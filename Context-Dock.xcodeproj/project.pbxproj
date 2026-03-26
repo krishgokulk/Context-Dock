@@ -19,7 +19,7 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FD1617D62ECEA5B500620C78 /* ILauncher */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ILauncher;
+			path = "Context-Dock";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -264,7 +264,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = /Users/gokulakannan/Desktop/ILauncher/ILauncher/Base.lproj/ILauncher.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "Context-Dock/Base.lproj/ILauncher.entitlements";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -318,7 +318,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = /Users/gokulakannan/Desktop/ILauncher/ILauncher/Base.lproj/ILauncher.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "Context-Dock/Base.lproj/ILauncher.entitlements";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
