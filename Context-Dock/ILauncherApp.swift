@@ -581,7 +581,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         launcherWindow?.isMovableByWindowBackground = true
-        launcherWindow?.hasShadow = true
+        launcherWindow?.hasShadow = false
         launcherWindow?.delegate = self
         launcherWindow?.ignoresMouseEvents = false
         launcherWindow?.hidesOnDeactivate = false

@@ -3398,7 +3398,6 @@ struct LauncherView: View {
                 }
                 .background(GlassBackground(cornerRadius: 20))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
-                .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: -6)
             } else {
                 // Normal mode: Dock + results in ONE unified sheet
                 let hasResultsToShow = !searchResults.isEmpty
@@ -3421,7 +3420,6 @@ struct LauncherView: View {
                 }
                 .background(GlassBackground(cornerRadius: 20))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
-                .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: -6)
             }
         }
         .ifLet(resolvedColorScheme) { view, scheme in
@@ -19268,8 +19266,6 @@ extension View {
         self
             .background(GlassBackground(cornerRadius: cornerRadius))
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .shadow(color: Color.black.opacity(0.22), radius: 28, x: 0, y: 10)
-            .shadow(color: Color.black.opacity(0.08), radius: 6,  x: 0, y: 2)
     }
 }
 
