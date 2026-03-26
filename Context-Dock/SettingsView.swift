@@ -1,0 +1,7957 @@
+//
+//  SettingsView.swift
+//  ILauncher
+//
+//  Created by Krishgokul on 20/11/2025.
+//
+
+import SwiftUI
+import AppKit
+import Carbon
+import UniformTypeIdentifiers
+import WebKit
+
+struct SettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var selectedTab = 0
+    
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gear") }
+                .tag(0)
+
+            AIProviderSettingsView()
+                .tabItem { Label("AI", systemImage: "brain.head.profile") }
+                .tag(1)
+
+            AppShortcutsSettingsView()
+                .tabItem { Label("Quick Actions", systemImage: "bolt.fill") }
+                .tag(2)
+
+            AppAdaptersSettingsView()
+                .tabItem { Label("Context Dock", systemImage: "dock.rectangle") }
+                .tag(3)
+
+            BrowserSettingsView()
+                .tabItem { Label("Browser", systemImage: "globe") }
+                .tag(4)
+
+            AdvancedSettingsView()
+                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+                .tag(5)
+
+            PermissionsSettingsView()
+                .tabItem { Label("Permissions", systemImage: "lock.shield") }
+                .tag(6)
+        }
+        .frame(width: 920, height: 680)
+    }
+}
+
+// MARK: - Advanced Settings Tab (Extensions + File Tools + Automation)
+
+enum AdvancedSection: String, CaseIterable {
+    case extensions = "Extensions"
+    case fileTools  = "File Tools"
+    case automation = "Automation"
+}
+
+struct AdvancedSettingsView: View {
+    @State private var section: AdvancedSection = .extensions
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $section) {
+                ForEach(AdvancedSection.allCases, id: \.self) { s in
+                    Text(s.rawValue).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color(NSColor.windowBackgroundColor))
+
+            Divider()
+
+            switch section {
+            case .extensions: LayeredExtensionsSettingsView()
+            case .fileTools:  FileToolsSettingsView()
+            case .automation: AXTriggerRuleSettingsView()
+            }
+        }
+    }
+}
+
+// MARK: - General Settings Tab
+// MARK: - General Settings (split-panel layout matching App Shortcuts / Extensions)
+
+enum GeneralSection: String, CaseIterable, Identifiable {
+    case launcher    = "Launcher"
+    case search      = "Search"
+    case layers      = "Layers"
+    case contextDock = "Context Dock"
+    case ai          = "AI"
+    case shortcuts   = "Shortcuts"
+    case appearance  = "Appearance"
+    case backup      = "Backup"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .launcher:    return "magnifyingglass"
+        case .search:      return "doc.text.magnifyingglass"
+        case .layers:      return "square.3.layers.3d"
+        case .contextDock: return "rectangle.grid.1x2"
+        case .ai:          return "brain.head.profile"
+        case .shortcuts:   return "keyboard"
+        case .appearance:  return "paintbrush"
+        case .backup:      return "arrow.up.arrow.down.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .launcher:    return .blue
+        case .search:      return .orange
+        case .layers:      return .cyan
+        case .contextDock: return .purple
+        case .ai:          return .indigo
+        case .shortcuts:   return .teal
+        case .appearance:  return .pink
+        case .backup:      return .gray
+        }
+    }
+}
+
+struct GeneralSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var selected: GeneralSection = .launcher
+
+    var body: some View {
+        HSplitView {
+            // ── Sidebar ────────────────────────────────────────────────────
+            List(selection: $selected) {
+                Section("Context-Dock") {
+                    ForEach([GeneralSection.launcher, .search, .shortcuts]) { sec in
+                        GeneralSidebarRow(section: sec)
+                            .tag(sec)
+                    }
+                }
+                Section("Features") {
+                    ForEach([GeneralSection.layers, .contextDock, .ai]) { sec in
+                        GeneralSidebarRow(section: sec)
+                            .tag(sec)
+                    }
+                }
+                Section("Customize") {
+                    ForEach([GeneralSection.appearance, .backup]) { sec in
+                        GeneralSidebarRow(section: sec)
+                            .tag(sec)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 160, maxWidth: 190)
+
+            // ── Detail panel ───────────────────────────────────────────────
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Image(systemName: selected.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(selected.color)
+                        .frame(width: 28, height: 28)
+                        .background(selected.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                    Text(selected.rawValue)
+                        .font(.title2).bold()
+                    Spacer()
+                }
+                .padding()
+
+                Divider()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        detailContent
+                    }
+                    .padding(20)
+                }
+            }
+            .frame(minWidth: 480)
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch selected {
+        case .launcher:    launcherPanel
+        case .search:      searchPanel
+        case .layers:      layersPanel
+        case .contextDock: contextDockPanel
+        case .ai:          aiPanel
+        case .shortcuts:   shortcutsPanel
+        case .appearance:  appearancePanel
+        case .backup:      backupPanel
+        }
+    }
+
+    // MARK: - Launcher panel
+    private var launcherPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "System", systemImage: "gear") {
+                VStack(spacing: 16) {
+                    Toggle(isOn: Binding(
+                        get: { settings.showMenuBarIcon },
+                        set: { settings.showMenuBarIcon = $0
+                              NotificationCenter.default.post(name: .menuBarIconVisibilityChanged, object: nil) }
+                    )) {
+                        GeneralToggleLabel("Show Menu Bar Icon", caption: "Display ILauncher icon in the menu bar")
+                    }.toggleStyle(.switch)
+
+                    Divider()
+
+                    LaunchAtLoginToggle()
+                }
+            }
+
+            CardSection(title: "Window", systemImage: "rectangle.on.rectangle") {
+                VStack(spacing: 16) {
+                    Toggle(isOn: $settings.alwaysDockAtBottom) {
+                        GeneralToggleLabel("Always Dock at Bottom",
+                            caption: "Pin results above the dock. Disable for smart auto-positioning based on screen space.")
+                    }.toggleStyle(.switch)
+
+                    Divider()
+
+                    Toggle(isOn: $settings.persistentContextDock) {
+                        GeneralToggleLabel("Always Context Dock at Bottom",
+                            caption: "Keep the context dock permanently visible at the bottom of the screen, like the macOS Dock. Shows live context pills for the frontmost app at all times.")
+                    }.toggleStyle(.switch)
+
+                    if settings.persistentContextDock {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle(isOn: $settings.persistentContextDockAutoHide) {
+                                GeneralToggleLabel("Auto-Hide",
+                                    caption: "Slide the dock out of view when the mouse moves away. It reappears when you move the cursor to the bottom of the screen.",
+                                    isSubItem: true)
+                            }.toggleStyle(.switch)
+                        }
+                        .padding(.leading, 20)
+                        .padding(.top, 4)
+                    }
+                }
+            }
+
+            CardSection(title: "Danger Zone", systemImage: "power") {
+                HStack {
+                    Text("Quit ILauncher").font(.subheadline).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Quit") { NSApplication.shared.terminate(nil) }
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    // MARK: - Search panel
+    private var searchPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "File Search", systemImage: "doc.text.magnifyingglass") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Toggle(isOn: $settings.enableSpotlightSearch) {
+                        GeneralToggleLabel("Enable File Search",
+                            caption: "Index and search files, folders and documents on this Mac")
+                    }.toggleStyle(.switch)
+
+                    if settings.enableSpotlightSearch {
+                        Divider()
+                        Toggle(isOn: $settings.useCustomSearchDirectories) {
+                            GeneralToggleLabel("Custom Directories Only",
+                                caption: "Only search specific folders — better privacy and speed",
+                                isSubItem: true)
+                        }.toggleStyle(.switch)
+                        if settings.useCustomSearchDirectories {
+                            SearchDirectoriesListView()
+                        }
+                        FileIndexStatusView()
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Layers panel
+    private var layersPanel: some View {
+        VStack(spacing: 16) {
+
+            // ── Layer 1 ────────────────────────────────────────────────────────
+            CardSection(title: "Layer 1 — Search", systemImage: "magnifyingglass") {
+                VStack(spacing: 10) {
+                    HStack {
+                        GeneralToggleLabel(
+                            "Pinned Apps, Files & Folders",
+                            caption: "Always on — the base search layer. Cannot be disabled."
+                        )
+                        Spacer()
+                        Toggle("", isOn: .constant(true)).disabled(true).labelsHidden()
+                    }
+
+                    Divider()
+
+                    HStack {
+                        GeneralToggleLabel(
+                            "Show Running Apps",
+                            caption: "Display running apps next to pinned apps. Green dot marks running. Right-click to pin or quit."
+                        )
+                        Spacer()
+                        Toggle("", isOn: $settings.showRunningAppsInBar).labelsHidden()
+                    }
+                }
+            }
+
+            // ── Layer 2 ────────────────────────────────────────────────────────
+            CardSection(title: "Layer 2 — Context Dock", systemImage: "rectangle.grid.1x2") {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Master toggle
+                    HStack {
+                        GeneralToggleLabel(
+                            "Enable Context Layer",
+                            caption: "Swipe up from Layer 1 to connect to the frontmost app and surface one-tap actions."
+                        )
+                        Spacer()
+                        Toggle("", isOn: $settings.enableLayer2).labelsHidden()
+                    }
+
+                    if settings.enableLayer2 {
+                        Divider()
+
+                        // Context-Aware Actions
+                        Toggle(isOn: Binding(
+                            get: { settings.enableFrontmostDetection },
+                            set: { v in settings.enableFrontmostDetection = v; settings.enableContextAIExtensions = v }
+                        )) {
+                            GeneralToggleLabel(
+                                "Context-Aware Actions",
+                                caption: "Reads the frontmost app and surfaces adapter actions, live menu items, and smart pills — default behaviour of the Context Dock.",
+                                isSubItem: true)
+                        }.toggleStyle(.switch)
+
+                        // Sub-options — always under Context-Aware Actions
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle(isOn: $settings.crossAppPills) {
+                                GeneralToggleLabel(
+                                    "Cross-App Connect  ⚗️ In Development",
+                                    caption: "Route queries and context to other running apps. Type an app name + action (e.g. \"safari close tab\") or get 'Send to [App]' pills based on current context.",
+                                    isSubItem: true)
+                            }.toggleStyle(.switch)
+
+                            Toggle(isOn: $settings.clipboardAwarePills) {
+                                GeneralToggleLabel(
+                                    "Clipboard-Aware Pills",
+                                    caption: "Surfaces one-tap actions from clipboard content (URL, text, file).",
+                                    isSubItem: true)
+                            }.toggleStyle(.switch)
+
+                            Toggle(isOn: $settings.sessionDetectionPills) {
+                                GeneralToggleLabel(
+                                    "Session Detection",
+                                    caption: "Detects dev / browse / comms session and re-ranks adapter pills.",
+                                    isSubItem: true)
+                            }.toggleStyle(.switch)
+                        }
+                        .padding(.leading, 20)
+                        .padding(.top, 4)
+
+                        Divider()
+
+                    }
+                }
+            }
+
+            // ── Layer 3 ────────────────────────────────────────────────────────
+            CardSection(title: "Layer 3 — Browser", systemImage: "globe") {
+                HStack {
+                    GeneralToggleLabel(
+                        "Enable Browser Layer",
+                        caption: "Swipe up from Layer 2 to open bookmarks and web search."
+                    )
+                    Spacer()
+                    Toggle("", isOn: $settings.enableLayer3).labelsHidden()
+                }
+            }
+
+            // ── AI Chat ────────────────────────────────────────────────────────
+            CardSection(title: "AI Chat (Horizontal Swipe)", systemImage: "brain.head.profile") {
+                HStack {
+                    GeneralToggleLabel(
+                        "Enable AI Chat Mode",
+                        caption: "Swipe left/right — or press Tab — to open AI chat from any layer."
+                    )
+                    Spacer()
+                    Toggle("", isOn: $settings.enableAIMode).labelsHidden()
+                }
+            }
+
+            // ── Navigation diagram ─────────────────────────────────────────────
+            CardSection(title: "Navigation", systemImage: "arrow.up.arrow.down") {
+                VStack(spacing: 8) {
+                    HStack(spacing: 0) {
+                        LayerChip(number: "1", label: "Search",  color: .blue,   enabled: true)
+                        LayerArrow(enabled: settings.enableLayer2)
+                        LayerChip(number: "2", label: "Context", color: .purple, enabled: settings.enableLayer2)
+                        LayerArrow(enabled: settings.enableLayer3)
+                        LayerChip(number: "3", label: "Browser", color: .teal,   enabled: settings.enableLayer3)
+                    }
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("Swipe left/right on any layer →").font(.system(size: 10)).foregroundStyle(.secondary)
+                        LayerChip(number: "✦", label: "AI Chat", color: .indigo, enabled: settings.enableAIMode)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    // MARK: - Context Dock panel
+    private var contextDockPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "Context Dock", systemImage: "rectangle.grid.1x2") {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "info.circle.fill").foregroundStyle(.purple).font(.system(size: 13))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("How it works").font(.caption).fontWeight(.semibold)
+                            Text("Swipe up on the launcher (or press your Context Dock hotkey) to activate Layer 2. Configure one-tap pills per app in **App Shortcuts**. Set a hotkey in **Shortcuts**. Toggle Context Layer on/off in **Layers**.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            CardSection(title: "Context Extensions", systemImage: "extension") {
+                Toggle(isOn: $settings.enableContextAIExtensions) {
+                    GeneralToggleLabel("Built-in Context Extensions",
+                        caption: "Show AI-powered suggestions based on what's selected or open in the frontmost app.")
+                }.toggleStyle(.switch)
+            }
+        }
+    }
+
+    // MARK: - AI panel
+    private var aiPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "AI Provider", systemImage: "cpu") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "info.circle.fill").foregroundStyle(.indigo).font(.system(size: 13))
+                        Text("Configure your AI provider and API keys in the **AI** tab. Enable or disable the AI Chat layer in **Layers**.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            CardSection(title: "Chat History", systemImage: "bubble.left.and.bubble.right") {
+                HStack {
+                    GeneralToggleLabel("Saved Conversations",
+                        caption: "Your AI conversation history is stored locally on this device.")
+                    Spacer()
+                    Button(action: {
+                        settings.clearChatHistory()
+                        NotificationCenter.default.post(name: .chatHistoryCleared, object: nil)
+                    }) {
+                        Label("Clear All", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!settings.hasChatHistory())
+                }
+            }
+        }
+    }
+
+    // MARK: - Shortcuts panel (merged from ShortcutsSettingsView)
+    private var shortcutsPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "Keyboard Shortcuts", systemImage: "keyboard") {
+                VStack(spacing: 0) {
+                    HotkeyRecorderRow(
+                        icon: "magnifyingglass", iconColor: .blue,
+                        title: "Open Launcher",
+                        subtitle: "Show / hide the search bar from anywhere",
+                        displayString: settings.hotkeyDisplayString,
+                        onClear: nil
+                    ) { kc, mod in
+                        settings.hotkeyKeyCode = kc
+                        settings.hotkeyModifiers = mod
+                    }
+
+                    Divider().padding(.leading, 46)
+
+                    HotkeyRecorderRow(
+                        icon: "rectangle.grid.1x2", iconColor: .purple,
+                        title: "Context Dock",
+                        subtitle: "Jump straight to the frontmost app's one-tap actions",
+                        displayString: settings.contextDockHotkeyDisplayString,
+                        onClear: {
+                            settings.contextDockHotkeyKeyCode = 0
+                            settings.contextDockHotkeyModifiers = 0
+                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                        }
+                    ) { kc, mod in
+                        settings.contextDockHotkeyKeyCode = kc
+                        settings.contextDockHotkeyModifiers = mod
+                    }
+
+
+                }
+            }
+
+            CardSection(title: "Tips", systemImage: "lightbulb") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Use ⌘ ⌥ ⌃ ⇧ + any letter or Space. Click a badge to record a new shortcut.", systemImage: "keyboard")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Label("Context Dock opens the launcher directly in app-action mode — no searching needed.", systemImage: "rectangle.grid.1x2")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            CardSection(title: "Menu Bar Apps", systemImage: "menubar.rectangle") {
+                MenuBarAppsSettingsView()
+            }
+        }
+    }
+
+    // MARK: - Appearance panel
+    private var appearancePanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "Theme", systemImage: "circle.lefthalf.filled") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("", selection: $settings.appearanceMode) {
+                        Label("System", systemImage: "desktopcomputer").tag("system")
+                        Label("Light",  systemImage: "sun.max").tag("light")
+                        Label("Dark",   systemImage: "moon").tag("dark")
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    Text("Glass adapts to the selected scheme. \"System\" follows macOS.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            CardSection(title: "Transparency", systemImage: "rectangle.on.rectangle") {
+                VStack(spacing: 12) {
+                    GeneralSlider(icon: "magnifyingglass", iconColor: .blue,
+                                  label: "Launcher Window", value: $settings.launcherWindowOpacity)
+                    Divider()
+                    GeneralSlider(icon: "folder", iconColor: .purple,
+                                  label: "Folder Preview", value: $settings.folderPreviewOpacity)
+                    Divider()
+                    GeneralSlider(icon: "globe", iconColor: .teal,
+                                  label: "Browser Window", value: $settings.webSearchWindowOpacity)
+                }
+            }
+        }
+    }
+
+    // MARK: - Backup panel
+    private var backupPanel: some View {
+        VStack(spacing: 16) {
+            CardSection(title: "Backup & Restore", systemImage: "arrow.up.arrow.down.circle") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Export all your settings, shortcuts, and extensions for safekeeping or to move to another Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            let result = SettingsBackupManager.shared.exportSettings().map { _ in () }
+                            showAlert(result: result, successMessage: "Settings exported successfully!")
+                        }) {
+                            Label("Export Settings", systemImage: "square.and.arrow.up")
+                        }.buttonStyle(.bordered)
+
+                        Button(action: {
+                            let result = SettingsBackupManager.shared.importSettings().map { _ in () }
+                            showAlert(result: result, successMessage: "Settings imported! Some changes may require a restart.")
+                        }) {
+                            Label("Import Settings", systemImage: "square.and.arrow.down")
+                        }.buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+    }
+
+    private func showAlert(result: Result<Void, Error>, successMessage: String) {
+        let alert = NSAlert()
+        switch result {
+        case .success:
+            alert.messageText = "Success"
+            alert.informativeText = successMessage
+            alert.alertStyle = .informational
+        case .failure(let error):
+            alert.messageText = "Error"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+        }
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
+
+// MARK: - Sidebar row for General settings
+private struct GeneralSidebarRow: View {
+    let section: GeneralSection
+    var body: some View {
+        Label {
+            Text(section.rawValue)
+                .font(.system(size: 13))
+        } icon: {
+            Image(systemName: section.icon)
+                .foregroundStyle(section.color)
+                .frame(width: 20)
+        }
+    }
+}
+
+// MARK: - Layer flow diagram helpers
+
+private struct LayerChip: View {
+    let number: String
+    let label: String
+    let color: Color
+    let enabled: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(enabled ? color.opacity(0.18) : Color.secondary.opacity(0.10))
+                    .frame(width: 56, height: 48)
+                VStack(spacing: 2) {
+                    Text(number)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(enabled ? color : .secondary)
+                    Text(label)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(enabled ? color.opacity(0.8) : .secondary)
+                }
+            }
+            if !enabled {
+                Text("off")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .opacity(enabled ? 1 : 0.5)
+    }
+}
+
+private struct LayerArrow: View {
+    let enabled: Bool
+    var body: some View {
+        Image(systemName: "arrow.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(enabled ? Color.primary.opacity(0.4) : Color.secondary.opacity(0.25))
+            .frame(width: 24)
+            .padding(.bottom, 16) // align with chip center
+    }
+}
+
+// MARK: - Small reusable helpers for General settings
+
+private struct GeneralToggleLabel: View {
+    let title: String
+    let caption: String
+    var isSubItem: Bool = false
+    init(_ title: String, caption: String, isSubItem: Bool = false) {
+        self.title = title; self.caption = caption; self.isSubItem = isSubItem
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(isSubItem ? .subheadline : .headline)
+            Text(caption).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct GeneralSlider: View {
+    let icon: String
+    let iconColor: Color
+    let label: String
+    @Binding var value: Double
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: icon).foregroundStyle(iconColor).font(.system(size: 13))
+                Text(label).font(.subheadline).fontWeight(.medium)
+                Spacer()
+                Text("\(Int(value * 100))%").font(.caption).foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $value, in: 0.5...1.0, step: 0.05)
+        }
+    }
+}
+
+struct CardSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(.blue)
+                Text(title)
+                    .font(.headline)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(12)
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(10)
+        }
+    }
+}
+
+// MARK: - File Index Status View
+struct FileIndexStatusView: View {
+    @ObservedObject var fileIndexManager = FileIndexManager.shared
+    @State private var isReindexing = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("File Index")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Spacer()
+                
+                if fileIndexManager.isReady {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.system(size: 12))
+                        Text("Ready")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                } else if fileIndexManager.progress.isIndexing {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Indexing...")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                // Stats
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Files Indexed")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(fileIndexManager.indexedFiles.count)")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    if let lastIndex = fileIndexManager.metadata.lastFullIndexDate {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Last Updated")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(lastIndex, style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+                
+                // Indexing progress
+                if fileIndexManager.progress.isIndexing {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: fileIndexManager.progress.progressPercentage, total: 100)
+                            .progressViewStyle(.linear)
+                        
+                        HStack {
+                            Text(fileIndexManager.progress.currentDirectory)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            
+                            Spacer()
+                            
+                            Text("\(fileIndexManager.progress.filesIndexed) files")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                // Actions
+                HStack(spacing: 12) {
+                    Button(action: {
+                        Task {
+                            isReindexing = true
+                            await fileIndexManager.forceReindex()
+                            isReindexing = false
+                        }
+                    }) {
+                        Label("Rebuild Index", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(fileIndexManager.progress.isIndexing)
+                    
+                    Button(action: {
+                        Task {
+                            await fileIndexManager.clearCache()
+                        }
+                    }) {
+                        Label("Clear Cache", systemImage: "trash")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(fileIndexManager.progress.isIndexing)
+                }
+
+                // Error display
+                if let error = fileIndexManager.progress.lastError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption2)
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(12)
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(8)
+
+            Text("Files are indexed at launch for instant search results. Re-index if you've added new files.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Search Directories List View
+struct SearchDirectoriesListView: View {
+    @ObservedObject var settings = AppSettings.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Search Directories")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+                
+                Button(action: addDirectory) {
+                    Label("Add Directory", systemImage: "plus.circle.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+            
+            if settings.searchDirectories.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+
+                    Text("No directories added")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("Add directories to limit search scope. If notes aren't appearing in results, ensure their parent folders are included here or turn off custom directories.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(settings.searchDirectories) { directory in
+                        SearchDirectoryRow(directory: directory)
+                    }
+                }
+                .padding(8)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+            }
+        }
+    }
+    
+    func addDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a directory to search"
+        panel.prompt = "Select"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            let displayName = url.lastPathComponent
+            // Use URL-based method to create security-scoped bookmark
+            settings.addSearchDirectory(url: url, displayName: displayName)
+        }
+    }
+}
+
+// MARK: - Search Directory Row
+struct SearchDirectoryRow: View {
+    let directory: SearchDirectory
+    @ObservedObject var settings = AppSettings.shared
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.blue)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(directory.displayName)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                Text(directory.path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                settings.removeSearchDirectory(directory)
+            }) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove directory")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.5))
+        .cornerRadius(6)
+    }
+}
+
+// MARK: - AI Provider Settings Tab
+struct AIProviderSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var isTestingConnection = false
+    @State private var connectionTestResult: ConnectionTestResult? = nil
+    @State private var isFetchingModels = false
+    @State private var fetchedOllamaModels: [OllamaModel] = []
+    
+    enum ConnectionTestResult {
+        case success(String)
+        case failure(String)
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Header
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI Provider")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("Select and configure your preferred AI provider for the AI mode.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Provider Selection
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Select Provider")
+                        .font(.headline)
+                    
+                    ForEach(AIProvider.allCases) { provider in
+                        AIProviderRow(
+                            provider: provider,
+                            isSelected: settings.selectedAIProvider == provider,
+                            isConfigured: settings.isProviderConfigured(provider)
+                        ) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                settings.selectedAIProvider = provider
+                            }
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // Configuration Section
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("Configuration")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        if settings.isProviderConfigured(settings.selectedAIProvider) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Configured")
+                                    .foregroundStyle(.green)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    
+                    providerConfigurationView
+                }
+                
+                // Test Connection Button
+                if settings.selectedAIProvider != .onDevice && settings.selectedAIProvider != .shortcuts {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Button(action: testConnection) {
+                                HStack(spacing: 8) {
+                                    if isTestingConnection {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "network")
+                                    }
+                                    Text("Test Connection")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isTestingConnection || !settings.isProviderConfigured(settings.selectedAIProvider))
+
+                            if let result = connectionTestResult {
+                                connectionResultView(result)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                PromptTemplatesSection()
+
+                Spacer()
+            }
+            .padding(24)
+        }
+    }
+    
+    @ViewBuilder
+    private var providerConfigurationView: some View {
+        switch settings.selectedAIProvider {
+        case .onDevice:
+            onDeviceConfigView
+        case .openAI:
+            apiKeyConfigView(
+                title: "OpenAI API Key",
+                key: $settings.openAIAPIKey,
+                placeholder: "sk-...",
+                helpURL: "https://platform.openai.com/api-keys"
+            )
+        case .googleGemini:
+            apiKeyConfigView(
+                title: "Google Gemini API Key",
+                key: $settings.googleGeminiAPIKey,
+                placeholder: "AIza...",
+                helpURL: "https://makersuite.google.com/app/apikey"
+            )
+        case .anthropic:
+            apiKeyConfigView(
+                title: "Anthropic API Key",
+                key: $settings.anthropicAPIKey,
+                placeholder: "sk-ant-...",
+                helpURL: "https://console.anthropic.com/settings/keys"
+            )
+        case .ollama:
+            ollamaConfigView
+        case .shortcuts:
+            shortcutsConfigView
+        }
+    }
+    
+    private var onDeviceConfigView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.primary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On-Device Intelligence")
+                        .font(.headline)
+                    Text("Powered by Apple's Foundation Models")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                FeatureRow(icon: "lock.shield.fill", text: "Private - data never leaves your device", color: .green)
+                FeatureRow(icon: "bolt.fill", text: "Fast - no network latency", color: .orange)
+                FeatureRow(icon: "key.slash", text: "No API key required", color: .blue)
+                FeatureRow(icon: "macbook", text: "Requires Apple Silicon Mac", color: .purple)
+            }
+            .padding()
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(12)
+
+
+            // Custom System Prompt
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("System Prompt")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Spacer()
+                }
+
+                Text("Customize the behavior and personality of the AI assistant")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $settings.onDeviceSystemPrompt)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(height: 100)
+                    .padding(8)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+
+                HStack {
+                    Button("Reset to Default") {
+                        settings.onDeviceSystemPrompt = "You are a helpful AI assistant for quick queries and information. Provide concise, accurate answers to user questions. Keep responses brief and to the point."
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.blue)
+
+                    Spacer()
+
+                    Text("\(settings.onDeviceSystemPrompt.count) characters")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Note: On-device AI uses Apple Intelligence and requires macOS 15+ and an Apple Silicon Mac with sufficient RAM.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+    
+    private func apiKeyConfigView(title: String, key: Binding<String>, placeholder: String, helpURL: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            
+            HStack {
+                SecureField(placeholder, text: key)
+                    .textFieldStyle(.roundedBorder)
+                
+                if !key.wrappedValue.isEmpty {
+                    Button(action: {
+                        key.wrappedValue = ""
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            
+            HStack {
+                Button(action: {
+                    if let url = URL(string: helpURL) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.circle")
+                        Text("Get API Key")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.link)
+                
+                Spacer()
+                
+                Text("Your API key is stored securely in your Mac's Keychain")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+    
+    private var ollamaConfigView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Endpoint Configuration
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Ollama Endpoint")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                HStack {
+                    TextField("http://localhost:11434", text: $settings.ollamaEndpoint)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Button(action: fetchOllamaModels) {
+                        HStack(spacing: 4) {
+                            if isFetchingModels {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text("Fetch Models")
+                        }
+                        .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isFetchingModels || settings.ollamaEndpoint.isEmpty)
+                }
+            }
+            
+            // Model Selection
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Select Model")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                if fetchedOllamaModels.isEmpty && settings.ollamaModels.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                        
+                        Text("No models found")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Text("Make sure Ollama is running and click 'Fetch Models'")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.gray.opacity(0.06))
+                    .cornerRadius(8)
+                } else {
+                    let models = fetchedOllamaModels.isEmpty ? settings.ollamaModels : fetchedOllamaModels
+                    
+                    Picker("Model", selection: $settings.selectedOllamaModel) {
+                        Text("Select a model").tag("")
+                        ForEach(models) { model in
+                            Text(model.name).tag(model.name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            
+            // Help text
+            VStack(alignment: .leading, spacing: 4) {
+                Text("To use Ollama:")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("1. Install Ollama from ollama.ai")
+                    Text("2. Run 'ollama pull llama3.2' to download a model")
+                    Text("3. Click 'Fetch Models' above to see available models")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(8)
+        }
+    }
+    
+    private var shortcutsConfigView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.blue)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Apple Shortcuts")
+                        .font(.headline)
+                    Text("Use any shortcut as your AI provider")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                FeatureRow(icon: "wand.and.stars", text: "Fully customizable workflow", color: .blue)
+                FeatureRow(icon: "lock.shield.fill", text: "Private - you control the data", color: .green)
+                FeatureRow(icon: "key.slash", text: "No API key needed from us", color: .orange)
+                FeatureRow(icon: "app.badge.checkmark", text: "Works with any AI service", color: .purple)
+            }
+            .padding()
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(12)
+            
+            Divider()
+            
+            // Shortcut Picker
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Select Shortcut")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text("Choose a shortcut that accepts text input and provides a text response")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                ShortcutPickerView(selectedShortcut: $settings.shortcutsProviderShortcut)
+            }
+            .padding()
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(12)
+
+            // Help text
+            VStack(alignment: .leading, spacing: 8) {
+                Text("💡 How to create a compatible shortcut:")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("1. Open Shortcuts app")
+                    Text("2. Create new shortcut with 'Shortcut Input'")
+                    Text("3. Add your AI integration (ChatGPT, Claude, etc.)")
+                    Text("4. Make sure it outputs text result")
+                    Text("5. Enable 'Show in Share Sheet' and 'Receive Input'")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color.orange.opacity(0.06))
+            .cornerRadius(8)
+            
+            Text("Note: Your shortcut will receive the user's query as input and should return a text response.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+    
+    @ViewBuilder
+    private func connectionResultView(_ result: ConnectionTestResult) -> some View {
+        switch result {
+        case .success(let message):
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(message)
+                    .foregroundStyle(.green)
+            }
+            .font(.caption)
+        case .failure(let message):
+            HStack(spacing: 4) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                Text(message)
+                    .foregroundStyle(.red)
+            }
+            .font(.caption)
+        }
+    }
+    
+    private func testConnection() {
+        isTestingConnection = true
+        connectionTestResult = nil
+        
+        Task {
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate network delay
+                
+                switch settings.selectedAIProvider {
+                case .ollama:
+                    // Test Ollama connection
+                    let endpoint = settings.ollamaEndpoint.trimmingCharacters(in: .whitespaces)
+                    guard let url = URL(string: "\(endpoint)/api/tags") else {
+                        throw NSError(domain: "Invalid URL", code: -1)
+                    }
+                    
+                    let (_, response) = try await URLSession.shared.data(from: url)
+                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                        await MainActor.run {
+                            connectionTestResult = .success("Connected to Ollama")
+                        }
+                    } else {
+                        throw NSError(domain: "Connection failed", code: -1)
+                    }
+                    
+                case .openAI, .googleGemini, .anthropic:
+                    // For API-based providers, we just verify the key format
+                    let key = settings.getAPIKey(for: settings.selectedAIProvider)
+                    if key.count > 10 {
+                        await MainActor.run {
+                            connectionTestResult = .success("API key looks valid")
+                        }
+                    } else {
+                        throw NSError(domain: "API key too short", code: -1)
+                    }
+                    
+                default:
+                    break
+                }
+            } catch {
+                await MainActor.run {
+                    connectionTestResult = .failure("Connection failed: \(error.localizedDescription)")
+                }
+            }
+            
+            await MainActor.run {
+                isTestingConnection = false
+            }
+        }
+    }
+    
+    private func fetchOllamaModels() {
+        isFetchingModels = true
+        
+        Task {
+            let models = await settings.fetchOllamaModels()
+            
+            await MainActor.run {
+                fetchedOllamaModels = models
+                settings.ollamaModels = models
+                isFetchingModels = false
+                
+                // Auto-select first model if none selected
+                if settings.selectedOllamaModel.isEmpty && !models.isEmpty {
+                    settings.selectedOllamaModel = models[0].name
+                }
+            }
+        }
+    }
+}
+
+/// MARK: - App Adapters Settings
+
+private struct ContextDockApp: Identifiable {
+    let id: String          // bundleId
+    let bundleId: String
+    let appName: String
+    let icon: NSImage?
+    let adapterActionsCount: Int
+    let starredCount: Int
+}
+
+struct AppAdaptersSettingsView: View {
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var l2Manager = L2ExtensionManager.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var selectedBundleId: String? = nil
+    @State private var showAutomations = false
+    @State private var searchText = ""
+    @State private var showNewAdapterSheet = false
+
+    private func resolvedName(bundleId: String) -> String {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.localizedName ?? bundleId.components(separatedBy: ".").last ?? bundleId
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return bundleId.components(separatedBy: ".").last ?? bundleId
+    }
+
+    private func resolvedIcon(bundleId: String) -> NSImage? {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.icon
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return nil
+    }
+
+    private var contextDockApps: [ContextDockApp] {
+        var byBundleId: [String: ContextDockApp] = [:]
+        // From adapters
+        for adapter in adapterManager.adapters {
+            byBundleId[adapter.bundleId] = ContextDockApp(
+                id: adapter.bundleId, bundleId: adapter.bundleId,
+                appName: adapter.appName,
+                icon: resolvedIcon(bundleId: adapter.bundleId),
+                adapterActionsCount: adapter.actions.count,
+                starredCount: 0
+            )
+        }
+        // From favourites — merge into existing or add new
+        let favDict = settings.allFavouriteMenuPills()
+        for (bid, names) in favDict where !names.isEmpty {
+            if let existing = byBundleId[bid] {
+                byBundleId[bid] = ContextDockApp(
+                    id: existing.bundleId, bundleId: existing.bundleId,
+                    appName: existing.appName, icon: existing.icon,
+                    adapterActionsCount: existing.adapterActionsCount,
+                    starredCount: names.count
+                )
+            } else {
+                byBundleId[bid] = ContextDockApp(
+                    id: bid, bundleId: bid,
+                    appName: resolvedName(bundleId: bid),
+                    icon: resolvedIcon(bundleId: bid),
+                    adapterActionsCount: 0,
+                    starredCount: names.count
+                )
+            }
+        }
+        return byBundleId.values.sorted {
+            $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+        }
+    }
+
+    private var filteredContextDockApps: [ContextDockApp] {
+        if searchText.isEmpty { return contextDockApps }
+        let q = searchText.lowercased()
+        return contextDockApps.filter {
+            $0.appName.lowercased().contains(q) || $0.bundleId.lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        HSplitView {
+            // MARK: Left sidebar
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    TextField("Search apps…", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.05))
+
+                Divider()
+
+                // Context Dock Apps header
+                HStack {
+                    Text("Context Dock Apps")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(contextDockApps.count)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Button {
+                        showNewAdapterSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Add new app adapter")
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+                // Unified app list
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        if filteredContextDockApps.isEmpty {
+                            Text("No apps yet")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .padding(16)
+                        } else {
+                            ForEach(filteredContextDockApps) { app in
+                                let isSelected = selectedBundleId == app.bundleId
+                                Button {
+                                    selectedBundleId = app.bundleId
+                                    showAutomations = false
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Group {
+                                            if let icon = app.icon {
+                                                Image(nsImage: icon)
+                                                    .resizable()
+                                                    .frame(width: 22, height: 22)
+                                                    .cornerRadius(5)
+                                            } else {
+                                                Image(systemName: "app.fill")
+                                                    .font(.system(size: 15))
+                                                    .foregroundStyle(isSelected ? .white : Color.accentColor)
+                                                    .frame(width: 22, height: 22)
+                                            }
+                                        }
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(app.appName)
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(isSelected ? .white : .primary)
+                                                .lineLimit(1)
+                                            HStack(spacing: 4) {
+                                                if app.adapterActionsCount > 0 {
+                                                    Text("\(app.adapterActionsCount) adapter")
+                                                        .font(.system(size: 9))
+                                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                                        .background(isSelected ? Color.white.opacity(0.2) : Color.blue.opacity(0.12),
+                                                                    in: Capsule())
+                                                        .foregroundStyle(isSelected ? .white : .blue)
+                                                }
+                                                if app.starredCount > 0 {
+                                                    Text("\(app.starredCount) starred")
+                                                        .font(.system(size: 9))
+                                                        .padding(.horizontal, 5).padding(.vertical, 1)
+                                                        .background(isSelected ? Color.white.opacity(0.2) : Color.yellow.opacity(0.18),
+                                                                    in: Capsule())
+                                                        .foregroundStyle(isSelected ? .white : Color(nsColor: .systemOrange))
+                                                }
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(isSelected ? Color.accentColor : Color.clear,
+                                                in: RoundedRectangle(cornerRadius: 6))
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+
+                // Automations section
+                Divider()
+
+                Button {
+                    showAutomations = true
+                    selectedBundleId = nil
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(showAutomations ? .white : Color.indigo)
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Automations")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(showAutomations ? .white : .primary)
+                            Text("\(l2Manager.extensions.count) script\(l2Manager.extensions.count == 1 ? "" : "s")")
+                                .font(.system(size: 10))
+                                .foregroundStyle(showAutomations ? .white.opacity(0.7) : .secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(showAutomations ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+
+                Divider()
+
+                // Footer
+                HStack {
+                    Button {
+                        if showAutomations {
+                            l2Manager.openExtensionsFolder()
+                        } else {
+                            NSWorkspace.shared.open(adapterManager.adaptersDirectory)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder").font(.system(size: 11))
+                            Text(showAutomations ? "Open Scripts Folder" : "Open Adapters Folder")
+                                .font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        Task {
+                            await adapterManager.loadUserAdapters()
+                            await l2Manager.loadExtensions()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Reload from disk")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+            .frame(minWidth: 200, maxWidth: 240)
+
+            // MARK: Right panel
+            VStack(spacing: 0) {
+                // Load error banner
+                if !adapterManager.loadErrors.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 12))
+                            Text("\(adapterManager.loadErrors.count) file\(adapterManager.loadErrors.count == 1 ? "" : "s") failed to load")
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                        }
+                        ForEach(adapterManager.loadErrors, id: \.file) { err in
+                            Text("• \(err.file): \(err.message)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(12)
+                    Divider()
+                }
+
+                if showAutomations {
+                    AutomationsDetailView()
+                } else if let bid = selectedBundleId {
+                    ContextDockAppDetailView(bundleId: bid)
+                } else {
+                    AdapterCreationGuide(onAddAdapter: { showNewAdapterSheet = true })
+                }
+            }
+        }
+        .padding(0)
+        .sheet(isPresented: $showNewAdapterSheet) {
+            NewAdapterSheet { appName, bundleId, icon in
+                Task { await adapterManager.createAdapter(appName: appName, bundleId: bundleId, icon: icon) }
+                showNewAdapterSheet = false
+            }
+        }
+    }
+}
+
+// MARK: - Automations detail panel
+
+private struct AutomationsDetailView: View {
+    @ObservedObject private var l2Manager = L2ExtensionManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.indigo)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Automations")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("Shell, AppleScript & JXA scripts that appear as Context Dock pills")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    l2Manager.openExtensionsFolder()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder").font(.system(size: 11))
+                        Text("Open Folder").font(.system(size: 11))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(16)
+
+            Divider()
+
+            if l2Manager.extensions.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.quaternary)
+                    Text("No automations yet")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    Text("Add folders to ~/Library/Application Support/ILauncher/L2Extensions/")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(l2Manager.extensions) { ext in
+                            AutomationRowView(ext: ext)
+                            Divider().padding(.leading, 48)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+}
+
+private struct AutomationRowView: View {
+    let ext: L2Extension
+    @ObservedObject private var l2Manager = L2ExtensionManager.shared
+
+    var isEnabled: Bool {
+        l2Manager.extensions.first(where: { $0.toolName == ext.toolName })?.isEnabled ?? ext.isEnabled
+    }
+
+    var scriptTypeColor: Color {
+        switch ext.scriptType {
+        case .bash, .python, .ruby, .node: return .green
+        case .appleScript: return .orange
+        case .jxa: return .yellow
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: ext.icon)
+                .font(.system(size: 16))
+                .foregroundStyle(isEnabled ? scriptTypeColor : Color.secondary.opacity(0.5))
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(ext.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isEnabled ? .primary : .secondary)
+                    Text(ext.scriptType.rawValue)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(scriptTypeColor.opacity(0.12), in: Capsule())
+                        .foregroundStyle(scriptTypeColor)
+                }
+                Text(ext.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                if !ext.contextApps.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "app.badge.checkmark").font(.system(size: 9))
+                        Text(ext.contextApps.joined(separator: ", "))
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { isEnabled },
+                set: { _ in l2Manager.toggleEnabled(ext) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+}
+
+// MARK: - Adapter Creation Guide (empty state)
+
+private struct AdapterCreationGuide: View {
+    let onAddAdapter: () -> Void
+
+    private struct ActionTypeInfo {
+        let icon: String; let color: Color; let name: String; let what: String; let example: String
+    }
+    private let types: [ActionTypeInfo] = [
+        .init(icon: "menubar.rectangle",        color: .blue,   name: "menubar",
+              what: "Click any macOS menu item",
+              example: #""menuPath": ["File", "Export", "PDF…"]"#),
+        .init(icon: "applescript",              color: .orange, name: "applescript",
+              what: "Run AppleScript on the frontmost app",
+              example: #""script": "tell application \"Photos\" to activate""#),
+        .init(icon: "curlybraces",              color: .yellow, name: "jxa",
+              what: "JavaScript for Automation — read live data",
+              example: #""script": "Application('Photos').selection().length + ' selected'"#),
+        .init(icon: "terminal.fill",            color: .green,  name: "shell",
+              what: "Bash script — $CURRENT_URL, $WINDOW_TITLE etc. auto-injected",
+              example: #""script": "echo $FRONTMOST_APP is open""#),
+        .init(icon: "link",                     color: .teal,   name: "urlScheme",
+              what: "Open a URL / deep-link with context vars",
+              example: #""urlScheme": "obsidian://new?content=$AX_SELECTED_TEXT""#),
+        .init(icon: "sparkles",                 color: .indigo, name: "aiPrompt",
+              what: "Pre-fill the AI chat with live context",
+              example: #""aiPromptTemplate": "Summarize: $AX_SELECTED_TEXT""#),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Title
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("How to create an App Adapter")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("An adapter is a JSON file that defines actions for one app.\nWhen that app is frontmost, its actions appear as pills in the Context Dock.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // Quick start
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Quick start", systemImage: "bolt.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 0) {
+                        Text("1. Click ").font(.system(size: 12))
+                        Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 4)
+                        Text(" above → pick a running app → Create Adapter").font(.system(size: 12))
+                    }
+                    Text("2. The blank JSON file opens — add actions from the types below.")
+                        .font(.system(size: 12))
+                    Text("3. Save the file → press ⟳ Reload → actions appear instantly.")
+                        .font(.system(size: 12))
+                    HStack(spacing: 6) {
+                        Text("4. See ").font(.system(size: 12))
+                        Button("Photos.json") {
+                            let url = AppAdapterManager.shared.adaptersDirectory
+                                .appendingPathComponent("Photos.json")
+                            NSWorkspace.shared.open(url)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .font(.system(size: 12))
+                        Text("for a complete real-world example of every type.").font(.system(size: 12))
+                    }
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+
+                // Action type cards
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("6 ACTION TYPES")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(types, id: \.name) { t in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: t.icon)
+                                .font(.system(size: 14))
+                                .foregroundStyle(t.color)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(t.name)
+                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    Text("—")
+                                        .foregroundStyle(.tertiary)
+                                    Text(t.what)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(t.example)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(.vertical, 5)
+                        if t.name != types.last?.name { Divider().padding(.leading, 32) }
+                    }
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+
+                Button("Create my first adapter") { onAddAdapter() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - New Adapter Sheet
+
+private struct NewAdapterSheet: View {
+    let onCreate: (String, String, String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var appName = ""
+    @State private var bundleId = ""
+    @State private var icon = "app.fill"
+    @State private var iconPreviewOk = true
+    @State private var selectedRunningApp: NSRunningApplication? = nil
+
+    private var runningApps: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+    }
+
+    private var canCreate: Bool { !appName.isEmpty && !bundleId.isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("New App Adapter")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+
+                    // Pick from running apps
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("PICK A RUNNING APP")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(runningApps, id: \.processIdentifier) { app in
+                                    let isSelected = selectedRunningApp?.processIdentifier == app.processIdentifier
+                                    Button {
+                                        selectedRunningApp = app
+                                        appName = app.localizedName ?? ""
+                                        bundleId = app.bundleIdentifier ?? ""
+                                        // Try to map common apps to good SF Symbols
+                                        icon = sfSymbol(for: app.localizedName ?? "")
+                                        iconPreviewOk = true
+                                    } label: {
+                                        VStack(spacing: 4) {
+                                            if let nsImg = app.icon {
+                                                Image(nsImage: nsImg)
+                                                    .resizable().frame(width: 32, height: 32)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                                            }
+                                            Text(app.localizedName ?? "")
+                                                .font(.system(size: 10))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: 54)
+                                        }
+                                        .padding(6)
+                                        .background(isSelected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05),
+                                                    in: RoundedRectangle(cornerRadius: 8))
+                                        .overlay(isSelected ? RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 1.5) : nil)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .frame(height: 80)
+                    }
+
+                    Divider()
+
+                    // Manual fields
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("OR FILL MANUALLY")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        LabeledField("App Name") {
+                            TextField("e.g. Photos", text: $appName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        LabeledField("Bundle ID") {
+                            TextField("e.g. com.apple.Photos", text: $bundleId)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+                        LabeledField("Icon (SF Symbol)") {
+                            HStack(spacing: 8) {
+                                TextField("e.g. photo.fill", text: $icon)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onChange(of: icon) { v in
+                                        iconPreviewOk = NSImage(systemSymbolName: v, accessibilityDescription: nil) != nil
+                                    }
+                                if iconPreviewOk {
+                                    Image(systemName: icon).font(.system(size: 18)).foregroundStyle(Color.accentColor)
+                                        .frame(width: 28)
+                                } else {
+                                    Image(systemName: "questionmark.circle").font(.system(size: 18)).foregroundStyle(.secondary)
+                                        .frame(width: 28)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Create Adapter") {
+                    onCreate(appName.trimmingCharacters(in: .whitespacesAndNewlines),
+                             bundleId.trimmingCharacters(in: .whitespacesAndNewlines),
+                             iconPreviewOk ? icon : "app.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canCreate)
+            }
+            .padding(20)
+        }
+        .frame(width: 480, height: 520)
+    }
+
+    private func sfSymbol(for appName: String) -> String {
+        let n = appName.lowercased()
+        if n.contains("photos")   { return "photo.fill" }
+        if n.contains("safari")   { return "safari.fill" }
+        if n.contains("mail")     { return "envelope.fill" }
+        if n.contains("calendar") { return "calendar" }
+        if n.contains("music")    { return "music.note" }
+        if n.contains("xcode")    { return "hammer.fill" }
+        if n.contains("terminal") { return "terminal.fill" }
+        if n.contains("finder")   { return "folder.fill" }
+        if n.contains("notes")    { return "note.text" }
+        if n.contains("messages") { return "message.fill" }
+        if n.contains("slack")    { return "bubble.left.and.bubble.right.fill" }
+        if n.contains("figma")    { return "paintbrush.fill" }
+        if n.contains("code") || n.contains("vscode") { return "chevron.left.forwardslash.chevron.right" }
+        return "app.fill"
+    }
+}
+
+private struct LabeledField<Content: View>: View {
+    let label: String
+    let content: Content
+    init(_ label: String, @ViewBuilder content: () -> Content) {
+        self.label = label; self.content = content()
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            content
+        }
+    }
+}
+
+// MARK: Adapter row
+
+private struct AdapterRowView: View {
+    let adapter: AppAdapter
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+
+    var isEnabled: Bool {
+        adapterManager.adapters.first(where: { $0.id == adapter.id })?.isEnabled ?? adapter.isEnabled
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: adapter.icon)
+                .font(.system(size: 14))
+                .foregroundStyle(isEnabled ? .primary : .tertiary)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(adapter.appName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                Text("\(adapter.actions.count) action\(adapter.actions.count == 1 ? "" : "s")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            if adapter.isBuiltIn {
+                Text("Built-in")
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            Toggle("", isOn: Binding(
+                get: { isEnabled },
+                set: { adapterManager.setEnabled($0, for: adapter.bundleId) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+        }
+    }
+}
+
+// MARK: Adapter detail
+
+private struct AdapterDetailView: View {
+    let adapter: AppAdapter
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @State private var selectedActionId: String? = nil
+
+    var currentAdapter: AppAdapter {
+        adapterManager.adapters.first(where: { $0.id == adapter.id }) ?? adapter
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // App header
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: currentAdapter.icon)
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(currentAdapter.appName)
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(currentAdapter.bundleId)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    // "Edit JSON" for user (non-built-in) adapters
+                    if let fileURL = currentAdapter.sourceFileURL {
+                        Button {
+                            NSWorkspace.shared.open(fileURL)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "pencil").font(.system(size: 11))
+                                Text("Edit JSON").font(.system(size: 11))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Open \(fileURL.lastPathComponent) in your default editor")
+                    }
+                    Toggle("Enable Adapter", isOn: Binding(
+                        get: { currentAdapter.isEnabled },
+                        set: { adapterManager.setEnabled($0, for: currentAdapter.bundleId) }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+                .padding(16)
+
+                Divider()
+
+                // Actions list
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Actions")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
+
+                    ForEach(currentAdapter.actions) { action in
+                        AdapterActionRowView(action: action)
+                        if action.id != currentAdapter.actions.last?.id {
+                            Divider().padding(.leading, 44)
+                        }
+                    }
+                }
+
+                // User adapter instructions
+                if !currentAdapter.isBuiltIn {
+                    Divider().padding(.top, 12)
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text("This is a user adapter. Edit the JSON file in the Adapters folder to modify it.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(14)
+                }
+
+                Spacer(minLength: 20)
+            }
+        }
+    }
+}
+
+// MARK: Action row in detail view
+
+private struct AdapterActionRowView: View {
+    let action: AdapterAction
+
+    private var typeIcon: String {
+        switch action.type {
+        case .menubar:     return "menubar.rectangle"
+        case .applescript: return "applescript"
+        case .jxa:         return "chevron.left.forwardslash.chevron.right"
+        case .shell:       return "terminal"
+        case .urlScheme:   return "link"
+        case .shortcut:    return "scissors"
+        case .aiPrompt:    return "sparkles"
+        }
+    }
+
+    private var typeColor: Color {
+        switch action.type {
+        case .menubar:     return .blue
+        case .applescript: return .orange
+        case .jxa:         return .orange
+        case .shell:       return .green
+        case .urlScheme:   return .teal
+        case .shortcut:    return .purple
+        case .aiPrompt:    return .indigo
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(typeColor.opacity(0.12))
+                    .frame(width: 28, height: 28)
+                Image(systemName: action.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(typeColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(action.name)
+                        .font(.system(size: 12, weight: .medium))
+                    if action.requiresApproval {
+                        Image(systemName: "checkmark.shield")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.orange)
+                            .help("Requires approval before executing")
+                    }
+                    if action.isDestructive {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.red)
+                            .help("Destructive action")
+                    }
+                }
+                if !action.description.isEmpty {
+                    Text(action.description)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            // Type badge
+            Text(action.type.displayName)
+                .font(.system(size: 9, weight: .medium))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(typeColor.opacity(0.12), in: Capsule())
+                .foregroundStyle(typeColor)
+
+            // Detail: menu path or trigger keywords
+            if let path = action.menuPath {
+                Text(path.joined(separator: " › "))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 160, alignment: .trailing)
+            } else if !action.triggers.isEmpty {
+                Text(action.triggers.prefix(3).joined(separator: ", "))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 160, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Prompt Templates Section
+struct PromptTemplatesSection: View {
+    @State private var selectedTemplate = 0
+    @State private var copied = false
+
+    private struct Template: Identifiable {
+        let id: Int
+        let title: String
+        let icon: String
+        let description: String
+        let prompt: String
+    }
+
+    private let templates: [Template] = [
+        Template(
+            id: 0,
+            title: "Quick Action — Shell",
+            icon: "terminal",
+            description: "Ask AI to generate a shell command quick action.",
+            prompt: """
+Ask AI to generate an ILauncher Quick Action using a Shell script.
+
+Format required:
+- Name: short action label (e.g. "Open Downloads")
+- Script type: shell
+- Script: a bash/zsh one-liner or short script
+- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT
+
+Example prompt to give AI:
+"Create an ILauncher Quick Action (shell) that opens the Downloads folder in Finder."
+
+Expected output format:
+{
+  "name": "Open Downloads",
+  "script": "open ~/Downloads",
+  "type": "shell"
+}
+"""
+        ),
+        Template(
+            id: 1,
+            title: "Quick Action — AppleScript",
+            icon: "applescript",
+            description: "Ask AI to generate an AppleScript quick action.",
+            prompt: """
+Ask AI to generate an ILauncher Quick Action using AppleScript.
+
+Format required:
+- Name: short action label
+- Script type: applescript
+- Script: valid AppleScript
+- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT (injected before execution)
+
+Example prompt to give AI:
+"Create an ILauncher Quick Action (AppleScript) that shows a dialog with the name of the frontmost app."
+
+Expected output:
+{
+  "name": "Show Frontmost App",
+  "script": "display dialog \"$FRONTMOST_APP\"",
+  "type": "applescript"
+}
+"""
+        ),
+        Template(
+            id: 2,
+            title: "Quick Action — JXA",
+            icon: "curlybraces",
+            description: "Ask AI to generate a JavaScript for Automation (JXA) quick action.",
+            prompt: """
+Ask AI to generate an ILauncher Quick Action using JavaScript for Automation (JXA).
+
+Format required:
+- Name: short action label
+- Script type: jxa
+- Script: valid JXA (JavaScript for Automation)
+- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT (injected before execution)
+
+Example prompt to give AI:
+"Create an ILauncher Quick Action (JXA) that centers the frontmost app window on screen."
+
+Expected output:
+{
+  "name": "Center Window",
+  "script": "var app = Application('$FRONTMOST_APP'); app.windows[0].bounds = {x: 200, y: 100, width: 900, height: 600};",
+  "type": "jxa"
+}
+"""
+        ),
+        Template(
+            id: 3,
+            title: "Context Dock Extension",
+            icon: "rectangle.grid.1x2",
+            description: "Ask AI to generate an L2 Context Dock extension package.",
+            prompt: """
+Ask AI to generate an ILauncher Context Dock Extension (L2 Extension).
+
+A Context Dock Extension is a folder placed in:
+~/Library/Application Support/ILauncher/Extensions/
+
+Structure:
+  MyExtension/
+    extension.json   ← metadata
+    run.sh           ← the executable script
+
+extension.json format:
+{
+  "name": "Extension Name",
+  "description": "What it does",
+  "icon": "SF Symbol name (e.g. safari)",
+  "context_apps": ["Safari", "com.apple.Safari"],
+  "command": "run.sh",
+  "output": "text"   // or "none"
+}
+
+run.sh receives:
+- $FRONTMOST_APP    — frontmost app name
+- $FRONTMOST_BUNDLE — frontmost app bundle ID
+- $QUERY            — user's typed query (if any)
+
+Example prompt to give AI:
+"Create an ILauncher Context Dock Extension for Safari that shows the title and URL of the current tab."
+"""
+        ),
+        Template(
+            id: 4,
+            title: "Context Action (App Shortcut)",
+            icon: "apps.iphone.badge.plus",
+            description: "Ask AI to create an App Shortcut shown in the context dock.",
+            prompt: """
+Ask AI to generate an ILauncher App Shortcut for the Context Dock.
+
+App Shortcuts appear as quick-tap pills in the L2 Context Dock for a specific app.
+
+JSON fields:
+{
+  "name": "Action label",
+  "appKey": "com.app.bundle.id",   // bundle ID of the target app
+  "targetAppKeys": [],              // optional: also show for these additional bundle IDs
+  "placement": "contextDock",       // "quickActions", "contextDock", or "both"
+  "type": "shell",                  // "shell", "applescript", or "jxa"
+  "script": "...",
+  "icon": "SF Symbol name"
+}
+
+Variables injected: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT
+
+Example prompt to give AI:
+"Create an ILauncher App Shortcut for Xcode (com.apple.dt.Xcode) that builds the project using xcodebuild and shows the result."
+"""
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "text.bubble.fill")
+                    .foregroundStyle(.indigo)
+                Text("Prompt Templates")
+                    .font(.headline)
+                Text("Copy a template and paste it into your AI to generate ILauncher scripts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Tab row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(templates) { tpl in
+                        Button {
+                            selectedTemplate = tpl.id
+                            copied = false
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: tpl.icon).font(.caption)
+                                Text(tpl.title).font(.caption).fontWeight(.medium)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(selectedTemplate == tpl.id ? Color.accentColor : Color.secondary.opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(selectedTemplate == tpl.id ? .white : .primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if let tpl = templates.first(where: { $0.id == selectedTemplate }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(tpl.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ZStack(alignment: .topTrailing) {
+                        ScrollView {
+                            Text(tpl.prompt)
+                                .font(.system(.caption, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                        }
+                        .frame(height: 200)
+                        .background(Color(NSColor.textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
+
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(tpl.prompt, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .font(.caption)
+                                Text(copied ? "Copied" : "Copy")
+                                    .font(.caption)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(8)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - AI Provider Row
+struct AIProviderRow: View {
+    let provider: AIProvider
+    let isSelected: Bool
+    let isConfigured: Bool
+    let onSelect: () -> Void
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                // Selection indicator
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .font(.system(size: 20))
+                
+                // Icon
+                Image(systemName: provider.iconName)
+                    .font(.system(size: 24))
+                    .foregroundStyle(isSelected ? .blue : .primary)
+                    .frame(width: 32, height: 32)
+                
+                // Text
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(provider.displayName)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.primary)
+                        
+                        if isConfigured && provider.requiresAPIKey {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    
+                    Text(provider.description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                
+                Spacer()
+            }
+            .padding(12)
+            .background(isSelected ? Color.blue.opacity(0.1) : Color.gray.opacity(0.05))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Feature Row Helper
+struct FeatureRow: View {
+    let icon: String
+    let text: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 20)
+            
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
+// MARK: - Shortcuts Settings Tab
+// MARK: - Reusable hotkey recorder row
+private struct HotkeyRecorderRow: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let subtitle: String
+    let displayString: String
+    let onClear: (() -> Void)?
+    let apply: (UInt32, UInt32) -> Void
+
+    @State private var isRecording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 32, height: 32)
+                .background(iconColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if isRecording {
+                Text("Press keys…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.red.opacity(0.3), lineWidth: 1))
+                Button("Cancel") { stopRecording() }.buttonStyle(.plain).foregroundStyle(.secondary)
+            } else {
+                Button { startRecording() } label: {
+                    Text(displayString)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(displayString == "Not Set" ? .tertiary : .primary)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator, lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+
+                if let clear = onClear, displayString != "Not Set" {
+                    Button { clear() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary).font(.system(size: 14))
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func startRecording() {
+        isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            var carbon: UInt32 = 0
+            if event.modifierFlags.contains(.command) { carbon |= UInt32(cmdKey) }
+            if event.modifierFlags.contains(.option)  { carbon |= UInt32(optionKey) }
+            if event.modifierFlags.contains(.control) { carbon |= UInt32(controlKey) }
+            if event.modifierFlags.contains(.shift)   { carbon |= UInt32(shiftKey) }
+            if carbon != 0 {
+                self.apply(UInt32(event.keyCode), carbon)
+                self.stopRecording()
+                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+            }
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+
+// MARK: - Browser Settings Tab
+struct BrowserSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var isImporting = false
+    @State private var importMessage: String? = nil
+    @State private var showImportMessage = false
+    @State private var isImportingHistory = false
+    @State private var historyImportMessage: String = ""
+    @State private var showHistoryImportMessage = false
+    @State private var selectedTab: BrowserSettingsTab = .bookmarks
+    @State private var maxHistoryItems = 100
+    @State private var enableHistory = true
+    @State private var enableCookies = true
+    @State private var enableJavaScript = true
+    @State private var defaultSearchEngine = "Google"
+    @State private var bookmarkFolderPath = ""
+    @State private var autoSyncBookmarks = false
+
+    enum BrowserSettingsTab: String, CaseIterable {
+        case bookmarks = "Bookmarks"
+        case history = "History"
+        case advanced = "Advanced"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "globe")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.blue)
+
+                Text("Browser Settings")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Spacer()
+            }
+            .padding()
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Tab selector
+            Picker("", selection: $selectedTab) {
+                ForEach(BrowserSettingsTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding()
+
+            Divider()
+
+            // Content based on selected tab
+            ScrollView {
+                switch selectedTab {
+                case .bookmarks:
+                    bookmarksTabContent
+                case .history:
+                    historyTabContent
+                case .advanced:
+                    advancedTabContent
+                }
+            }
+        }
+    }
+
+    // MARK: - Bookmarks Tab
+    private var bookmarksTabContent: some View {
+        VStack(spacing: 20) {
+
+                // Import Bookmarks Card
+                CardSection(title: "Import Bookmarks", systemImage: "bookmark.fill") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Import bookmarks manually or from your browsers")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        // Manual Import
+                        HStack {
+                            Image(systemName: "doc.badge.plus")
+                                .font(.title2)
+                                .foregroundStyle(.green)
+                                .frame(width: 40)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Manual Import")
+                                    .font(.headline)
+                                Text("Choose a bookmarks HTML file")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Button("Import File...") {
+                                importBookmarksManually()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isImporting)
+                        }
+                        .padding(.vertical, 8)
+
+                        Divider()
+
+                        // Instructions
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("How to export bookmarks:")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("• Safari: File → Export → Bookmarks...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("• Chrome: ⋮ → Bookmarks → Bookmark Manager → ⋮ → Export bookmarks")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("• Firefox: ☰ → Bookmarks → Manage Bookmarks → Import and Backup → Export...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("• Edge: ⋯ → Favorites → ⋯ → Export favorites")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.top, 8)
+
+                        if showImportMessage, let message = importMessage {
+                            Divider()
+
+                            HStack {
+                                Image(systemName: message.contains("successfully") || message.contains("imported") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(message.contains("successfully") || message.contains("imported") ? .green : .orange)
+                                Text(message)
+                                    .font(.caption)
+                            }
+                            .padding(.vertical, 8)
+                        }
+                    }
+                }
+
+                // Imported Bookmarks Card
+                CardSection(title: "Imported Bookmarks", systemImage: "list.bullet") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("\(settings.importedBookmarks.count) bookmarks imported")
+                                .font(.headline)
+
+                            Spacer()
+
+                            if !settings.importedBookmarks.isEmpty {
+                                Button("Clear All") {
+                                    clearAllBookmarks()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if settings.importedBookmarks.isEmpty {
+                            Text("No bookmarks imported yet. Use the import buttons above to import from your browsers.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            Divider()
+
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(settings.importedBookmarks.prefix(10)) { bookmark in
+                                        HStack {
+                                            Image(systemName: "bookmark.fill")
+                                                .foregroundStyle(.blue)
+                                                .font(.caption)
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(bookmark.title)
+                                                    .font(.caption)
+                                                    .lineLimit(1)
+                                                Text(bookmark.url)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                            }
+
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+
+                                    if settings.importedBookmarks.count > 10 {
+                                        Text("... and \(settings.importedBookmarks.count - 10) more")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.vertical, 4)
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 200)
+                        }
+                    }
+                }
+
+                // Recent Searches Card
+                CardSection(title: "Recent Web Searches", systemImage: "clock.arrow.circlepath") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("\(settings.recentWebSearches.count) recent searches")
+                                .font(.headline)
+
+                            Spacer()
+
+                            if !settings.recentWebSearches.isEmpty {
+                                Button("Clear All") {
+                                    settings.clearRecentWebSearches()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+
+                        if settings.recentWebSearches.isEmpty {
+                            Text("No recent searches yet. Your web searches from Layer 3 will appear here.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            Divider()
+
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(settings.recentWebSearches.prefix(10), id: \.self) { search in
+                                        HStack {
+                                            Image(systemName: "magnifyingglass")
+                                                .foregroundStyle(.gray)
+                                                .font(.caption)
+
+                                            Text(search)
+                                                .font(.caption)
+                                                .lineLimit(1)
+
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 150)
+                        }
+                    }
+                }
+
+                // Bookmark Folders Card
+                CardSection(title: "Bookmark Organization", systemImage: "folder.fill") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Organize and manage your imported bookmarks")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Divider()
+
+                        Toggle(isOn: $autoSyncBookmarks) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Auto-sync Bookmarks")
+                                    .font(.headline)
+                                Text("Automatically sync bookmarks from browsers on launch")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Export Bookmarks Folder")
+                                .font(.headline)
+
+                            HStack {
+                                TextField("Export path...", text: $bookmarkFolderPath)
+                                    .textFieldStyle(.roundedBorder)
+                                    .disabled(true)
+
+                                Button("Choose...") {
+                                    selectBookmarkExportFolder()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("Export") {
+                                    exportBookmarks()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(settings.importedBookmarks.isEmpty || bookmarkFolderPath.isEmpty)
+                            }
+
+                            Text("Export bookmarks as HTML file for backup or sharing")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(20)
+        }
+
+    // MARK: - History Tab
+    private var historyTabContent: some View {
+        VStack(spacing: 20) {
+            // Import History Card
+            CardSection(title: "Import History", systemImage: "square.and.arrow.down") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Import browsing history from Safari or other browsers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Button(action: importHistoryManually) {
+                        HStack {
+                            Image(systemName: "doc.badge.plus")
+                            Text("Import File...")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isImportingHistory)
+
+                    if isImportingHistory {
+                        ProgressView("Importing history...")
+                            .font(.caption)
+                            .padding(.vertical, 4)
+                    }
+
+                    if showHistoryImportMessage {
+                        HStack {
+                            Image(systemName: historyImportMessage.contains("Success") ? "checkmark.circle.fill" : "info.circle.fill")
+                                .foregroundStyle(historyImportMessage.contains("Success") ? .green : .orange)
+                            Text(historyImportMessage)
+                                .font(.caption)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("How to export history:")
+                            .font(.caption.bold())
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("• Safari: File → Export → History... (saves as History.json)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("• Chrome: Not directly supported - use third-party extensions")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("• Firefox: Library → History → Show All History → Import and Backup → Export")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            CardSection(title: "Browser History", systemImage: "clock.arrow.circlepath") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Manage your L3 browser history and storage")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Toggle(isOn: $enableHistory) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enable History")
+                                .font(.headline)
+                            Text("Save browsing history from L3 inline browser")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Maximum History Items")
+                            .font(.headline)
+
+                        HStack {
+                            Slider(value: Binding(
+                                get: { Double(maxHistoryItems) },
+                                set: { maxHistoryItems = Int($0) }
+                            ), in: 50...500, step: 50)
+
+                            Text("\(maxHistoryItems)")
+                                .font(.body.monospacedDigit())
+                                .frame(width: 50)
+                        }
+
+                        Text("Older items will be automatically removed")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    HStack {
+                        Text("Storage Usage")
+                            .font(.headline)
+
+                        Spacer()
+
+                        Text("~2.3 MB")
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            CardSection(title: "Recent Web Searches", systemImage: "magnifyingglass.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("\(settings.recentWebSearches.count) recent searches")
+                            .font(.headline)
+
+                        Spacer()
+
+                        if !settings.recentWebSearches.isEmpty {
+                            Button("Clear All") {
+                                settings.clearRecentWebSearches()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    if settings.recentWebSearches.isEmpty {
+                        Text("No recent searches yet. Your web searches from Layer 3 will appear here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    } else {
+                        Divider()
+
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(settings.recentWebSearches.prefix(10), id: \.self) { search in
+                                    HStack {
+                                        Image(systemName: "magnifyingglass")
+                                            .foregroundStyle(.gray)
+                                            .font(.caption)
+
+                                        Text(search)
+                                            .font(.caption)
+                                            .lineLimit(1)
+
+                                        Spacer()
+
+                                        Button(action: {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(search, forType: .string)
+                                        }) {
+                                            Image(systemName: "doc.on.doc")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Copy to clipboard")
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 250)
+                    }
+                }
+            }
+
+            CardSection(title: "Clear Browsing Data", systemImage: "trash") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Remove stored browser data to free up space")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Button(action: clearBrowserCache) {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("Clear Cache & Cookies")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+
+                    Button(action: clearAllBrowserData) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                            Text("Clear All Browser Data")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    // MARK: - Advanced Tab
+    private var advancedTabContent: some View {
+        VStack(spacing: 20) {
+            CardSection(title: "Web Engine Settings", systemImage: "gearshape.2") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Configure how the L3 inline browser renders web pages")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Toggle(isOn: $enableJavaScript) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enable JavaScript")
+                                .font(.headline)
+                            Text("Required for most modern websites")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    Toggle(isOn: $enableCookies) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accept Cookies")
+                                .font(.headline)
+                            Text("Allow websites to store cookies")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("User Agent")
+                            .font(.headline)
+
+                        Picker("", selection: .constant("Safari")) {
+                            Text("Safari (macOS)").tag("Safari")
+                            Text("Chrome (macOS)").tag("Chrome")
+                            Text("Mobile Safari").tag("Mobile")
+                            Text("Custom").tag("Custom")
+                        }
+                        .pickerStyle(.menu)
+
+                        Text("Controls how websites see your browser")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            CardSection(title: "Search Engine", systemImage: "magnifyingglass") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Default search engine for L3 browser")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Picker("Search Engine", selection: $defaultSearchEngine) {
+                        HStack {
+                            Image(systemName: "globe")
+                            Text("Google")
+                        }.tag("Google")
+
+                        HStack {
+                            Image(systemName: "globe")
+                            Text("DuckDuckGo")
+                        }.tag("DuckDuckGo")
+
+                        HStack {
+                            Image(systemName: "globe")
+                            Text("Bing")
+                        }.tag("Bing")
+
+                        HStack {
+                            Image(systemName: "globe")
+                            Text("Brave Search")
+                        }.tag("Brave")
+                    }
+                    .pickerStyle(.radioGroup)
+                }
+            }
+
+            CardSection(title: "Web Extensions (L3)", systemImage: "puzzlepiece.extension") {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Browser Extensions")
+                                .font(.headline)
+                            Text("\(settings.webExtensions.filter { $0.enabled }.count) of \(settings.webExtensions.count) enabled")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button("Manage") {
+                            // Switch to Extensions tab
+                            NotificationCenter.default.post(
+                                name: Notification.Name("SwitchToExtensionsTab"),
+                                object: nil
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+
+                    Divider()
+
+                    Text("Manage JavaScript extensions that enhance web browsing in L3 layer")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            CardSection(title: "Privacy & Security", systemImage: "shield.checkered") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Toggle("Block Pop-ups", isOn: .constant(true))
+                    Divider()
+                    Toggle("Block Trackers", isOn: .constant(false))
+                    Divider()
+                    Toggle("HTTPS Only", isOn: .constant(false))
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Content Blocking")
+                            .font(.headline)
+
+                        Text("Use L3 extensions like 'Remove Ads' and 'Dark Mode' for content filtering")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            CardSection(title: "Developer Options", systemImage: "hammer") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Toggle(isOn: .constant(false)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enable Web Inspector")
+                                .font(.headline)
+                            Text("Right-click → Inspect Element in L3 browser")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    Toggle(isOn: .constant(false)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Show Console Logs")
+                                .font(.headline)
+                            Text("Display JavaScript console in browser panel")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    // MARK: - Helper Functions
+    enum BrowserType {
+        case safari, chrome, edge, firefox
+    }
+
+    private func selectBookmarkExportFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Select Export Folder"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            bookmarkFolderPath = url.path
+        }
+    }
+
+    private func exportBookmarks() {
+        guard !bookmarkFolderPath.isEmpty else { return }
+
+        let fileName = "ILauncher_Bookmarks_\(Date().formatted(date: .numeric, time: .omitted)).html"
+        let filePath = (bookmarkFolderPath as NSString).appendingPathComponent(fileName)
+
+        var html = """
+        <!DOCTYPE NETSCAPE-Bookmark-file-1>
+        <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+        <TITLE>ILauncher Bookmarks</TITLE>
+        <H1>ILauncher Bookmarks</H1>
+        <DL><p>
+        """
+
+        for bookmark in settings.importedBookmarks {
+            html += "    <DT><A HREF=\"\(bookmark.url)\">\(bookmark.title)</A>\n"
+        }
+
+        html += "</DL><p>"
+
+        do {
+            try html.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+            let alert = NSAlert()
+            alert.messageText = "Export Successful"
+            alert.informativeText = "Bookmarks exported to:\n\(fileName)"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Open Folder")
+
+            let response = alert.runModal()
+            if response == .alertSecondButtonReturn {
+                NSWorkspace.shared.open(URL(fileURLWithPath: bookmarkFolderPath))
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Export Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .critical
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    private func clearBrowserCache() {
+        let alert = NSAlert()
+        alert.messageText = "Clear Cache & Cookies?"
+        alert.informativeText = "This will remove all cached data and cookies from the L3 browser."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            // Clear WebKit cache
+            let dataStore = WKWebsiteDataStore.default()
+            let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+            let date = Date(timeIntervalSince1970: 0)
+
+            dataStore.removeData(ofTypes: dataTypes, modifiedSince: date) {
+                DispatchQueue.main.async {
+                    let confirmAlert = NSAlert()
+                    confirmAlert.messageText = "Cache Cleared"
+                    confirmAlert.informativeText = "Browser cache and cookies have been cleared."
+                    confirmAlert.alertStyle = .informational
+                    confirmAlert.addButton(withTitle: "OK")
+                    confirmAlert.runModal()
+                }
+            }
+        }
+    }
+
+    private func clearAllBrowserData() {
+        let alert = NSAlert()
+        alert.messageText = "Clear All Browser Data?"
+        alert.informativeText = "This will remove:\n• All browsing history\n• Cache and cookies\n• Recent searches\n• Form data\n\nThis action cannot be undone."
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Clear All")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            // Clear all data
+            settings.clearRecentWebSearches()
+
+            let dataStore = WKWebsiteDataStore.default()
+            let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+            let date = Date(timeIntervalSince1970: 0)
+
+            dataStore.removeData(ofTypes: dataTypes, modifiedSince: date) {
+                DispatchQueue.main.async {
+                    let confirmAlert = NSAlert()
+                    confirmAlert.messageText = "All Data Cleared"
+                    confirmAlert.informativeText = "All browser data has been permanently deleted."
+                    confirmAlert.alertStyle = .informational
+                    confirmAlert.addButton(withTitle: "OK")
+                    confirmAlert.runModal()
+                }
+            }
+        }
+    }
+
+    private func importFromBrowser(_ browser: BrowserType) {
+        isImporting = true
+        showImportMessage = false
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let count: Int
+
+            switch browser {
+            case .safari:
+                count = self.settings.importSafariBookmarks()
+            case .chrome:
+                count = self.settings.importChromeBookmarks()
+            case .edge:
+                count = self.settings.importEdgeBookmarks()
+            case .firefox:
+                count = self.settings.importFirefoxBookmarks()
+            }
+
+            DispatchQueue.main.async {
+                self.isImporting = false
+
+                if count > 0 {
+                    self.importMessage = "Successfully imported \(count) bookmarks!"
+                } else {
+                    self.importMessage = "No bookmarks found or browser not installed"
+                }
+
+                self.showImportMessage = true
+
+                // Hide message after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    self.showImportMessage = false
+                }
+            }
+        }
+    }
+
+    private func clearAllBookmarks() {
+        let alert = NSAlert()
+        alert.messageText = "Clear All Bookmarks?"
+        alert.informativeText = "This will remove all \(settings.importedBookmarks.count) imported bookmarks. This action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            settings.clearImportedBookmarks()
+        }
+    }
+
+    private func importBookmarksManually() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.html, .xml, .text]
+        panel.prompt = "Import Bookmarks"
+        panel.message = "Select a bookmarks HTML file from your browser"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            isImporting = true
+            showImportMessage = false
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let count = self.parseBookmarkHTMLFile(url)
+
+                DispatchQueue.main.async {
+                    self.isImporting = false
+
+                    if count > 0 {
+                        self.importMessage = "Successfully imported \(count) bookmarks from file!"
+                    } else {
+                        self.importMessage = "No bookmarks found in file. Make sure it's a valid bookmarks HTML file."
+                    }
+
+                    self.showImportMessage = true
+
+                    // Hide message after 5 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        self.showImportMessage = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func parseBookmarkHTMLFile(_ url: URL) -> Int {
+        // Read file content safely
+        guard let htmlContent = try? String(contentsOf: url, encoding: .utf8) else {
+            print("⚠️ Failed to read bookmarks file")
+            return 0
+        }
+
+        var newBookmarks: [BrowserItem] = []
+        var count = 0
+
+        // Parse HTML bookmarks file (Netscape format used by most browsers)
+        let lines = htmlContent.components(separatedBy: .newlines)
+
+        for line in lines {
+            // Skip empty lines and comments
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmedLine.isEmpty,
+                  !trimmedLine.hasPrefix("<!--"),
+                  !trimmedLine.hasPrefix("<!DOCTYPE"),
+                  !trimmedLine.hasPrefix("<META"),
+                  !trimmedLine.hasPrefix("<TITLE") else {
+                continue
+            }
+
+            // Look for bookmark entries: <DT><A HREF="url">title</A>
+            if trimmedLine.contains("<A HREF=") || trimmedLine.contains("<a href=") {
+                // Extract URL
+                guard let urlRange = trimmedLine.range(of: "HREF=\"", options: .caseInsensitive),
+                      let urlEnd = trimmedLine.range(of: "\"", range: urlRange.upperBound..<trimmedLine.endIndex) else {
+                    continue
+                }
+
+                var urlString = String(trimmedLine[urlRange.upperBound..<urlEnd.lowerBound])
+
+                // Validate URL
+                urlString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !urlString.isEmpty,
+                      urlString.hasPrefix("http://") || urlString.hasPrefix("https://") || urlString.hasPrefix("file://") else {
+                    continue
+                }
+
+                // Extract title between > and </A>
+                var title = urlString
+                if let titleStart = trimmedLine.range(of: ">", range: urlEnd.upperBound..<trimmedLine.endIndex),
+                   let titleEnd = trimmedLine.range(of: "</A>", options: .caseInsensitive, range: titleStart.upperBound..<trimmedLine.endIndex) {
+                    let extractedTitle = String(trimmedLine[titleStart.upperBound..<titleEnd.lowerBound])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !extractedTitle.isEmpty {
+                        title = extractedTitle
+                    }
+                }
+
+                // Create bookmark
+                let bookmark = BrowserItem(
+                    title: title,
+                    url: urlString,
+                    favicon: nil,
+                    type: .bookmark
+                )
+
+                // Check for duplicates in new bookmarks array
+                if !newBookmarks.contains(where: { $0.url == bookmark.url }) {
+                    newBookmarks.append(bookmark)
+                    count += 1
+                }
+            }
+        }
+
+        // Update settings on main thread
+        DispatchQueue.main.sync {
+            // Check against existing bookmarks and add only new ones
+            for bookmark in newBookmarks {
+                if !settings.importedBookmarks.contains(where: { $0.url == bookmark.url }) {
+                    settings.importedBookmarks.append(bookmark)
+                }
+            }
+        }
+
+        print("✅ Imported \(count) new bookmarks from HTML file")
+        return count
+    }
+
+    // MARK: - History Import
+    private func importHistoryManually() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json, .text]
+        panel.prompt = "Import History"
+        panel.message = "Select a history JSON file from Safari or your browser"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            isImportingHistory = true
+            showHistoryImportMessage = false
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let count = self.parseHistoryJSONFile(url)
+
+                DispatchQueue.main.async {
+                    self.isImportingHistory = false
+
+                    if count > 0 {
+                        self.historyImportMessage = "Successfully imported \(count) history items!"
+                    } else {
+                        self.historyImportMessage = "No history items found in file. Make sure it's a valid history JSON file."
+                    }
+
+                    self.showHistoryImportMessage = true
+
+                    // Hide message after 5 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        self.showHistoryImportMessage = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func parseHistoryJSONFile(_ url: URL) -> Int {
+        // Read JSON file
+        guard let jsonData = try? Data(contentsOf: url) else {
+            print("⚠️ Failed to read history file")
+            return 0
+        }
+
+        print("📖 Reading history file: \(url.lastPathComponent)")
+        print("📦 File size: \(jsonData.count) bytes")
+
+        var newHistoryItems: [BrowserItem] = []
+        var count = 0
+
+        do {
+            // Parse Safari history JSON format
+            if let jsonObject = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let historyItems = jsonObject["WebHistoryDates"] as? [[String: Any]] {
+
+                print("✅ Found Safari history format with \(historyItems.count) items")
+
+                // Safari history format
+                for item in historyItems {
+                    // Safari uses "" (empty string) as the URL key in History.json
+                    guard let urlString = item[""] as? String ?? item["url"] as? String ?? item["URL"] as? String,
+                          !urlString.isEmpty,
+                          (urlString.hasPrefix("http://") || urlString.hasPrefix("https://")) else {
+                        continue
+                    }
+
+                    // Safari uses "title" key or falls back to URL
+                    var title = item["title"] as? String ?? item["Title"] as? String ?? urlString
+                    if title.isEmpty {
+                        title = urlString
+                    }
+
+                    let historyItem = BrowserItem(
+                        title: title,
+                        url: urlString,
+                        favicon: nil,
+                        type: .history
+                    )
+
+                    if !newHistoryItems.contains(where: { $0.url == historyItem.url }) {
+                        newHistoryItems.append(historyItem)
+                        count += 1
+                    }
+                }
+            } else if let historyArray = try JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]] {
+                print("✅ Found generic history array format with \(historyArray.count) items")
+
+                // Generic history array format
+                for item in historyArray {
+                    guard let urlString = item["url"] as? String ?? item["URL"] as? String,
+                          !urlString.isEmpty,
+                          (urlString.hasPrefix("http://") || urlString.hasPrefix("https://")) else {
+                        continue
+                    }
+
+                    var title = item["title"] as? String ?? item["Title"] as? String ?? urlString
+                    if title.isEmpty {
+                        title = urlString
+                    }
+
+                    let historyItem = BrowserItem(
+                        title: title,
+                        url: urlString,
+                        favicon: nil,
+                        type: .history
+                    )
+
+                    if !newHistoryItems.contains(where: { $0.url == historyItem.url }) {
+                        newHistoryItems.append(historyItem)
+                        count += 1
+                    }
+                }
+            } else {
+                print("⚠️ Unrecognized JSON format. Expected Safari format with 'WebHistoryDates' key or array of history items")
+
+                // Try to print the top-level structure to help debug
+                if let jsonObject = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    print("📋 Top-level keys found: \(jsonObject.keys.joined(separator: ", "))")
+                } else {
+                    print("📋 JSON is not a dictionary format")
+                }
+            }
+        } catch {
+            print("⚠️ Failed to parse history JSON: \(error)")
+            return 0
+        }
+
+        // Update settings on main thread
+        DispatchQueue.main.sync {
+            // Add to browser history (you may need to add a browserHistory array to AppSettings)
+            for item in newHistoryItems {
+                if !settings.importedBookmarks.contains(where: { $0.url == item.url }) {
+                    // For now, add to bookmarks with history type
+                    settings.importedBookmarks.append(item)
+                }
+            }
+        }
+
+        print("✅ Imported \(count) history items from JSON file")
+        return count
+    }
+}
+
+// MARK: - Terminal Settings Tab
+struct TerminalSettingsView: View {
+    @StateObject private var packageManager = TerminalPackageManager.shared
+    @State private var isScanning = false
+    @State private var isDetecting = false
+    @State private var detectSummary: String? = nil
+    @State private var selectedPackage: TerminalPackage?
+    @State private var showAddPackageSheet = false
+    @State private var searchQuery = ""
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Terminal Packages (L2)")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("AI-powered terminal that auto-generates commands for your requests")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 8) {
+                    Button(action: scanForTools) {
+                        HStack(spacing: 4) {
+                            if isScanning { ProgressView().scaleEffect(0.7) }
+                            Image(systemName: "magnifyingglass")
+                            Text("Scan")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isScanning)
+                    .help("Scan for installed tools")
+
+                    Button(action: {
+                        Task { await detectAndAutoAddNewTools() }
+                    }) {
+                        HStack(spacing: 4) {
+                            if isDetecting { ProgressView().scaleEffect(0.7) }
+                            Image(systemName: "sparkle.magnifyingglass")
+                            Text("Detect")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isDetecting)
+                    .help("Auto-detect new tools and assign intents")
+
+                    Button(action: { showAddPackageSheet = true }) {
+                        Label("Add", systemImage: "plus.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
+
+            if let summary = detectSummary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(summary.hasPrefix("✅") ? Color.green : Color.secondary)
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Quick Info Card
+                    CardSection(title: "AI-Powered Terminal", systemImage: "sparkles") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Just ask L2 in natural language - it figures out the commands:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                FeatureRow(icon: "network", text: "\"show wifi details\" → auto-executes network commands", color: .blue)
+                                FeatureRow(icon: "cpu", text: "\"check disk space\" → df -h", color: .green)
+                                FeatureRow(icon: "arrow.down.circle", text: "\"download video\" → uses yt-dlp if configured", color: .orange)
+                                FeatureRow(icon: "checkmark.shield", text: "Asks before installing missing packages", color: .purple)
+                            }
+                        }
+                    }
+                    
+                    // Configured Packages
+                    CardSection(title: "Configured Packages", systemImage: "shippingbox") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if packageManager.packages.isEmpty {
+                                VStack(spacing: 16) {
+                                    Image(systemName: "terminal")
+                                        .font(.system(size: 48))
+                                        .foregroundStyle(.secondary)
+                                    
+                                    VStack(spacing: 8) {
+                                        Text("No Packages Configured")
+                                            .font(.headline)
+                                        
+                                        Text("Click 'Scan' to auto-detect, 'GitHub' to import, or 'Brew' to browse")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .multilineTextAlignment(.center)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 40)
+                            } else {
+                                // Search bar
+                                HStack {
+                                    Image(systemName: "magnifyingglass")
+                                        .foregroundStyle(.secondary)
+                                    TextField("Search packages...", text: $searchQuery)
+                                        .textFieldStyle(.plain)
+                                    
+                                    if !searchQuery.isEmpty {
+                                        Button(action: { searchQuery = "" }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(8)
+                                .background(Color.gray.opacity(0.1))
+                                .cornerRadius(8)
+                                
+                                Divider()
+                                
+                                // Package list
+                                ForEach(filteredPackages) { package in
+                                    TerminalPackageRow(
+                                        package: package,
+                                        onToggle: { togglePackage(package) },
+                                        onEdit: { selectedPackage = package },
+                                        onDelete: { packageManager.removePackage(package) }
+                                    )
+                                    
+                                    if package.id != filteredPackages.last?.id {
+                                        Divider()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Universal Intent Assignments
+                    CardSection(title: "Universal Intents (L2 Auto-Routing)", systemImage: "map") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("L2 automatically routes requests to the right tool based on intent. Set one tool per capability.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Divider()
+                            IntentAssignmentsView()
+                                .frame(minHeight: 200)
+                        }
+                    }
+
+                    // Example Commands
+                    CardSection(title: "Example Natural Language Commands", systemImage: "text.bubble") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Try these in L2 (Layer 2 chat):")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            
+                            Divider()
+                            
+                            VStack(alignment: .leading, spacing: 8) {
+                                ExampleCommandRow(
+                                    icon: "wifi",
+                                    example: "show wifi details",
+                                    result: "Auto-executes network commands"
+                                )
+                                
+                                ExampleCommandRow(
+                                    icon: "arrow.up.circle",
+                                    example: "update all packages",
+                                    result: "Runs: brew upgrade"
+                                )
+                                
+                                ExampleCommandRow(
+                                    icon: "cpu",
+                                    example: "check disk space",
+                                    result: "Shows disk usage"
+                                )
+                                
+                                ExampleCommandRow(
+                                    icon: "play.rectangle",
+                                    example: "download this video",
+                                    result: "Uses yt-dlp if configured"
+                                )
+                            }
+                            
+                            Divider()
+                            
+                            HStack {
+                                Image(systemName: "lightbulb")
+                                    .foregroundStyle(.yellow)
+                                Text("L2 auto-generates commands, asks before installing missing packages")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .sheet(isPresented: $showAddPackageSheet) {
+            AddPackageSheet(packageManager: packageManager)
+        }
+        .sheet(item: $selectedPackage) { package in
+            EditPackageSheet(package: package, packageManager: packageManager)
+        }
+    }
+    
+    private var filteredPackages: [TerminalPackage] {
+        if searchQuery.isEmpty {
+            return packageManager.packages
+        }
+        let query = searchQuery.lowercased()
+        return packageManager.packages.filter { package in
+            package.name.lowercased().contains(query) ||
+            package.command.lowercased().contains(query) ||
+            package.description.lowercased().contains(query) ||
+            package.keywords.contains(where: { $0.lowercased().contains(query) })
+        }
+    }
+    
+    private func scanForTools() {
+        isScanning = true
+        Task {
+            let discovered = await packageManager.scanForInstalledTools()
+
+            await MainActor.run {
+                // Add newly discovered packages
+                for package in discovered {
+                    if !packageManager.packages.contains(where: { $0.command == package.command }) {
+                        packageManager.addPackage(package)
+                    }
+                }
+                isScanning = false
+            }
+        }
+    }
+
+    /// Scan binary dirs and populate the BinaryDiscoveryBanner for user review.
+    /// Does NOT auto-add — user clicks "Add to L2" in the banner for each tool they want.
+    private func detectAndAutoAddNewTools() async {
+        isDetecting = true
+        detectSummary = nil
+
+        let watcher = BinaryWatcherService.shared
+        let beforeCount = watcher.newToolsFound.filter { !$0.isAdded }.count
+
+        // Use skipHelpScan=true so we don't hang spawning 100+ --help processes.
+        // Help text is fetched on demand when the user clicks "Add to L2" in the banner.
+        await watcher.scanNow(skipHelpScan: true)
+
+        let found = watcher.newToolsFound.filter { !$0.isAdded }.count - beforeCount
+        if found > 0 {
+            detectSummary = "🔍 Found \(found) new tool\(found > 1 ? "s" : "") — open the terminal panel to review and add them"
+        } else if watcher.newToolsFound.filter({ !$0.isAdded }).isEmpty {
+            detectSummary = "✅ No new tools found — everything is already configured"
+        } else {
+            detectSummary = "🔍 \(watcher.newToolsFound.filter { !$0.isAdded }.count) tool(s) pending review in the terminal panel"
+        }
+        isDetecting = false
+    }
+    
+    private func togglePackage(_ package: TerminalPackage) {
+        var updated = package
+        updated.isEnabled.toggle()
+        packageManager.updatePackage(updated)
+    }
+}
+
+// MARK: - Terminal Package Row
+struct TerminalPackageRow: View {
+    let package: TerminalPackage
+    let onToggle: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Status indicator
+            Toggle("", isOn: Binding(
+                get: { package.isEnabled },
+                set: { _ in onToggle() }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            
+            // Icon
+            Image(systemName: package.isInstalled ? "checkmark.circle.fill" : "questionmark.circle")
+                .foregroundStyle(package.isInstalled ? .green : .orange)
+                .font(.title3)
+            
+            // Info
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(package.name)
+                        .font(.headline)
+                    
+                    Text(package.command)
+                        .font(.caption)
+                        .fontDesign(.monospaced)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(4)
+                }
+                
+                Text(package.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                if !package.keywords.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(package.keywords.prefix(5), id: \.self) { keyword in
+                            Text(keyword)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundStyle(.blue)
+                                .cornerRadius(3)
+                        }
+                    }
+                }
+                
+                if let path = package.installedPath {
+                    Text(path)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            
+            Spacer()
+            
+            // Actions
+            HStack(spacing: 8) {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.borderless)
+                .help("Edit package")
+                
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove package")
+            }
+        }
+        .padding(.vertical, 8)
+        .opacity(package.isEnabled ? 1.0 : 0.6)
+    }
+}
+
+// MARK: - Example Command Row
+struct ExampleCommandRow: View {
+    let icon: String
+    let example: String
+    let result: String
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(.blue)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\"\(example)\"")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                Text("→ \(result)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - Add Package Sheet
+struct AddPackageSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var packageManager: TerminalPackageManager
+    
+    @State private var name = ""
+    @State private var command = ""
+    @State private var description = ""
+    @State private var keywords = ""
+    @State private var isVerifying = false
+    @State private var verificationResult: String? = nil
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Add Terminal Package")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+            }
+            .padding()
+            
+            Divider()
+            
+            // Form
+            Form {
+                Section {
+                    TextField("Name (e.g., YouTube Downloader)", text: $name)
+                    TextField("Command (e.g., yt-dlp)", text: $command)
+                        .fontDesign(.monospaced)
+                    TextField("Description", text: $description)
+                    TextField("Keywords (comma separated)", text: $keywords)
+                        .help("e.g., youtube, video, download")
+                }
+                
+                Section {
+                    HStack {
+                        Button(action: verifyCommand) {
+                            HStack {
+                                if isVerifying {
+                                    ProgressView().scaleEffect(0.7)
+                                }
+                                Text("Verify Installation")
+                            }
+                        }
+                        .disabled(command.isEmpty || isVerifying)
+                        
+                        if let result = verificationResult {
+                            Text(result)
+                                .font(.caption)
+                                .foregroundStyle(result.contains("✓") ? .green : .orange)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            
+            Divider()
+            
+            // Actions
+            HStack {
+                Spacer()
+                Button("Add Package") {
+                    addPackage()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.isEmpty || command.isEmpty)
+            }
+            .padding()
+        }
+        .frame(width: 500, height: 400)
+    }
+    
+    private func verifyCommand() {
+        isVerifying = true
+        verificationResult = nil
+        
+        Task {
+            if let path = await findCommandPath(command) {
+                await MainActor.run {
+                    verificationResult = "✓ Found at \(path)"
+                    isVerifying = false
+                }
+            } else {
+                await MainActor.run {
+                    verificationResult = "⚠ Command not found in PATH"
+                    isVerifying = false
+                }
+            }
+        }
+    }
+    
+    private func findCommandPath(_ cmd: String) async -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = [cmd]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            if process.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                    return path
+                }
+            }
+        } catch {
+            print("⚠️ Failed to verify command: \(error)")
+        }
+        
+        return nil
+    }
+    
+    private func addPackage() {
+        let keywordArray = keywords
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        
+        let package = TerminalPackage(
+            name: name,
+            command: command,
+            description: description,
+            installedPath: nil,
+            keywords: keywordArray
+        )
+        
+        packageManager.addPackage(package)
+        dismiss()
+    }
+}
+
+// MARK: - Edit Package Sheet
+struct EditPackageSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var packageManager: TerminalPackageManager
+    
+    @State private var package: TerminalPackage
+    @State private var name: String
+    @State private var command: String
+    @State private var description: String
+    @State private var keywords: String
+    @State private var customNotes: String
+    
+    init(package: TerminalPackage, packageManager: TerminalPackageManager) {
+        self.packageManager = packageManager
+        _package = State(initialValue: package)
+        _name = State(initialValue: package.name)
+        _command = State(initialValue: package.command)
+        _description = State(initialValue: package.description)
+        _keywords = State(initialValue: package.keywords.joined(separator: ", "))
+        _customNotes = State(initialValue: package.customNotes)
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Edit Package")
+                    .font(.headline)
+                Spacer()
+                Button("Done") {
+                    saveAndDismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            
+            Divider()
+            
+            // Form
+            Form {
+                Section("Basic Info") {
+                    TextField("Name", text: $name)
+                    TextField("Command", text: $command)
+                        .fontDesign(.monospaced)
+                    TextField("Description", text: $description)
+                }
+                
+                Section("Keywords") {
+                    TextField("Keywords (comma separated)", text: $keywords)
+                    Text("Used for matching natural language queries")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Section("Usage Examples") {
+                    if package.usageExamples.isEmpty {
+                        Text("No examples available")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(package.usageExamples.prefix(5), id: \.self) { example in
+                            Text(example)
+                                .font(.system(size: 11, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                
+                Section("Notes") {
+                    TextEditor(text: $customNotes)
+                        .frame(height: 80)
+                        .font(.caption)
+                }
+                
+                if let path = package.installedPath {
+                    Section("Installation") {
+                        LabeledContent("Path") {
+                            Text(path)
+                                .font(.system(size: 10, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .frame(width: 600, height: 500)
+    }
+    
+    private func saveAndDismiss() {
+        var updated = package
+        updated.name = name
+        updated.command = command
+        updated.description = description
+        updated.keywords = keywords
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        updated.customNotes = customNotes
+        
+        packageManager.updatePackage(updated)
+        dismiss()
+    }
+}
+
+// MARK: - App Shortcuts Settings Tab
+struct AppShortcutsSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    @ObservedObject private var l2Manager = L2ExtensionManager.shared
+    @State private var selectedAppKey: String = "calendar"
+    @State private var showAddShortcut = false
+    @State private var editingShortcut: AppShortcut? = nil
+    @State private var showAddApp = false
+    @State private var showAddExtension = false
+    @State private var editingExtension: AppToolExtension? = nil
+    @State private var showAddCLITool = false
+    @State private var showExportPanel = false
+    @State private var showImportPanel = false
+    @State private var showAddL2Tool = false        // Create new context dock tool
+    @State private var editingL2Tool: L2Extension? = nil  // Edit existing context dock tool
+
+    private let builtInApps: [(key: String, label: String, icon: String, appPath: String)] = [
+        ("finder",          "Files & Folders",   "folder",           "/System/Library/CoreServices/Finder.app"),
+        ("safari",          "Safari",            "safari",           "/Applications/Safari.app"),
+        ("systemsettings",  "System Settings",   "gear.badge",       "/System/Applications/System Settings.app"),
+        ("calendar",        "Calendar",          "calendar",         "/System/Applications/Calendar.app"),
+        ("reminders",       "Reminders",         "checkmark.circle", "/System/Applications/Reminders.app"),
+        ("notes",           "Notes",             "note.text",        "/System/Applications/Notes.app"),
+        ("mail",            "Mail",              "envelope",         "/System/Applications/Mail.app"),
+        ("photos",          "Photos",            "photo",            "/System/Applications/Photos.app"),
+        ("messages",        "Messages",          "message",          "/System/Applications/Messages.app"),
+        ("contacts",        "Contacts",          "person.2",         "/System/Applications/Contacts.app"),
+    ]
+
+    private var selectedLabel: String {
+        if selectedAppKey == "homebrew" { return "Homebrew" }
+        if selectedAppKey.hasPrefix("cli_") {
+            let cmd = String(selectedAppKey.dropFirst(4))
+            return pkgMgr.packages.first(where: { $0.command == cmd })?.name ?? cmd
+        }
+        return builtInApps.first(where: { $0.key == selectedAppKey })?.label
+            ?? settings.customAppEntries.first(where: { $0.key == selectedAppKey })?.label
+            ?? selectedAppKey.capitalized
+    }
+
+    // All tool names already known to TerminalPackageManager
+    private var installedToolNames: Set<String> {
+        Set(pkgMgr.packages.map { $0.command })
+    }
+
+    // MARK: - Left sidebar
+    @ViewBuilder
+    private var appSidebarView: some View {
+        VStack(spacing: 0) {
+            List(selection: $selectedAppKey) {
+                Section("Built-in Apps") {
+                    ForEach(builtInApps, id: \.key) { item in
+                        AppSidebarRow(label: item.label, appPath: item.appPath, fallbackIcon: item.icon)
+                            .tag(item.key)
+                    }
+                }
+                if !settings.customAppEntries.isEmpty {
+                    Section("My Apps") {
+                        ForEach(settings.customAppEntries) { entry in
+                            AppSidebarRow(label: entry.label, appPath: entry.appPath, fallbackIcon: entry.iconName)
+                                .tag(entry.key)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        settings.removeCustomApp(entry)
+                                        if selectedAppKey == entry.key { selectedAppKey = "calendar" }
+                                    } label: { Label("Remove App", systemImage: "trash") }
+                                }
+                        }
+                    }
+                }
+                let brewInstalled = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew")
+                    || FileManager.default.fileExists(atPath: "/usr/local/bin/brew")
+                if brewInstalled {
+                    Section("Package Manager") {
+                        HStack(spacing: 8) {
+                            Image(systemName: "shippingbox.fill").font(.system(size: 14))
+                                .foregroundStyle(Color.orange).frame(width: 20)
+                            Text("Homebrew").font(.system(size: 13, weight: .medium))
+                        }
+                        .tag("homebrew")
+                    }
+                }
+                let pinnedCmds = settings.pinnedCLITools
+                let pinnedPkgs = pkgMgr.packages.filter { pinnedCmds.contains($0.command) }
+                if !pinnedPkgs.isEmpty {
+                    Section("My CLI Tools") {
+                        ForEach(pinnedPkgs, id: \.command) { pkg in
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.right.square.fill").font(.system(size: 14))
+                                    .foregroundStyle(Color.accentColor).frame(width: 20)
+                                Text(pkg.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            }
+                            .tag("cli_\(pkg.command)")
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    settings.unpinCLITool(pkg.command)
+                                    if selectedAppKey == "cli_\(pkg.command)" { selectedAppKey = "calendar" }
+                                } label: { Label("Remove from My CLI Tools", systemImage: "minus.circle") }
+                            }
+                        }
+                    }
+                }
+                let cliPkgs = pkgMgr.packages.filter { TerminalAIBridge.shared.isTUICommand($0.command) }.prefix(30)
+                if !cliPkgs.isEmpty {
+                    Section("TUI Apps") {
+                        ForEach(cliPkgs, id: \.command) { pkg in
+                            HStack(spacing: 8) {
+                                Image(systemName: "terminal.fill").font(.system(size: 14))
+                                    .foregroundStyle(Color.green).frame(width: 20)
+                                Text(pkg.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            }
+                            .tag("cli_\(pkg.command)")
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            Divider()
+            Button { showAddApp = true } label: {
+                Label("Add App", systemImage: "plus.app")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 4)
+            }
+            .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+            Button { showAddCLITool = true } label: {
+                Label("Add CLI Tool", systemImage: "plus.square.on.square")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 4)
+            }
+            .buttonStyle(.plain).foregroundStyle(Color.accentColor).padding(.bottom, 4)
+        }
+        .frame(minWidth: 160, maxWidth: 200)
+    }
+
+    // MARK: - Right panel
+    @ViewBuilder
+    private var appRightPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(selectedLabel).font(.title2).bold()
+                Spacer()
+                Button { showImportPanel = true } label: {
+                    Label("Import", systemImage: "square.and.arrow.down").font(.caption)
+                }
+                .buttonStyle(.bordered).help("Import an app profile template (JSON)")
+                Button { showExportPanel = true } label: {
+                    Label("Export", systemImage: "square.and.arrow.up").font(.caption)
+                }
+                .buttonStyle(.bordered).help("Export this app's shortcuts and tools as a JSON template")
+            }
+            .padding()
+            Divider()
+            ScrollView { appDetailScrollContent }
+        }
+    }
+
+    // MARK: - App detail scroll content (extracted to reduce body complexity)
+    @ViewBuilder
+    private var appDetailScrollContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let selectedCustomLabel = settings.customAppEntries.first(where: { $0.key == selectedAppKey })?.label ?? ""
+            let toolPathsDict = Dictionary(
+                pkgMgr.packages.compactMap { pkg -> (String, String)? in
+                    guard let path = pkg.installedPath else { return nil }
+                    return (pkg.command, path)
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+
+            // Hardcoded suggestions card
+            if let suggestion = AppSuggestionsDB.suggestions(for: selectedAppKey, label: selectedCustomLabel) {
+                AppSuggestionsCard(entry: suggestion, appKey: selectedAppKey,
+                                  installedToolNames: installedToolNames,
+                                  installedToolPaths: toolPathsDict) { sc in
+                    settings.addShortcut(sc)
+                } onAddExtension: { ext in
+                    settings.addToolExtension(ext)
+                }
+                .padding(.bottom, 4)
+            }
+
+            // Auto-detected CLIs
+            let autoDetected = AppSuggestionsDB.autoDetectedCLIs(
+                for: selectedAppKey, label: selectedCustomLabel,
+                installedPackages: pkgMgr.packages)
+            if !autoDetected.isEmpty {
+                AutoDetectedCLICard(appKey: selectedAppKey, packages: autoDetected) { ext in
+                    settings.addToolExtension(ext)
+                }
+                .padding(.bottom, 4)
+            }
+
+            // TUI Permissions (only for TUI apps)
+            if selectedAppKey.hasPrefix("cli_") {
+                TUIPermissionsSection(command: String(selectedAppKey.dropFirst(4)))
+                    .padding(.bottom, 4)
+            }
+
+            // Quick Actions
+            appSectionHeader("Quick Actions", subtitle: "Appear at the top when you type \"\(selectedAppKey)\" in the launcher") {
+                showAddShortcut = true
+            }
+            let shortcuts = settings.shortcuts(for: selectedAppKey)
+            if shortcuts.isEmpty {
+                Text("No actions yet. Tap + to add one.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal).padding(.bottom, 8)
+            } else {
+                ForEach(shortcuts) { sc in
+                    shortcutRow(sc)
+                    Divider().padding(.leading, 52)
+                }
+            }
+
+            // AI Extensions
+            Divider().padding(.top, 12)
+            appSectionHeader("AI Extensions", subtitle: "CLI tools the AI uses when this app is active") {
+                showAddExtension = true
+            }
+            let exts = settings.toolExtensions(for: selectedAppKey)
+            if exts.isEmpty {
+                Text("No extensions. Tap + to assign a CLI tool.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal).padding(.bottom, 8)
+            } else {
+                ForEach(exts) { ext in
+                    extensionRow(ext)
+                    Divider().padding(.leading, 52)
+                }
+            }
+
+            // Context Dock Actions
+            contextDockActionsSection
+
+            // File Actions
+            fileActionsSection
+        }
+    }
+
+    // MARK: - Context Dock Actions section (extracted to reduce body complexity)
+    @ViewBuilder
+    private var contextDockActionsSection: some View {
+        let appL2Tools = l2Manager.extensions.filter { tool in
+            guard !tool.contextApps.isEmpty else { return false }
+            return tool.contextApps.contains { ctx in
+                ctx.lowercased().contains(selectedAppKey.lowercased())
+                    || selectedAppKey.lowercased().contains(ctx.lowercased())
+            }
+        }
+        Divider().padding(.top, 12)
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Context Dock Actions").font(.headline)
+                Text("One-tap pills in the L2 dock when this app is frontmost")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { L2ExtensionManager.shared.openExtensionsFolder() } label: {
+                Image(systemName: "folder")
+                    .frame(width: 28, height: 28)
+                    .background(Color.purple.opacity(0.12), in: Circle())
+                    .foregroundStyle(.purple)
+            }
+            .buttonStyle(.plain).help("Open extensions folder")
+            Button { showAddL2Tool = true } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.purple)
+            }
+            .buttonStyle(.plain).help("New context dock action")
+        }
+        .padding()
+
+        // User shortcuts placed in contextDock or both
+        let dockShortcuts = settings.contextDockShortcuts(for: selectedAppKey)
+
+        if appL2Tools.isEmpty && dockShortcuts.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.dashed").foregroundStyle(.tertiary)
+                Text("No dock actions yet — tap + to create one, or add a script via Quick Actions with placement set to \"Context Dock\".")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 12)
+        } else {
+            // AppShortcuts placed in contextDock / both
+            ForEach(dockShortcuts) { sc in
+                HStack(spacing: 12) {
+                    Image(systemName: sc.iconName)
+                        .frame(width: 28, height: 28)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sc.name).fontWeight(.medium)
+                        Text(sc.actionType.rawValue)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(sc.placement == .both ? "quick + dock" : "dock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.secondary.opacity(0.1), in: Capsule())
+                    Button { editingShortcut = sc } label: {
+                        Image(systemName: "pencil")
+                    }.buttonStyle(.plain)
+                    Button { settings.removeShortcut(sc) } label: {
+                        Image(systemName: "trash").foregroundStyle(.red)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal).padding(.vertical, 8)
+                Divider().padding(.leading, 52)
+            }
+
+            ForEach(appL2Tools) { tool in
+                HStack(spacing: 12) {
+                    Image(systemName: tool.icon)
+                        .frame(width: 28, height: 28)
+                        .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.purple)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(tool.displayName).fontWeight(.medium)
+                            Text(tool.toolName)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(.secondary.opacity(0.1), in: Capsule())
+                        }
+                        if tool.contextApps.count > 1 {
+                            Text("Apps: \(tool.contextApps.joined(separator: ", "))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            Text(tool.description)
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                    Spacer()
+                    Text(tool.scriptType.rawValue)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.secondary.opacity(0.08), in: Capsule())
+                    Button { editingL2Tool = tool } label: {
+                        Image(systemName: "pencil")
+                    }.buttonStyle(.plain)
+                    Button {
+                        if let folder = tool.folderPath {
+                            try? FileManager.default.removeItem(at: folder)
+                            Task { await L2ExtensionManager.shared.loadExtensions() }
+                        }
+                    } label: {
+                        Image(systemName: "trash").foregroundStyle(.red)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal).padding(.vertical, 8)
+                Divider().padding(.leading, 52)
+            }
+        }
+    }
+
+    // MARK: - File Actions section
+    @ViewBuilder
+    private var fileActionsSection: some View {
+        let fileShortcuts = settings.appShortcuts.filter { $0.placement == .fileActions }
+        Divider().padding(.top, 12)
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("File Actions").font(.headline)
+                Text("Action buttons that appear when a file is selected in search results")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { showAddShortcut = true } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.orange)
+            }
+            .buttonStyle(.plain).help("New file action")
+        }
+        .padding()
+
+        if fileShortcuts.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.badge.gearshape").foregroundStyle(.tertiary)
+                Text("No file actions yet — tap + and choose \"File Actions\" as the placement.")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 12)
+        } else {
+            ForEach(fileShortcuts) { sc in
+                HStack(spacing: 12) {
+                    Image(systemName: sc.iconName)
+                        .frame(width: 28, height: 28)
+                        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sc.name).fontWeight(.medium)
+                        if sc.fileTypes.isEmpty {
+                            Text("All files · \(sc.actionType.rawValue)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text(sc.fileTypes.joined(separator: ", ") + " · \(sc.actionType.rawValue)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if !sc.triggerKeywords.isEmpty {
+                        Text(sc.triggerKeywords.prefix(2).joined(separator: ", "))
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.secondary.opacity(0.1), in: Capsule())
+                    }
+                    Button { editingShortcut = sc } label: {
+                        Image(systemName: "pencil")
+                    }.buttonStyle(.plain)
+                    Button { settings.removeShortcut(sc) } label: {
+                        Image(systemName: "trash").foregroundStyle(.red)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal).padding(.vertical, 8)
+                Divider().padding(.leading, 52)
+            }
+        }
+    }
+
+    var body: some View {
+        HSplitView {
+            appSidebarView
+            appRightPanel
+        }
+        .task { await L2ExtensionManager.shared.loadExtensions() }
+        .modifier(AppShortcutsSheets(
+            selectedAppKey: selectedAppKey,
+            builtInApps: builtInApps,
+            showAddShortcut: $showAddShortcut,
+            editingShortcut: $editingShortcut,
+            showAddApp: $showAddApp,
+            showAddCLITool: $showAddCLITool,
+            showAddExtension: $showAddExtension,
+            editingExtension: $editingExtension,
+            showAddL2Tool: $showAddL2Tool,
+            editingL2Tool: $editingL2Tool,
+            showImportPanel: $showImportPanel,
+            showExportPanel: $showExportPanel
+        ))
+    }
+
+    @ViewBuilder
+    private func appSectionHeader(_ title: String, subtitle: String, onAdd: @escaping () -> Void) -> some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(action: onAdd) {
+                Image(systemName: "plus").fontWeight(.semibold)
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentColor.opacity(0.15), in: Circle())
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+    }
+
+    @ViewBuilder
+    private func shortcutRow(_ sc: AppShortcut) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: sc.iconName)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(sc.name).fontWeight(.medium)
+                Text(sc.actionValue).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Text(sc.actionType.rawValue)
+                .font(.caption2)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(.secondary.opacity(0.15), in: Capsule())
+            Button { editingShortcut = sc } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
+            Button { settings.removeShortcut(sc) } label: { Image(systemName: "trash").foregroundStyle(.red) }.buttonStyle(.plain)
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func extensionRow(_ ext: AppToolExtension) -> some View {
+        let isScript    = ext.kind == .script
+        let isInstalled = isScript || AppSettings.isToolInstalled(ext)
+        let iconName    = isScript ? (ext.scriptLanguage?.systemImage ?? "doc.text") : "terminal.fill"
+        let iconColor: Color = isScript ? .purple : (isInstalled ? .green : .orange)
+
+        return HStack(spacing: 12) {
+            Image(systemName: iconName)
+                .frame(width: 28, height: 28)
+                .background(iconColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                .foregroundStyle(iconColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(ext.toolName).fontWeight(.medium).font(.system(.body, design: .monospaced))
+
+                    if isScript {
+                        Text(ext.scriptLanguage?.rawValue ?? "script")
+                            .font(.caption2).foregroundStyle(.purple)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.purple.opacity(0.12), in: Capsule())
+                    }
+                    if ext.profile.isDestructive {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2).foregroundStyle(.orange)
+                            .help("Destructive — AI will confirm before running delete/overwrite operations")
+                    }
+                    if !isInstalled {
+                        Text("not found")
+                            .font(.caption2).foregroundStyle(.orange)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12), in: Capsule())
+                            .help("Binary not found on disk — will not be injected into AI prompts until installed")
+                    }
+                }
+                if !ext.profile.capabilities.isEmpty {
+                    Text(ext.profile.capabilities.prefix(2).joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if !ext.aiHint.isEmpty {
+                    // Show first meaningful line of hint
+                    let firstLine = ext.aiHint.components(separatedBy: .newlines).first(where: { !$0.isEmpty }) ?? ""
+                    Text(firstLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else if !ext.toolPath.isEmpty {
+                    Text(ext.toolPath).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            // Re-scan help for CLI tools — refreshes the full recursive help tree
+            if ext.kind == .cli {
+                Button {
+                    Task {
+                        await TerminalPackageManager.shared.refreshHelpTextByCommand(ext.toolName)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise").foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .help("Re-scan --help (refreshes full command tree for AI)")
+            }
+            Button { editingExtension = ext } label: {
+                Image(systemName: "pencil").foregroundStyle(.secondary)
+            }.buttonStyle(.plain)
+            Button {
+                // Delete script file from disk when removing a script extension
+                if ext.kind == .script && !ext.toolPath.isEmpty {
+                    settings.deleteScript(at: ext.toolPath)
+                }
+                settings.removeToolExtension(ext)
+            } label: {
+                Image(systemName: "trash").foregroundStyle(.red)
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+    }
+}
+
+// MARK: - AppShortcutsSheets ViewModifier (keeps body lean)
+private struct AppShortcutsSheets: ViewModifier {
+    let selectedAppKey: String
+    let builtInApps: [(key: String, label: String, icon: String, appPath: String)]
+    @Binding var showAddShortcut: Bool
+    @Binding var editingShortcut: AppShortcut?
+    @Binding var showAddApp: Bool
+    @Binding var showAddCLITool: Bool
+    @Binding var showAddExtension: Bool
+    @Binding var editingExtension: AppToolExtension?
+    @Binding var showAddL2Tool: Bool
+    @Binding var editingL2Tool: L2Extension?
+    @Binding var showImportPanel: Bool
+    @Binding var showExportPanel: Bool
+    @ObservedObject private var settings = AppSettings.shared
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $showAddShortcut) {
+                AppShortcutEditSheet(appKey: selectedAppKey, shortcut: nil) { settings.addShortcut($0) }
+            }
+            .sheet(item: $editingShortcut) { sc in
+                AppShortcutEditSheet(appKey: selectedAppKey, shortcut: sc) { settings.updateShortcut($0) }
+            }
+            .sheet(isPresented: $showAddApp) {
+                AddCustomAppSheet { settings.addCustomApp($0) }
+            }
+            .sheet(isPresented: $showAddCLITool) {
+                AddCLIToolSheet { command in settings.pinCLITool(command) }
+            }
+            .sheet(isPresented: $showAddExtension) {
+                AddAppExtensionSheet(appKey: selectedAppKey) { settings.addToolExtension($0) }
+            }
+            .sheet(item: $editingExtension) { ext in
+                AddAppExtensionSheet(appKey: selectedAppKey, existing: ext) { settings.updateToolExtension($0) }
+            }
+            .sheet(isPresented: $showAddL2Tool) { addL2ToolSheet }
+            .sheet(item: $editingL2Tool) { tool in editL2ToolSheet(tool) }
+            .fileImporter(isPresented: $showImportPanel, allowedContentTypes: [.json]) { result in
+                if case .success(let url) = result, let data = try? Data(contentsOf: url) {
+                    try? settings.importTemplate(data)
+                }
+            }
+            .fileExporter(
+                isPresented: $showExportPanel,
+                document: AppProfileJSONDocument(data: (try? settings.exportTemplate(for: selectedAppKey)) ?? Data()),
+                contentType: .json,
+                defaultFilename: "\(selectedAppKey)-profile.json"
+            ) { _ in }
+    }
+
+    @ViewBuilder
+    private var addL2ToolSheet: some View {
+        let appDisplayName = builtInApps.first(where: { $0.key == selectedAppKey })?.label
+            ?? settings.customAppEntries.first(where: { $0.key == selectedAppKey })?.label
+            ?? selectedAppKey.capitalized
+        L2ExtensionEditorSheet(
+            initialJSON: "{\n  \"tool_name\": \"\(selectedAppKey)_action\",\n  \"display_name\": \"My Action\",\n  \"description\": \"Describe what this does\",\n  \"version\": \"1.0\",\n  \"author\": \"me\",\n  \"icon\": \"star.fill\",\n  \"parameters\": {},\n  \"script\": \"script.js\",\n  \"script_type\": \"jxa\",\n  \"task_category\": \"\(selectedAppKey)\",\n  \"context_app\": \"\(appDisplayName)\",\n  \"triggers\": [\"keyword1\", \"keyword2\"]\n}",
+            initialScript: "// JXA — runs when user taps the pill\nvar app = Application(\"\(appDisplayName)\");\napp.includeStandardAdditions = true;\napp.displayNotification(\"Done!\", { withTitle: \"My Action\" });",
+            onSave: { Task { await L2ExtensionManager.shared.loadExtensions() } }
+        )
+    }
+
+    @ViewBuilder
+    private func editL2ToolSheet(_ tool: L2Extension) -> some View {
+        let jsonText: String = {
+            guard let folder = tool.folderPath else { return "" }
+            return (try? String(contentsOf: folder.appendingPathComponent("extension.json"), encoding: .utf8)) ?? ""
+        }()
+        let scriptText: String = {
+            guard let scriptURL = tool.scriptURL else { return "" }
+            return (try? String(contentsOf: scriptURL, encoding: .utf8)) ?? ""
+        }()
+        L2ExtensionEditorSheet(
+            initialJSON: jsonText.isEmpty ? nil : jsonText,
+            initialScript: scriptText.isEmpty ? nil : scriptText,
+            onSave: { Task { await L2ExtensionManager.shared.loadExtensions() } }
+        )
+    }
+}
+
+// MARK: - TUI Permissions Section
+struct TUIPermissionsSection: View {
+    let command: String
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var folderAccessEnabled: Bool {
+        settings.isFolderAccessEnabled(for: command)
+    }
+
+    private let userFolders: [(name: String, path: String)] = {
+        let home = NSHomeDirectory()
+        return [
+            ("Downloads",  "\(home)/Downloads"),
+            ("Documents",  "\(home)/Documents"),
+            ("Desktop",    "\(home)/Desktop"),
+            ("Pictures",   "\(home)/Pictures"),
+            ("Movies",     "\(home)/Movies"),
+            ("Music",      "\(home)/Music"),
+        ]
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().padding(.top, 12)
+
+            HStack(spacing: 6) {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("Permissions")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+
+            Text("Allow the AI to access your home folders when controlling \(command). The AI will use real paths instead of placeholders like /Users/username.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+
+            // Main toggle
+            HStack(spacing: 12) {
+                Image(systemName: folderAccessEnabled ? "folder.fill.badge.checkmark" : "folder.fill.badge.questionmark")
+                    .font(.system(size: 20))
+                    .foregroundStyle(folderAccessEnabled ? .orange : .secondary)
+                    .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Allow User Folder Access")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(folderAccessEnabled
+                         ? "AI can read/write ~/Downloads, ~/Documents, ~/Desktop and more"
+                         : "AI will not access your personal folders")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { folderAccessEnabled },
+                    set: { settings.setFolderAccess(for: command, enabled: $0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(.orange)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal)
+
+            // Expanded folder list when enabled
+            if folderAccessEnabled {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(userFolders, id: \.path) { folder in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.orange.opacity(0.7))
+                            Text(folder.name)
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            Text(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 5)
+                        if folder.path != userFolders.last?.path {
+                            Divider().padding(.leading, 42)
+                        }
+                    }
+                }
+                .background(Color.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.2), lineWidth: 0.5))
+                .padding(.horizontal)
+                .padding(.top, 6)
+
+                Text("These folders are shared with the AI only when you interact with \(command) in ILauncher. No data leaves your device.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+            }
+        }
+    }
+}
+
+// MARK: - Add CLI Tool Sheet
+struct AddCLIToolSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var search = ""
+    var onAdd: (String) -> Void
+
+    /// All non-TUI installed packages, filtered by search
+    private var filteredPackages: [TerminalPackage] {
+        let all = pkgMgr.packages.filter { pkg in
+            !TerminalAIBridge.shared.isTUICommand(pkg.command)
+        }
+        guard !search.isEmpty else { return all }
+        let q = search.lowercased()
+        return all.filter {
+            $0.name.lowercased().contains(q) ||
+            $0.command.lowercased().contains(q) ||
+            $0.description.lowercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add CLI Tool")
+                        .font(.headline)
+                    Text("Pick any installed CLI tool to add it as an AI panel")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.escape)
+            }
+            .padding()
+
+            Divider()
+
+            // Search bar
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search tools…", text: $search)
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button { search = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            if filteredPackages.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.tertiary)
+                    Text(pkgMgr.packages.isEmpty
+                         ? "No CLI tools detected yet.\nInstall tools via Homebrew and relaunch."
+                         : "No results for \"\(search)\"")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(filteredPackages, id: \.command) { pkg in
+                        let pinned = settings.isCLIToolPinned(pkg.command)
+                        HStack(spacing: 12) {
+                            Image(systemName: "arrow.right.square.fill")
+                                .font(.system(size: 20))
+                                .foregroundStyle(pinned ? Color.accentColor : Color.secondary.opacity(0.4))
+                                .frame(width: 28)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pkg.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                HStack(spacing: 6) {
+                                    Text(pkg.command)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                    if let path = pkg.installedPath {
+                                        Text("·")
+                                            .foregroundStyle(.tertiary)
+                                        Text(path)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                if !pkg.description.isEmpty {
+                                    Text(pkg.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+
+                            Spacer()
+
+                            if pinned {
+                                Label("Added", systemImage: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
+                                    .labelStyle(.iconOnly)
+                                    .font(.system(size: 18))
+                            } else {
+                                Button {
+                                    onAdd(pkg.command)
+                                    dismiss()
+                                } label: {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .listStyle(.plain)
+            }
+
+            // Bottom: count
+            Divider()
+            Text("\(filteredPackages.count) CLI tools found")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+        }
+        .frame(width: 520, height: 460)
+    }
+}
+
+// MARK: - App Sidebar Row (real app icon)
+struct AppSidebarRow: View {
+    let label: String
+    let appPath: String
+    let fallbackIcon: String
+
+    private var appIcon: NSImage? {
+        guard !appPath.isEmpty, FileManager.default.fileExists(atPath: appPath) else { return nil }
+        let img = NSWorkspace.shared.icon(forFile: appPath)
+        return img
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let icon = appIcon {
+                Image(nsImage: icon)
+                    .resizable().interpolation(.high)
+                    .frame(width: 20, height: 20)
+            } else {
+                Image(systemName: fallbackIcon)
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(Color.accentColor)
+            }
+            Text(label)
+        }
+    }
+}
+
+// MARK: - Add Custom App Sheet
+struct AddCustomAppSheet: View {
+    let onSave: (CustomAppEntry) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var label: String = ""
+    @State private var key: String = ""
+    @State private var iconName: String = "app.fill"
+    @State private var appPath: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add App").font(.title2).bold()
+
+            Form {
+                TextField("App Name (e.g. Slack)", text: $label)
+                    .onChange(of: label) { _, v in
+                        if key.isEmpty || key == label.lowercased().prefix(key.count).description {
+                            key = v.lowercased().filter { $0.isLetter || $0.isNumber }
+                        }
+                    }
+
+                TextField("Trigger keyword (e.g. slack)", text: $key)
+
+                HStack {
+                    TextField("App path (e.g. /Applications/Slack.app)", text: $appPath)
+                    Button("Browse…") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.applicationBundle]
+                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                        panel.allowsMultipleSelection = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            appPath = url.path
+                            if label.isEmpty {
+                                label = url.deletingPathExtension().lastPathComponent
+                                key = label.lowercased().filter { $0.isLetter || $0.isNumber }
+                            }
+                        }
+                    }
+                }
+
+                HStack {
+                    TextField("SF Symbol icon (e.g. app.fill)", text: $iconName)
+                    Image(systemName: iconName).foregroundStyle(Color.accentColor).frame(width: 24)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add") {
+                    guard !label.isEmpty, !key.isEmpty else { return }
+                    onSave(CustomAppEntry(key: key, label: label, iconName: iconName, appPath: appPath))
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(label.isEmpty || key.isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 480, minHeight: 280)
+    }
+}
+
+// MARK: - Add App Extension Sheet
+// MARK: - Unified Add / Edit Extension Sheet
+
+struct AddAppExtensionSheet: View {
+    let appKey: String
+    let existing: AppToolExtension?
+    let onSave: (AppToolExtension) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var pkgMgr   = TerminalPackageManager.shared
+
+    // Mode
+    enum Mode: String, CaseIterable {
+        case cli = "CLI Tool"; case script = "Custom Script"; case file = "Script File"; case prompt = "AI Prompt"
+    }
+    @State private var mode: Mode
+
+    // ── CLI Tool fields ──────────────────────────────────────────────────────
+    @State private var toolName: String
+    @State private var toolPath: String
+    @State private var aiHint: String
+    @State private var capabilitiesText: String
+    @State private var examplesText: String
+    @State private var isDestructive: Bool
+    /// Per-app entry command, e.g. "memo notes" when memo is set for Notes app.
+    /// Auto-detected after help scan; user can override.
+    @State private var appSubcommand: String = ""
+    /// Context flag, e.g. "--reminders" for ekctl when panel is Reminders.
+    @State private var appContextFlag: String = ""
+    @State private var scannedHelp: String = ""
+    @State private var isScanning = false
+    @State private var scanDone = false
+    // inline install
+    @State private var showInstall = false
+    @State private var installMethod: ToolInstallMethod = .brew
+    @State private var installPkg: String = ""
+    @State private var installLog: String = ""
+    @State private var isInstalling = false
+    @State private var installDone = false
+    @State private var allInstalledBinaries: [String] = []
+
+    // ── Custom Script fields ─────────────────────────────────────────────────
+    @State private var scriptName: String = ""
+    @State private var scriptLang: AppScriptLanguage = .bash
+    @State private var scriptCode: String = ""
+    @State private var scriptDesc: String = ""
+    @State private var showTemplatePicker = false
+
+    // ── Script File fields ───────────────────────────────────────────────────
+    @State private var scriptFilePath: String = ""
+    @State private var scriptFileDesc: String = ""
+    @State private var showFilePicker = false
+
+    // ── AI Prompt fields ─────────────────────────────────────────────────────
+    @State private var promptName: String = ""
+    @State private var promptTemplate: String = ""
+    @State private var cacheTTLMinutes: Int = 0
+
+    init(appKey: String, existing: AppToolExtension? = nil, onSave: @escaping (AppToolExtension) -> Void) {
+        self.appKey   = appKey
+        self.existing = existing
+        self.onSave   = onSave
+        let isPrompt = existing?.kind == .prompt
+        let isScript = existing?.kind == .script
+        let isFile   = existing?.kind == .script && existing?.scriptCode.isEmpty == true
+        _mode = State(initialValue: isPrompt ? .prompt : isFile ? .file : isScript ? .script : .cli)
+        _toolName          = State(initialValue: existing?.toolName ?? "")
+        _toolPath          = State(initialValue: existing?.toolPath ?? "")
+        _aiHint            = State(initialValue: existing?.aiHint ?? "")
+        _capabilitiesText  = State(initialValue: existing?.profile.capabilities.joined(separator: ", ") ?? "")
+        _examplesText      = State(initialValue: existing?.profile.exampleCommands.joined(separator: "\n") ?? "")
+        _isDestructive     = State(initialValue: existing?.profile.isDestructive ?? false)
+        _appSubcommand     = State(initialValue: existing?.appSubcommand ?? "")
+        _appContextFlag    = State(initialValue: existing?.appContextFlag ?? "")
+        _scriptName        = State(initialValue: existing?.toolName ?? "")
+        _scriptLang        = State(initialValue: existing?.scriptLanguage ?? .bash)
+        _scriptCode        = State(initialValue: existing?.scriptCode ?? "")
+        _scriptDesc        = State(initialValue: existing?.aiHint ?? "")
+        _scriptFilePath    = State(initialValue: (existing?.kind == .script && existing?.scriptCode.isEmpty == true) ? (existing?.toolPath ?? "") : "")
+        _scriptFileDesc    = State(initialValue: existing?.aiHint ?? "")
+        _promptName        = State(initialValue: existing?.toolName ?? "")
+        _promptTemplate    = State(initialValue: existing?.promptTemplate ?? "")
+        _cacheTTLMinutes   = State(initialValue: existing?.cacheTTLMinutes ?? 0)
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Header ────────────────────────────────────────────────────────
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(existing == nil ? "Add to \(appKey.capitalized)" : "Edit Extension")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("AI uses these tools when you interact with \(appKey.capitalized)")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                // Mode picker (tab-bar style)
+                HStack(spacing: 0) {
+                    ForEach(Mode.allCases, id: \.self) { m in
+                        Button(action: { mode = m }) {
+                            Text(m.rawValue)
+                                .font(.system(size: 11, weight: mode == m ? .semibold : .regular))
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(mode == m ? Color.accentColor.opacity(0.15) : Color.clear)
+                                .foregroundStyle(mode == m ? Color.accentColor : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        if m != Mode.allCases.last { Divider().frame(height: 18) }
+                    }
+                }
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.secondary.opacity(0.15)))
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+
+            Divider()
+
+            // ── Content ───────────────────────────────────────────────────────
+            ScrollView {
+                Group {
+                    switch mode {
+                    case .cli:    cliContent
+                    case .script: scriptContent
+                    case .file:   fileContent
+                    case .prompt: promptContent
+                    }
+                }
+                .padding(.horizontal, 20).padding(.vertical, 16)
+            }
+
+            Divider()
+
+            // ── Footer ────────────────────────────────────────────────────────
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(existing == nil ? "Add" : "Save", action: save)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSave)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+        }
+        .frame(width: 600, height: 520)
+        .task {
+            if let e = existing, e.kind == .cli, !e.toolName.isEmpty, !e.aiHint.contains("--help output:") {
+                triggerHelpScan(command: e.toolName)
+            }
+            // Populate full list of installed executables from bin dirs
+            let bins = await scanInstalledBinaries()
+            allInstalledBinaries = bins
+        }
+    }
+
+    private func scanInstalledBinaries() async -> [String] {
+        await Task.detached(priority: .userInitiated) {
+            let home = NSHomeDirectory()
+            let dirs = [
+                "/opt/homebrew/bin", "/opt/homebrew/sbin",
+                "/usr/local/bin",
+                "\(home)/.local/bin",
+                "\(home)/.cargo/bin",
+                "\(home)/go/bin",
+                "\(home)/.npm-global/bin",
+                "\(home)/.yarn/bin",
+                "\(home)/.deno/bin",
+                "\(home)/.bun/bin",
+            ]
+            let fm = FileManager.default
+            var results: [String] = []
+            for dir in dirs {
+                guard let items = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+                for item in items {
+                    let full = "\(dir)/\(item)"
+                    var isDir: ObjCBool = false
+                    if fm.fileExists(atPath: full, isDirectory: &isDir), !isDir.boolValue,
+                       fm.isExecutableFile(atPath: full) {
+                        results.append(item)
+                    }
+                }
+            }
+            return Array(Set(results)).sorted()
+        }.value
+    }
+
+    // MARK: - CLI content
+
+    private var cliContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+
+            // Tool name + known packages picker
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Tool name", systemImage: "terminal").font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 8) {
+                    TextField("e.g. memo, rem, yt-dlp", text: $toolName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { triggerHelpScan(command: toolName) }
+
+                    if !toolName.isEmpty {
+                        let found = isCLIInstalled
+                        Label(found ? "Found" : "Not found",
+                              systemImage: found ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(found ? Color.green : Color.orange)
+                    }
+                }
+
+                // Quick-pick from all installed binaries
+                if !allInstalledBinaries.isEmpty {
+                    Menu("Pick from installed tools… ▾") {
+                        ForEach(allInstalledBinaries, id: \.self) { bin in
+                            Button(bin) {
+                                toolName = bin
+                                toolPath = ""
+                                triggerHelpScan(command: bin)
+                            }
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .menuStyle(.borderlessButton)
+                } else if !pkgMgr.packages.isEmpty {
+                    // Fallback while scan is running
+                    Menu("Pick from installed tools… ▾") {
+                        ForEach(pkgMgr.packages.filter { $0.installedPath != nil }) { pkg in
+                            Button(pkg.command) {
+                                toolName = pkg.command
+                                toolPath = pkg.installedPath ?? ""
+                                triggerHelpScan(command: pkg.command)
+                            }
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .menuStyle(.borderlessButton)
+                }
+            }
+
+            // ── Install panel (shown when not installed) ──────────────────────
+            if !toolName.isEmpty && !isCLIInstalled {
+                installPanel
+            }
+
+            // ── Help scan status ──────────────────────────────────────────────
+            if !toolName.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        if isScanning {
+                            ProgressView().scaleEffect(0.6)
+                            Text("Scanning \(toolName)…").font(.caption).foregroundStyle(.secondary)
+                        } else if scanDone && !scannedHelp.isEmpty {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
+                            let cmdCount = TerminalPackageManager.shared.scanLog
+                                .filter { $0.hasPrefix("✓") }.count
+                            Text("Scanned \(cmdCount) command path\(cmdCount == 1 ? "" : "s") — AI knows all \(toolName) subcommands")
+                                .font(.caption).foregroundStyle(.green)
+                        } else if scanDone && scannedHelp.isEmpty {
+                            Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                            Text("\(toolName) --help returned nothing").font(.caption).foregroundStyle(.orange)
+                        } else {
+                            Button("Scan --help now") { triggerHelpScan(command: toolName) }
+                                .font(.system(size: 11))
+                        }
+                        Spacer()
+                        if scanDone && !scannedHelp.isEmpty {
+                            Button { triggerHelpScan(command: toolName) } label: {
+                                Label("Re-scan", systemImage: "arrow.clockwise")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    // Live scan log — shows each command being scanned
+                    let logLines = TerminalPackageManager.shared.scanLog
+                    if !logLines.isEmpty {
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    ForEach(Array(logLines.enumerated()), id: \.offset) { i, line in
+                                        HStack(spacing: 4) {
+                                            Text(line)
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundStyle(
+                                                    line.hasPrefix("✓") ? Color.green.opacity(0.85) :
+                                                    line.hasPrefix("✗") ? Color.orange.opacity(0.7) :
+                                                    Color.secondary
+                                                )
+                                        }
+                                        .id(i)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(6)
+                            }
+                            .frame(height: isScanning ? 90 : 70)
+                            .background(Color(nsColor: .textBackgroundColor).opacity(0.4),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.2)))
+                            .onChange(of: logLines.count) { _, _ in
+                                withAnimation { proxy.scrollTo(logLines.count - 1, anchor: .bottom) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            // ── Entry command (auto-detected subcommand per app) ──────────────
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Label("Entry command for \(appKey.capitalized)", systemImage: "arrow.turn.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("(optional)")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                TextField("e.g. memo notes  or  memo rem  (leave blank to use binary name as-is)", text: $appSubcommand)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                // Auto-detect hint from scan
+                if appSubcommand.isEmpty && scanDone && !toolName.isEmpty {
+                    let detected = TerminalPackageManager.shared.autoDetectSubcommand(
+                        toolName: toolName, appKey: appKey, appLabel: appKey.capitalized)
+                    if !detected.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles").foregroundStyle(.blue).font(.caption)
+                            Text("Auto-detected: \(detected)")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                            Button("Use this") { appSubcommand = detected }
+                                .font(.system(size: 11))
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+                Text("When the same CLI handles multiple apps (e.g. memo notes vs memo rem), set the right entry here.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+
+            // ── Context flag (flag-based multi-app CLIs like ekctl) ───────────
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    Label("Context flag for \(appKey.capitalized)", systemImage: "flag")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("(optional)")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                TextField("e.g. --reminders  or  --calendars  (leave blank if not needed)", text: $appContextFlag)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                // Auto-detect hint from scan
+                if appContextFlag.isEmpty && scanDone && !toolName.isEmpty {
+                    let detectedFlag = TerminalPackageManager.shared.autoDetectContextFlag(
+                        toolName: toolName, appKey: appKey, appLabel: appKey.capitalized)
+                    if !detectedFlag.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "flag.fill").foregroundStyle(.orange).font(.caption)
+                            Text("Auto-detected flag: \(detectedFlag)")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                            Button("Use this") { appContextFlag = detectedFlag }
+                                .font(.system(size: 11))
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Text("For CLIs that use flags to select context, e.g. `ekctl list --reminders` vs `ekctl list --calendars`.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+
+            Divider()
+
+            // ── Capability hints ──────────────────────────────────────────────
+            Group {
+                labeledField("What can it do? (comma-separated, helps AI pick right tool)",
+                             "e.g. list notes, add reminder, search files",
+                             $capabilitiesText)
+                labeledField("Example commands (one per line, optional)",
+                             "memo notes add \"Buy milk\"\nmemo rem list",
+                             $examplesText, multiline: true)
+                Toggle("Destructive — AI will confirm before running delete/overwrite", isOn: $isDestructive)
+                    .font(.system(size: 12))
+            }
+        }
+    }
+
+    // ── AI Prompt content ─────────────────────────────────────────────────────
+    private var promptContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+
+            // Name
+            VStack(alignment: .leading, spacing: 5) {
+                Label("Prompt name", systemImage: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                TextField("e.g. notes-assistant, summarizer", text: $promptName)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            // Template editor
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 6) {
+                    Label("System prompt template", systemImage: "text.quote")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    // Variable insertion chips
+                    ForEach(PromptVariable.all) { v in
+                        Button(v.label) { promptTemplate += v.tag }
+                            .font(.system(size: 10, design: .monospaced))
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .help(v.description)
+                    }
+                }
+
+                ZStack(alignment: .topLeading) {
+                    if promptTemplate.isEmpty {
+                        Text("You are a smart \(appKey.capitalized) assistant inside ILauncher.\nToday is {{date}}.\nAnswer this: {{query}}")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(6)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $promptTemplate)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minHeight: 180)
+                        .scrollContentBackground(.hidden)
+                        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                }
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text("Click a variable chip above to insert it. The AI replaces each {{var}} before sending the prompt.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+
+            Divider()
+
+            // Cache
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Cache identical responses", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 10) {
+                    Picker("Cache TTL", selection: $cacheTTLMinutes) {
+                        ForEach(CacheTTLOption.options) { opt in
+                            Text(opt.label).tag(opt.minutes)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 130)
+                    if cacheTTLMinutes > 0 {
+                        Text("Same question → reuse cached answer for \(CacheTTLOption.label(for: cacheTTLMinutes))")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                Text("Useful for deterministic prompts (e.g. formatting, summarizing). Leave off for live queries.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+
+            Divider()
+
+            // How it works
+            VStack(alignment: .leading, spacing: 4) {
+                Label("How it works", systemImage: "info.circle")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("When you ask anything in the \(appKey.capitalized) panel, this template becomes the AI's system prompt — replacing the generic one. The AI answers directly using its knowledge, without running any shell commands. You can combine an AI Prompt with CLI/Script extensions: the AI will use your prompt as its persona and still call your scripts as tools when needed.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // ── Inline install panel ──────────────────────────────────────────────────
+    private var installPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "arrow.down.circle").foregroundStyle(.orange)
+                Text("\(toolName) is not installed").font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button(showInstall ? "Hide" : "Install…") { showInstall.toggle() }
+                    .font(.system(size: 11))
+            }
+
+            if showInstall {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Method picker
+                    Picker("Method", selection: $installMethod) {
+                        ForEach(availableInstallMethods, id: \.self) { m in
+                            Text(m.rawValue).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    HStack(spacing: 8) {
+                        TextField(installMethod.placeholder, text: $installPkg)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                            .onAppear { if installPkg.isEmpty { installPkg = toolName } }
+
+                        Button(action: runInlineInstall) {
+                            if isInstalling { ProgressView().scaleEffect(0.7) }
+                            else { Label("Install", systemImage: "arrow.down.circle") }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isInstalling || installPkg.isEmpty)
+                    }
+
+                    if !installLog.isEmpty {
+                        ScrollView {
+                            Text(installLog)
+                                .font(.system(size: 10, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 60)
+                        .background(Color(nsColor: .textBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
+                    }
+
+                    if installDone {
+                        Label("Installed! Re-scanning help…", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                    }
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.2)))
+            }
+        }
+    }
+
+    // MARK: - Custom Script content
+
+    private var scriptContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+
+            // ── Apple Templates banner ────────────────────────────────────────
+            HStack(spacing: 10) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Use an Apple App template")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Ready-made scripts for Messages, Mail, Notes, Reminders, Calendar and more")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Browse Templates") { showTemplatePicker = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.15)))
+            .sheet(isPresented: $showTemplatePicker) {
+                AppleTemplatePickerSheet(appKey: appKey) { template in
+                    scriptName = template.name
+                    scriptLang = template.language
+                    scriptCode = template.code
+                    scriptDesc = template.aiCapability
+                }
+            }
+
+            Divider()
+
+            labeledField("Script name (no spaces, used as the command)", "e.g. open-in-wtf", $scriptName)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Language", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                Picker("", selection: $scriptLang) {
+                    ForEach(AppScriptLanguage.allCases) { lang in
+                        Label(lang.rawValue, systemImage: lang.systemImage).tag(lang)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: scriptLang) { _, lang in
+                    // Replace template when user switches language and hasn't typed anything custom
+                    let currentIsDefault = AppScriptLanguage.allCases.contains(where: {
+                        scriptCode.trimmingCharacters(in: .whitespacesAndNewlines) ==
+                        $0.starterTemplate(appKey: appKey, scriptName: scriptName).trimmingCharacters(in: .whitespacesAndNewlines)
+                    })
+                    if scriptCode.isEmpty || currentIsDefault {
+                        scriptCode = lang.starterTemplate(appKey: appKey, scriptName: scriptName)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Label("Script", systemImage: "doc.text").font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    // Context hint changes by language
+                    Group {
+                        switch scriptLang {
+                        case .bash:
+                            Text("$FILE = file path  ·  $QUERY = user query")
+                        case .python:
+                            Text("sys.argv[1] = file path  ·  sys.argv[2] = query")
+                        case .jxa:
+                            Text("argv[0] = file path  ·  argv[1] = query")
+                        case .applescript:
+                            Text("item 1 of argv = file path")
+                        case .lua:
+                            Text("arg[1] = file path  ·  arg[2] = query  (via hs)")
+                        }
+                    }
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                TextEditor(text: $scriptCode)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 160)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                    .overlay(
+                        Group {
+                            if scriptCode.isEmpty {
+                                Text(scriptLang.shebang + "\n# Write your script here")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.secondary.opacity(0.5))
+                                    .padding(.horizontal, 5).padding(.vertical, 8)
+                                    .allowsHitTesting(false)
+                            }
+                        }, alignment: .topLeading)
+            }
+
+            labeledField("What does this script do? (shown to AI as its capability)",
+                         "e.g. Opens the selected file in WTF terminal file manager",
+                         $scriptDesc)
+        }
+        .onAppear {
+            if scriptCode.isEmpty {
+                scriptCode = scriptLang.starterTemplate(appKey: appKey, scriptName: scriptName)
+            }
+        }
+    }
+
+    // MARK: - Script File content
+
+    private var fileContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Script path", systemImage: "doc.badge.gearshape").font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 8) {
+                    TextField("/path/to/your-script.sh", text: $scriptFilePath)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                    Button("Browse…") { showFilePicker = true }
+                        .controlSize(.small)
+                }
+                if !scriptFilePath.isEmpty {
+                    let exists = FileManager.default.fileExists(atPath: scriptFilePath)
+                    Label(exists ? "File found" : "File not found", systemImage: exists ? "checkmark.circle.fill" : "xmark.circle")
+                        .font(.caption).foregroundStyle(exists ? Color.green : Color.orange)
+                }
+            }
+            .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
+                if case .success(let url) = result {
+                    scriptFilePath = url.path
+                    if scriptFileDesc.isEmpty { scriptFileDesc = url.deletingPathExtension().lastPathComponent }
+                }
+            }
+
+            // Show detected language badge when a file is picked
+            if !scriptFilePath.isEmpty {
+                let detectedLang = inferLanguage(from: scriptFilePath)
+                HStack(spacing: 6) {
+                    Image(systemName: detectedLang.systemImage).font(.caption).foregroundStyle(.purple)
+                    Text(detectedLang.rawValue).font(.caption).foregroundStyle(.purple)
+                    Text("·").foregroundStyle(.secondary).font(.caption)
+                    Text("Run as: \(detectedLang.runCommand(scriptPath: scriptFilePath))")
+                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            labeledField("What does this script do? (for AI context)",
+                         "e.g. Opens selected file in WTF; accepts path as first argument",
+                         $scriptFileDesc, multiline: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Supported formats").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(AppScriptLanguage.allCases) { lang in
+                        HStack(spacing: 4) {
+                            Image(systemName: lang.systemImage).font(.system(size: 10))
+                            Text(".\(lang.fileExtension)").font(.system(size: 10, design: .monospaced))
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.08), in: Capsule())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Script receives: arg[1] = file path  ·  arg[2] = user query")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func inferLanguage(from path: String) -> AppScriptLanguage {
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "py":           return .python
+        case "js":           return .jxa
+        case "applescript", "scpt": return .applescript
+        case "lua":          return .lua
+        default:             return .bash
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var isCLIInstalled: Bool {
+        AppSettings.isToolInstalled(AppToolExtension(appKey: appKey, toolName: toolName, toolPath: toolPath))
+    }
+
+    private var canSave: Bool {
+        switch mode {
+        case .cli:    return !toolName.isEmpty && !isScanning
+        case .script: return !scriptName.isEmpty && !scriptCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .file:   return !scriptFilePath.isEmpty && FileManager.default.fileExists(atPath: scriptFilePath)
+        case .prompt: return !promptName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          && !promptTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var previousShebang: String { scriptLang.shebang }
+
+    private var availableInstallMethods: [ToolInstallMethod] {
+        let fm = FileManager.default
+        var list: [ToolInstallMethod] = []
+        if ["/opt/homebrew/bin/brew","/usr/local/bin/brew"].contains(where: { fm.fileExists(atPath: $0) }) { list.append(.brew) }
+        if ["/opt/homebrew/bin/npm","/usr/local/bin/npm"].contains(where: { fm.fileExists(atPath: $0) })  { list.append(.npm) }
+        if ["/opt/homebrew/bin/pip3","/usr/local/bin/pip3","/usr/bin/pip3"].contains(where: { fm.fileExists(atPath: $0) }) { list.append(.pip) }
+        if fm.fileExists(atPath: "\(NSHomeDirectory())/.cargo/bin/cargo")                                  { list.append(.cargo) }
+        if ["/opt/homebrew/bin/go","/usr/local/go/bin/go"].contains(where: { fm.fileExists(atPath: $0) }) { list.append(.goInstall) }
+        list += [.gitClone, .custom]
+        return list
+    }
+
+    private func labeledField(_ label: String, _ placeholder: String, _ binding: Binding<String>, multiline: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            if multiline {
+                TextEditor(text: binding)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(height: 60)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.15)))
+            } else {
+                TextField(placeholder, text: binding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+            }
+        }
+    }
+
+    // MARK: - Install
+
+    private func runInlineInstall() {
+        guard !installPkg.isEmpty else { return }
+        isInstalling = true
+        installLog   = ""
+        Task {
+            let env = buildInstallEnv()
+            let cmd = makeInstallCommand()
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            p.arguments = ["-c", cmd]
+            p.environment = env
+            let pipe = Pipe()
+            p.standardOutput = pipe; p.standardError = pipe
+            guard (try? p.run()) != nil else {
+                await MainActor.run { installLog = "Failed to start process"; isInstalling = false }
+                return
+            }
+            p.waitUntilExit()
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let ok  = p.terminationStatus == 0
+            await MainActor.run {
+                installLog   = out
+                isInstalling = false
+                installDone  = ok
+                if ok {
+                    showInstall = false
+                    Task {
+                        await BinaryWatcherService.shared.scanNow(skipHelpScan: true)
+                        triggerHelpScan(command: toolName)
+                    }
+                }
+            }
+        }
+    }
+
+    private func makeInstallCommand() -> String {
+        let pkg = installPkg.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brew = FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew") ? "/opt/homebrew/bin/brew" : "/usr/local/bin/brew"
+        switch installMethod {
+        case .brew:      return "\(brew) install \(pkg)"
+        case .npm:       return "npm install -g \(pkg)"
+        case .pip:       return "pip3 install \(pkg)"
+        case .cargo:     return "\(NSHomeDirectory())/.cargo/bin/cargo install \(pkg)"
+        case .goInstall: return "go install \(pkg)"
+        case .gitClone:  return "git clone \"\(pkg)\""
+        case .custom:    return pkg
+        }
+    }
+
+    private func buildInstallEnv() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extras = ["/opt/homebrew/bin","/usr/local/bin","/usr/bin","/bin",
+                      "\(NSHomeDirectory())/.cargo/bin","\(NSHomeDirectory())/go/bin",
+                      "\(NSHomeDirectory())/.local/bin","/usr/local/go/bin"]
+        env["PATH"] = (extras + (env["PATH"] ?? "").components(separatedBy: ":")).joined(separator: ":")
+        return env
+    }
+
+    // MARK: - Save
+
+    private func save() {
+        let ext: AppToolExtension
+        switch mode {
+        case .cli:
+            let helpBase = scannedHelp.isEmpty
+                ? "Use \(toolName) for \(appKey) tasks."
+                : "Tool: \(toolName)\n--help output:\n\(String(scannedHelp.prefix(1200)))"
+            let finalHint = aiHint.isEmpty ? helpBase : helpBase + "\n\nExtra: \(aiHint)"
+            let path = toolPath.isEmpty
+                ? (pkgMgr.packages.first(where: { $0.command == toolName })?.installedPath ?? "")
+                : toolPath
+            let caps  = capabilitiesText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let exmps = examplesText.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let profile = AppToolProfile(capabilities: caps, exampleCommands: exmps, fileTypes: [], isDestructive: isDestructive)
+            ext = AppToolExtension(appKey: appKey, toolName: toolName, toolPath: path,
+                                   aiHint: finalHint, profile: profile, kind: .cli,
+                                   appSubcommand: appSubcommand.trimmingCharacters(in: .whitespaces),
+                                   appContextFlag: appContextFlag.trimmingCharacters(in: .whitespaces))
+
+        case .script:
+            let name = scriptName.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "-")
+            let savedPath = settings.saveScript(appKey: appKey, name: name,
+                                                language: scriptLang, code: scriptCode) ?? ""
+            let runCmd = scriptLang.runCommand(scriptPath: savedPath)
+            let hint   = "Script: \(name)\nLanguage: \(scriptLang.rawValue)\nRun as: \(runCmd)\nDescription: \(scriptDesc)"
+            ext = AppToolExtension(appKey: appKey, toolName: name, toolPath: savedPath,
+                                   aiHint: hint, profile: AppToolProfile(),
+                                   kind: .script, scriptLanguage: scriptLang, scriptCode: scriptCode)
+
+        case .file:
+            let name = URL(fileURLWithPath: scriptFilePath).deletingPathExtension().lastPathComponent
+            let lang: AppScriptLanguage = inferLanguage(from: scriptFilePath)
+            let runCmd = lang.runCommand(scriptPath: scriptFilePath)
+            let hint   = "Script file: \(scriptFilePath)\nRun as: \(runCmd)\nDescription: \(scriptFileDesc)"
+            ext = AppToolExtension(appKey: appKey, toolName: name, toolPath: scriptFilePath,
+                                   aiHint: hint, profile: AppToolProfile(),
+                                   kind: .script, scriptLanguage: lang, scriptCode: "")
+
+        case .prompt:
+            let name = promptName.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "-")
+            // Save template to disk so it can be imported/shared
+            let savedPath = PromptRunner.shared.savePromptFile(
+                appKey: appKey, name: name, template: promptTemplate) ?? ""
+            // Clear old cache when template is updated
+            if let e = existing { PromptRunner.shared.clearCache(for: e) }
+            ext = AppToolExtension(appKey: appKey, toolName: name, toolPath: savedPath,
+                                   aiHint: promptTemplate, profile: AppToolProfile(),
+                                   kind: .prompt, promptTemplate: promptTemplate,
+                                   cacheTTLMinutes: cacheTTLMinutes)
+        }
+
+        onSave(ext)
+        dismiss()
+    }
+
+    // MARK: - Help scan
+
+    private func triggerHelpScan(command: String) {
+        guard !command.isEmpty else { return }
+        isScanning = true; scanDone = false; scannedHelp = ""
+        Task {
+            let result = await TerminalPackageManager.shared.scanDeepHelp(for: command) ?? ""
+            await MainActor.run {
+                scannedHelp = result
+                isScanning = false
+                scanDone = true
+                if let idx = TerminalPackageManager.shared.packages.firstIndex(where: { $0.command == command }) {
+                    TerminalPackageManager.shared.packages[idx].helpText = result
+                }
+            }
+        }
+    }
+}
+
+struct AppShortcutEditSheet: View {
+    let appKey: String
+    let shortcut: AppShortcut?
+    let onSave: (AppShortcut) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String
+    @State private var iconName: String
+    @State private var actionType: AppShortcut.ActionType
+    @State private var actionValue: String
+    @State private var placement: AppShortcut.Placement
+    @State private var targetAppKeys: [String]
+    @State private var fileTypeFilter: String        // comma-separated file extensions for File Actions
+    @State private var triggerKeywordStr: String     // comma-separated trigger keywords
+    @State private var installedApps: [(key: String, name: String, bundleId: String)] = []
+
+    init(appKey: String, shortcut: AppShortcut?, onSave: @escaping (AppShortcut) -> Void) {
+        self.appKey = appKey
+        self.shortcut = shortcut
+        self.onSave = onSave
+        _name               = State(initialValue: shortcut?.name ?? "")
+        _iconName           = State(initialValue: shortcut?.iconName ?? "bolt.fill")
+        _actionType         = State(initialValue: shortcut?.actionType ?? .openURL)
+        _actionValue        = State(initialValue: shortcut?.actionValue ?? "")
+        _placement          = State(initialValue: shortcut?.placement ?? .quickActions)
+        _targetAppKeys      = State(initialValue: shortcut?.targetAppKeys ?? [])
+        _fileTypeFilter     = State(initialValue: shortcut?.fileTypes.joined(separator: ", ") ?? "")
+        _triggerKeywordStr  = State(initialValue: shortcut?.triggerKeywords.joined(separator: ", ") ?? "")
+    }
+
+    // Whether the current action type accepts file/text context
+    private var isScriptType: Bool {
+        actionType == .shellCommand || actionType == .appleScript || actionType == .jxa
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(shortcut == nil ? "Add Action" : "Edit Action")
+                .font(.title2).bold()
+
+            Form {
+                TextField("Name (e.g. Center Window)", text: $name)
+
+                SFSymbolPickerButton(selected: $iconName)
+
+                // SHOWS IN — segmented picker (mirrors Extensions layer picker)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Show In").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 0) {
+                        placementTab(.quickActions, icon: "magnifyingglass",    label: "Quick Actions")
+                        placementTab(.contextDock,  icon: "rectangle.grid.1x2", label: "Context Dock")
+                        placementTab(.both,         icon: "square.grid.2x2",    label: "Both")
+                        placementTab(.fileActions,  icon: "doc.badge.gearshape",label: "File Actions")
+                    }
+                    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.2)))
+                    Text(placementDescription).font(.caption2).foregroundStyle(.secondary)
+                }
+
+                // File Actions extra fields
+                if placement == .fileActions {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("File types (leave blank for all files)").font(.caption).foregroundStyle(.secondary)
+                        TextField("pdf, jpg, png", text: $fileTypeFilter)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Comma-separated extensions — this action appears when a matching file is selected.")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Trigger keywords (optional)").font(.caption).foregroundStyle(.secondary)
+                        TextField("compress, zip, archive", text: $triggerKeywordStr)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Comma-separated — typing one of these in search also surfaces this action.")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+
+                if placement != .fileActions {
+                    crossAppPicker
+                }
+
+                Picker("Action Type", selection: $actionType) {
+                    Text("Open URL / Deep Link").tag(AppShortcut.ActionType.openURL)
+                    Text("Open File / App").tag(AppShortcut.ActionType.openFile)
+                    Text("Shell Command").tag(AppShortcut.ActionType.shellCommand)
+                    Text("AppleScript").tag(AppShortcut.ActionType.appleScript)
+                    Text("JXA (JavaScript for Automation)").tag(AppShortcut.ActionType.jxa)
+                }
+                .pickerStyle(.menu)
+
+                switch actionType {
+                case .openURL:
+                    TextField("URL (e.g. ical:// or mailto:)", text: $actionValue)
+                case .openFile:
+                    TextField("App/File path (e.g. /Applications/Calendar.app)", text: $actionValue)
+                case .shellCommand:
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextEditor(text: $actionValue)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 100)
+                            .border(.separator)
+                        contextVarHints
+                    }
+                case .appleScript:
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextEditor(text: $actionValue)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 100)
+                            .border(.separator)
+                        contextVarHints
+                    }
+                case .jxa:
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("JavaScript for Automation — runs via osascript -l JavaScript")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextEditor(text: $actionValue)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 120)
+                            .border(.separator)
+                        contextVarHints
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    guard !name.isEmpty, !actionValue.isEmpty else { return }
+                    let parsedFileTypes = fileTypeFilter
+                        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                        .filter { !$0.isEmpty }
+                    let parsedKeywords = triggerKeywordStr
+                        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                        .filter { !$0.isEmpty }
+                    let sc = AppShortcut(name: name, iconName: iconName,
+                                        actionType: actionType, actionValue: actionValue,
+                                        appKey: appKey, placement: placement,
+                                        targetAppKeys: targetAppKeys,
+                                        fileTypes: parsedFileTypes,
+                                        triggerKeywords: parsedKeywords)
+                    onSave(sc)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.isEmpty || actionValue.isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 520, minHeight: 360)
+        .onAppear {
+            // Load all registered apps for the cross-app picker (exclude current appKey)
+            let settings = AppSettings.shared
+            let builtIn: [(key: String, name: String, bundleId: String)] = [
+                ("safari",         "Safari",          "com.apple.Safari"),
+                ("systemsettings", "System Settings", "com.apple.systempreferences"),
+                ("calendar",       "Calendar",        "com.apple.iCal"),
+                ("reminders",      "Reminders",       "com.apple.reminders"),
+                ("notes",          "Notes",           "com.apple.Notes"),
+                ("mail",           "Mail",            "com.apple.mail"),
+                ("photos",         "Photos",          "com.apple.Photos"),
+                ("messages",       "Messages",        "com.apple.MobileSMS"),
+                ("contacts",       "Contacts",        "com.apple.AddressBook"),
+                ("finder",         "Finder",          "com.apple.finder"),
+            ]
+            let custom = settings.customAppEntries.map { entry in
+                (key: entry.key, name: entry.label, bundleId: entry.key)
+            }
+            installedApps = (builtIn + custom).filter { $0.key != appKey }
+        }
+    }
+
+    @ViewBuilder
+    private func placementTab(_ p: AppShortcut.Placement, icon: String, label: String) -> some View {
+        Button { placement = p } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 12))
+                Text(label).font(.system(size: 9)).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(placement == p ? Color.accentColor.opacity(0.18) : Color.clear)
+            .foregroundStyle(placement == p ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var placementDescription: String {
+        switch placement {
+        case .quickActions:  return "Appears in the search dock when you type the app name."
+        case .contextDock:   return "Pill in the L2 Context Dock when this app is frontmost."
+        case .both:          return "Shows in both Quick Actions search and Context Dock."
+        case .fileActions:   return "Action button appears when a matching file is selected in search."
+        }
+    }
+
+    @ViewBuilder
+    private var crossAppPicker: some View {
+        if !installedApps.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Also show for apps")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Share this action with other apps in addition to \"\(appKey)\"")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(installedApps, id: \.key) { app in
+                            crossAppChip(app)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func crossAppChip(_ app: (key: String, name: String, bundleId: String)) -> some View {
+        let selected = targetAppKeys.contains(app.key)
+        Button {
+            if selected { targetAppKeys.removeAll { $0 == app.key } }
+            else { targetAppKeys.append(app.key) }
+        } label: {
+            HStack(spacing: 4) {
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.accentColor).font(.caption2)
+                }
+                Text(app.name).font(.caption)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(selected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1), in: Capsule())
+            .overlay(Capsule().stroke(selected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Chip row showing available context variables for shell/AppleScript actions
+    @ViewBuilder
+    private var contextVarHints: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Available variables — click to insert:")
+                .font(.caption2).foregroundStyle(.tertiary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(contextVars, id: \.0) { variable, desc in
+                        Button {
+                            actionValue += variable
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(variable)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                Text("·")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                Text(desc)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.08), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var contextVars: [(String, String)] {
+        switch actionType {
+        case .jxa:
+            return [
+                ("argv[0]",  "1st selected file path"),
+                ("argv[1]",  "query / search term"),
+                ("argv[2]",  "selected text"),
+            ]
+        case .appleScript:
+            return [
+                ("$1",                "1st selected file path"),
+                ("$2",                "2nd selected file path"),
+                ("$SELECTED_TEXT",    "selected text in the app used before ILauncher"),
+                ("$SELECTED_FILES",   "all selected files, space-separated"),
+                ("$FRONTMOST_APP",    "name of the app active before ILauncher (e.g. \"Finder\")"),
+                ("$FRONTMOST_BUNDLE", "bundle ID of that app (e.g. \"com.apple.finder\")"),
+                ("$CURRENT_URL",      "URL currently open in the frontmost browser window (AX-read)"),
+                ("$WINDOW_TITLE",     "title of the frontmost window (AX-read)"),
+                ("$AX_SELECTED_TEXT", "selected text read via Accessibility API (more reliable)"),
+            ]
+        default:
+            return [
+                ("$1",                "1st selected file"),
+                ("$2",                "2nd selected file"),
+                ("$SELECTED_TEXT",    "text selected in the app you used before opening ILauncher"),
+                ("$SELECTED_FILES",   "all selected files (space-separated)"),
+                ("$SELECTED_FILE",    "first selected file (env var)"),
+                ("$FRONTMOST_APP",    "name of the app that was active before ILauncher opened"),
+                ("$FRONTMOST_BUNDLE", "bundle ID of that app (e.g. \"com.apple.Terminal\")"),
+                ("$CURRENT_URL",      "URL currently open in the frontmost browser (AX-read, no script needed)"),
+                ("$WINDOW_TITLE",     "title of the frontmost window (AX-read)"),
+                ("$AX_SELECTED_TEXT", "selected text via Accessibility API (works in more apps than clipboard)"),
+            ]
+        }
+    }
+}
+
+// MARK: - Permissions Settings Tab
+struct PermissionsSettingsView: View {
+    @State private var hasAccessibilityPermission = false
+    @State private var isTestingAutomation = false
+    @State private var automationTestMessage: String? = nil
+    
+    @State private var commandInput: String = ""
+    @State private var commandOutput: String = ""
+    @State private var isRunningCommand: Bool = false
+    @State private var recentCommands: [String] = []
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Accessibility Card (existing)
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 50))
+                    .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: hasAccessibilityPermission ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
+                        
+                        Text("Accessibility Permissions")
+                            .font(.headline)
+                    }
+                    
+                    Text("Required for global hotkey detection")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+                
+                if !hasAccessibilityPermission {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("How to enable:")
+                            .font(.headline)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("1. Click 'Open System Settings' below")
+                            Text("2. Find 'ILauncher' in the list")
+                            Text("3. Toggle the switch to enable")
+                            Text("4. Return here and click 'Check Again'")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(8)
+                    
+                    HStack(spacing: 12) {
+                        Button("Open System Settings") {
+                            openAccessibilitySettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        
+                        Button("Check Again") {
+                            checkPermissions()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        Text("✅ Permissions Granted")
+                            .font(.headline)
+                            .foregroundStyle(.green)
+                        
+                        Text("All required permissions are enabled")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                // Automation Permission (open settings only)
+                CardSection(title: "Automation", systemImage: "gearshape.arrow.triangle.2.circlepath") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Automation access lets ILauncher run AppleScripts or interact with other apps.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Note:")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text("macOS only shows apps here after they've requested automation. If ILauncher doesn't appear, try running an action that uses AppleScript once, then return and check again.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button("Open System Settings") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Test Automation") {
+                                automationTestMessage = nil
+                                triggerAutomationPrompt()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Learn More") {
+                                if let url = URL(string: "https://support.apple.com/guide/mac-help/allow-accessibility-apps-mh43185/mac") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.link)
+                        }
+
+                        if isTestingAutomation {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Sending request...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if let msg = automationTestMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: msg.lowercased().contains("error") ? "xmark.octagon.fill" : "checkmark.seal.fill")
+                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
+                                Text(msg)
+                                    .font(.caption)
+                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
+                            }
+                        }
+                    }
+                }
+                
+                CardSection(title: "Command Runner", systemImage: "terminal") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Run a shell command. Output and errors will appear below.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .center, spacing: 8) {
+                            TextField("echo hello", text: $commandInput)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(isRunningCommand)
+
+                            Button(action: runCommand) {
+                                HStack(spacing: 6) {
+                                    if isRunningCommand { ProgressView().scaleEffect(0.7) }
+                                    Text(isRunningCommand ? "Running" : "Run")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(commandInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRunningCommand)
+
+                            Button("Clear") {
+                                commandOutput = ""
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(commandOutput.isEmpty)
+                        }
+
+                        if !recentCommands.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .foregroundStyle(.secondary)
+                                Text("Recent:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 6) {
+                                        ForEach(recentCommands.suffix(5), id: \.self) { cmd in
+                                            Button(cmd) {
+                                                commandInput = cmd
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .font(.caption2)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Output")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            ScrollView {
+                                Text(commandOutput.isEmpty ? "(no output)" : commandOutput)
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(minHeight: 80, maxHeight: 180)
+                            .background(Color.black.opacity(0.06))
+                            .cornerRadius(6)
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.shield")
+                                .foregroundStyle(.orange)
+                            Text("Be careful: commands run with your user privileges. Avoid destructive operations.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                // System data search permissions section (Calendars, Reminders, Photos, Contacts, Automation)
+                Form {
+                    SystemPermissionsSection()
+                }
+                .formStyle(.grouped)
+                .frame(maxWidth: .infinity)
+            }
+            .padding(30)
+        }
+        .onAppear {
+            checkPermissions()
+        }
+    }
+    
+    func checkPermissions() {
+        hasAccessibilityPermission = AXIsProcessTrusted()
+    }
+    
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    func triggerAutomationPrompt() {
+        isTestingAutomation = true
+        automationTestMessage = nil
+
+        func run(script: String) -> String? {
+            if let appleScript = NSAppleScript(source: script) {
+                var error: NSDictionary?
+                _ = appleScript.executeAndReturnError(&error)
+                if let error {
+                    return "AppleScript error: \(error)"
+                } else {
+                    return nil
+                }
+            } else {
+                return "Failed to create AppleScript"
+            }
+        }
+
+        func launch(appName: String) {
+            NSWorkspace.shared.launchApplication(appName)
+        }
+
+        func containsMinus600(_ message: String) -> Bool {
+            return message.contains("-600") || message.localizedCaseInsensitiveContains("Application isn’t running") || message.localizedCaseInsensitiveContains("Application isn't running")
+        }
+
+        Task { @MainActor in
+            // 1) Try System Events first (commonly available)
+            let systemEventsScript = """
+            tell application \"System Events\"
+                count of processes
+            end tell
+            """
+
+            if let sysErr = run(script: systemEventsScript) {
+                // 2) Try Shortcuts: launch, wait, then ask for list of shortcuts
+                launch(appName: "Shortcuts")
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                let shortcutsScript = """
+                tell application \"Shortcuts\"
+                    get name of every shortcut
+                end tell
+                """
+                if let scErr = run(script: shortcutsScript) {
+                    if containsMinus600(scErr) {
+                        try? await Task.sleep(nanoseconds: 700_000_000)
+                        if let scErrRetry = run(script: shortcutsScript) {
+                            // 3) Fallback: Terminal launch + no-op, with retry on -600
+                            launch(appName: "Terminal")
+                            try? await Task.sleep(nanoseconds: 700_000_000)
+                            let terminalScript = """
+                            tell application \"Terminal\"
+                                do script \"echo automation-test\"
+                            end tell
+                            """
+                            if let termErr = run(script: terminalScript) {
+                                if containsMinus600(termErr) {
+                                    try? await Task.sleep(nanoseconds: 700_000_000)
+                                    if let termErrRetry = run(script: terminalScript) {
+                                        automationTestMessage = termErrRetry
+                                    } else {
+                                        automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                                    }
+                                } else {
+                                    automationTestMessage = termErr
+                                }
+                            } else {
+                                automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                            }
+                        } else {
+                            automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                        }
+                    } else {
+                        automationTestMessage = scErr
+                    }
+                } else {
+                    automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                }
+            } else {
+                automationTestMessage = "Automation request sent to System Events. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+            }
+
+            isTestingAutomation = false
+        }
+    }
+    
+    func runCommand() {
+        let cmd = commandInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return }
+
+        isRunningCommand = true
+        commandOutput = ""
+
+        // Keep a short history
+        if recentCommands.last != cmd {
+            recentCommands.append(cmd)
+            if recentCommands.count > 20 { recentCommands.removeFirst(recentCommands.count - 20) }
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", cmd]
+
+            let pipe = Pipe()
+            let errPipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = errPipe
+
+            do {
+                try process.run()
+            } catch {
+                DispatchQueue.main.async {
+                    self.commandOutput = "Failed to start process: \(error.localizedDescription)"
+                    self.isRunningCommand = false
+                }
+                return
+            }
+
+            process.waitUntilExit()
+
+            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
+            let stderrStr = String(data: errData, encoding: .utf8) ?? ""
+            let status = process.terminationStatus
+
+            DispatchQueue.main.async {
+                var combined = ""
+                if !stdoutStr.isEmpty { combined += stdoutStr }
+                if !stderrStr.isEmpty {
+                    if !combined.isEmpty { combined += "\n" }
+                    combined += stderrStr
+                }
+                combined += "\n(exit status: \(status))"
+                self.commandOutput = combined
+                self.isRunningCommand = false
+            }
+        }
+    }
+}
+
+// MARK: - Shortcut Picker View
+struct ShortcutPickerView: View {
+    @Binding var selectedShortcut: String
+    @State private var availableShortcuts: [String] = []
+    @State private var isLoadingShortcuts = false
+    @State private var loadError: String? = nil
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if isLoadingShortcuts {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading shortcuts...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let error = loadError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if availableShortcuts.isEmpty {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text("No shortcuts found")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                Button(action: loadShortcuts) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoadingShortcuts)
+            }
+            
+            if !availableShortcuts.isEmpty {
+                Picker("Shortcut", selection: $selectedShortcut) {
+                    Text("Select a shortcut").tag("")
+                    ForEach(availableShortcuts, id: \.self) { shortcut in
+                        HStack {
+                            Image(systemName: "bolt.fill")
+                            Text(shortcut)
+                        }
+                        .tag(shortcut)
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                if !selectedShortcut.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Using shortcut: \(selectedShortcut)")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("To create a shortcut:")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("1. Open the Shortcuts app")
+                        Text("2. Create a new shortcut")
+                        Text("3. Add 'Ask for Input' and 'Text' actions")
+                        Text("4. Return here and click 'Refresh'")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(6)
+            }
+        }
+        .onAppear {
+            loadShortcuts()
+        }
+    }
+    
+    private func loadShortcuts() {
+        isLoadingShortcuts = true
+        loadError = nil
+        
+        Task {
+            do {
+                let query = ShortcutsLinkQuery()
+                let shortcuts = try query.shortcuts()
+                
+                await MainActor.run {
+                    availableShortcuts = shortcuts.map { $0.name }
+                    isLoadingShortcuts = false
+                    
+                    if shortcuts.isEmpty {
+                        loadError = "No shortcuts found in Shortcuts app"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    loadError = "Failed to load shortcuts: \(error.localizedDescription)"
+                    isLoadingShortcuts = false
+                }
+            }
+        }
+    }
+}
+// MARK: - Notification Names
+extension Notification.Name {
+    static let menuBarIconVisibilityChanged = Notification.Name("menuBarIconVisibilityChanged")
+    static let hotkeyChanged = Notification.Name("hotkeyChanged")
+    static let chatHistoryCleared = Notification.Name("chatHistoryCleared")
+    static let activateContextDock = Notification.Name("activateContextDock")
+    static let switchToL1 = Notification.Name("switchToL1")
+}
+
+// MARK: - Launch at Login Toggle
+struct LaunchAtLoginToggle: View {
+    @StateObject private var launchHelper = LaunchAtLoginHelper.shared
+
+    var body: some View {
+        if #available(macOS 13.0, *) {
+            HStack(alignment: .center) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch at Login")
+                        .font(.headline)
+                    Text("Start ILauncher automatically when you log in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { launchHelper.isEnabled },
+                    set: { launchHelper.setEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+            }
+        } else {
+            HStack(alignment: .center) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch at Login")
+                        .font(.headline)
+                    Text("Requires macOS 13 or later")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: .constant(false))
+                    .toggleStyle(.switch)
+                    .disabled(true)
+                    .opacity(0.5)
+            }
+        }
+    }
+}
+
+
+// MARK: - FileDocument for App Profile JSON export
+struct AppProfileJSONDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+// MARK: - Menu Bar Apps Settings
+
+struct MenuBarAppsSettingsView: View {
+    @ObservedObject private var manager = MenuBarItemManager.shared
+    @State private var showAddSheet = false
+
+    /// Running apps merged with pinned: each entry shows running state + pinned state
+    var mergedApps: [(name: String, bundleId: String, icon: NSImage?, sfSymbol: String, isRunning: Bool, isPinned: Bool)] {
+        var seen = Set<String>()
+        var result: [(name: String, bundleId: String, icon: NSImage?, sfSymbol: String, isRunning: Bool, isPinned: Bool)] = []
+
+        // Pinned apps first (always visible)
+        for app in manager.manualApps {
+            seen.insert(app.bundleId)
+            let runningItem = manager.statusItems.first { $0.bundleId == app.bundleId }
+            result.append((name: app.name, bundleId: app.bundleId,
+                           icon: runningItem?.icon, sfSymbol: app.sfSymbol,
+                           isRunning: runningItem != nil, isPinned: true))
+        }
+
+        // Running apps not already pinned
+        for item in manager.statusItems {
+            guard let bid = item.bundleId, bid != Bundle.main.bundleIdentifier,
+                  !seen.contains(bid) else { continue }
+            seen.insert(bid)
+            result.append((name: item.appName, bundleId: bid,
+                           icon: item.icon, sfSymbol: "menubar.rectangle",
+                           isRunning: true, isPinned: false))
+        }
+        return result
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Running & Pinned")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button { manager.refresh() } label: {
+                    Image(systemName: "arrow.clockwise").font(.caption)
+                }.buttonStyle(.plain)
+                Button { manager.refresh(); showAddSheet = true } label: {
+                    Image(systemName: "plus").font(.caption)
+                }.buttonStyle(.plain)
+            }
+
+            if mergedApps.isEmpty {
+                HStack {
+                    Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    Text("No menu bar apps found. Open the context dock to discover them.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(mergedApps, id: \.bundleId) { app in
+                    HStack(spacing: 8) {
+                        // Icon
+                        if let icon = app.icon {
+                            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                        } else {
+                            Image(systemName: app.sfSymbol).font(.caption).frame(width: 16, height: 16)
+                        }
+                        // Name + status
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(app.name).font(.subheadline).lineLimit(1)
+                            HStack(spacing: 4) {
+                                if app.isRunning {
+                                    Circle().fill(.green).frame(width: 5, height: 5)
+                                    Text("Running").font(.caption2).foregroundStyle(.secondary)
+                                } else {
+                                    Circle().fill(.gray).frame(width: 5, height: 5)
+                                    Text("Not running").font(.caption2).foregroundStyle(.secondary)
+                                }
+                                if app.isPinned {
+                                    Text("· Pinned").font(.caption2).foregroundStyle(.purple)
+                                }
+                            }
+                        }
+                        Spacer()
+                        // Pin / Unpin button
+                        Button {
+                            if app.isPinned {
+                                manager.removeManual(id: app.bundleId)
+                            } else {
+                                manager.addManual(ManualMenuBarApp(name: app.name, bundleId: app.bundleId, sfSymbol: app.sfSymbol))
+                            }
+                        } label: {
+                            Image(systemName: app.isPinned ? "pin.slash.fill" : "pin")
+                                .font(.caption)
+                                .foregroundStyle(app.isPinned ? .purple : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(app.isPinned ? "Unpin from context dock" : "Pin to context dock")
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .onAppear { manager.refresh() }
+        .sheet(isPresented: $showAddSheet) {
+            AddMenuBarAppSheet(isPresented: $showAddSheet)
+        }
+    }
+}
+
+struct AddMenuBarAppSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject private var manager = MenuBarItemManager.shared
+    @State private var manualName = ""
+    @State private var manualBundleId = ""
+    @State private var manualSymbol = "menubar.rectangle"
+    @State private var selectedTab = 0  // 0=from running, 1=manual
+
+    // Running apps that look like menu-bar apps (have no regular window or are status-bar only)
+    var candidates: [(name: String, bundleId: String, icon: NSImage?)] {
+        let running = NSWorkspace.shared.runningApplications
+        return running.compactMap { app in
+            guard let name = app.localizedName,
+                  let bid = app.bundleIdentifier,
+                  bid != Bundle.main.bundleIdentifier,
+                  app.activationPolicy != .regular else { return nil }
+            let ic = app.icon.map { i -> NSImage in let c = i.copy() as! NSImage; c.size = NSSize(width: 16, height: 16); return c }
+            return (name: name, bundleId: bid, icon: ic)
+        }.sorted { $0.name < $1.name }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Add Menu Bar App")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { isPresented = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding()
+
+            Divider()
+
+            Picker("", selection: $selectedTab) {
+                Text("Running Apps").tag(0)
+                Text("Manual Entry").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding()
+
+            if selectedTab == 0 {
+                // Running accessory/menu-bar apps
+                List(candidates, id: \.bundleId) { app in
+                    HStack(spacing: 10) {
+                        if let ic = app.icon { Image(nsImage: ic) }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(app.name).font(.subheadline)
+                            Text(app.bundleId).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Pin") {
+                            manager.addManual(ManualMenuBarApp(
+                                name: app.name,
+                                bundleId: app.bundleId,
+                                sfSymbol: "menubar.rectangle"
+                            ))
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(manager.manualApps.contains(where: { $0.bundleId == app.bundleId }))
+                    }
+                }
+            } else {
+                // Manual bundle ID entry
+                Form {
+                    TextField("App Name", text: $manualName)
+                    TextField("Bundle ID (e.g. com.supercharge.amphetamine)", text: $manualBundleId)
+                    TextField("SF Symbol Icon", text: $manualSymbol)
+                    HStack {
+                        Spacer()
+                        Button("Add") {
+                            guard !manualName.isEmpty, !manualBundleId.isEmpty else { return }
+                            manager.addManual(ManualMenuBarApp(
+                                name: manualName,
+                                bundleId: manualBundleId,
+                                sfSymbol: manualSymbol.isEmpty ? "menubar.rectangle" : manualSymbol
+                            ))
+                            manualName = ""; manualBundleId = ""; manualSymbol = "menubar.rectangle"
+                        }
+                        .buttonStyle(.borderedProminent).disabled(manualName.isEmpty || manualBundleId.isEmpty)
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 460, height: 480)
+    }
+}
+
+#Preview {
+    SettingsView()
+}
+
+
+// MARK: - Context Dock App Detail (adapter actions + starred menu items combined)
+
+private struct ContextDockAppDetailView: View {
+    let bundleId: String
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var adapter: AppAdapter? {
+        adapterManager.adapters.first { $0.bundleId == bundleId }
+    }
+
+    private var starredItems: [String] {
+        Array(settings.favouriteMenuPills(for: bundleId)).sorted()
+    }
+
+    private var appName: String {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.localizedName ?? bundleId
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return bundleId
+    }
+
+    private var appIcon: NSImage? {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.icon
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return nil
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // App header
+                HStack(spacing: 12) {
+                    if let icon = appIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 40, height: 40)
+                            .cornerRadius(9)
+                    } else {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color.accentColor.opacity(0.15))
+                            .frame(width: 40, height: 40)
+                            .overlay(Image(systemName: "app.fill").foregroundStyle(Color.accentColor))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(appName)
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(bundleId)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    // Adapter controls (enable toggle + edit JSON) if adapter exists
+                    if let adp = adapter {
+                        if let fileURL = adp.sourceFileURL {
+                            Button {
+                                NSWorkspace.shared.open(fileURL)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "pencil").font(.system(size: 11))
+                                    Text("Edit JSON").font(.system(size: 11))
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        Toggle("Adapter", isOn: Binding(
+                            get: { adp.isEnabled },
+                            set: { adapterManager.setEnabled($0, for: adp.bundleId) }
+                        ))
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
+                // MARK: Adapter Actions section
+                if let adp = adapter, !adp.actions.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color.accentColor)
+                            Text("Adapter Actions")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(adp.actions.count)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
+
+                        ForEach(adp.actions) { action in
+                            AdapterActionRowView(action: action)
+                            if action.id != adp.actions.last?.id {
+                                Divider().padding(.leading, 44)
+                            }
+                        }
+
+                        if !adp.isBuiltIn {
+                            Divider().padding(.top, 8)
+                            HStack(spacing: 8) {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                Text("User adapter — edit the JSON file to modify actions.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                        }
+                    }
+
+                    Divider().padding(.top, 4)
+                }
+
+                // MARK: Starred Menu Items section
+                if !starredItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.yellow)
+                            Text("Starred Menu Items")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(starredItems.count)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
+
+                        ForEach(starredItems, id: \.self) { name in
+                            HStack(spacing: 10) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.yellow)
+                                    .frame(width: 20)
+                                Text(name)
+                                    .font(.system(size: 13))
+                                    .lineLimit(1)
+                                Spacer()
+                                Button {
+                                    settings.toggleFavouriteMenuPill(name, for: bundleId)
+                                } label: {
+                                    Image(systemName: "star.slash")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove from Favourites")
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 7)
+                            if name != starredItems.last {
+                                Divider().padding(.leading, 46)
+                            }
+                        }
+                    }
+                }
+
+                // Empty state — no adapter and no starred items
+                if adapter == nil && starredItems.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.tertiary)
+                        Text("No context dock items")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                        Text("Add an adapter file or star menu items in the context dock to see them here.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 260)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                }
+
+                Spacer(minLength: 20)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Favourite Menus sidebar section (kept for reference, no longer used in main panel)
+
+private struct FavouriteMenusSidebarSection: View {
+    @Binding var showFavMenus: Bool
+    @Binding var selectedFavBundleId: String?
+    let onSelect: () -> Void
+
+    @ObservedObject private var settings = AppSettings.shared
+
+    /// Apps that have at least one favourited pill — sorted by name.
+    private var favApps: [(bundleId: String, appName: String, icon: NSImage?, count: Int)] {
+        let dict = settings.allFavouriteMenuPills()
+        return dict
+            .filter { !$0.value.isEmpty }
+            .map { bundleId, names in
+                let appName = resolvedName(bundleId: bundleId)
+                let icon    = resolvedIcon(bundleId: bundleId)
+                return (bundleId: bundleId, appName: appName, icon: icon, count: names.count)
+            }
+            .sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Section header
+            HStack(spacing: 4) {
+                Text("Favourite Menus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.4)
+                Spacer()
+                Text("\(favApps.count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            if favApps.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "star.slash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text("Right-click any menu pill in the dock to star it")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+            } else {
+                ForEach(favApps, id: \.bundleId) { app in
+                    let isSelected = selectedFavBundleId == app.bundleId
+                    Button {
+                        selectedFavBundleId = app.bundleId
+                        showFavMenus = true
+                        onSelect()
+                    } label: {
+                        HStack(spacing: 8) {
+                            // App icon
+                            if let icon = app.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .frame(width: 18, height: 18)
+                                    .cornerRadius(4)
+                            } else {
+                                Image(systemName: "app.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(isSelected ? .white : Color.yellow)
+                                    .frame(width: 18, height: 18)
+                            }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(app.appName)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(isSelected ? .white : .primary)
+                                    .lineLimit(1)
+                                Text("\(app.count) starred")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(isSelected ? .white.opacity(0.7) : .secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(isSelected ? Color.accentColor : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                }
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    private func resolvedName(bundleId: String) -> String {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.localizedName ?? bundleId.components(separatedBy: ".").last ?? bundleId
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return bundleId.components(separatedBy: ".").last ?? bundleId
+    }
+
+    private func resolvedIcon(bundleId: String) -> NSImage? {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.icon
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return nil
+    }
+}
+
+// MARK: - Favourite Menus detail panel
+
+private struct FavouriteMenusDetailView: View {
+    let bundleId: String
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var appName: String {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.localizedName ?? bundleId
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return bundleId
+    }
+
+    private var appIcon: NSImage? {
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            return app.icon
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return nil
+    }
+
+    private var favourites: [String] {
+        Array(settings.favouriteMenuPills(for: bundleId)).sorted()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                if let icon = appIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 36, height: 36)
+                        .cornerRadius(8)
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.yellow.opacity(0.2))
+                        .frame(width: 36, height: 36)
+                        .overlay(Image(systemName: "star.fill").foregroundStyle(.yellow))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(appName)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(bundleId)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(favourites.count) starred")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+
+            Divider()
+
+            if favourites.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "star.slash")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.tertiary)
+                    Text("No starred menu items yet")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    Text("In the context dock, right-click any menu pill and choose \"Add to Favourites\"")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 260)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Starred items list
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text("Starred Menu Items")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(favourites, id: \.self) { name in
+                                HStack(spacing: 10) {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.yellow)
+                                        .frame(width: 20)
+                                    Text(name)
+                                        .font(.system(size: 13))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button {
+                                        settings.toggleFavouriteMenuPill(name, for: bundleId)
+                                    } label: {
+                                        Image(systemName: "star.slash")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Remove from Favourites")
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 7)
+                                Divider().padding(.leading, 46)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}

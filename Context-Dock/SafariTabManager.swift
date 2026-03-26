@@ -1,0 +1,211 @@
+// SafariTabManager.swift
+// ILauncher
+//
+// Fetches all open Safari tabs via AppleScript and provides
+// instant tab-switching from the ILauncher panel.
+
+import Foundation
+import AppKit
+
+// MARK: - Safari Tab Model
+
+struct SafariTab: Identifiable {
+    let id = UUID()
+    let title: String
+    let url: String
+    let windowIndex: Int
+    let tabIndex: Int
+
+    /// Display-friendly domain extracted from url
+    var domain: String {
+        guard let host = URL(string: url)?.host else { return url }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// SF Symbol that best represents the page type
+    var icon: String {
+        let u = url.lowercased()
+        if u.contains("github.com")          { return "chevron.left.forwardslash.chevron.right" }
+        if u.contains("youtube.com")         { return "play.rectangle.fill" }
+        if u.contains("mail.google.com")     { return "envelope.fill" }
+        if u.contains("docs.google.com")     { return "doc.text.fill" }
+        if u.contains("notion.so")           { return "square.grid.2x2" }
+        if u.contains("figma.com")           { return "paintbrush.fill" }
+        if u.contains("stackoverflow.com")   { return "questionmark.circle.fill" }
+        if u.contains("twitter.com") ||
+           u.contains("x.com")               { return "bird.fill" }
+        if u.contains("reddit.com")          { return "bubble.left.and.bubble.right.fill" }
+        if u.contains("apple.com")           { return "applelogo" }
+        if u.contains("localhost") ||
+           u.contains("127.0.0.1")           { return "server.rack" }
+        if u.hasPrefix("file://")            { return "doc.fill" }
+        return "safari"
+    }
+
+    /// Accent color hint for the tab pill
+    var accentColor: String {
+        let u = url.lowercased()
+        if u.contains("github.com")      { return "gray" }
+        if u.contains("youtube.com")     { return "red" }
+        if u.contains("mail.google")     { return "red" }
+        if u.contains("docs.google")     { return "blue" }
+        if u.contains("notion.so")       { return "gray" }
+        if u.contains("figma.com")       { return "purple" }
+        if u.contains("localhost")       { return "green" }
+        return "blue"
+    }
+}
+
+// MARK: - SafariTabManager
+
+final class SafariTabManager {
+    static let shared = SafariTabManager()
+    private init() {}
+
+    // MARK: Fetch
+
+    /// Fetch all open tabs across all Safari windows.
+    /// Returns an empty array if Safari is not running or AppleScript fails.
+    func fetchTabs() async -> [SafariTab] {
+        let script = """
+        tell application "Safari"
+            set output to {}
+            set winCount to count of windows
+            repeat with wi from 1 to winCount
+                try
+                    set tabCount to count of tabs of window wi
+                    repeat with ti from 1 to tabCount
+                        try
+                            set t to tab ti of window wi
+                            set tabTitle to name of t
+                            set tabURL to URL of t
+                            if tabURL is missing value then set tabURL to ""
+                            if tabTitle is missing value then set tabTitle to tabURL
+                            set end of output to (wi as string) & "|||" & (ti as string) & "|||" & tabTitle & "|||" & tabURL
+                        end try
+                    end repeat
+                end try
+            end repeat
+            return output
+        end tell
+        """
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let appleScript = NSAppleScript(source: script) else {
+                    continuation.resume(returning: []); return
+                }
+                var error: NSDictionary?
+                let result = appleScript.executeAndReturnError(&error)
+                guard error == nil else { continuation.resume(returning: []); return }
+
+                var tabs: [SafariTab] = []
+                // Result is an AppleScript list; iterate descriptors
+                let count = result.numberOfItems
+                for i in 1...max(1, count) {
+                    guard let item = result.atIndex(i)?.stringValue else { continue }
+                    let parts = item.components(separatedBy: "|||")
+                    guard parts.count == 4,
+                          let wi = Int(parts[0]),
+                          let ti = Int(parts[1]) else { continue }
+                    let title = parts[2].isEmpty ? parts[3] : parts[2]
+                    let url   = parts[3]
+                    tabs.append(SafariTab(title: title, url: url,
+                                          windowIndex: wi, tabIndex: ti))
+                }
+                continuation.resume(returning: tabs)
+            }
+        }
+    }
+
+    // MARK: Switch
+
+    /// Bring the given tab to front in Safari and activate the app.
+    func switchTo(_ tab: SafariTab) {
+        let script = """
+        tell application "Safari"
+            set current tab of window \(tab.windowIndex) to tab \(tab.tabIndex) of window \(tab.windowIndex)
+            set index of window \(tab.windowIndex) to 1
+            activate
+        end tell
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+    }
+
+    // MARK: Current tab info
+
+    /// Returns the URL of the currently active Safari tab, or nil.
+    func currentURL() async -> String? {
+        let script = """
+        tell application "Safari"
+            try
+                return URL of current tab of front window
+            end try
+        end tell
+        """
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let s = NSAppleScript(source: script) else {
+                    continuation.resume(returning: nil); return
+                }
+                var err: NSDictionary?
+                let res = s.executeAndReturnError(&err)
+                continuation.resume(returning: err == nil ? res.stringValue : nil)
+            }
+        }
+    }
+
+    // MARK: Execute JS in current tab
+
+    /// Run arbitrary JavaScript in Safari's frontmost tab and return the result string.
+    func executeJS(_ js: String) async -> String? {
+        let escaped = js.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Safari"
+            try
+                return execute JavaScript "\(escaped)" in current tab of front window
+            end try
+        end tell
+        """
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let s = NSAppleScript(source: script) else {
+                    continuation.resume(returning: nil); return
+                }
+                var err: NSDictionary?
+                let res = s.executeAndReturnError(&err)
+                continuation.resume(returning: err == nil ? res.stringValue : nil)
+            }
+        }
+    }
+
+    // MARK: Close tab
+
+    func closeTab(_ tab: SafariTab) {
+        let script = """
+        tell application "Safari"
+            close tab \(tab.tabIndex) of window \(tab.windowIndex)
+        end tell
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+    }
+
+    // MARK: New tab
+
+    func openURL(_ urlString: String) {
+        let escaped = urlString.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+        tell application "Safari"
+            make new document
+            set URL of current tab of front window to "\(escaped)"
+            activate
+        end tell
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+    }
+}

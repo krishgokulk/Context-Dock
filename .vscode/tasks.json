@@ -1,0 +1,35 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build & Run ILauncher",
+			"type": "shell",
+			"command": "xcodebuild -project ILauncher.xcodeproj -scheme ILauncher -configuration Debug build && pkill -x ILauncher 2>/dev/null; sleep 0.5; open \"${HOME}/Library/Developer/Xcode/DerivedData/ILauncher-faidlwfarsmjnhacscxvhbqmdxux/Build/Products/Debug/ILauncher.app\"",
+			"options": {
+				"cwd": "/Users/gokulakannan/Desktop/ILauncher"
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"clear": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Run ILauncher (no build)",
+			"type": "shell",
+			"command": "pkill -x ILauncher 2>/dev/null; sleep 0.5; open \"${HOME}/Library/Developer/Xcode/DerivedData/ILauncher-faidlwfarsmjnhacscxvhbqmdxux/Build/Products/Debug/ILauncher.app\"",
+			"group": "build",
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"clear": true
+			},
+			"problemMatcher": []
+		}
+	]
+}

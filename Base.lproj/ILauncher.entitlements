@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- ============================================== -->
+	<!-- APP SANDBOX                                    -->
+	<!-- Required for App Store distribution            -->
+	<!-- ============================================== -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- FILE ACCESS                                    -->
+	<!-- ============================================== -->
+	
+	<!-- User Selected Files - allows file picker access -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	
+	<!-- Downloads Folder -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- MEDIA ASSET ACCESS                             -->
+	<!-- ============================================== -->
+	
+	<!-- Pictures/Photos -->
+	<key>com.apple.security.assets.pictures.read-write</key>
+	<true/>
+	
+	<!-- Music -->
+	<key>com.apple.security.assets.music.read-write</key>
+	<true/>
+	
+	<!-- Movies -->
+	<key>com.apple.security.assets.movies.read-write</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- PERSONAL INFORMATION ACCESS                    -->
+	<!-- CRITICAL FOR CONNECTORS                        -->
+	<!-- ============================================== -->
+	
+	<!-- Photos Library - REQUIRED for Photos Connector -->
+	<!-- THIS WAS MISSING IN YOUR ORIGINAL FILE -->
+	<key>com.apple.security.personal-information.photos-library</key>
+	<true/>
+	
+	<!-- Contacts - Required for Contacts Connector -->
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
+	
+	<!-- Calendar & Reminders - Required for Calendar/Reminders Connectors -->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	
+	<!-- Location (Optional) -->
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- APPLESCRIPT AUTOMATION                         -->
+	<!-- CRITICAL - Required for Mail, Notes, Messages, -->
+	<!-- Calendar, Finder, Safari, Terminal connectors  -->
+	<!-- ============================================== -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- NETWORK ACCESS                                 -->
+	<!-- Required for AI provider APIs                  -->
+	<!-- ============================================== -->
+	
+	<!-- Outgoing network connections -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	
+	<!-- Incoming network connections (if running local server) -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- DEVELOPMENT                                    -->
+	<!-- Remove for production/App Store                -->
+	<!-- ============================================== -->
+	
+	<!-- Allow debugging -->
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+	
+	<!-- ============================================== -->
+	<!-- OPTIONAL ENTITLEMENTS                          -->
+	<!-- Uncomment if needed                            -->
+	<!-- ============================================== -->
+	
+	<!-- Print -->
+	<!-- <key>com.apple.security.print</key> -->
+	<!-- <true/> -->
+	
+	<!-- Camera -->
+	<!-- <key>com.apple.security.device.camera</key> -->
+	<!-- <true/> -->
+	
+	<!-- Microphone -->
+	<!-- <key>com.apple.security.device.audio-input</key> -->
+	<!-- <true/> -->
+	
+	<!-- USB -->
+	<!-- <key>com.apple.security.device.usb</key> -->
+	<!-- <true/> -->
+	
+	<!-- Bluetooth -->
+	<!-- <key>com.apple.security.device.bluetooth</key> -->
+	<!-- <true/> -->
+</dict>
+</plist>

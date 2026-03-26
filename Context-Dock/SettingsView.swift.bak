@@ -1,0 +1,2335 @@
+//
+//  SettingsView.swift
+//  ILauncher
+//
+//  Created by Krishgokul on 20/11/2025.
+//
+
+import SwiftUI
+import AppKit
+import Carbon
+import UniformTypeIdentifiers
+
+struct SettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var selectedTab = 0
+    
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            GeneralSettingsView()
+                .tabItem {
+                    Label("General", systemImage: "gear")
+                }
+                .tag(0)
+
+            AIProviderSettingsView()
+                .tabItem {
+                    Label("AI Provider", systemImage: "brain.head.profile")
+                }
+                .tag(1)
+
+            ShortcutsSettingsView()
+                .tabItem {
+                    Label("Shortcuts", systemImage: "keyboard")
+                }
+                .tag(2)
+
+            PermissionsSettingsView()
+                .tabItem {
+                    Label("Permissions", systemImage: "lock.shield")
+                }
+                .tag(3)
+        }
+        .frame(width: 550, height: 550)
+    }
+}
+
+// MARK: - General Settings Tab
+struct GeneralSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+
+    func showSuccessAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Success"
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    func showErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Error"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                CardSection(title: "Appearance", systemImage: "paintbrush") {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Toggle(isOn: Binding(
+                            get: { settings.showMenuBarIcon },
+                            set: { newValue in
+                                settings.showMenuBarIcon = newValue
+                                NotificationCenter.default.post(name: .menuBarIconVisibilityChanged, object: nil)
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Show Menu Bar Icon")
+                                    .font(.headline)
+                                Text("Display ILauncher icon in the menu bar")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        Divider()
+
+                        Toggle(isOn: $settings.enableSpotlightSearch) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Enable Spotlight Search")
+                                    .font(.headline)
+                                Text("Search for files, folders, documents, and more using Spotlight")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        if settings.enableSpotlightSearch {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle(isOn: $settings.useCustomSearchDirectories) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Use Custom Search Directories")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text("Only search in specific folders for better privacy")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .toggleStyle(.switch)
+
+                                if settings.useCustomSearchDirectories {
+                                    SearchDirectoriesListView()
+                                }
+                            }
+                            .padding(.leading, 4)
+
+                            FileIndexStatusView()
+                                .padding(.top, 4)
+                        }
+
+                        Divider()
+
+                        Toggle(isOn: $settings.enableFrontmostDetection) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Enable Context Awareness")
+                                    .font(.headline)
+                                Text("Show shortcuts for the frontmost application")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("AI Chat History")
+                                        .font(.headline)
+                                    Text("Manage your AI conversation history")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                Button(action: {
+                                    settings.clearChatHistory()
+                                    NotificationCenter.default.post(name: .chatHistoryCleared, object: nil)
+                                }) {
+                                    Label("Clear History", systemImage: "trash")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!settings.hasChatHistory())
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "rectangle.on.rectangle")
+                                    .foregroundStyle(.blue)
+                                Text("Launcher Window Transparency")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(Int(settings.launcherWindowOpacity * 100))%")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $settings.launcherWindowOpacity, in: 0.5...1.0, step: 0.05)
+                            Text("Adjust the transparency of the main launcher window")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "folder")
+                                    .foregroundStyle(.purple)
+                                Text("Folder Preview Transparency")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(Int(settings.folderPreviewOpacity * 100))%")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: $settings.folderPreviewOpacity, in: 0.5...1.0, step: 0.05)
+                            Text("Adjust the transparency of folder preview windows")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Divider()
+
+                        LaunchAtLoginToggle()
+                    }
+                }
+
+                CardSection(title: "Backup & Restore", systemImage: "arrow.up.arrow.down.circle") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Export your settings for backup or transfer to another Mac")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            Button(action: {
+                                let result = SettingsBackupManager.shared.exportSettings()
+                                if case .success = result {
+                                    showSuccessAlert(message: "Settings exported successfully!")
+                                } else if case .failure(let error) = result {
+                                    showErrorAlert(message: "Export failed: \(error.localizedDescription)")
+                                }
+                            }) {
+                                Label("Export Settings", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button(action: {
+                                let result = SettingsBackupManager.shared.importSettings()
+                                if case .success = result {
+                                    showSuccessAlert(message: "Settings imported successfully! Some changes may require app restart.")
+                                } else if case .failure(let error) = result {
+                                    showErrorAlert(message: "Import failed: \(error.localizedDescription)")
+                                }
+                            }) {
+                                Label("Import Settings", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+
+                CardSection(title: "App", systemImage: "power") {
+                    HStack {
+                        Spacer()
+                        Button("Quit ILauncher") {
+                            NSApplication.shared.terminate(nil)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(20)
+        }
+    }
+}
+
+struct CardSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(.blue)
+                Text(title)
+                    .font(.headline)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(12)
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(10)
+        }
+    }
+}
+
+// MARK: - File Index Status View
+struct FileIndexStatusView: View {
+    @ObservedObject var fileIndexManager = FileIndexManager.shared
+    @State private var isReindexing = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("File Index")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Spacer()
+                
+                if fileIndexManager.isReady {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.system(size: 12))
+                        Text("Ready")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                } else if fileIndexManager.progress.isIndexing {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Indexing...")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                // Stats
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Files Indexed")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(fileIndexManager.indexedFiles.count)")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    if let lastIndex = fileIndexManager.metadata.lastFullIndexDate {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Last Updated")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(lastIndex, style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+                
+                // Indexing progress
+                if fileIndexManager.progress.isIndexing {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: fileIndexManager.progress.progressPercentage, total: 100)
+                            .progressViewStyle(.linear)
+                        
+                        HStack {
+                            Text(fileIndexManager.progress.currentDirectory)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            
+                            Spacer()
+                            
+                            Text("\(fileIndexManager.progress.filesIndexed) files")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                // Actions
+                HStack(spacing: 12) {
+                    Button(action: {
+                        Task {
+                            isReindexing = true
+                            await fileIndexManager.forceReindex()
+                            isReindexing = false
+                        }
+                    }) {
+                        Label("Rebuild Index", systemImage: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(fileIndexManager.progress.isIndexing)
+                    
+                    Button(action: {
+                        Task {
+                            await fileIndexManager.clearCache()
+                        }
+                    }) {
+                        Label("Clear Cache", systemImage: "trash")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(fileIndexManager.progress.isIndexing)
+                }
+
+                // Error display
+                if let error = fileIndexManager.progress.lastError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption2)
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(12)
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(8)
+
+            Text("Files are indexed at launch for instant search results. Re-index if you've added new files.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Search Directories List View
+struct SearchDirectoriesListView: View {
+    @ObservedObject var settings = AppSettings.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Search Directories")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+                
+                Button(action: addDirectory) {
+                    Label("Add Directory", systemImage: "plus.circle.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+            
+            if settings.searchDirectories.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+
+                    Text("No directories added")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("Add directories to limit search scope. If notes aren't appearing in results, ensure their parent folders are included here or turn off custom directories.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(settings.searchDirectories) { directory in
+                        SearchDirectoryRow(directory: directory)
+                    }
+                }
+                .padding(8)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+            }
+        }
+    }
+    
+    func addDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a directory to search"
+        panel.prompt = "Select"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            let displayName = url.lastPathComponent
+            // Use URL-based method to create security-scoped bookmark
+            settings.addSearchDirectory(url: url, displayName: displayName)
+        }
+    }
+}
+
+// MARK: - Search Directory Row
+struct SearchDirectoryRow: View {
+    let directory: SearchDirectory
+    @ObservedObject var settings = AppSettings.shared
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.blue)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(directory.displayName)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                Text(directory.path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            
+            Spacer()
+            
+            Button(action: {
+                settings.removeSearchDirectory(directory)
+            }) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove directory")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.5))
+        .cornerRadius(6)
+    }
+}
+
+// MARK: - AI Provider Settings Tab
+struct AIProviderSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var isTestingConnection = false
+    @State private var connectionTestResult: ConnectionTestResult? = nil
+    @State private var isFetchingModels = false
+    @State private var fetchedOllamaModels: [OllamaModel] = []
+    
+    enum ConnectionTestResult {
+        case success(String)
+        case failure(String)
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Header
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI Provider")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    Text("Select and configure your preferred AI provider for the AI mode.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Provider Selection
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Select Provider")
+                        .font(.headline)
+                    
+                    ForEach(AIProvider.allCases) { provider in
+                        AIProviderRow(
+                            provider: provider,
+                            isSelected: settings.selectedAIProvider == provider,
+                            isConfigured: settings.isProviderConfigured(provider)
+                        ) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                settings.selectedAIProvider = provider
+                            }
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // Configuration Section
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Text("Configuration")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        if settings.isProviderConfigured(settings.selectedAIProvider) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Configured")
+                                    .foregroundStyle(.green)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    
+                    providerConfigurationView
+                }
+                
+                // Test Connection Button
+                if settings.selectedAIProvider != .onDevice && settings.selectedAIProvider != .shortcuts {
+                    Divider()
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Button(action: testConnection) {
+                                HStack(spacing: 8) {
+                                    if isTestingConnection {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "network")
+                                    }
+                                    Text("Test Connection")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isTestingConnection || !settings.isProviderConfigured(settings.selectedAIProvider))
+                            
+                            if let result = connectionTestResult {
+                                connectionResultView(result)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(24)
+        }
+    }
+    
+    @ViewBuilder
+    private var providerConfigurationView: some View {
+        switch settings.selectedAIProvider {
+        case .onDevice:
+            onDeviceConfigView
+        case .openAI:
+            apiKeyConfigView(
+                title: "OpenAI API Key",
+                key: $settings.openAIAPIKey,
+                placeholder: "sk-...",
+                helpURL: "https://platform.openai.com/api-keys"
+            )
+        case .googleGemini:
+            apiKeyConfigView(
+                title: "Google Gemini API Key",
+                key: $settings.googleGeminiAPIKey,
+                placeholder: "AIza...",
+                helpURL: "https://makersuite.google.com/app/apikey"
+            )
+        case .anthropic:
+            apiKeyConfigView(
+                title: "Anthropic API Key",
+                key: $settings.anthropicAPIKey,
+                placeholder: "sk-ant-...",
+                helpURL: "https://console.anthropic.com/settings/keys"
+            )
+        case .ollama:
+            ollamaConfigView
+        case .shortcuts:
+            shortcutsConfigView
+        }
+    }
+    
+    private var onDeviceConfigView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.primary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On-Device Intelligence")
+                        .font(.headline)
+                    Text("Powered by Apple's Foundation Models")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                FeatureRow(icon: "lock.shield.fill", text: "Private - data never leaves your device", color: .green)
+                FeatureRow(icon: "bolt.fill", text: "Fast - no network latency", color: .orange)
+                FeatureRow(icon: "key.slash", text: "No API key required", color: .blue)
+                FeatureRow(icon: "macbook", text: "Requires Apple Silicon Mac", color: .purple)
+            }
+            .padding()
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(12)
+
+
+            // Custom System Prompt
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("System Prompt")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Spacer()
+                }
+
+                Text("Customize the behavior and personality of the AI assistant")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $settings.onDeviceSystemPrompt)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(height: 100)
+                    .padding(8)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+
+                HStack {
+                    Button("Reset to Default") {
+                        settings.onDeviceSystemPrompt = "You are a helpful AI assistant for quick queries and information. Provide concise, accurate answers to user questions. Keep responses brief and to the point."
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.blue)
+
+                    Spacer()
+
+                    Text("\(settings.onDeviceSystemPrompt.count) characters")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Note: On-device AI uses Apple Intelligence and requires macOS 15+ and an Apple Silicon Mac with sufficient RAM.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+    
+    private func apiKeyConfigView(title: String, key: Binding<String>, placeholder: String, helpURL: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            
+            HStack {
+                SecureField(placeholder, text: key)
+                    .textFieldStyle(.roundedBorder)
+                
+                if !key.wrappedValue.isEmpty {
+                    Button(action: {
+                        key.wrappedValue = ""
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            
+            HStack {
+                Button(action: {
+                    if let url = URL(string: helpURL) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.circle")
+                        Text("Get API Key")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.link)
+                
+                Spacer()
+                
+                Text("Your API key is stored securely in your Mac's Keychain")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+    
+    private var ollamaConfigView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Endpoint Configuration
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Ollama Endpoint")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                HStack {
+                    TextField("http://localhost:11434", text: $settings.ollamaEndpoint)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Button(action: fetchOllamaModels) {
+                        HStack(spacing: 4) {
+                            if isFetchingModels {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text("Fetch Models")
+                        }
+                        .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isFetchingModels || settings.ollamaEndpoint.isEmpty)
+                }
+            }
+            
+            // Model Selection
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Select Model")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                if fetchedOllamaModels.isEmpty && settings.ollamaModels.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                        
+                        Text("No models found")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Text("Make sure Ollama is running and click 'Fetch Models'")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.gray.opacity(0.06))
+                    .cornerRadius(8)
+                } else {
+                    let models = fetchedOllamaModels.isEmpty ? settings.ollamaModels : fetchedOllamaModels
+                    
+                    Picker("Model", selection: $settings.selectedOllamaModel) {
+                        Text("Select a model").tag("")
+                        ForEach(models) { model in
+                            Text(model.name).tag(model.name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            
+            // Help text
+            VStack(alignment: .leading, spacing: 4) {
+                Text("To use Ollama:")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("1. Install Ollama from ollama.ai")
+                    Text("2. Run 'ollama pull llama3.2' to download a model")
+                    Text("3. Click 'Fetch Models' above to see available models")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(8)
+        }
+    }
+    
+    private var shortcutsConfigView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.blue)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Apple Shortcuts")
+                        .font(.headline)
+                    Text("Use any shortcut as your AI provider")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                FeatureRow(icon: "wand.and.stars", text: "Fully customizable workflow", color: .blue)
+                FeatureRow(icon: "lock.shield.fill", text: "Private - you control the data", color: .green)
+                FeatureRow(icon: "key.slash", text: "No API key needed from us", color: .orange)
+                FeatureRow(icon: "app.badge.checkmark", text: "Works with any AI service", color: .purple)
+            }
+            .padding()
+            .background(Color.gray.opacity(0.06))
+            .cornerRadius(12)
+            
+            Divider()
+            
+            // Shortcut Picker
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Select Shortcut")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text("Choose a shortcut that accepts text input and provides a text response")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                ShortcutPickerView(selectedShortcut: $settings.shortcutsProviderShortcut)
+            }
+            .padding()
+            .background(Color.blue.opacity(0.06))
+            .cornerRadius(12)
+
+            // Help text
+            VStack(alignment: .leading, spacing: 8) {
+                Text("💡 How to create a compatible shortcut:")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("1. Open Shortcuts app")
+                    Text("2. Create new shortcut with 'Shortcut Input'")
+                    Text("3. Add your AI integration (ChatGPT, Claude, etc.)")
+                    Text("4. Make sure it outputs text result")
+                    Text("5. Enable 'Show in Share Sheet' and 'Receive Input'")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(Color.orange.opacity(0.06))
+            .cornerRadius(8)
+            
+            Text("Note: Your shortcut will receive the user's query as input and should return a text response.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+    
+    @ViewBuilder
+    private func connectionResultView(_ result: ConnectionTestResult) -> some View {
+        switch result {
+        case .success(let message):
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(message)
+                    .foregroundStyle(.green)
+            }
+            .font(.caption)
+        case .failure(let message):
+            HStack(spacing: 4) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                Text(message)
+                    .foregroundStyle(.red)
+            }
+            .font(.caption)
+        }
+    }
+    
+    private func testConnection() {
+        isTestingConnection = true
+        connectionTestResult = nil
+        
+        Task {
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000) // Simulate network delay
+                
+                switch settings.selectedAIProvider {
+                case .ollama:
+                    // Test Ollama connection
+                    let endpoint = settings.ollamaEndpoint.trimmingCharacters(in: .whitespaces)
+                    guard let url = URL(string: "\(endpoint)/api/tags") else {
+                        throw NSError(domain: "Invalid URL", code: -1)
+                    }
+                    
+                    let (_, response) = try await URLSession.shared.data(from: url)
+                    if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                        await MainActor.run {
+                            connectionTestResult = .success("Connected to Ollama")
+                        }
+                    } else {
+                        throw NSError(domain: "Connection failed", code: -1)
+                    }
+                    
+                case .openAI, .googleGemini, .anthropic:
+                    // For API-based providers, we just verify the key format
+                    let key = settings.getAPIKey(for: settings.selectedAIProvider)
+                    if key.count > 10 {
+                        await MainActor.run {
+                            connectionTestResult = .success("API key looks valid")
+                        }
+                    } else {
+                        throw NSError(domain: "API key too short", code: -1)
+                    }
+                    
+                default:
+                    break
+                }
+            } catch {
+                await MainActor.run {
+                    connectionTestResult = .failure("Connection failed: \(error.localizedDescription)")
+                }
+            }
+            
+            await MainActor.run {
+                isTestingConnection = false
+            }
+        }
+    }
+    
+    private func fetchOllamaModels() {
+        isFetchingModels = true
+        
+        Task {
+            let models = await settings.fetchOllamaModels()
+            
+            await MainActor.run {
+                fetchedOllamaModels = models
+                settings.ollamaModels = models
+                isFetchingModels = false
+                
+                // Auto-select first model if none selected
+                if settings.selectedOllamaModel.isEmpty && !models.isEmpty {
+                    settings.selectedOllamaModel = models[0].name
+                }
+            }
+        }
+    }
+}
+
+// MARK: - AI Provider Row
+struct AIProviderRow: View {
+    let provider: AIProvider
+    let isSelected: Bool
+    let isConfigured: Bool
+    let onSelect: () -> Void
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                // Selection indicator
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .font(.system(size: 20))
+                
+                // Icon
+                Image(systemName: provider.iconName)
+                    .font(.system(size: 24))
+                    .foregroundStyle(isSelected ? .blue : .primary)
+                    .frame(width: 32, height: 32)
+                
+                // Text
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(provider.displayName)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.primary)
+                        
+                        if isConfigured && provider.requiresAPIKey {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    
+                    Text(provider.description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                
+                Spacer()
+            }
+            .padding(12)
+            .background(isSelected ? Color.blue.opacity(0.1) : Color.gray.opacity(0.05))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Feature Row Helper
+struct FeatureRow: View {
+    let icon: String
+    let text: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 20)
+            
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
+// MARK: - Shortcuts Settings Tab
+struct ShortcutsSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var isRecordingHotkey = false
+    @State private var recordedKeyCode: UInt32?
+    @State private var recordedModifiers: UInt32?
+    @State private var localMonitor: Any?
+    
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Global Hotkey")
+                            .font(.headline)
+                        
+                        Text("Press the button below and then type your desired hotkey combination")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Button(action: {
+                            if isRecordingHotkey {
+                                stopRecording()
+                            } else {
+                                startRecording()
+                            }
+                        }) {
+                            HStack {
+                                if isRecordingHotkey {
+                                    Text("Recording... Press any key combo")
+                                        .foregroundStyle(.red)
+                                } else {
+                                    Text(settings.hotkeyDisplayString)
+                                        .fontWeight(.semibold)
+                                        .frame(minWidth: 100)
+                                }
+                            }
+                            .frame(height: 30)
+                            .padding(.horizontal, 12)
+                        }
+                        .buttonStyle(.bordered)
+                        
+                        if isRecordingHotkey {
+                            Button("Cancel") {
+                                stopRecording()
+                            }
+                            .buttonStyle(.bordered)
+                        } else {
+                            Button("Reset to Default") {
+                                resetToDefault()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    
+                    if !isRecordingHotkey {
+                        Text("💡 Tip: Use modifier keys (⌘, ⌥, ⌃, ⇧) + a letter or space")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                    }
+                }
+                .padding()
+            } header: {
+                Text("Launcher Hotkey")
+                    .font(.headline)
+            }
+        }
+        .formStyle(.grouped)
+    }
+    
+    func startRecording() {
+        isRecordingHotkey = true
+        recordedKeyCode = nil
+        recordedModifiers = nil
+        
+        // Monitor for keypress
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags
+            let keyCode = event.keyCode
+            
+            // Convert NSEvent modifiers to Carbon modifiers
+            var carbonModifiers: UInt32 = 0
+            if modifiers.contains(.command) {
+                carbonModifiers |= UInt32(cmdKey)
+            }
+            if modifiers.contains(.option) {
+                carbonModifiers |= UInt32(optionKey)
+            }
+            if modifiers.contains(.control) {
+                carbonModifiers |= UInt32(controlKey)
+            }
+            if modifiers.contains(.shift) {
+                carbonModifiers |= UInt32(shiftKey)
+            }
+            
+            // Require at least one modifier
+            if carbonModifiers != 0 {
+                self.recordedKeyCode = UInt32(keyCode)
+                self.recordedModifiers = carbonModifiers
+                self.applyRecordedHotkey()
+            }
+            
+            return nil // Consume event
+        }
+    }
+    
+    func stopRecording() {
+        isRecordingHotkey = false
+        if let monitor = localMonitor {
+            NSEvent.removeMonitor(monitor)
+            localMonitor = nil
+        }
+    }
+    
+    func applyRecordedHotkey() {
+        guard let keyCode = recordedKeyCode,
+              let modifiers = recordedModifiers else {
+            stopRecording()
+            return
+        }
+        
+        settings.hotkeyKeyCode = keyCode
+        settings.hotkeyModifiers = modifiers
+        
+        stopRecording()
+        
+        // Notify app delegate to re-register hotkey
+        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+    }
+    
+    func resetToDefault() {
+        settings.hotkeyKeyCode = 49 // Space
+        settings.hotkeyModifiers = UInt32(optionKey)
+        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+    }
+}
+
+// MARK: - Permissions Settings Tab
+struct PermissionsSettingsView: View {
+    @State private var hasAccessibilityPermission = false
+    @State private var isTestingAutomation = false
+    @State private var automationTestMessage: String? = nil
+    
+    @State private var commandInput: String = ""
+    @State private var commandOutput: String = ""
+    @State private var isRunningCommand: Bool = false
+    @State private var recentCommands: [String] = []
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Accessibility Card (existing)
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 50))
+                    .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: hasAccessibilityPermission ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
+                        
+                        Text("Accessibility Permissions")
+                            .font(.headline)
+                    }
+                    
+                    Text("Required for global hotkey detection")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(8)
+                
+                if !hasAccessibilityPermission {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("How to enable:")
+                            .font(.headline)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("1. Click 'Open System Settings' below")
+                            Text("2. Find 'ILauncher' in the list")
+                            Text("3. Toggle the switch to enable")
+                            Text("4. Return here and click 'Check Again'")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(8)
+                    
+                    HStack(spacing: 12) {
+                        Button("Open System Settings") {
+                            openAccessibilitySettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        
+                        Button("Check Again") {
+                            checkPermissions()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        Text("✅ Permissions Granted")
+                            .font(.headline)
+                            .foregroundStyle(.green)
+                        
+                        Text("All required permissions are enabled")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                // Automation Permission (open settings only)
+                CardSection(title: "Automation", systemImage: "gearshape.arrow.triangle.2.circlepath") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Automation access lets ILauncher run AppleScripts or interact with other apps.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Note:")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text("macOS only shows apps here after they've requested automation. If ILauncher doesn't appear, try running an action that uses AppleScript once, then return and check again.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button("Open System Settings") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Test Automation") {
+                                automationTestMessage = nil
+                                triggerAutomationPrompt()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Learn More") {
+                                if let url = URL(string: "https://support.apple.com/guide/mac-help/allow-accessibility-apps-mh43185/mac") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.link)
+                        }
+
+                        if isTestingAutomation {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Sending request...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if let msg = automationTestMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: msg.lowercased().contains("error") ? "xmark.octagon.fill" : "checkmark.seal.fill")
+                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
+                                Text(msg)
+                                    .font(.caption)
+                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
+                            }
+                        }
+                    }
+                }
+                
+                CardSection(title: "Command Runner", systemImage: "terminal") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Run a shell command. Output and errors will appear below.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .center, spacing: 8) {
+                            TextField("echo hello", text: $commandInput)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(isRunningCommand)
+
+                            Button(action: runCommand) {
+                                HStack(spacing: 6) {
+                                    if isRunningCommand { ProgressView().scaleEffect(0.7) }
+                                    Text(isRunningCommand ? "Running" : "Run")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(commandInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRunningCommand)
+
+                            Button("Clear") {
+                                commandOutput = ""
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(commandOutput.isEmpty)
+                        }
+
+                        if !recentCommands.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .foregroundStyle(.secondary)
+                                Text("Recent:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 6) {
+                                        ForEach(recentCommands.suffix(5), id: \.self) { cmd in
+                                            Button(cmd) {
+                                                commandInput = cmd
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .font(.caption2)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Output")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            ScrollView {
+                                Text(commandOutput.isEmpty ? "(no output)" : commandOutput)
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(minHeight: 80, maxHeight: 180)
+                            .background(Color.black.opacity(0.06))
+                            .cornerRadius(6)
+                        }
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.shield")
+                                .foregroundStyle(.orange)
+                            Text("Be careful: commands run with your user privileges. Avoid destructive operations.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                // System data search permissions section (Calendars, Reminders, Photos, Contacts, Automation)
+                Form {
+                    SystemPermissionsSection()
+                }
+                .formStyle(.grouped)
+                .frame(maxWidth: .infinity)
+            }
+            .padding(30)
+        }
+        .onAppear {
+            checkPermissions()
+        }
+    }
+    
+    func checkPermissions() {
+        hasAccessibilityPermission = AXIsProcessTrusted()
+    }
+    
+    func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    func triggerAutomationPrompt() {
+        isTestingAutomation = true
+        automationTestMessage = nil
+
+        func run(script: String) -> String? {
+            if let appleScript = NSAppleScript(source: script) {
+                var error: NSDictionary?
+                _ = appleScript.executeAndReturnError(&error)
+                if let error {
+                    return "AppleScript error: \(error)"
+                } else {
+                    return nil
+                }
+            } else {
+                return "Failed to create AppleScript"
+            }
+        }
+
+        func launch(appName: String) {
+            NSWorkspace.shared.launchApplication(appName)
+        }
+
+        func containsMinus600(_ message: String) -> Bool {
+            return message.contains("-600") || message.localizedCaseInsensitiveContains("Application isn’t running") || message.localizedCaseInsensitiveContains("Application isn't running")
+        }
+
+        Task { @MainActor in
+            // 1) Try System Events first (commonly available)
+            let systemEventsScript = """
+            tell application \"System Events\"
+                count of processes
+            end tell
+            """
+
+            if let sysErr = run(script: systemEventsScript) {
+                // 2) Try Shortcuts: launch, wait, then ask for list of shortcuts
+                launch(appName: "Shortcuts")
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                let shortcutsScript = """
+                tell application \"Shortcuts\"
+                    get name of every shortcut
+                end tell
+                """
+                if let scErr = run(script: shortcutsScript) {
+                    if containsMinus600(scErr) {
+                        try? await Task.sleep(nanoseconds: 700_000_000)
+                        if let scErrRetry = run(script: shortcutsScript) {
+                            // 3) Fallback: Terminal launch + no-op, with retry on -600
+                            launch(appName: "Terminal")
+                            try? await Task.sleep(nanoseconds: 700_000_000)
+                            let terminalScript = """
+                            tell application \"Terminal\"
+                                do script \"echo automation-test\"
+                            end tell
+                            """
+                            if let termErr = run(script: terminalScript) {
+                                if containsMinus600(termErr) {
+                                    try? await Task.sleep(nanoseconds: 700_000_000)
+                                    if let termErrRetry = run(script: terminalScript) {
+                                        automationTestMessage = termErrRetry
+                                    } else {
+                                        automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                                    }
+                                } else {
+                                    automationTestMessage = termErr
+                                }
+                            } else {
+                                automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                            }
+                        } else {
+                            automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                        }
+                    } else {
+                        automationTestMessage = scErr
+                    }
+                } else {
+                    automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                }
+            } else {
+                automationTestMessage = "Automation request sent to System Events. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+            }
+
+            isTestingAutomation = false
+        }
+    }
+    
+    func runCommand() {
+        let cmd = commandInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return }
+
+        isRunningCommand = true
+        commandOutput = ""
+
+        // Keep a short history
+        if recentCommands.last != cmd {
+            recentCommands.append(cmd)
+            if recentCommands.count > 20 { recentCommands.removeFirst(recentCommands.count - 20) }
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", cmd]
+
+            let pipe = Pipe()
+            let errPipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = errPipe
+
+            do {
+                try process.run()
+            } catch {
+                DispatchQueue.main.async {
+                    self.commandOutput = "Failed to start process: \(error.localizedDescription)"
+                    self.isRunningCommand = false
+                }
+                return
+            }
+
+            process.waitUntilExit()
+
+            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
+            let stderrStr = String(data: errData, encoding: .utf8) ?? ""
+            let status = process.terminationStatus
+
+            DispatchQueue.main.async {
+                var combined = ""
+                if !stdoutStr.isEmpty { combined += stdoutStr }
+                if !stderrStr.isEmpty {
+                    if !combined.isEmpty { combined += "\n" }
+                    combined += stderrStr
+                }
+                combined += "\n(exit status: \(status))"
+                self.commandOutput = combined
+                self.isRunningCommand = false
+            }
+        }
+    }
+}
+
+// MARK: - Shortcut Picker View
+struct ShortcutPickerView: View {
+    @Binding var selectedShortcut: String
+    @State private var availableShortcuts: [String] = []
+    @State private var isLoadingShortcuts = false
+    @State private var loadError: String? = nil
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if isLoadingShortcuts {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading shortcuts...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let error = loadError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if availableShortcuts.isEmpty {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text("No shortcuts found")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                Button(action: loadShortcuts) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoadingShortcuts)
+            }
+            
+            if !availableShortcuts.isEmpty {
+                Picker("Shortcut", selection: $selectedShortcut) {
+                    Text("Select a shortcut").tag("")
+                    ForEach(availableShortcuts, id: \.self) { shortcut in
+                        HStack {
+                            Image(systemName: "bolt.fill")
+                            Text(shortcut)
+                        }
+                        .tag(shortcut)
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                if !selectedShortcut.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Using shortcut: \(selectedShortcut)")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("To create a shortcut:")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("1. Open the Shortcuts app")
+                        Text("2. Create a new shortcut")
+                        Text("3. Add 'Ask for Input' and 'Text' actions")
+                        Text("4. Return here and click 'Refresh'")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .background(Color.gray.opacity(0.06))
+                .cornerRadius(6)
+            }
+        }
+        .onAppear {
+            loadShortcuts()
+        }
+    }
+    
+    private func loadShortcuts() {
+        isLoadingShortcuts = true
+        loadError = nil
+        
+        Task {
+            do {
+                let query = ShortcutsLinkQuery()
+                let shortcuts = try query.shortcuts()
+                
+                await MainActor.run {
+                    availableShortcuts = shortcuts.map { $0.name }
+                    isLoadingShortcuts = false
+                    
+                    if shortcuts.isEmpty {
+                        loadError = "No shortcuts found in Shortcuts app"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    loadError = "Failed to load shortcuts: \(error.localizedDescription)"
+                    isLoadingShortcuts = false
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Notification Names
+extension Notification.Name {
+    static let menuBarIconVisibilityChanged = Notification.Name("menuBarIconVisibilityChanged")
+    static let hotkeyChanged = Notification.Name("hotkeyChanged")
+    static let chatHistoryCleared = Notification.Name("chatHistoryCleared")
+}
+
+// MARK: - Launch at Login Toggle
+struct LaunchAtLoginToggle: View {
+    @StateObject private var launchHelper = LaunchAtLoginHelper.shared
+
+    var body: some View {
+        if #available(macOS 13.0, *) {
+            HStack(alignment: .center) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch at Login")
+                        .font(.headline)
+                    Text("Start ILauncher automatically when you log in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { launchHelper.isEnabled },
+                    set: { launchHelper.setEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+            }
+        } else {
+            HStack(alignment: .center) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch at Login")
+                        .font(.headline)
+                    Text("Requires macOS 13 or later")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: .constant(false))
+                    .toggleStyle(.switch)
+                    .disabled(true)
+                    .opacity(0.5)
+            }
+        }
+    }
+}
+
+// MARK: - AI Extensions Settings Tab
+struct AIExtensionsSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var showReloadConfirmation = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("AI Extensions")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                            Text("Hammerspoon automation - Import .lua and .spoon scripts")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        // Reload Button
+                        Button(action: {
+                            ExtensionRegistry.shared.loadCapabilities()
+                            showReloadConfirmation = true
+
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                showReloadConfirmation = false
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                if showReloadConfirmation {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                    Text("Reloaded!")
+                                } else {
+                                    Label("Reload", systemImage: "arrow.clockwise")
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .animation(.easeInOut(duration: 0.2), value: showReloadConfirmation)
+                    }
+                }
+
+                Divider()
+
+                // Info Section
+                CardSection(title: "How AI Extensions Work", systemImage: "info.circle") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("AI Extensions respond to natural language commands when you're in **AI mode**.")
+                            .font(.body)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("1.")
+                                    .fontWeight(.bold)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Switch to AI mode")
+                                        .fontWeight(.medium)
+                                    Text("Click your AI provider icon (Ollama/On-Device/Shortcuts)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("2.")
+                                    .fontWeight(.bold)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Type natural language")
+                                        .fontWeight(.medium)
+                                    Text("Example: \"calculate 5 + 3\", \"search for Swift tutorials\"")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("3.")
+                                    .fontWeight(.bold)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("AI routes to extension")
+                                        .fontWeight(.medium)
+                                    Text("The AI determines which extension can help and executes it")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Built-in Extensions List
+                CardSection(title: "Built-in Extensions", systemImage: "sparkles") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ExtensionInfoRow(
+                            icon: "magnifyingglass",
+                            name: "Web Search",
+                            description: "Search the web for information",
+                            examples: ["search for Swift tutorials", "look up quantum physics"]
+                        )
+
+                        Divider()
+
+                        ExtensionInfoRow(
+                            icon: "function",
+                            name: "Calculator",
+                            description: "Perform mathematical calculations",
+                            examples: ["calculate 15% of 200", "what is sqrt(144)"]
+                        )
+
+                        Divider()
+
+                        ExtensionInfoRow(
+                            icon: "desktopcomputer",
+                            name: "System Info",
+                            description: "Get system information about your Mac",
+                            examples: ["show system info", "how much disk space"]
+                        )
+
+                        Divider()
+
+                        ExtensionInfoRow(
+                            icon: "doc.text.magnifyingglass",
+                            name: "File Finder",
+                            description: "Find files on your Mac",
+                            examples: ["find file named report.pdf", "locate recent downloads"]
+                        )
+                    }
+                }
+
+                // Hammerspoon AI Mode
+                CardSection(title: "Hammerspoon AI Mode", systemImage: "hammer.circle.fill") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(isOn: $settings.enableHammerspoonAIMode) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Enable Hammerspoon Lua Script Generation")
+                                    .font(.headline)
+                                Text("AI generates and executes Lua scripts directly in Hammerspoon")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        if settings.enableHammerspoonAIMode {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                        .font(.caption)
+                                    Text("Everything you type → AI generates Lua → Hammerspoon executes")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    Image(systemName: "info.circle.fill")
+                                        .foregroundStyle(.blue)
+                                        .font(.caption)
+                                    Text("Hammerspoon must be installed and running")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                        .font(.caption)
+                                    Text("When enabled, AI Extension Routing is bypassed - pure Lua generation")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+
+                                Divider()
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Examples:")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                    Text("• \"maximize current window\"")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("• \"show battery percentage\"")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("• \"get current wifi name\"")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("• \"open safari and tile windows\"")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Divider()
+
+                                HStack(spacing: 6) {
+                                    Image(systemName: "gear")
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                    Text("Edit the system prompt in Settings → AI Provider → Hammerspoon AI System Prompt")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding()
+                            .background(Color.green.opacity(0.06))
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+
+                // Capabilities Info
+                CardSection(title: "Loaded Capabilities", systemImage: "checklist") {
+                    let capabilityCount = ExtensionRegistry.shared.getAllCapabilities().count
+
+                    if capabilityCount > 0 {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(capabilityCount) capabilities loaded")
+                                .font(.headline)
+
+                            ForEach(ExtensionRegistry.shared.getAllCapabilities().prefix(10)) { capability in
+                                HStack {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                        .font(.caption)
+                                    Text(capability.name)
+                                        .font(.body)
+                                    Spacer()
+                                    Text(capability.category)
+                                        .font(.caption)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(Color.secondary.opacity(0.2))
+                                        .cornerRadius(4)
+                                }
+                            }
+
+                            if capabilityCount > 10 {
+                                Text("+ \(capabilityCount - 10) more...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        Text("No capabilities loaded. Click 'Reload' to load extensions.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding()
+        }
+    }
+}
+
+// Helper view for extension info
+struct ExtensionInfoRow: View {
+    let icon: String
+    let name: String
+    let description: String
+    let examples: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+                Text(name)
+                    .font(.headline)
+            }
+
+            Text(description)
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Examples:")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+
+                ForEach(examples, id: \.self) { example in
+                    HStack(spacing: 4) {
+                        Text("•")
+                            .foregroundStyle(.secondary)
+                        Text("\"\(example)\"")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .italic()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Extensions Settings Tab
+struct ExtensionsSettingsView: View {
+    @ObservedObject var settings = AppSettings.shared
+    @State private var isImporting = false
+    @State private var showReloadConfirmation = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Extensions")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                            Text("Manage status bar and script extensions")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        // Reload Button (prominent)
+                        Button(action: {
+                            ExtensionManager.shared.loadExtensions()
+                            showReloadConfirmation = true
+
+                            // Hide confirmation after 2 seconds
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                showReloadConfirmation = false
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                if showReloadConfirmation {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                    Text("Reloaded!")
+                                } else {
+                                    Label("Reload Extensions", systemImage: "arrow.clockwise")
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .help("Reload all extensions to see changes immediately")
+                        .animation(.easeInOut(duration: 0.2), value: showReloadConfirmation)
+                    }
+                }
+
+                Divider()
+
+                // Status Bar Extensions Section
+                CardSection(title: "Status Bar Extensions", systemImage: "menubar.rectangle") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(isOn: Binding(
+                            get: { settings.enableStatusBar },
+                            set: { newValue in
+                                settings.enableStatusBar = newValue
+                                // Reload extensions immediately on any change
+                                ExtensionManager.shared.loadExtensions()
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Enable Status Bar")
+                                    .font(.headline)
+                                Text("Show status bar extensions at the top of ILauncher")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        Text("Status bar extensions display system information, media controls, and custom data at the top of the launcher window.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                    }
+                }
+
+                Divider()
+
+                // Script Extensions Import Section
+                CardSection(title: "Script Extensions", systemImage: "doc.text.fill") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Import custom scripts for Hammerspoon and automation")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            isImporting = true
+                        }) {
+                            Label("Import Scripts", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .fileImporter(
+                            isPresented: $isImporting,
+                            allowedContentTypes: [.item],
+                            allowsMultipleSelection: true
+                        ) { result in
+                            switch result {
+                            case .success(let urls):
+                                for url in urls {
+                                    settings.addExtensionScript(url: url)
+                                }
+                            case .failure(let error):
+                                print("⚠️ Failed to import: \(error)")
+                            }
+                        }
+
+                        Text("Supported: .spoon, .lua, .sh, .jxa, .py")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    // Drag & Drop area
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(style: StrokeStyle(lineWidth: 2, dash: [8]))
+                            .foregroundStyle(.secondary.opacity(0.4))
+
+                        VStack(spacing: 8) {
+                            Image(systemName: "arrow.down.doc.fill")
+                                .font(.system(size: 32))
+                                .foregroundStyle(.secondary)
+                            Text("Drag & Drop Scripts Here")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 30)
+                    }
+                    .frame(height: 120)
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                        for provider in providers {
+                            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                if let url = url {
+                                    DispatchQueue.main.async {
+                                        settings.addExtensionScript(url: url)
+                                    }
+                                }
+                            }
+                        }
+                        return true
+                    }
+                    }
+                }
+
+                Divider()
+
+                // Installed Scripts List
+                CardSection(title: "Installed Scripts", systemImage: "list.bullet.rectangle") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("\(settings.extensionScripts.count) script(s) installed")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                    if settings.extensionScripts.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "tray.fill")
+                                .font(.system(size: 40))
+                                .foregroundStyle(.secondary)
+                            Text("No extension scripts added yet")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("Import scripts using the button above or drag & drop them")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    } else {
+                        ForEach(settings.extensionScripts) { script in
+                            ExtensionScriptRow(script: script)
+                        }
+                    }
+                    }
+                }
+            }
+            .padding()
+        }
+    }
+}
+
+// MARK: - Extension Script Row
+struct ExtensionScriptRow: View {
+    @ObservedObject var settings = AppSettings.shared
+    let script: ExtensionScript
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            Image(systemName: script.type.icon)
+                .font(.title3)
+                .foregroundStyle(script.isEnabled ? .blue : .secondary)
+                .frame(width: 32)
+
+            // Info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(script.name)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(script.isEnabled ? .primary : .secondary)
+
+                HStack(spacing: 6) {
+                    Text(script.type.displayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("•")
+                        .foregroundStyle(.tertiary)
+                    Text(script.path)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer()
+
+            // Controls
+            HStack(spacing: 8) {
+                Toggle("", isOn: Binding(
+                    get: { script.isEnabled },
+                    set: { _ in settings.toggleExtensionScript(script) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                Button(action: {
+                    settings.removeExtensionScript(script)
+                }) {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove script")
+            }
+        }
+        .padding(12)
+        .background(script.isEnabled ? Color.blue.opacity(0.08) : Color.gray.opacity(0.04))
+        .cornerRadius(8)
+    }
+}
+
+#Preview {
+    SettingsView()
+}
+

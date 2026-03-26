@@ -1,0 +1,210 @@
+{
+  "Translate Selected Text": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Make PDF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic", "docx", "doc", "pages"]
+  },
+  "Convert to PDF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic", "docx", "doc", "pages"]
+  },
+  "Summarise PDF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": ["pdf"]
+  },
+  "Share": {
+    "acceptsFiles": true,
+    "acceptsText": true,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": []
+  },
+  "Zip and Email": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": []
+  },
+  "Share File Nearby": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": []
+  },
+  "Combine Screenshots and Share": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic"]
+  },
+  "Rename Files": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": []
+  },
+  "Video to GIF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["mp4", "mov", "avi", "mkv"]
+  },
+  "Make GIF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic"]
+  },
+  "Convert Photos to GIF": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic"]
+  },
+  "Convert to JPEG": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": ["png", "heic", "gif", "tiff", "bmp"]
+  },
+  "PDF To JPEG": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": ["pdf"]
+  },
+  "Text from picture": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": ["jpg", "jpeg", "png", "heic", "pdf"]
+  },
+  "Quick Look": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": true,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": []
+  },
+  "Save PDF as Long Screenshot": {
+    "acceptsFiles": true,
+    "acceptsText": false,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": true,
+    "fileExtensions": ["pdf"]
+  },
+  "Turn Text Into Audio": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Check Spelling": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Send Message": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": true,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Message Via whatts app": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": true,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Send WhatsApp": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": true,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "ChatGPT": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Ask ChatGPT": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Summarize This Webpage": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  },
+  "Download File": {
+    "acceptsFiles": false,
+    "acceptsText": true,
+    "acceptsImages": false,
+    "acceptsContacts": false,
+    "acceptsPDFs": false,
+    "fileExtensions": []
+  }
+}

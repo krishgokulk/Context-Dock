@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# ILauncher API Command-Line Interface
+# This script communicates with ILauncher to access native macOS APIs
+# Usage: ilauncher-api <category> <command> [args...]
+
+# Check if ILauncher is running
+if ! pgrep -x "ILauncher" > /dev/null; then
+    echo "{\"error\": \"ILauncher is not running\"}"
+    exit 1
+fi
+
+# Send command to ILauncher via file-based IPC
+API_DIR="$HOME/.ilauncher/api"
+REQUEST_FILE="$API_DIR/request_$$"
+RESPONSE_FILE="$API_DIR/response_$$"
+
+mkdir -p "$API_DIR"
+
+# Write request
+echo "$@" > "$REQUEST_FILE"
+
+# Wait for response (with timeout)
+TIMEOUT=5
+COUNT=0
+while [ $COUNT -lt $((TIMEOUT * 10)) ]; do
+    if [ -f "$RESPONSE_FILE" ]; then
+        cat "$RESPONSE_FILE"
+        rm -f "$REQUEST_FILE" "$RESPONSE_FILE"
+        exit 0
+    fi
+    sleep 0.1
+    COUNT=$((COUNT + 1))
+done
+
+# Timeout
+echo "{\"error\": \"Request timeout\"}"
+rm -f "$REQUEST_FILE"
+exit 1
