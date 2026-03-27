@@ -164,8 +164,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Store the previously frontmost app for context detection
     var previousFrontmostApp: NSRunningApplication?
 
-    // Finder selection observer — powers the FileContextOverlay
+    // Finder selection observer — powers the FileContextOverlay (files/folders)
     private let finderSelectionObserver = AXSelectionObserver()
+
+    // Text selection monitor — powers the FileContextOverlay (text/URL in any app)
+    private let textSelectionMonitor = TextSelectionMonitor()
 
     // Recent app history — last 5 apps the user was in (excluding ILauncher)
     private(set) var recentApps: [NSRunningApplication] = []
@@ -1164,19 +1167,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recordFrontmostApp(app)
         print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
 
-        // File context overlay: watch Finder selection; hide when switching away
+        // File / text context overlay
         let pid = app.processIdentifier
-        if app.bundleIdentifier == "com.apple.finder" && settings.enableFileContextOverlay {
+        guard settings.enableFileContextOverlay else {
+            finderSelectionObserver.stop()
+            textSelectionMonitor.stop()
+            Task { @MainActor in FileContextOverlayController.shared.hide() }
+            return
+        }
+
+        if app.bundleIdentifier == "com.apple.finder" {
+            // Finder: watch file/folder selection; position near mouse at selection time
+            textSelectionMonitor.stop()
             finderSelectionObserver.start(for: pid)
             finderSelectionObserver.onChange = {
                 Task { @MainActor in
                     let files = ContextDetector.shared.getFinderSelectedFiles()
-                    FileContextOverlayController.shared.update(files: files)
+                    let mousePt = NSEvent.mouseLocation
+                    FileContextOverlayController.shared.update(files: files, at: mousePt)
                 }
             }
         } else {
+            // Any other app: watch text/URL selection via global mouse events + AX
             finderSelectionObserver.stop()
             Task { @MainActor in FileContextOverlayController.shared.hide() }
+            textSelectionMonitor.start(for: pid)
+            textSelectionMonitor.onChange = { text, mousePt in
+                Task { @MainActor in
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        FileContextOverlayController.shared.hide()
+                    } else {
+                        FileContextOverlayController.shared.update(text: text, at: mousePt)
+                    }
+                }
+            }
         }
         Task.detached(priority: .background) {
             _ = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)

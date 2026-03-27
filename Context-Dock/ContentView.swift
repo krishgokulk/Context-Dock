@@ -815,8 +815,16 @@ struct LauncherView: View {
 
     private var calculatedWidth: CGFloat {
         let expandedWidth: CGFloat = 700
-        let pinnedCount = max(settings.pinnedApps.count, 1)
-        let iconBlockWidth: CGFloat = CGFloat(pinnedCount) * 56
+        // Count total visible icons: pinned + deduped running apps
+        let pinnedPaths = Set(settings.pinnedApps.map { $0.path })
+        let pinnedBundleIds = Set(settings.pinnedApps.compactMap { $0.bundleIdentifier })
+        let extraRunning = settings.showRunningAppsInBar ? runningRegularApps.filter { app in
+            guard let path = app.bundleURL?.path else { return false }
+            return !pinnedPaths.contains(path)
+                && (app.bundleIdentifier == nil || !pinnedBundleIds.contains(app.bundleIdentifier!))
+        }.count : 0
+        let totalIconCount = max(settings.pinnedApps.count + extraRunning, 1)
+        let iconBlockWidth: CGFloat = CGFloat(totalIconCount) * 56
         let collapsedWidth: CGFloat = min(700, max(380, 220 + iconBlockWidth))
 
         let shouldCollapse = !isSearchBarExpanded &&
@@ -963,6 +971,12 @@ struct LauncherView: View {
         contentWithModifiers
             .blur(radius: showWebSearch ? 3 : 0)
             .onAppear {
+                // Load running apps immediately so the dock bar shows them on first launch
+                runningRegularApps = NSWorkspace.shared.runningApplications.filter {
+                    $0.activationPolicy == .regular &&
+                    $0.bundleIdentifier != Bundle.main.bundleIdentifier
+                }
+
                 loadApplicationsInBackground()
                 initializeFileIndex()
                 activateSearchField()
@@ -1138,6 +1152,14 @@ struct LauncherView: View {
                         loadAIExtensionSuggestions()
                     }
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .overlayAskAboutSelection)) { notification in
+                guard let text = notification.userInfo?["text"] as? String else { return }
+                searchText = text
+                isAIMode = true
+                showContextInDock = false
+                showBrowserLayer = false
+                AppDelegate.shared?.showLauncher()
             }
             .onReceive(NotificationCenter.default.publisher(for: .frontmostAppDetected)) { notification in
                 // Receive frontmost app info from ILauncherApp
@@ -3686,9 +3708,9 @@ struct LauncherView: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, isSearchBarExpanded ? 12 : 8)
             .padding(.vertical, inputVerticalPadding)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: isSearchBarExpanded ? .infinity : 44)
             .background {
                 // Inner search field glass — darker inset pill inside the dock container
                 ZStack {
@@ -3710,8 +3732,7 @@ struct LauncherView: View {
 
 
             // Pinned apps or context chips/AI extensions or browser (3-layer swipeable)
-            if !settings.pinnedApps.isEmpty {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
                     Group {
                         if showBrowserLayer {
                             // Layer 3: Browser — recent searches + bookmarks
@@ -3750,7 +3771,7 @@ struct LauncherView: View {
                     .frame(height: pinnedRowHeight) // Fixed height to prevent jumping
 
                     // User profile picture / notification bell
-                    if (isAIMode && hasAIExtensionsToShow) || hasContextToShow || notificationManager.unreadCount > 0 {
+                    if settings.enableLayer2 || (isAIMode && hasAIExtensionsToShow) || notificationManager.unreadCount > 0 {
                         Button(action: {
                             if notificationManager.unreadCount > 0 {
                                 showNotificationPanel = true
@@ -3803,7 +3824,6 @@ struct LauncherView: View {
                     isHoveringDockArea = hovering
                 }
                 .animation(.spring(response: 0.3, dampingFraction: 0.75), value: showContextInDock)
-            }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, outerVerticalPadding)
@@ -10303,7 +10323,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                         if self.accumulatedSwipeDeltaY < 0 {
                             if !self.showContextInDock {
                                 // Layer 1 -> Layer 2 (only if Layer 2 is enabled)
-                                if self.settings.enableLayer2 && (self.hasContextToShow || !self.settings.pinnedApps.isEmpty) {
+                                if self.settings.enableLayer2 {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                         self.showContextInDock = true
                                     }
