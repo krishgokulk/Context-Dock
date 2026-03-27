@@ -164,6 +164,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Store the previously frontmost app for context detection
     var previousFrontmostApp: NSRunningApplication?
 
+    // Finder selection observer — powers the FileContextOverlay
+    private let finderSelectionObserver = AXSelectionObserver()
+
     // Recent app history — last 5 apps the user was in (excluding ILauncher)
     private(set) var recentApps: [NSRunningApplication] = []
     private let maxRecentApps = 5
@@ -1161,8 +1164,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recordFrontmostApp(app)
         print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
 
-        // Pre-warm the AX menu cache in background so dock opens instantly
+        // File context overlay: watch Finder selection; hide when switching away
         let pid = app.processIdentifier
+        if app.bundleIdentifier == "com.apple.finder" && settings.enableFileContextOverlay {
+            finderSelectionObserver.start(for: pid)
+            finderSelectionObserver.onChange = {
+                Task { @MainActor in
+                    let files = ContextDetector.shared.getFinderSelectedFiles()
+                    FileContextOverlayController.shared.update(files: files)
+                }
+            }
+        } else {
+            finderSelectionObserver.stop()
+            Task { @MainActor in FileContextOverlayController.shared.hide() }
+        }
         Task.detached(priority: .background) {
             _ = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
         }

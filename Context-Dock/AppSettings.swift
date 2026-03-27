@@ -692,6 +692,7 @@ class AppSettings: ObservableObject {
     @AppStorage("alwaysDockAtBottom") var alwaysDockAtBottom: Bool = false // Always keep dock at bottom (results above)
     @AppStorage("persistentContextDock") var persistentContextDock: Bool = false
     @AppStorage("persistentContextDockAutoHide") var persistentContextDockAutoHide: Bool = false
+    @AppStorage("enableFileContextOverlay") var enableFileContextOverlay: Bool = true
     @AppStorage("showRunningAppsInBar") var showRunningAppsInBar: Bool = false
 
     /// True when anything should anchor at the bottom and grow upward.
@@ -703,7 +704,8 @@ class AppSettings: ObservableObject {
     // Layer 1 (search + pinned apps) is always on and cannot be disabled.
     @AppStorage("enableLayer2") var enableLayer2: Bool = true    // Context Layer (app panel / shortcuts dock)
     @AppStorage("enableLayer3") var enableLayer3: Bool = true    // Browser Layer
-    @AppStorage("l2OnlyMode") var l2OnlyMode: Bool = false            // Always open in L2 Context Dock
+    /// True only when the persistent context dock is active — derived, never stored separately.
+    var l2OnlyMode: Bool { persistentContextDock }
     @AppStorage("l2ScrollPassthrough") var l2ScrollPassthrough: Bool = false // Forward scroll events to frontmost app while in context dock
     // Context Dock intelligence features
     @AppStorage("crossAppPills") var crossAppPills: Bool = true         // "Send to [running app]" pills based on context

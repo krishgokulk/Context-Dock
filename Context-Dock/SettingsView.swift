@@ -241,6 +241,13 @@ struct GeneralSettingsView: View {
                         .padding(.leading, 20)
                         .padding(.top, 4)
                     }
+
+                    Divider()
+
+                    Toggle(isOn: $settings.enableFileContextOverlay) {
+                        GeneralToggleLabel("File Context Pill",
+                            caption: "Show a floating action pill above the dock when you select files in Finder — open, preview, trash or copy path without switching apps.")
+                    }.toggleStyle(.switch)
                 }
             }
 
@@ -523,9 +530,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "Menu Bar Apps", systemImage: "menubar.rectangle") {
-                MenuBarAppsSettingsView()
-            }
         }
     }
 
@@ -7312,199 +7316,6 @@ struct AppProfileJSONDocument: FileDocument {
     }
 }
 
-// MARK: - Menu Bar Apps Settings
-
-struct MenuBarAppsSettingsView: View {
-    @ObservedObject private var manager = MenuBarItemManager.shared
-    @State private var showAddSheet = false
-
-    /// Running apps merged with pinned: each entry shows running state + pinned state
-    var mergedApps: [(name: String, bundleId: String, icon: NSImage?, sfSymbol: String, isRunning: Bool, isPinned: Bool)] {
-        var seen = Set<String>()
-        var result: [(name: String, bundleId: String, icon: NSImage?, sfSymbol: String, isRunning: Bool, isPinned: Bool)] = []
-
-        // Pinned apps first (always visible)
-        for app in manager.manualApps {
-            seen.insert(app.bundleId)
-            let runningItem = manager.statusItems.first { $0.bundleId == app.bundleId }
-            result.append((name: app.name, bundleId: app.bundleId,
-                           icon: runningItem?.icon, sfSymbol: app.sfSymbol,
-                           isRunning: runningItem != nil, isPinned: true))
-        }
-
-        // Running apps not already pinned
-        for item in manager.statusItems {
-            guard let bid = item.bundleId, bid != Bundle.main.bundleIdentifier,
-                  !seen.contains(bid) else { continue }
-            seen.insert(bid)
-            result.append((name: item.appName, bundleId: bid,
-                           icon: item.icon, sfSymbol: "menubar.rectangle",
-                           isRunning: true, isPinned: false))
-        }
-        return result
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Running & Pinned")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button { manager.refresh() } label: {
-                    Image(systemName: "arrow.clockwise").font(.caption)
-                }.buttonStyle(.plain)
-                Button { manager.refresh(); showAddSheet = true } label: {
-                    Image(systemName: "plus").font(.caption)
-                }.buttonStyle(.plain)
-            }
-
-            if mergedApps.isEmpty {
-                HStack {
-                    Image(systemName: "info.circle").foregroundStyle(.secondary)
-                    Text("No menu bar apps found. Open the context dock to discover them.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                ForEach(mergedApps, id: \.bundleId) { app in
-                    HStack(spacing: 8) {
-                        // Icon
-                        if let icon = app.icon {
-                            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-                        } else {
-                            Image(systemName: app.sfSymbol).font(.caption).frame(width: 16, height: 16)
-                        }
-                        // Name + status
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(app.name).font(.subheadline).lineLimit(1)
-                            HStack(spacing: 4) {
-                                if app.isRunning {
-                                    Circle().fill(.green).frame(width: 5, height: 5)
-                                    Text("Running").font(.caption2).foregroundStyle(.secondary)
-                                } else {
-                                    Circle().fill(.gray).frame(width: 5, height: 5)
-                                    Text("Not running").font(.caption2).foregroundStyle(.secondary)
-                                }
-                                if app.isPinned {
-                                    Text("· Pinned").font(.caption2).foregroundStyle(.purple)
-                                }
-                            }
-                        }
-                        Spacer()
-                        // Pin / Unpin button
-                        Button {
-                            if app.isPinned {
-                                manager.removeManual(id: app.bundleId)
-                            } else {
-                                manager.addManual(ManualMenuBarApp(name: app.name, bundleId: app.bundleId, sfSymbol: app.sfSymbol))
-                            }
-                        } label: {
-                            Image(systemName: app.isPinned ? "pin.slash.fill" : "pin")
-                                .font(.caption)
-                                .foregroundStyle(app.isPinned ? .purple : .secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(app.isPinned ? "Unpin from context dock" : "Pin to context dock")
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-        .onAppear { manager.refresh() }
-        .sheet(isPresented: $showAddSheet) {
-            AddMenuBarAppSheet(isPresented: $showAddSheet)
-        }
-    }
-}
-
-struct AddMenuBarAppSheet: View {
-    @Binding var isPresented: Bool
-    @ObservedObject private var manager = MenuBarItemManager.shared
-    @State private var manualName = ""
-    @State private var manualBundleId = ""
-    @State private var manualSymbol = "menubar.rectangle"
-    @State private var selectedTab = 0  // 0=from running, 1=manual
-
-    // Running apps that look like menu-bar apps (have no regular window or are status-bar only)
-    var candidates: [(name: String, bundleId: String, icon: NSImage?)] {
-        let running = NSWorkspace.shared.runningApplications
-        return running.compactMap { app in
-            guard let name = app.localizedName,
-                  let bid = app.bundleIdentifier,
-                  bid != Bundle.main.bundleIdentifier,
-                  app.activationPolicy != .regular else { return nil }
-            let ic = app.icon.map { i -> NSImage in let c = i.copy() as! NSImage; c.size = NSSize(width: 16, height: 16); return c }
-            return (name: name, bundleId: bid, icon: ic)
-        }.sorted { $0.name < $1.name }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Add Menu Bar App")
-                    .font(.headline)
-                Spacer()
-                Button("Done") { isPresented = false }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding()
-
-            Divider()
-
-            Picker("", selection: $selectedTab) {
-                Text("Running Apps").tag(0)
-                Text("Manual Entry").tag(1)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-
-            if selectedTab == 0 {
-                // Running accessory/menu-bar apps
-                List(candidates, id: \.bundleId) { app in
-                    HStack(spacing: 10) {
-                        if let ic = app.icon { Image(nsImage: ic) }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.name).font(.subheadline)
-                            Text(app.bundleId).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Pin") {
-                            manager.addManual(ManualMenuBarApp(
-                                name: app.name,
-                                bundleId: app.bundleId,
-                                sfSymbol: "menubar.rectangle"
-                            ))
-                        }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                        .disabled(manager.manualApps.contains(where: { $0.bundleId == app.bundleId }))
-                    }
-                }
-            } else {
-                // Manual bundle ID entry
-                Form {
-                    TextField("App Name", text: $manualName)
-                    TextField("Bundle ID (e.g. com.supercharge.amphetamine)", text: $manualBundleId)
-                    TextField("SF Symbol Icon", text: $manualSymbol)
-                    HStack {
-                        Spacer()
-                        Button("Add") {
-                            guard !manualName.isEmpty, !manualBundleId.isEmpty else { return }
-                            manager.addManual(ManualMenuBarApp(
-                                name: manualName,
-                                bundleId: manualBundleId,
-                                sfSymbol: manualSymbol.isEmpty ? "menubar.rectangle" : manualSymbol
-                            ))
-                            manualName = ""; manualBundleId = ""; manualSymbol = "menubar.rectangle"
-                        }
-                        .buttonStyle(.borderedProminent).disabled(manualName.isEmpty || manualBundleId.isEmpty)
-                    }
-                }
-                .padding()
-            }
-        }
-        .frame(width: 460, height: 480)
-    }
-}
 
 #Preview {
     SettingsView()

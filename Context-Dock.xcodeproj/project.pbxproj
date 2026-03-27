@@ -72,13 +72,13 @@
 			fileSystemSynchronizedGroups = (
 				FD1617D62ECEA5B500620C78 /* ILauncher */,
 			);
-			name = ILauncher;
+			name = "Context-Dock";
 			packageProductDependencies = (
 				FDE6DAB22F17B92700E175DF /* SwiftTerm */,
 				FDE6DAB42F17B92700E175DF /* SwiftTermFuzz */,
 				FDE6DAB62F17B92700E175DF /* termcast */,
 			);
-			productName = ILauncher;
+			productName = "Context-Dock";
 			productReference = FD1617D42ECEA5B500620C78 /* ILauncher.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -294,7 +294,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ILauncher.ILauncher;
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock;
+				PRODUCT_NAME = "Context-Dock";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
@@ -348,7 +349,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ILauncher.ILauncher;
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock;
+				PRODUCT_NAME = "Context-Dock";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;

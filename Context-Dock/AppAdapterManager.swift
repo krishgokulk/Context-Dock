@@ -1,6 +1,6 @@
 //
 //  AppAdapterManager.swift
-//  ILauncher
+//  Context-Dock
 //
 //  Per-app action adapters: menu-bar clicks, AppleScript, JXA, shell commands,
 //  URL schemes, macOS Shortcuts, and AI prompt templates.

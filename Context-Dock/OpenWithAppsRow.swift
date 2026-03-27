@@ -10,7 +10,7 @@ import SwiftUI
 import AppKit
 
 // Use the same typealias as AIModeView
-typealias OpenWithUserContext = ILauncher.UserContext
+typealias OpenWithUserContext = UserContext
 
 struct OpenWithAppsRow: View {
     let fileURLs: [URL]

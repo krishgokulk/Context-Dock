@@ -493,7 +493,7 @@ struct LauncherView: View {
     @ObservedObject private var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject private var terminalBridge = TerminalAIBridge.shared
     @ObservedObject private var adapterManager = AppAdapterManager.shared
-    @ObservedObject private var menuBarManager = MenuBarItemManager.shared
+
     @ObservedObject private var notificationManager = ILauncherNotificationManager.shared
     @State private var showNotificationPanel = false
     @State private var runningRegularApps: [NSRunningApplication] = []
@@ -905,8 +905,6 @@ struct LauncherView: View {
                         $0.bundleIdentifier != Bundle.main.bundleIdentifier
                     }
                     runningRegularApps = apps
-                    // Refresh menu bar status items
-                    MenuBarItemManager.shared.refresh()
                     // Refresh AX context periodically while dock is open so pills update as user interacts
                     axContextRefreshTimer?.invalidate()
                     axContextRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [self] _ in
@@ -2664,37 +2662,6 @@ struct LauncherView: View {
         // Clipboard-aware pills — only in l2OnlyMode (always-context-dock)
         if settings.l2OnlyMode {
             pills += buildClipboardPills(query: q)
-        }
-
-        // Menu bar app pills — auto-discovered running items + manually pinned (deduplicated)
-        let mbItems = menuBarManager.statusItems
-        let mbManual = menuBarManager.manualApps
-        var shownBundleIds = Set<String>()
-
-        // 1. Pinned apps first (they always appear, running or not)
-        for app in mbManual {
-            let name = "Open \(app.name)"
-            if !q.isEmpty && !name.lowercased().contains(q) && !app.name.lowercased().contains(q) { continue }
-            shownBundleIds.insert(app.bundleId)
-            // If there's a live AX element for this pinned app, prefer clicking that
-            let liveItem = mbItems.first { $0.bundleId == app.bundleId }
-            let captured = app
-            let execute: () -> Void = liveItem != nil
-                ? { MenuBarItemManager.shared.click(liveItem!) }
-                : { MenuBarItemManager.shared.activateManualApp(captured) }
-            pills.append(DockPill(id: "mbp-\(app.bundleId)", name: name,
-                                  icon: app.sfSymbol, accentColorName: "purple", badge: "Pinned",
-                                  execute: execute))
-        }
-
-        // 2. Running (auto-discovered) apps not already shown as pinned
-        for item in mbItems where item.bundleId != Bundle.main.bundleIdentifier {
-            guard let bid = item.bundleId, !shownBundleIds.contains(bid) else { continue }
-            let name = "Open \(item.displayName)"
-            if !q.isEmpty && !name.lowercased().contains(q) && !item.displayName.lowercased().contains(q) { continue }
-            pills.append(DockPill(id: "mb-\(item.id)", name: name,
-                                  icon: "menubar.rectangle", accentColorName: "gray", badge: "Menu Bar",
-                                  execute: { MenuBarItemManager.shared.click(item) }))
         }
 
         // AX Trigger Rules — user-defined "when I see X → show pill Y"
@@ -5191,7 +5158,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
 
         // Explicit contact keywords
-        let contactKeywords = ["contact", "contacts", "email", "mail", "message", "call", "phone", "text", "sms", "imessage"]
+        let contactKeywords = ["contact", "contacts", "call", "phone", "text", "sms", "imessage"]
         if contactKeywords.contains(where: { normalized.contains($0) }) {
             return .contactSearch(query: query)
         }
@@ -5205,34 +5172,9 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return .contactSearch(query: query)
         }
 
-        let calendarKeywords = ["calendar", "event", "events", "meeting", "schedule", "appointments"]
-        if calendarKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.calendarEvent], title: "Calendar", query: normalized, allowEmpty: normalized == "calendar" || normalized == "events")
-        }
-
-        let reminderKeywords = ["reminder", "reminders", "remind", "todo", "task", "tasks"]
-        if reminderKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.reminder], title: "Reminders", query: normalized, allowEmpty: normalized == "reminders" || normalized == "reminder")
-        }
-
         let photoKeywords = ["photo", "photos", "image", "images", "picture", "pictures", "screenshot"]
         if photoKeywords.contains(where: { normalized.contains($0) }) {
             return .systemSearch(types: [.photo], title: "Photos", query: normalized, allowEmpty: normalized == "photos" || normalized == "photo")
-        }
-
-        let notesKeywords = ["note", "notes"]
-        if notesKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.note], title: "Notes", query: normalized, allowEmpty: normalized == "notes" || normalized == "note")
-        }
-
-        let mailKeywords = ["mailbox", "inbox", "mail", "emails"]
-        if mailKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.mail], title: "Mail", query: normalized, allowEmpty: normalized == "mail" || normalized == "emails")
-        }
-
-        let messageKeywords = ["messages", "message", "imessage", "sms"]
-        if messageKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.message], title: "Messages", query: normalized, allowEmpty: normalized == "messages" || normalized == "message")
         }
 
         if let terminal = terminalCommandFromQuery(query: query, selectedFiles: selectedFiles) {
@@ -11499,12 +11441,10 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return
         }
         
-        print("🔍 Searching indexed files for: '\(query)'")
         
         // Use the pre-built index for instant search
         let results = fileIndexManager.search(query: query, limit: 20)
         
-        print("✅ Found \(results.count) indexed file results")
         indexedFileResults = results
     }
 
@@ -14768,8 +14708,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return
         }
 
-        print("🔍 performSearch called with query: '\(query)'")
-        print("📱 Total items loaded: \(allItems.count) (\(allApplications.count) apps, \(allShortcuts.count) shortcuts)")
 
         // If an app panel is active (calendar/notes/etc.), the panel view handles display
         // via appPanelDisplayedItems (reactive to searchText). Just clear regular results
@@ -14901,9 +14839,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return
         }
 
-        // Cancel previous debounced task (system data search)
-        searchDebounceTask?.cancel()
-
         // Indexed file search is in-memory — run immediately for instant results
         if settings.enableSpotlightSearch {
             searchIndexedFiles(for: query)
@@ -14911,15 +14846,12 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             indexedFileResults = []
         }
 
-        // Show app/file results immediately without waiting for system data
-        performSearchWithoutSpotlight()
-
-        // System data (Calendar, Reminders, Notes, Mail, Photos, Messages) is slow —
-        // debounce by 200ms so rapid typing doesn't spawn a flood of async queries
+        // Debounce scoring onto background thread so keystrokes never block the UI
+        searchDebounceTask?.cancel()
         searchDebounceTask = Task(priority: .userInitiated) {
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            try? await Task.sleep(nanoseconds: 60_000_000) // 60ms debounce
             guard !Task.isCancelled else { return }
-            await searchSystemData(for: query)
+            await MainActor.run { performSearchWithoutSpotlight() }
         }
     }
 
@@ -14935,7 +14867,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         case messages            // Show all messages
         case application(String) // Specific app (show app-related content)
         case customApp(String)   // User-added app by key (show generic AI panel)
-        case emojis              // Show emoji picker
     }
 
     private func detectSmartQuery(query: String) -> SmartQueryType? {
@@ -14979,10 +14910,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return .photos
         }
 
-        // Detect "emoji" query
-        if lowercased == "emoji" || lowercased == "emojis" || lowercased == "emoticon" || lowercased == "emoticons" {
-            return .emojis
-        }
 
         // Detect common folder names (exact match)
         let commonFolders = [
@@ -15111,9 +15038,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             loadApplicationSpecificContent(appPath: appPath)
             return false
 
-        case .emojis:
-            loadEmojisAsResults()
-            return true
         }
     }
 
@@ -15435,68 +15359,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
     }
 
-    private func loadEmojisAsResults() {
-        Task {
-            await MainActor.run {
-                var emojiResults: [SearchResult] = []
-
-                // Comprehensive emoji list organized by category
-                let emojiCategories: [(String, [String])] = [
-                    ("Smileys & People", ["😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "🙃", "😉", "😊", "😇", "🥰", "😍", "🤩", "😘", "😗", "😚", "😙", "🥲", "😋", "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔", "🤐", "🤨", "😐", "😑", "😶", "😏", "😒", "🙄", "😬", "🤥", "😌", "😔", "😪", "🤤", "😴", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "🥵", "🥶", "🥴", "😵", "🤯", "🤠", "🥳", "🥸", "😎", "🤓", "🧐", "😕", "😟", "🙁", "☹️", "😮", "😯", "😲", "😳", "🥺", "😦", "😧", "😨", "😰", "😥", "😢", "😭", "😱", "😖", "😣", "😞", "😓", "😩", "😫", "🥱", "😤", "😡", "😠", "🤬", "😈", "👿", "💀", "☠️", "💩", "🤡", "👹", "👺", "👻", "👽", "👾", "🤖", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾"]),
-                    ("Gestures & Body", ["👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦿", "🦵", "🦶", "👂", "🦻", "👃", "🧠", "🫀", "🫁", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋"]),
-                    ("People & Family", ["👶", "👧", "🧒", "👦", "👩", "🧑", "👨", "👩‍🦱", "🧑‍🦱", "👨‍🦱", "👩‍🦰", "🧑‍🦰", "👨‍🦰", "👱‍♀️", "👱", "👱‍♂️", "👩‍🦳", "🧑‍🦳", "👨‍🦳", "👩‍🦲", "🧑‍🦲", "👨‍🦲", "🧔", "👵", "🧓", "👴", "👲", "👳‍♀️", "👳", "👳‍♂️", "🧕", "👮‍♀️", "👮", "👮‍♂️", "👷‍♀️", "👷", "👷‍♂️", "💂‍♀️", "💂", "💂‍♂️", "🕵️‍♀️", "🕵️", "🕵️‍♂️", "👩‍⚕️", "🧑‍⚕️", "👨‍⚕️", "👩‍🌾", "🧑‍🌾", "👨‍🌾"]),
-                    ("Animals & Nature", ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐽", "🐸", "🐵", "🙈", "🙉", "🙊", "🐒", "🐔", "🐧", "🐦", "🐤", "🐣", "🐥", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗", "🐴", "🦄", "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🦟", "🦗", "🕷", "🕸", "🦂", "🐢", "🐍", "🦎", "🦖", "🦕", "🐙", "🦑", "🦐", "🦞", "🦀", "🐡", "🐠", "🐟", "🐬", "🐳", "🐋", "🦈", "🐊", "🐅", "🐆", "🦓", "🦍", "🦧", "🐘", "🦛", "🦏", "🐪", "🐫", "🦒", "🦘", "🦬", "🐃", "🐂", "🐄", "🐎", "🐖", "🐏", "🐑", "🦙", "🐐", "🦌", "🐕", "🐩", "🦮", "🐈", "🦤", "🦢", "🦃", "🦚", "🦜", "🦩", "🕊"]),
-                    ("Food & Drink", ["🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐", "🍈", "🍒", "🍑", "🥭", "🍍", "🥥", "🥝", "🍅", "🍆", "🥑", "🥦", "🥬", "🥒", "🌶", "🫑", "🌽", "🥕", "🫒", "🧄", "🧅", "🥔", "🍠", "🥐", "🥯", "🍞", "🥖", "🥨", "🧀", "🥚", "🍳", "🧈", "🥞", "🧇", "🥓", "🥩", "🍗", "🍖", "🦴", "🌭", "🍔", "🍟", "🍕", "🫓", "🥪", "🥙", "🧆", "🌮", "🌯", "🫔", "🥗", "🥘", "🫕", "🥫", "🍝", "🍜", "🍲", "🍛", "🍣", "🍱", "🥟", "🦪", "🍤", "🍙", "🍚", "🍘", "🍥", "🥠", "🥮", "🍢", "🍡", "🍧", "🍨", "🍦", "🥧", "🧁", "🍰", "🎂", "🍮", "🍭", "🍬", "🍫", "🍿", "🍩", "🍪", "🌰", "🥜", "🍯", "🥛", "🍼", "☕️", "🫖", "🍵", "🧃", "🥤", "🧋", "🍶", "🍺", "🍻", "🥂", "🍷", "🥃", "🍸", "🍹", "🧉", "🍾", "🧊"]),
-                    ("Travel & Places", ["🚗", "🚕", "🚙", "🚌", "🚎", "🏎", "🚓", "🚑", "🚒", "🚐", "🛻", "🚚", "🚛", "🚜", "🦯", "🦽", "🦼", "🛴", "🚲", "🛵", "🏍", "🛺", "🚨", "🚔", "🚍", "🚘", "🚖", "🚡", "🚠", "🚟", "🚃", "🚋", "🚞", "🚝", "🚄", "🚅", "🚈", "🚂", "🚆", "🚇", "🚊", "🚉", "✈️", "🛫", "🛬", "🛩", "💺", "🛰", "🚀", "🛸", "🚁", "🛶", "⛵️", "🚤", "🛥", "🛳", "⛴", "🚢", "⚓️", "⛽️", "🚧", "🚦", "🚥", "🚏", "🗺", "🗿", "🗽", "🗼", "🏰", "🏯", "🏟", "🎡", "🎢", "🎠", "⛲️", "⛱", "🏖", "🏝", "🏜", "🌋", "⛰", "🏔", "🗻", "🏕", "⛺️", "🏠", "🏡", "🏘", "🏚", "🏗", "🏭", "🏢", "🏬", "🏣", "🏤", "🏥", "🏦", "🏨", "🏪", "🏫", "🏩", "💒", "🏛", "⛪️", "🕌", "🕍", "🛕", "🕋"]),
-                    ("Activities & Sports", ["⚽️", "🏀", "🏈", "⚾️", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳️", "🪁", "🏹", "🎣", "🤿", "🥊", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸", "🥌", "🎿", "⛷", "🏂", "🪂", "🏋️‍♀️", "🏋️", "🏋️‍♂️", "🤼‍♀️", "🤼", "🤼‍♂️", "🤸‍♀️", "🤸", "🤸‍♂️", "⛹️‍♀️", "⛹️", "⛹️‍♂️", "🤺", "🤾‍♀️", "🤾", "🤾‍♂️", "🏌️‍♀️", "🏌️", "🏌️‍♂️", "🏇", "🧘‍♀️", "🧘", "🧘‍♂️", "🏄‍♀️", "🏄", "🏄‍♂️", "🏊‍♀️", "🏊", "🏊‍♂️", "🤽‍♀️", "🤽", "🤽‍♂️", "🚣‍♀️", "🚣", "🚣‍♂️", "🧗‍♀️", "🧗", "🧗‍♂️", "🚵‍♀️", "🚵", "🚵‍♂️", "🚴‍♀️", "🚴", "🚴‍♂️", "🏆", "🥇", "🥈", "🥉", "🏅", "🎖", "🏵", "🎗"]),
-                    ("Objects", ["⌚️", "📱", "📲", "💻", "⌨️", "🖥", "🖨", "🖱", "🖲", "🕹", "🗜", "💽", "💾", "💿", "📀", "📼", "📷", "📸", "📹", "🎥", "📽", "🎞", "📞", "☎️", "📟", "📠", "📺", "📻", "🎙", "🎚", "🎛", "🧭", "⏱", "⏲", "⏰", "🕰", "⌛️", "⏳", "📡", "🔋", "🔌", "💡", "🔦", "🕯", "🪔", "🧯", "🛢", "💸", "💵", "💴", "💶", "💷", "🪙", "💰", "💳", "💎", "⚖️", "🪜", "🧰", "🪛", "🔧", "🔨", "⚒", "🛠", "⛏", "🪚", "🔩", "⚙️", "🪤", "🧱", "⛓", "🧲", "🔫", "💣", "🧨", "🪓", "🔪", "🗡", "⚔️", "🛡", "🚬", "⚰️", "🪦", "⚱️", "🏺", "🔮", "📿", "🧿", "💈", "⚗️", "🔭", "🔬", "🕳", "🩹", "🩺", "💊", "💉", "🩸", "🧬", "🦠", "🧫", "🧪", "🌡", "🧹", "🪠", "🧺", "🧻", "🚽", "🚰", "🚿", "🛁", "🛀", "🧼", "🪒", "🧽", "🧴", "🛎", "🔑", "🗝", "🚪", "🪑", "🛋", "🛏", "🛌", "🧸", "🪆", "🖼", "🪞", "🪟", "🛍", "🛒", "🎁", "🎈", "🎏", "🎀", "🪄", "🪅", "🎊", "🎉", "🎎", "🏮", "🎐", "🧧"]),
-                    ("Symbols", ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❤️‍🔥", "❤️‍🩹", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "☮️", "✝️", "☪️", "🕉", "☸️", "✡️", "🔯", "🕎", "☯️", "☦️", "🛐", "⛎", "♈️", "♉️", "♊️", "♋️", "♌️", "♍️", "♎️", "♏️", "♐️", "♑️", "♒️", "♓️", "🆔", "⚛️", "🉑", "☢️", "☣️", "📴", "📳", "🈶", "🈚️", "🈸", "🈺", "🈷️", "✴️", "🆚", "💮", "🉐", "㊙️", "㊗️", "🈴", "🈵", "🈹", "🈲", "🅰️", "🅱️", "🆎", "🆑", "🅾️", "🆘", "❌", "⭕️", "🛑", "⛔️", "📛", "🚫", "💯", "💢", "♨️", "🚷", "🚯", "🚳", "🚱", "🔞", "📵", "🚭", "❗️", "❕", "❓", "❔", "‼️", "⁉️", "🔅", "🔆", "〽️", "⚠️", "🚸", "🔱", "⚜️", "🔰", "♻️", "✅", "🈯️", "💹", "❇️", "✳️", "❎", "🌐", "💠", "Ⓜ️", "🌀", "💤", "🏧", "🚾", "♿️", "🅿️", "🛗", "🈳", "🈂️", "🛂", "🛃", "🛄", "🛅", "🚹", "🚺", "🚼", "⚧", "🚻", "🚮", "🎦", "📶", "🈁", "🔣", "ℹ️", "🔤", "🔡", "🔠", "🆖", "🆗", "🆙", "🆒", "🆕", "🆓", "0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]),
-                    ("Flags", ["🏁", "🚩", "🎌", "🏴", "🏳️", "🏳️‍🌈", "🏳️‍⚧️", "🏴‍☠️", "🇺🇸", "🇬🇧", "🇨🇦", "🇦🇺", "🇮🇳", "🇨🇳", "🇯🇵", "🇰🇷", "🇫🇷", "🇩🇪", "🇮🇹", "🇪🇸", "🇧🇷", "🇲🇽", "🇷🇺", "🇿🇦", "🇳🇿"])
-                ]
-
-                // Create emoji results
-                for (category, emojis) in emojiCategories {
-                    for emoji in emojis {
-                        emojiResults.append(SearchResult(
-                            title: emoji,
-                            subtitle: category,
-                            icon: nil, // No icon needed, emoji is the visual
-                            action: {
-                                // Copy emoji to clipboard
-                                let pasteboard = NSPasteboard.general
-                                pasteboard.clearContents()
-                                pasteboard.setString(emoji, forType: .string)
-
-                                // Show notification
-                                let notification = NSUserNotification()
-                                notification.title = "Emoji Copied!"
-                                notification.informativeText = "\(emoji) copied to clipboard"
-                                notification.soundName = nil
-                                NSUserNotificationCenter.default.deliver(notification)
-                            },
-                            type: .webSearch, // Use webSearch type for now
-                            filePath: nil,
-                            contactData: nil
-                        ))
-                    }
-                }
-
-                // Update grouped results for proper display
-                var grouped = GroupedResults()
-                for emoji in emojiResults {
-                    grouped.add(emoji)
-                }
-
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    searchResults = emojiResults
-                    groupedResults = grouped
-                    selectedResultIndex = emojiResults.isEmpty ? nil : 0
-                }
-
-                print("✅ Loaded \(emojiResults.count) emojis across \(emojiCategories.count) categories")
-            }
-        }
-    }
 
     // MARK: - Instant Calculator
     private func evaluateMathExpression(_ expression: String) -> String? {
@@ -15561,8 +15423,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             // If no items loaded yet, just clear results
             searchResults = []
             selectedResultIndex = nil
-            print("⚠️ No items loaded yet")
-            return
+                return
         }
 
         // Fuzzy match and score all items (apps + shortcuts + indexed file results + extension commands)
@@ -15571,24 +15432,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         if showContextInDock && !showBrowserLayer {
             updateL2Results(l2ExtensionResults)
             return
-        }
-
-        // Check for instant calculator (highest priority)
-        if let calculatorResult = evaluateMathExpression(query) {
-            let calcResult = SearchResult(
-                title: "\(query) = \(calculatorResult)",
-                subtitle: "Press Enter to copy result",
-                icon: NSImage(systemSymbolName: "function", accessibilityDescription: "Calculator"),
-                action: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(calculatorResult, forType: .string)
-                    print("📋 Copied result to clipboard: \(calculatorResult)")
-                },
-                type: .extensionCommand,
-                filePath: nil,
-                contactData: nil
-            )
-            scoredItems.append((item: calcResult, score: 1000.0)) // Highest priority
         }
 
         // Search regular items
@@ -15609,7 +15452,14 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             !pinnedResultTypesToExclude.contains($0.type) && !l1ExcludedTypes.contains($0.type)
         }
 
-        for item in filteredItems {
+        // Quick pre-filter: skip items that don't even contain the first character
+        // This eliminates ~90% of the list before the expensive fuzzy match
+        let queryLower = query.lowercased()
+        let preFiltered = filteredItems.filter {
+            $0.title.lowercased().contains(queryLower.prefix(1))
+        }
+
+        for item in preFiltered {
             if let score = FuzzyMatcher.score(query, against: item.title) {
                 var scoredItem = item
                 scoredItem.score = score
@@ -15658,7 +15508,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                    let metadata = shortcutMetadataCache[item.title],
                    metadata.matches(context: currentContext) {
                     finalScore += 500.0  // Massive boost for context-matching shortcuts
-                    print("✨ Context boost for '\(item.title)' (+500)")
                 }
 
                 scoredItems.append((item: scoredItem, score: finalScore))
@@ -15667,7 +15516,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
         // L2 extensions show only as chips next to the input field.
 
-        print("🎯 Found \(scoredItems.count) matches for '\(query)'")
 
         // Sort by score and limit to top results
         let sortedResults = scoredItems
@@ -15691,7 +15539,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             Array(grouped.allResults.reversed()) :
             grouped.allResults
 
-        print("📊 Top results: \(newResults.prefix(10).map { "\($0.title) [\($0.type)] (\($0.score))" }.joined(separator: ", "))")
 
         let oldSelectedResultID: UUID? = {
             if let oldIndex = selectedResultIndex,

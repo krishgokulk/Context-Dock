@@ -10,7 +10,7 @@ import SwiftUI
 import AppKit
 
 // Explicitly reference our UserContext to avoid ambiguity with system types
-typealias AppUserContext = ILauncher.UserContext
+typealias AppUserContext = UserContext
 
 struct AIModeView: View {
     @Binding var currentContext: AppUserContext
