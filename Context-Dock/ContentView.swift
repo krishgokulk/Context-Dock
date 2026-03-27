@@ -19089,15 +19089,13 @@ struct GlassBackground: NSViewRepresentable {
         let isLight = isLightMode
         switch settings.appearanceMode {
         case "light":
-            // .menu gives the bright frosted-glass effect (like macOS popovers/menus)
-            ve.material = .menu
+            ve.material = .popover
             ve.appearance = NSAppearance(named: .aqua)
         case "dark":
-            ve.material = .underWindowBackground
+            ve.material = .popover
             ve.appearance = NSAppearance(named: .darkAqua)
         default:
-            // System: pick material based on current effective appearance
-            ve.material = isLight ? .menu : .underWindowBackground
+            ve.material = .popover
             ve.appearance = nil
         }
 
