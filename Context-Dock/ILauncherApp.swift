@@ -962,6 +962,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             recordFrontmostApp(currentApp)
             print("📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")")
+            // Immediately update ContentView's frontmostAppName so the dock reflects the real app
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .frontmostAppDetected,
+                    object: nil,
+                    userInfo: [
+                        "name":     currentApp.localizedName     ?? "",
+                        "bundleID": currentApp.bundleIdentifier  ?? ""
+                    ]
+                )
+            }
         }
 
         // Detect context synchronously so it's ready before window shows
@@ -1204,6 +1215,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         Task.detached(priority: .background) {
             _ = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
+        }
+
+        // Pre-cache web page text when a browser becomes frontmost
+        // so AI queries are instantly grounded in the real page content
+        if AXWebReader.shared.isBrowser(bundleId: app.bundleIdentifier ?? "") {
+            Task.detached(priority: .background) {
+                // Small delay so the browser's AX tree finishes loading
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                let url = AXContextReader.shared.current.currentURL ?? ""
+                AXWebReader.shared.refresh(pid: pid, currentURL: url)
+            }
+        } else {
+            // Not a browser — evict stale cache so memory doesn't grow
+            AXWebReader.shared.invalidate(pid: pid)
         }
 
         // Notify ContentView immediately so it can reload menu items for the new app

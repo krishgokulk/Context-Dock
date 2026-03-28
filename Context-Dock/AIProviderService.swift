@@ -408,20 +408,62 @@ class AIProviderService: ObservableObject {
             prompt += "If asked to translate, output ONLY the translation in the requested language.\n"
 
         case .url(let urlString):
-            prompt += "\n\nThe user is viewing a URL:\n"
-            prompt += urlString
-            prompt += "\n"
-
-            // Check if in Safari - provide direct save capability
-            if let frontmost = NSWorkspace.shared.frontmostApplication,
-               frontmost.bundleIdentifier == "com.apple.Safari" {
-                prompt += "\n🌐 SAFARI CONTEXT DETECTED: You can save this page as PDF using `ilauncher-api safari save-pdf`\n"
+            // Multi-page research session takes priority over single page
+            let research = WebResearchSession.shared
+            if !research.isEmpty {
+                prompt += research.count > 1 ? research.contextBlock : research.singlePageBlock
+            } else {
+                // Use previousFrontmostApp — when the dock is open, frontmostApplication is
+                // Context-Dock itself, giving the wrong PID for AXWebReader lookups.
+                let browser = AppDelegate.shared?.previousFrontmostApp
+                    ?? NSWorkspace.shared.runningApplications.first(where: { AXWebReader.shared.isBrowser(bundleId: $0.bundleIdentifier ?? "") })
+                let pid = browser?.processIdentifier ?? 0
+                prompt += "\n\n## CURRENT WEB PAGE\nURL: \(urlString)\n"
+                if let snap = AXWebReader.shared.cachedSnapshot(for: pid), !snap.text.isEmpty {
+                    if !snap.title.isEmpty { prompt += "Title: \(snap.title)\n" }
+                    prompt += "\n### Page Content (live, extracted from screen):\n"
+                    prompt += snap.text
+                    prompt += "\n\nAnswer ONLY using this content — it is the ACTUAL live text on screen.\n"
+                } else {
+                    Task.detached(priority: .background) {
+                        AXWebReader.shared.refresh(pid: pid, currentURL: urlString)
+                    }
+                    prompt += "(Page content loading — answer from URL context for now)\n"
+                }
+                if browser?.bundleIdentifier == "com.apple.Safari" {
+                    prompt += "\nYou can save this page as PDF: `ilauncher-api safari save-pdf`\n"
+                }
             }
 
         case .appFocused(let name, let bundleID):
-            prompt += "\n\nThe user is currently focused on the app: \(name) (bundle ID: \(bundleID)).\n"
-            prompt += "IMPORTANT: Questions from this user are about what they're doing in \(name). "
-            prompt += "Answer in the context of \(name). For example, if the user asks 'what am I watching?' and they're in a media app, answer about that app's content.\n"
+            if AXWebReader.shared.isBrowser(bundleId: bundleID),
+               let frontmost = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID }) {
+                let pid = frontmost.processIdentifier
+                // Always inject current URL (fast AX read) even if full page isn't cached yet
+                let liveURL = AXContextReader.shared.current.currentURL ?? ""
+                prompt += "\n\n## CURRENT WEB PAGE\n"
+                prompt += "URL: \(liveURL.isEmpty ? "(unknown)" : liveURL)\n"
+
+                let research = WebResearchSession.shared
+                if !research.isEmpty {
+                    prompt += research.count > 1 ? research.contextBlock : research.singlePageBlock
+                } else if let snap = AXWebReader.shared.cachedSnapshot(for: pid), !snap.text.isEmpty {
+                    if !snap.title.isEmpty { prompt += "Title: \(snap.title)\n" }
+                    prompt += "\n### Page Content (live, extracted from screen):\n"
+                    prompt += snap.text
+                    prompt += "\n\nAnswer ONLY using the page content above — this is the actual live text on screen.\n"
+                } else {
+                    // Cache cold — kick off a background read for next query
+                    Task.detached(priority: .background) {
+                        AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+                    }
+                    prompt += "\n(Full page text is loading — answer from the URL above for now. "
+                    prompt += "Try asking again in a moment for page-grounded answers.)\n"
+                }
+            } else {
+                prompt += "\n\nThe user is currently focused on: \(name) (\(bundleID)).\n"
+                prompt += "Answer in the context of \(name).\n"
+            }
 
         case .contactSelected(let contact):
             prompt += "\n\nThe user has selected a contact: \(contact)\n"

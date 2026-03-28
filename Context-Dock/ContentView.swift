@@ -12,6 +12,7 @@ import Quartz // For Quick Look
 import Combine // For ObservableObject
 import FoundationModels
 import Contacts
+import AddressBook
 import WebKit // For inline browser in L3
 import SwiftTerm // For terminal integration
 
@@ -586,6 +587,11 @@ struct LauncherView: View {
     // User profile picture
     @State private var userProfileImage: NSImage?
 
+    // Web research
+    @StateObject private var webResearch = WebResearchSession.shared
+    @State private var lastKnownBrowserURL: String = ""
+    @State private var showL2ResultsPopover = false
+
     // Swipe gesture monitor
     @State private var swipeGestureMonitor: Any?
     @State private var accumulatedSwipeDeltaY: CGFloat = 0
@@ -772,18 +778,9 @@ struct LauncherView: View {
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + panelHeight + 10
         }
 
-        // L2 Context layer with chat - calculate height for L2 chat messages
-        if showContextInDock && !showBrowserLayer && (!l2ChatMessages.isEmpty || l2IsLoading) {
-            let l2TotalChatHeight = l2ChatHeight
-
-            // If we also have search results, add them too
-            if !searchResults.isEmpty {
-                let resultRowHeight: CGFloat = 50
-                let resultsHeight = min(CGFloat(searchResults.count) * resultRowHeight, 450)
-                return statusBarHeight + pinnedAppsHeight + searchBarHeight + l2TotalChatHeight + resultsHeight + 10
-            } else {
-                return statusBarHeight + pinnedAppsHeight + searchBarHeight + l2TotalChatHeight + 10
-            }
+        // L2 context dock with chat results
+        if showContextInDock && !showBrowserLayer && (l2ChatHeight > 0) {
+            return statusBarHeight + pinnedAppsHeight + searchBarHeight + l2ChatHeight + 16
         }
 
         // L3 Browser layer height calculation
@@ -920,6 +917,19 @@ struct LauncherView: View {
                         if let app = AppDelegate.shared?.previousFrontmostApp {
                             AXContextReader.shared.refresh(from: app)
                             let newCtx = AXContextReader.shared.current
+
+                            // URL-change detection: recache page when user navigates
+                            if AXWebReader.shared.isBrowser(bundleId: app.bundleIdentifier ?? ""),
+                               let newURL = newCtx.currentURL, !newURL.isEmpty,
+                               newURL != self.lastKnownBrowserURL {
+                                self.lastKnownBrowserURL = newURL
+                                AXWebReader.shared.invalidate(pid: app.processIdentifier)
+                                let pid = app.processIdentifier
+                                Task.detached(priority: .background) {
+                                    try? await Task.sleep(nanoseconds: 300_000_000)
+                                    AXWebReader.shared.refresh(pid: pid, currentURL: newURL)
+                                }
+                            }
                             // Only trigger re-render if something meaningful changed
                             if newCtx.selectedFilePaths != self.axContext.selectedFilePaths
                                 || newCtx.selectedText != self.axContext.selectedText
@@ -1103,8 +1113,8 @@ struct LauncherView: View {
                     isAIMode = false
                     showBrowserLayer = false
                     showFolderPreview = false
-                    // In L2-only mode, always open directly into the context dock
-                    showContextInDock = settings.l2OnlyMode
+                    // Always open in L2 when dock-at-bottom or L2-only mode is active
+                    showContextInDock = settings.l2OnlyMode || settings.effectiveDockAtBottom
                     // Also clear app-panel state so calculatedHeight returns base height
                     activeSmartQueryKey = nil
                     searchContextApp = nil
@@ -1124,8 +1134,8 @@ struct LauncherView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .switchToL1)) { _ in
                 // Launcher shortcut pressed while in dock context mode — instant switch, no animation
-                // In l2OnlyMode the context dock is permanent; just clear search text
-                guard !settings.l2OnlyMode else { searchText = ""; return }
+                // In l2OnlyMode or dock-at-bottom the context dock is permanent; just clear search text
+                guard !settings.l2OnlyMode && !settings.effectiveDockAtBottom else { searchText = ""; return }
                 showContextInDock = false
                 isAIMode = false
                 searchText = ""
@@ -3705,6 +3715,9 @@ struct LauncherView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Clear")
+                    } else if showContextInDock,
+                              AXWebReader.shared.isBrowser(bundleId: frontmostAppBundleID) {
+                        addPageButton
                     }
                 }
             }
@@ -3730,6 +3743,48 @@ struct LauncherView: View {
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSearchBarExpanded)
 
+            // Research session page chips (shown when multiple pages added)
+            if !webResearch.pages.isEmpty && showContextInDock {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(webResearch.pages.enumerated()), id: \.offset) { i, page in
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.text.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                                Text(page.title.isEmpty ? URL(string: page.url)?.host ?? page.url : page.title)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .lineLimit(1)
+                                    .foregroundStyle(.primary)
+                                Button(action: { WebResearchSession.shared.remove(at: i) }) {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule().fill(Color.white.opacity(0.1))
+                                    .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+                            )
+                        }
+
+                        if webResearch.count > 1 {
+                            Button(action: { WebResearchSession.shared.clear() }) {
+                                Text("Clear All")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             // Pinned apps or context chips/AI extensions or browser (3-layer swipeable)
             HStack(spacing: 8) {
@@ -3857,15 +3912,8 @@ struct LauncherView: View {
                 aiChatSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else if showContextInDock && !showBrowserLayer {
-                VStack(spacing: 0) {
-                    l2ChatSection
-                    if !l2ChatMessages.isEmpty || l2IsLoading {
-                        resultsSection
-                    }
-                }
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: l2ChatMessages.count)
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: l2IsLoading)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                l2ChatSection
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
                 // Normal mode: Search results (works on L1/L2/L3)
                 // L3 browser layer shows web search results when user types
@@ -4142,6 +4190,83 @@ struct LauncherView: View {
         case .appFocused, .contactSelected, .none:
             return ""
         }
+    }
+
+    @ViewBuilder
+    private var l2ResultsPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(frontmostAppName.isEmpty ? "Context" : frontmostAppName)
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !l2ChatMessages.isEmpty {
+                    Button("Clear") {
+                        l2ChatMessages = []
+                        l2IsLoading = false
+                        showL2ResultsPopover = false
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider().padding(.horizontal, 8)
+
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(l2ChatMessages) { message in
+                        if message.hasInstallButton {
+                            AIChatMessageView(message: message, onInstallExtension: installSuggestedExtension)
+                        } else {
+                            AIChatMessageView(message: message)
+                        }
+                    }
+                    if l2IsLoading { AILoadingView() }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .frame(minHeight: 120, maxHeight: 420)
+        }
+        .frame(minWidth: 540, idealWidth: 600)
+    }
+
+    // MARK: - Add Page Button (browser L2 research)
+
+    @ViewBuilder
+    private var addPageButton: some View {
+        let browserPID: pid_t = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+        let snap: PageSnapshot? = AXWebReader.shared.cachedSnapshot(for: browserPID)
+        let alreadyAdded: Bool = snap.map { s in webResearch.pages.contains(where: { $0.url == s.url }) } ?? false
+        Button(action: {
+            if let s = snap {
+                Task { @MainActor in WebResearchSession.shared.addPage(s) }
+            } else {
+                Task.detached(priority: .background) {
+                    let url = AXContextReader.shared.current.currentURL ?? ""
+                    AXWebReader.shared.refresh(pid: browserPID, currentURL: url)
+                }
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .fill(alreadyAdded ? Color.green.opacity(0.3) : Color.white.opacity(0.12))
+                    .frame(width: 22, height: 22)
+                Image(systemName: alreadyAdded ? "checkmark" : "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+        }
+        .buttonStyle(.plain)
+        .help(alreadyAdded ? "Page added to research" : snap != nil ? "Add page to research session" : "Tap to read page first")
     }
 
     // MARK: - L2 Chat Section
@@ -5150,527 +5275,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             content: "📋 Install command copied to clipboard!\n\nPaste it in Terminal:\n```\ncurl -fsSL https://rem.sidv.dev/install | bash\n```\nAnswer **n** when asked about the AI agent skill — ILauncher uses your selected provider (\(AppSettings.shared.selectedAIProvider.shortName)) instead.\n\nAlternatively: open ILauncher terminal → type \"install rem\" → AI will handle it."))
     }
 
-    private enum L2RouteDecision {
-        case none
-        case systemSearch(types: Set<SystemDataType>, title: String, query: String, allowEmpty: Bool)
-        case contactSearch(query: String)
-        case terminalCommand(command: String, purpose: String)
-    }
-
-    private func routeL2QueryDecision(query: String, frontmostName: String?, selectedFiles: [URL]) -> L2RouteDecision {
-        let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return .none }
-
-        // Action verbs mean the user wants to DO something, not just look things up.
-        // These queries must fall through to the AI (Layer 5) so it can execute
-        // cross-app operations like "save this link to Notes" or "add a reminder".
-        let actionVerbs = ["save", "add", "create", "new", "put", "store", "move", "copy",
-                           "send", "share", "delete", "remove", "update", "edit", "rename",
-                           "make", "write", "set", "book", "schedule", "open", "launch",
-                           "download", "export", "import", "convert", "compress", "extract"]
-        let isActionQuery = actionVerbs.contains(where: { normalized.hasPrefix($0) || normalized.contains(" \($0) ") })
-        if isActionQuery { return .none }
-
-        // When Contacts app is frontmost, any non-action query is a contact lookup
-        let isContactsApp = frontmostName?.lowercased().contains("contact") == true
-        if isContactsApp {
-            return .contactSearch(query: query)
-        }
-
-        // Explicit contact keywords
-        let contactKeywords = ["contact", "contacts", "call", "phone", "text", "sms", "imessage"]
-        if contactKeywords.contains(where: { normalized.contains($0) }) {
-            return .contactSearch(query: query)
-        }
-
-        // Name-lookup patterns: "find gowri", "show gokula address", "get X phone number"
-        let lookupPrefixes = ["find ", "show ", "get ", "look up ", "lookup ", "search for ", "who is "]
-        let contactFields = ["address", "number", "birthday", "birthday", "mobile", "office"]
-        let hasLookupPrefix = lookupPrefixes.contains { normalized.hasPrefix($0) }
-        let hasContactField = contactFields.contains { normalized.contains($0) }
-        if hasLookupPrefix || hasContactField {
-            return .contactSearch(query: query)
-        }
-
-        let photoKeywords = ["photo", "photos", "image", "images", "picture", "pictures", "screenshot"]
-        if photoKeywords.contains(where: { normalized.contains($0) }) {
-            return .systemSearch(types: [.photo], title: "Photos", query: normalized, allowEmpty: normalized == "photos" || normalized == "photo")
-        }
-
-        if let terminal = terminalCommandFromQuery(query: query, selectedFiles: selectedFiles) {
-            return .terminalCommand(command: terminal.command, purpose: terminal.purpose)
-        }
-
-        return .none
-    }
-
-    private func handleL2RouteDecision(_ decision: L2RouteDecision, query: String) -> Bool {
-        switch decision {
-        case .none:
-            return false
-        case .systemSearch(let types, let title, let searchQuery, let allowEmpty):
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            l2CurrentTask = Task {
-                let results = await systemDataManager.searchAll(
-                    query: searchQuery,
-                    types: types,
-                    perTypeLimit: 20,
-                    allowEmptyQuery: allowEmpty
-                )
-                let searchResults = mapSystemResultsToSearchResults(results)
-                await MainActor.run {
-                    if searchResults.isEmpty {
-                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: "No \(title.lowercased()) results found."))
-                    } else {
-                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: "Found \(searchResults.count) \(title.lowercased()) item(s)."))
-                    }
-                    updateL2Results(searchResults)
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-                if shouldSuggestExtensionForQuery(query) {
-                    if let suggestion = buildL2SuggestedExtensionResponse(for: decision, query: query) {
-                        await handleL2AIResponse(suggestion)
-                    }
-                }
-            }
-            return true
-        case .contactSearch(let searchQuery):
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            l2CurrentTask = Task {
-                let results = await searchContactsForL2(query: searchQuery)
-                await MainActor.run {
-                    if results.isEmpty {
-                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: "No matching contacts found for \"\(searchQuery.trimmingCharacters(in: .whitespacesAndNewlines))\"."))
-                    } else {
-                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: "Found \(results.count) contact(s)."))
-                    }
-                    updateL2Results(results)
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-                // Do NOT fall through to AI extension creation for contact searches —
-                // the contact extensions in the dock already cover all contact actions.
-            }
-            return true
-        case .terminalCommand(let command, let purpose):
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            l2CurrentTask = Task {
-                let (success, output) = await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
-                await MainActor.run {
-                    let status = success ? "Command executed." : "Command blocked or failed."
-                    let response = """
-                    \(status)
-
-                    \(output)
-                    """
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: response))
-                    updateL2Results(buildL2OutputResults(title: "Terminal Output", output: output))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-            }
-            return true
-        }
-    }
-
-    private func terminalCommandFromQuery(query: String, selectedFiles: [URL]) -> (command: String, purpose: String)? {
-        var raw = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = raw.lowercased()
-
-        if raw.hasPrefix("$") || raw.hasPrefix(">") {
-            raw.removeFirst()
-            raw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !raw.isEmpty {
-                return (raw, "Run requested terminal command")
-            }
-        }
-
-        if normalized.contains("list files") || normalized.contains("show files") {
-            return ("ls -la", "List directory contents")
-        }
-
-        if normalized.contains("disk space") {
-            return ("df -h", "Show disk space")
-        }
-
-        if normalized.contains("disk usage") || normalized.contains("folder size") {
-            return ("du -sh .", "Show folder size")
-        }
-
-        if normalized.contains("git status") {
-            return ("git status", "Show git status")
-        }
-
-        if normalized.contains("current directory") || normalized == "pwd" {
-            return ("pwd", "Show current directory")
-        }
-
-        if selectedFiles.count >= 1 {
-            let file = selectedFiles[0]
-            let filePath = file.path
-            let fileName = file.lastPathComponent
-            let nameNoExt = file.deletingPathExtension().lastPathComponent
-            let parentDir = file.deletingLastPathComponent().path
-
-            // Zip / compress
-            if normalized.contains("zip") || normalized.contains("compress") || normalized.contains("archive") {
-                let outPath = "\(parentDir)/\(nameNoExt).zip"
-                return (
-                    "zip -r \"\(outPath)\" \"\(filePath)\" && echo \"✅ Saved to: \(outPath)\"",
-                    "Compress \(fileName) → \(nameNoExt).zip"
-                )
-            }
-
-            // Unzip / extract
-            if normalized.contains("unzip") || normalized.contains("extract") {
-                let outDir = "\(parentDir)/\(nameNoExt)_extracted"
-                return (
-                    "unzip -o \"\(filePath)\" -d \"\(outDir)\" && echo \"✅ Extracted to: \(outDir)\"",
-                    "Extract \(fileName)"
-                )
-            }
-
-            // Open in Finder
-            if normalized.contains("reveal in finder") || normalized.contains("show in finder") || normalized.contains("open in finder") {
-                return ("open -R \"\(filePath)\"", "Reveal \(fileName) in Finder")
-            }
-
-            // Open in Terminal
-            if normalized.contains("open in terminal") || normalized.contains("open terminal here") || normalized.contains("terminal here") {
-                let dir = file.hasDirectoryPath ? filePath : parentDir
-                return ("open -a Terminal \"\(dir)\"", "Open Terminal at \(fileName)")
-            }
-
-            // File size / info
-            if normalized.contains("file size") || normalized.contains("how big") || normalized.contains("how large") {
-                return ("du -sh \"\(filePath)\"", "Show size of \(fileName)")
-            }
-
-            // MD5 / checksum
-            if normalized.contains("md5") || normalized.contains("checksum") || normalized.contains("hash") {
-                return ("md5 \"\(filePath)\"", "MD5 checksum of \(fileName)")
-            }
-
-            // Rename
-            if normalized.contains("rename") {
-                // Can't rename without a new name — route to AI tool-use
-            } else if selectedFiles.count == 1 {
-                if normalized.contains("show file") || normalized.contains("cat ") || normalized.contains("print file") {
-                    return ("cat \"\(filePath)\"", "Show file contents")
-                }
-                if normalized.contains("count lines") || normalized.contains("line count") {
-                    return ("wc -l \"\(filePath)\"", "Count lines in file")
-                }
-            }
-        }
-
-        let firstToken = normalized.split(separator: " ").first.map(String.init) ?? ""
-        let commandStarters: Set<String> = ["ls", "cat", "head", "tail", "grep", "find", "du", "df", "pwd", "whoami", "date", "uptime", "ps", "git"]
-        if commandStarters.contains(firstToken) {
-            let classification = TerminalCommandClassifier.shared.classify(raw)
-            if classification.canExecute {
-                return (raw, classification.explanation)
-            }
-        }
-
-        return nil
-    }
-
-    private func mapSystemResultsToSearchResults(_ systemResults: [SystemSearchResult]) -> [SearchResult] {
-        systemResults.map { systemResult in
-            let resultType: SearchResult.ResultType
-            switch systemResult.type {
-            case .calendarEvent:
-                resultType = .calendarEvent
-            case .reminder:
-                resultType = .reminder
-            case .note:
-                resultType = .note
-            case .mail:
-                resultType = .mail
-            case .photo:
-                resultType = .photo
-            case .message:
-                resultType = .message
-            case .voiceRecording, .contact:
-                resultType = .file
-            }
-
-            return SearchResult(
-                title: systemResult.title,
-                subtitle: systemResult.subtitle,
-                icon: systemResult.icon,
-                action: { systemResult.open() },
-                score: 0.0,
-                type: resultType,
-                filePath: nil,
-                contactData: nil
-            )
-        }
-    }
-
-    private func searchContactsForL2(query: String) async -> [SearchResult] {
-        if !settings.allowContacts {
-            return []
-        }
-
-        if !contactManager.hasContactsPermission {
-            let granted = await contactManager.requestPermission()
-            if !granted { return [] }
-        }
-
-        let contactResults = await contactManager.getAllContacts()
-        let normalized = query.lowercased()
-        let ignoreTokens: Set<String> = [
-            // explicit contact keywords
-            "contact", "contacts", "email", "mail", "message", "call", "phone", "text", "sms", "imessage",
-            // lookup verbs and prepositions
-            "find", "show", "get", "look", "up", "lookup", "search", "who", "is", "whois",
-            // field names / info words people append to queries
-            "address", "number", "mobile", "office", "birthday", "info", "detail", "details",
-            "full", "profile", "about", "data", "record", "summary",
-            // stop words
-            "to", "for", "the", "a", "an", "of", "me", "my", "their", "his", "her", "tell", "what", "give"
-        ]
-        let tokens = normalized
-            .split(whereSeparator: { $0.isWhitespace })
-            .map(String.init)
-            .filter { !ignoreTokens.contains($0) }
-
-        let filtered = contactResults.filter { contact in
-            let haystack = [
-                contact.fullName,
-                contact.primaryEmail,
-                contact.primaryPhone,
-                contact.subtitle
-            ]
-            .map { $0.lowercased() }
-            .joined(separator: " ")
-
-            guard !tokens.isEmpty else { return true }
-            return tokens.allSatisfy { haystack.contains($0) }
-        }
-
-        let limited = Array(filtered.prefix(20))
-        return limited.map { contact in
-            SearchResult(
-                title: contact.fullName,
-                subtitle: contact.subtitle,
-                icon: contact.image,
-                action: {
-                    contact.openInContacts()
-                },
-                type: .contact,
-                filePath: nil,
-                contactData: SearchResult.ContactData(
-                    primaryEmail: contact.primaryEmail,
-                    allEmails: contact.allEmails,
-                    primaryPhone: contact.primaryPhone,
-                    allPhones: contact.allPhones,
-                    identifier: contact.identifier
-                )
-            )
-        }
-    }
-
-    private func shouldSuggestExtensionForQuery(_ query: String) -> Bool {
-        let frontmostName = frontmostAppName.isEmpty ? nil : frontmostAppName
-        let selectedFiles: [URL] = {
-            if case .filesSelected(let urls) = currentContext { return urls }
-            return []
-        }()
-        let matches = LayeredExtensionManager.shared.discoverExtensions(
-            for: query,
-            selectedFiles: selectedFiles,
-            frontmostApp: frontmostName,
-            layer: .l2_context
-        )
-        return matches.isEmpty
-    }
-
-    private func buildL2SuggestedExtensionResponse(for decision: L2RouteDecision, query: String) -> String? {
-        switch decision {
-        case .systemSearch(let types, _, _, _):
-            if types.contains(.photo) {
-                if let suggestion = buildPhotosExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            if types.contains(.calendarEvent) {
-                if let suggestion = buildCalendarExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            if types.contains(.reminder) {
-                if let suggestion = buildRemindersExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            if types.contains(.note) {
-                if let suggestion = buildNotesExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            if types.contains(.mail) {
-                if let suggestion = buildMailExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            if types.contains(.message) {
-                if let suggestion = buildMessagesExtensionSuggestion(query: query) {
-                    return suggestion
-                }
-            }
-            return nil
-        case .contactSearch:
-            return buildContactsExtensionSuggestion(query: query)
-        case .terminalCommand, .none:
-            return nil
-        }
-    }
-
-    private func buildPhotosExtensionSuggestion(query: String) -> String? {
-        let normalized = query.lowercased()
-        let count = parseFirstInt(from: normalized) ?? 10
-        if normalized.contains("recent") || normalized.contains("latest") {
-            return """
-            [SUGGEST_EXTENSION]
-            {
-                "name": "Recent Photos (\(count))",
-                "description": "List the most recent \(count) photos from your Pictures folder.",
-                "app": "Photos",
-                "code": "#!/bin/bash\\n# Extension: Recent Photos (\\(count))\\n# Description: Lists the most recent \\(count) images from your Pictures folder.\\n# Trigger: recent photos\\n# Layer: l2_context\\n\\nCOUNT=\\(count)\\nROOT=\\\"$HOME/Pictures\\\"\\nmdfind -onlyin \\\"$ROOT\\\" \\\"kMDItemContentTypeTree == 'public.image'\\\" | while IFS= read -r file; do\\n  stat -f \\\"%m %N\\\" \\\"$file\\\"\\ndone | sort -rn | head -n \\\"$COUNT\\\" | cut -d' ' -f2-\\n"
-            }
-            [/SUGGEST_EXTENSION]
-            """
-        }
-
-        if let term = extractTerm(after: ["photos of", "pictures of", "images of"], from: query) {
-            let safeTerm = term.replacingOccurrences(of: "\"", with: "")
-            return """
-            [SUGGEST_EXTENSION]
-            {
-                "name": "Photos of \(safeTerm)",
-                "description": "Find photos matching '\(safeTerm)' in your Pictures folder.",
-                "app": "Photos",
-                "code": "#!/bin/bash\\n# Extension: Photos of \(safeTerm)\\n# Description: Finds images that match the name or keywords.\\n# Trigger: photos of \(safeTerm)\\n# Layer: l2_context\\n\\nTERM=\\\"\(safeTerm)\\\"\\nROOT=\\\"$HOME/Pictures\\\"\\nmdfind -onlyin \\\"$ROOT\\\" \\\"kMDItemContentTypeTree == 'public.image' && (kMDItemFSName == '*$TERM*' || kMDItemKeywords == '*$TERM*')\\\" | head -n 50\\n"
-            }
-            [/SUGGEST_EXTENSION]
-            """
-        }
-
-        return nil
-    }
-
-    private func buildCalendarExtensionSuggestion(query: String) -> String? {
-        let normalized = query.lowercased()
-        let days = normalized.contains("today") ? 1 : 7
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Upcoming Calendar Events",
-            "description": "List upcoming calendar events for the next \(days) day(s).",
-            "app": "Calendar",
-            "code": "#!/bin/bash\\n# Extension: Upcoming Calendar Events\\n# Description: Lists upcoming events for the next \(days) day(s).\\n# Trigger: calendar\\n# Layer: l2_context\\n\\nosascript <<'APPLESCRIPT'\\nset startDate to current date\\nset endDate to startDate + (\(days) * days)\\nset output to \\\"\\\"\\ntell application \\\"Calendar\\\"\\n  repeat with cal in calendars\\n    set evs to every event of cal whose start date >= startDate and start date <= endDate\\n    repeat with e in evs\\n      set output to output & (summary of e) & \\\" - \\\" & (start date of e as string) & linefeed\\n    end repeat\\n  end repeat\\nend tell\\nreturn output\\nAPPLESCRIPT\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func buildRemindersExtensionSuggestion(query: String) -> String? {
-        let term = extractTerm(after: ["remind me to", "reminder", "reminders"], from: query)
-        let filter = term ?? ""
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Open Reminders List",
-            "description": "List incomplete reminders\(filter.isEmpty ? "" : " matching '\(filter)'" ).",
-            "app": "Reminders",
-            "code": "#!/bin/bash\\n# Extension: Reminders List\\n# Description: Lists incomplete reminders.\\n# Trigger: reminders\\n# Layer: l2_context\\n\\nFILTER=\\\"\(filter.replacingOccurrences(of: "\"", with: ""))\\\"\\nosascript <<'APPLESCRIPT'\\nset filterText to \\\"\(filter.replacingOccurrences(of: "\"", with: ""))\\\"\\nset output to \\\"\\\"\\ntell application \\\"Reminders\\\"\\n  repeat with lst in lists\\n    repeat with r in reminders of lst whose completed is false\\n      if filterText is \\\"\\\" or (name of r) contains filterText then\\n        set output to output & (name of r) & linefeed\\n      end if\\n    end repeat\\n  end repeat\\nend tell\\nreturn output\\nAPPLESCRIPT\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func buildNotesExtensionSuggestion(query: String) -> String? {
-        let term = extractTerm(after: ["note", "notes", "find note", "search note"], from: query)
-        let filter = term ?? ""
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Search Notes",
-            "description": "Search Notes for '\(filter.isEmpty ? "query" : filter)'.",
-            "app": "Notes",
-            "code": "#!/bin/bash\\n# Extension: Search Notes\\n# Description: Searches Apple Notes by title.\\n# Trigger: notes\\n# Layer: l2_context\\n\\nFILTER=\\\"\(filter.replacingOccurrences(of: "\"", with: ""))\\\"\\nosascript <<'APPLESCRIPT'\\nset filterText to \\\"\(filter.replacingOccurrences(of: "\"", with: ""))\\\"\\nset output to \\\"\\\"\\ntell application \\\"Notes\\\"\\n  repeat with n in notes of default account\\n    if filterText is \\\"\\\" or (name of n) contains filterText then\\n      set output to output & (name of n) & linefeed\\n    end if\\n  end repeat\\nend tell\\nreturn output\\nAPPLESCRIPT\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func buildMailExtensionSuggestion(query: String) -> String? {
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Unread Mail Count",
-            "description": "Show unread Mail count from your Inbox.",
-            "app": "Mail",
-            "code": "#!/bin/bash\\n# Extension: Unread Mail Count\\n# Description: Shows unread count from Inbox.\\n# Trigger: mail\\n# Layer: l2_context\\n\\nosascript -e 'tell application \"Mail\" to count of (every message of inbox whose read status is false)'\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func buildMessagesExtensionSuggestion(query: String) -> String? {
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Open Messages",
-            "description": "Open Messages.app for quick access.",
-            "app": "Messages",
-            "code": "#!/bin/bash\\n# Extension: Open Messages\\n# Description: Opens Messages.app.\\n# Trigger: messages\\n# Layer: l2_context\\n\\nopen -a \"Messages\"\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func buildContactsExtensionSuggestion(query: String) -> String? {
-        let term = extractTerm(after: ["contact", "contacts", "email", "message", "call"], from: query) ?? ""
-        let sanitizedTerm = term.replacingOccurrences(of: "\"", with: "")
-        return """
-        [SUGGEST_EXTENSION]
-        {
-            "name": "Find Contact \(term.isEmpty ? "" : "(\(term))")",
-            "description": "Search Contacts for matching names.",
-            "app": "Contacts",
-            "code": "#!/bin/bash\\n# Extension: Find Contact\\n# Description: Searches Contacts by name.\\n# Trigger: contacts\\n# Layer: l2_context\\n\\nFILTER=\\\"\(sanitizedTerm)\\\"\\nosascript <<'APPLESCRIPT'\\nset filterText to \\\"\(sanitizedTerm)\\\"\\nset output to \\\"\\\"\\ntell application \\\"Contacts\\\"\\n  set matches to people whose name contains filterText\\n  repeat with p in matches\\n    set output to output & (name of p) & linefeed\\n  end repeat\\nend tell\\nreturn output\\nAPPLESCRIPT\\n"
-        }
-        [/SUGGEST_EXTENSION]
-        """
-    }
-
-    private func extractTerm(after prefixes: [String], from query: String) -> String? {
-        let lower = query.lowercased()
-        for prefix in prefixes {
-            if let range = lower.range(of: prefix) {
-                let start = range.upperBound
-                let term = query[start...].trimmingCharacters(in: .whitespacesAndNewlines)
-                if !term.isEmpty {
-                    return term
-                }
-            }
-        }
-        return nil
-    }
-
-    private func parseFirstInt(from text: String) -> Int? {
-        let numbers = text.split(whereSeparator: { !$0.isNumber })
-        guard let first = numbers.first else { return nil }
-        return Int(first)
-    }
 
     private func isAffirmativeResponse(_ text: String) -> Bool {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -5823,126 +5427,57 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             return []
         }()
 
-        if frontmostName?.lowercased().contains("safari") == true,
-           handleSafariDirectQuery(query: query) {
-            return
+        // Extension discovery
+        let matches = LayeredExtensionManager.shared.discoverExtensions(
+            for: query,
+            selectedFiles: selectedFiles,
+            frontmostApp: frontmostName,
+            layer: .l2_context
+        ).filter { result in
+            result.ilExtension.triggers.contains { trigger in
+                if case .appContext = trigger { return true }
+                return false
+            }
         }
 
-        let routeDecision = routeL2QueryDecision(
-            query: query,
-            frontmostName: frontmostName,
-            selectedFiles: selectedFiles
-        )
-        if handleL2RouteDecision(routeDecision, query: query) {
-            return
-        }
-
-        if L2CommandInterface.shared.canHandle(query: query) {
-            let userMessage = AIChatMessage(role: .user, content: query)
-            l2ChatMessages.append(userMessage)
+        if (queryLower.contains("summarize") || queryLower.contains("summary") || queryLower.contains("tldr")),
+           case .filesSelected(let urls) = currentContext,
+           let pdf = ContextDetector.shared.analyzeFiles(urls).first(where: { $0.type == "pdf" }),
+           let pdfContent = pdf.content, !pdfContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
             l2IsLoading = true
-
             l2CurrentTask = Task {
-                let result = await L2CommandInterface.shared.handle(query: query, context: currentContext)
-                if Task.isCancelled { return }
-                if let result = result {
-                    let msg = result.message
-                    // If message still has legacy command tags, parse and execute them properly
-                    let hasCommandTag = msg.contains("[TERMINAL_COMMAND:") || msg.contains("[EXECUTE_COMMAND:") || msg.contains("[USE_EXTENSION:")
-                    if hasCommandTag {
-                        await handleL2AIResponse(msg)
-                    } else {
-                        await MainActor.run {
-                            let assistantMessage = AIChatMessage(role: .assistant, content: msg)
-                            l2ChatMessages.append(assistantMessage)
-                            if let output = result.output, !output.isEmpty {
-                                updateL2Results(buildL2OutputResults(title: result.title, output: output))
-                            } else {
-                                updateL2Results([])
-                            }
-                        }
-                    }
-                }
-                await MainActor.run {
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-            }
-            return
-        }
-
-        // Detect if this is a tab query that should be answered directly (not with extensions)
-        let isTabQuery = frontmostName?.lowercased().contains("safari") == true &&
-            queryLower.contains("tab") &&
-            (queryLower.contains("list") || queryLower.contains("show") ||
-             queryLower.contains("how many") || queryLower.contains("which") ||
-             queryLower.contains("what") || queryLower.contains("find") ||
-             queryLower.contains("about") || queryLower.contains("opened") ||
-             queryLower.contains("open") || queryLower.contains("count"))
-
-        // Skip extension discovery for tab queries - AI should answer directly with tab data
-        if !isTabQuery {
-            let matches = LayeredExtensionManager.shared.discoverExtensions(
-                for: query,
-                selectedFiles: selectedFiles,
-                frontmostApp: frontmostName,
-                layer: .l2_context
-            ).filter { result in
-                result.ilExtension.triggers.contains { trigger in
-                    if case .appContext = trigger {
-                        return true
-                    }
-                    return false
-                }
-            }
-
-            if (queryLower.contains("summarize") || queryLower.contains("summary") || queryLower.contains("tldr")),
-               case .filesSelected(let urls) = currentContext,
-               let pdf = ContextDetector.shared.analyzeFiles(urls).first(where: { $0.type == "pdf" }),
-               let pdfContent = pdf.content, !pdfContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2IsLoading = true
-                l2CurrentTask = Task {
-                    do {
-                        let prompt = "Summarize this PDF content for the user request:\n\n\(pdfContent)\n\nUser request:\n\(query)"
-                        let response = try await sendToAIProviderWithContext(query: prompt, messageHistory: l2ChatMessages)
-                        if Task.isCancelled { return }
-                        await MainActor.run {
-                            let assistantMessage = AIChatMessage(role: .assistant, content: response)
-                            l2ChatMessages.append(assistantMessage)
-                            l2IsLoading = false
-                            l2CurrentTask = nil
-                        }
-                    } catch {
-                        await MainActor.run {
-                            let errorMessage = AIChatMessage(role: .assistant, content: "Sorry, I encountered an error: \(error.localizedDescription)", isError: true)
-                            l2ChatMessages.append(errorMessage)
-                            l2IsLoading = false
-                            l2CurrentTask = nil
-                        }
-                    }
-                }
-                return
-            }
-
-            if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
-                l2CurrentTask = Task {
-                    await executeL2Extension(top.ilExtension, context: currentContext)
+                do {
+                    let prompt = "Summarize this PDF content for the user request:\n\n\(pdfContent)\n\nUser request:\n\(query)"
+                    let response = try await sendToAIProviderWithContext(query: prompt, messageHistory: l2ChatMessages)
+                    if Task.isCancelled { return }
                     await MainActor.run {
+                        let assistantMessage = AIChatMessage(role: .assistant, content: response)
+                        l2ChatMessages.append(assistantMessage)
+                        l2IsLoading = false
+                        l2CurrentTask = nil
+                    }
+                } catch {
+                    await MainActor.run {
+                        let errorMessage = AIChatMessage(role: .assistant, content: "Sorry, I encountered an error: \(error.localizedDescription)", isError: true)
+                        l2ChatMessages.append(errorMessage)
+                        l2IsLoading = false
                         l2CurrentTask = nil
                     }
                 }
-                return
             }
-
-            if matches.isEmpty {
-                updateL2Results([])
-            }
-        } else {
-            // For tab queries, clear extension results so AI can answer directly
-            updateL2Results([])
-            print("🚫 [L2 Query] Skipping extension discovery for tab query - AI will answer directly")
+            return
         }
+
+        if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
+            l2CurrentTask = Task {
+                await executeL2Extension(top.ilExtension, context: currentContext)
+                await MainActor.run { l2CurrentTask = nil }
+            }
+            return
+        }
+
+        if matches.isEmpty { updateL2Results([]) }
 
         // Build intelligent context prompt
         print("🔍 [L2 Query] Current context when building prompt: \(currentContext.description)")
@@ -5974,10 +5509,20 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             do {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), sendWithTools path")
 
+                // Browser/URL contexts: answer directly from page content — never run shell commands
+                let isBrowserContext: Bool = {
+                    switch currentContext {
+                    case .url: return true
+                    case .appFocused(_, let bid): return AXWebReader.shared.isBrowser(bundleId: bid)
+                    default: return false
+                    }
+                }()
+
                 // Cloud providers: use real tool_use loop so AI can chain cross-app commands
                 // (e.g. get Safari URL → save to Notes in two connected steps)
-                if provider != .onDevice && provider != .shortcuts {
-                    let (finalResponse, executedCmds) = try await AIProviderService.shared.sendWithTools(
+                // Skip tools for browser contexts — page content is already in the system prompt.
+                if provider != .onDevice && provider != .shortcuts && !isBrowserContext {
+                    let (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
                         intelligentPrompt,
                         context: currentContext,
                         provider: provider,
@@ -5989,6 +5534,21 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                             }
                             return await TerminalAIBridge.shared.processAICommand(cmd, purpose: purpose)
                         }
+                    )
+                    if Task.isCancelled { return }
+                    await MainActor.run {
+                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: finalResponse))
+                        l2IsLoading = false
+                        l2CurrentTask = nil
+                    }
+                } else if provider != .onDevice && provider != .shortcuts && isBrowserContext {
+                    // Browser context — plain send, no tools, answers from page content in system prompt
+                    let finalResponse = try await AIProviderService.shared.sendMessage(
+                        intelligentPrompt,
+                        context: currentContext,
+                        provider: provider,
+                        apiKey: apiKey,
+                        conversationHistory: chatHistory
                     )
                     if Task.isCancelled { return }
                     await MainActor.run {
@@ -6038,19 +5598,10 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                         l2IsLoading = false
                     }
                 } else {
-                    // Shortcuts: text-tag approach
-                    let messageHistory = l2ChatMessages.dropLast()
-                    let contextualizedHistory = Array(messageHistory).map { msg in
-                        ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
-                    }
-                    var fullContext = contextualizedHistory
-                    fullContext.append(["role": "user", "content": intelligentPrompt])
-                    let response = try await sendToAIProviderDirect(context: fullContext)
-                    if Task.isCancelled { return }
-                    await handleL2AIResponse(response)
                     await MainActor.run {
-                        l2CurrentTask = nil
+                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: "This AI provider is not supported in L2 mode. Please select OpenAI, Anthropic, Gemini, Ollama, or On-Device in Settings.", isError: true))
                         l2IsLoading = false
+                        l2CurrentTask = nil
                     }
                 }
 
@@ -6130,20 +5681,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
     }
     
     // Direct provider sender that accepts pre-built context (used by L2 for custom prompts)
-    private func sendToAIProviderDirect(context: [[String: String]]) async throws -> String {
-        // Check if we have image files selected (for vision support)
-        var imageFiles: [URL] = []
-        if case .filesSelected(let urls) = currentContext {
-            imageFiles = urls.filter { url in
-                let ext = url.pathExtension.lowercased()
-                return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"].contains(ext)
-            }
-        }
-
-        // Send directly without adding another query
-        return try await sendToProvider(query: "", context: context, imageFiles: imageFiles)
-    }
-
     // Common provider router
     private func sendToProvider(query: String, context: [[String: String]]) async throws -> String {
         return try await sendToProvider(query: query, context: context, imageFiles: [])
@@ -10255,20 +9792,29 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
     }
 
     private func loadUserProfilePicture() {
-        // Get the user's profile picture from Contacts
-        Task { @MainActor in
-            // Try to get user icon from system
-            let userPictureURL = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Caches/com.apple.iconservices.store/")
-                .appendingPathComponent("user.icns")
-
-            if let image = NSImage(contentsOf: userPictureURL) {
-                userProfileImage = image
+        Task(priority: .userInitiated) {
+            // 1. AddressBook "me" card — Apple ID / account profile picture (macOS API)
+            if let book = ABAddressBook.shared(),
+               let me = book.me(),
+               let data = me.imageData(),
+               let image = NSImage(data: data) {
+                await MainActor.run { userProfileImage = image }
                 return
             }
 
-            // Fallback: Use default person icon if we can't find user picture
-            userProfileImage = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
+            // 2. Fallback: known macOS local account picture paths
+            let home = NSHomeDirectory()
+            let localPaths = [
+                home + "/Library/Application Support/AddressBook/Images/me.jpg",
+                home + "/Library/Application Support/AddressBook/Thumbs/me.jpg"
+            ]
+            for path in localPaths {
+                if let image = NSImage(contentsOfFile: path) {
+                    await MainActor.run { userProfileImage = image }
+                    return
+                }
+            }
+            // No picture found — stays nil, shows person.circle.fill fallback
         }
     }
 
@@ -10586,6 +10132,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
                 if showContextInDock {
                     updateL2Results([])
+                    reloadMenuForApp(app)
                 }
             }
         }
@@ -10672,9 +10219,9 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
             print("🔍 [Context Detection] Frontmost app: \(appName) (\(bundleID))")
 
-            // CRITICAL: Skip ILauncher itself - we never want to detect our own app
-            if bundleID.contains("ILauncher") {
-                print("⚠️ [Context Detection] Skipping ILauncher itself")
+            // CRITICAL: Skip Context-Dock itself - we never want to detect our own app
+            if bundleID == Bundle.main.bundleIdentifier {
+                print("⚠️ [Context Detection] Skipping Context-Dock itself")
             } else {
                 frontmostAppName = appName
                 frontmostAppBundleID = bundleID
@@ -10695,14 +10242,12 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                         print("📝 ✅ Context: Selected text (\(words.count) words) - \"\(String(text.prefix(100)))...\"")
 
                     case .browserTab(let url, let title):
-                        // Store browser URL context
-                        currentContext = .textSelected(url) // Treat URL as text for now
+                        currentContext = .url(url)
                         print("🌐 Context: Browser tab - \(title)")
 
                     case .browserTabs(let tabs):
-                        // Store first tab URL or summary
                         if let firstTab = tabs.first {
-                            currentContext = .textSelected(firstTab.url)
+                            currentContext = .url(firstTab.url)
                         }
                         print("🌐 Context: \(tabs.count) browser tabs")
 
@@ -10773,13 +10318,21 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
     }
 
     private func contextTargetApp() -> NSRunningApplication? {
+        // Use previousFrontmostApp from AppDelegate first — it is always the real user-facing app,
+        // captured before Context-Dock activated and stole focus.
+        if let prev = AppDelegate.shared?.previousFrontmostApp,
+           prev.bundleIdentifier != Bundle.main.bundleIdentifier {
+            return prev
+        }
+
+        // Fallback: NSWorkspace frontmost, but exclude ourselves
         if let frontmostApp = NSWorkspace.shared.frontmostApplication,
-           !(frontmostApp.bundleIdentifier ?? "").contains("ILauncher") {
+           frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             return frontmostApp
         }
 
         if !frontmostAppBundleID.isEmpty,
-           !frontmostAppBundleID.contains("ILauncher"),
+           frontmostAppBundleID != Bundle.main.bundleIdentifier,
            let fallbackApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == frontmostAppBundleID }) {
             return fallbackApp
         }
@@ -11772,102 +11325,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         return Array(NSOrderedSet(array: images)) as? [String] ?? images
     }
 
-    private func handleSafariDirectQuery(query: String) -> Bool {
-        let normalized = query.lowercased()
-
-        let isPDFSaveQuery = (normalized.contains("save") || normalized.contains("export")) &&
-            (normalized.contains("pdf") || normalized.contains("page"))
-
-        if isPDFSaveQuery {
-            let userMessage = AIChatMessage(role: .user, content: query)
-            l2ChatMessages.append(userMessage)
-            l2IsLoading = true
-
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-                .replacingOccurrences(of: ":", with: "-")
-                .replacingOccurrences(of: ".", with: "-")
-            let outputPath = "\(NSHomeDirectory())/Downloads/SafariPage-\(timestamp).pdf"
-            let command = "ilauncher-api safari save-pdf \"\(outputPath)\""
-
-            l2CurrentTask = Task {
-                let result = await executeShellCommandSafely(command)
-                await MainActor.run {
-                    let response = """
-                    Saved current page as PDF:
-                    \(outputPath)
-
-                    Result:
-                    \(result)
-                    """
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: response))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-            }
-            return true
-        }
-
-        if normalized.contains("airdrop") || normalized.contains("share") {
-            let userMessage = AIChatMessage(role: .user, content: query)
-            l2ChatMessages.append(userMessage)
-            l2IsLoading = true
-
-            let suggestion = """
-            [SUGGEST_EXTENSION]
-            {
-                "name": "Safari Page → PDF (Ready for AirDrop)",
-                "description": "Save the current Safari page as a PDF to Downloads and reveal it so you can AirDrop it.",
-                "app": "Safari",
-                "code": "#!/bin/bash\\nset -e\\nTS=$(date +%Y%m%d-%H%M%S)\\nOUT=\\\"$HOME/Downloads/SafariPage-$TS.pdf\\\"\\nilauncher-api safari save-pdf \\\"$OUT\\\"\\nopen -R \\\"$OUT\\\"\\necho \\\"Saved: $OUT\\\""
-            }
-            [/SUGGEST_EXTENSION]
-            """
-
-            l2CurrentTask = Task {
-                await handleL2AIResponse(suggestion)
-                await MainActor.run {
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-            }
-            return true
-        }
-
-
-        let isSearchQuery = normalized.contains("search") ||
-            normalized.contains("youtube") ||
-            normalized.contains("google") ||
-            normalized.contains("open") ||
-            normalized.contains("go to") ||
-            normalized.contains("navigate")
-
-        if isSearchQuery, let url = buildSafariSearchURL(from: normalized) {
-            let userMessage = AIChatMessage(role: .user, content: query)
-            l2ChatMessages.append(userMessage)
-            l2IsLoading = true
-
-            let command = "open -a Safari \"\(url.absoluteString)\""
-            l2CurrentTask = Task {
-                let result = await executeShellCommandSafely(command)
-                await MainActor.run {
-                    let response = """
-                    Opened in Safari:
-                    \(url.absoluteString)
-
-                    Result:
-                    \(result)
-                    """
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: response))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
-                }
-            }
-            return true
-        }
-
-        return false
-    }
-
     // MARK: - YouTube Panel Handlers
 
     func handleYouTubePanelQuery(query: String) {
@@ -12026,39 +11483,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             ))
         }
         return results
-    }
-
-    private func buildSafariSearchURL(from normalizedQuery: String) -> URL? {
-        let isYouTube = normalizedQuery.contains("youtube")
-        var term = normalizedQuery
-
-        let tokens = [
-            "search", "on youtube", "in youtube", "youtube",
-            "google", "open", "go to", "navigate", "in safari", "on safari"
-        ]
-
-        for token in tokens {
-            term = term.replacingOccurrences(of: token, with: "")
-        }
-
-        term = term
-            .replacingOccurrences(of: "  ", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !term.isEmpty else {
-            return nil
-        }
-
-        let queryTerm = term
-            .split(whereSeparator: { $0.isWhitespace })
-            .map(String.init)
-            .joined(separator: "+")
-
-        let base = isYouTube
-            ? "https://youtube.com/results?search_query="
-            : "https://google.com/search?q="
-
-        return URL(string: base + queryTerm)
     }
 
     private func shouldAutoRunL2Extension(query: String, ext: ILExtension) -> Bool {
@@ -13705,325 +13129,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         return .directAnswer(response)
     }
 
-    private func handleL2AIResponse(_ response: String) async {
-        let action = parseL2AIResponse(response)
-
-        switch action {
-        case .useExtension(let extensionName):
-            print("🔧 [L2] Executing extension: \(extensionName)")
-
-            // Find the extension
-            if let ext = findExtension(named: extensionName) {
-                if let query = originalUserQuery, !shouldAutoRunL2Extension(query: query, ext: ext) {
-                    await MainActor.run {
-                        var cleanedResponse = response
-                        if let range = response.range(of: #"\[USE_EXTENSION:[^\]]+\]"#, options: .regularExpression) {
-                            cleanedResponse.removeSubrange(range)
-                        }
-
-                        let message = AIChatMessage(
-                            role: .assistant,
-                            content: cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                        )
-                        l2ChatMessages.append(message)
-                        l2IsLoading = false
-                    }
-                    return
-                }
-                print("✅ [L2] Found extension: \(ext.name)")
-
-                // Show initial message
-                await MainActor.run {
-                    // Remove the [USE_EXTENSION: ...] tag from display
-                    var cleanedResponse = response
-                    if let range = response.range(of: #"\[USE_EXTENSION:[^\]]+\]"#, options: .regularExpression) {
-                        cleanedResponse.removeSubrange(range)
-                    }
-
-                    let message = AIChatMessage(
-                        role: .assistant,
-                        content: cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                    )
-                    if l2ChatMessages.last?.role != .assistant {
-                        l2ChatMessages.append(message)
-                    } else {
-                        // Update last message if it's already there
-                        l2ChatMessages[l2ChatMessages.count - 1] = message
-                    }
-                }
-
-                // Execute the extension and get results
-                let inputFiles: [URL]
-                if case .filesSelected(let urls) = currentContext {
-                    inputFiles = urls
-                } else {
-                    inputFiles = []
-                }
-
-                do {
-                    let output = try await LayeredExtensionManager.shared.execute(extension: ext, with: inputFiles)
-
-                    await MainActor.run {
-                        // Update L2 results panel
-                        updateL2Results(buildL2OutputResults(title: ext.name, output: output))
-
-                        // Also add results to chat
-                        let resultMessage = AIChatMessage(
-                            role: .assistant,
-                            content: "📋 Results:\n\(output)"
-                        )
-                        l2ChatMessages.append(resultMessage)
-                        l2IsLoading = false
-                    }
-                } catch {
-                    await MainActor.run {
-                        let errorMessage = AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Failed to execute extension: \(error.localizedDescription)",
-                            isError: true
-                        )
-                        l2ChatMessages.append(errorMessage)
-                        l2IsLoading = false
-                    }
-                }
-            } else {
-                print("❌ [L2] Extension '\(extensionName)' not found")
-                await MainActor.run {
-                    let errorMessage = AIChatMessage(
-                        role: .assistant,
-                        content: "Sorry, I couldn't find the '\(extensionName)' extension.",
-                        isError: true
-                    )
-                    l2ChatMessages.append(errorMessage)
-                    l2IsLoading = false
-                }
-            }
-
-        case .executeCommand(let command):
-            print("⚙️ [L2] Executing shell command: \(command)")
-
-            // Execute command safely
-            let result = await executeShellCommandSafely(command)
-
-            await MainActor.run {
-                // Remove the [EXECUTE_COMMAND: ...] tag from display
-                var cleanedResponse = response
-                if let range = response.range(of: #"\[EXECUTE_COMMAND:[^\]]+\]"#, options: .regularExpression) {
-                    cleanedResponse.removeSubrange(range)
-                }
-
-                let finalMessage = """
-                \(cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines))
-
-                Result:
-                \(result)
-                """
-
-                let message = AIChatMessage(role: .assistant, content: finalMessage)
-                l2ChatMessages.append(message)
-                l2IsLoading = false
-            }
-
-        case .terminalCommand(let command, let purpose):
-            print("🖥️ [L2] Processing terminal command: \(command)")
-            print("   Purpose: \(purpose)")
-
-            // Classify the command
-            let classification = TerminalCommandClassifier.shared.classify(command)
-
-            // Clean response for display
-            var cleanedResponse = response
-            if let range = response.range(of: #"\[TERMINAL_COMMAND:[^\]]+\]"#, options: .regularExpression) {
-                cleanedResponse.removeSubrange(range)
-            }
-            if let range = cleanedResponse.range(of: #"\[COMMAND_PURPOSE:[^\]]+\]"#, options: .regularExpression) {
-                cleanedResponse.removeSubrange(range)
-            }
-            if let range = cleanedResponse.range(of: #"\[COMMAND_CATEGORY:[^\]]+\]"#, options: .regularExpression) {
-                cleanedResponse.removeSubrange(range)
-            }
-
-            // Show AI explanation in chat
-            await MainActor.run {
-                let explanationMessage = AIChatMessage(
-                    role: .assistant,
-                    content: cleanedResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                l2ChatMessages.append(explanationMessage)
-            }
-
-            // Check if command is blocked
-            if classification.riskLevel == .critical {
-                await MainActor.run {
-                    var blockedMessage = "⛔ Command blocked for safety: \(classification.blockedReason ?? "Security risk")"
-                    if let alternative = classification.suggestedAlternative {
-                        blockedMessage += "\n\n💡 Alternative: \(alternative)"
-                    }
-                    let message = AIChatMessage(role: .assistant, content: blockedMessage, isError: true)
-                    l2ChatMessages.append(message)
-                    l2IsLoading = false
-                }
-                return
-            }
-
-            let lowerExplanation = cleanedResponse.lowercased()
-            let needsConfirmation = lowerExplanation.contains("would you like") ||
-                lowerExplanation.contains("should i") ||
-                lowerExplanation.contains("do you want") ||
-                command.contains("<") ||
-                command.contains("{")
-
-            if needsConfirmation {
-                await MainActor.run {
-                    pendingTerminalCommand = PendingTerminalCommand(command: command, purpose: purpose)
-                    let promptMessage = AIChatMessage(
-                        role: .assistant,
-                        content: "Reply \"yes\" to run that command, or \"no\" to cancel."
-                    )
-                    l2ChatMessages.append(promptMessage)
-                    l2IsLoading = false
-                }
-                return
-            }
-
-            // Process through terminal AI bridge
-            let (success, output) = await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
-
-            await MainActor.run {
-                let resultIcon = success ? "✅" : "❌"
-                let resultMessage = AIChatMessage(
-                    role: .assistant,
-                    content: "\(resultIcon) Command Result:\n```\n\(output)\n```"
-                )
-                l2ChatMessages.append(resultMessage)
-                l2IsLoading = false
-            }
-
-        case .suggestExtension(let code, let explanation):
-            print("💡 [L2] Showing extension suggestion")
-            await MainActor.run {
-                // Show explanation and code with action button
-                let suggestedExtensionMessage = """
-                \(explanation.trimmingCharacters(in: .whitespacesAndNewlines))
-
-                📦 Extension Code:
-                ```
-                \(code)
-                ```
-
-                💾 Click "Add to Extensions" below to install and use it immediately!
-                """
-
-                let message = AIChatMessage(role: .assistant, content: suggestedExtensionMessage, hasInstallButton: true)
-                l2ChatMessages.append(message)
-
-                // Store the code for installation
-                suggestedExtensionCode = code
-
-                l2IsLoading = false
-            }
-
-        case .createAndExecuteExtension(let name, let description, let app, let code):
-            print("🚀 [L2] Creating and executing extension: \(name)")
-            await MainActor.run {
-                // Show creation message
-                let creatingMessage = AIChatMessage(
-                    role: .assistant,
-                    content: "Creating extension '\(name)' for \(app)..."
-                )
-                l2ChatMessages.append(creatingMessage)
-            }
-
-            // Create the extension
-            let newExtension = ILExtension(
-                name: name,
-                description: description,
-                layer: .l2_context,
-                category: app,
-                triggers: [.appContext(app)],
-                scriptPath: "", // Will be set by manager
-                isBuiltIn: false
-            )
-
-            // Save the script content
-            let extensionsDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ILauncher/Extensions")
-            let appGroupDir = extensionsDir.appendingPathComponent(app)
-
-            do {
-                // Create app group directory if needed
-                try FileManager.default.createDirectory(at: appGroupDir, withIntermediateDirectories: true)
-
-                // Create script file
-                let scriptFileName = "\(name.lowercased().replacingOccurrences(of: " ", with: "_")).sh"
-                let scriptPath = appGroupDir.appendingPathComponent(scriptFileName)
-                try code.write(to: scriptPath, atomically: true, encoding: .utf8)
-
-                // Make executable
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath.path)
-
-                // Update extension with actual path
-                var ext = newExtension
-                ext.scriptPath = scriptPath.path
-
-                // Add to manager
-                await MainActor.run {
-                    LayeredExtensionManager.shared.addExtension(ext)
-                }
-
-                print("✅ [L2] Extension created at: \(scriptPath.path)")
-
-                // Execute the extension immediately
-                let inputFiles: [URL]
-                if case .filesSelected(let urls) = currentContext {
-                    inputFiles = urls
-                } else {
-                    inputFiles = []
-                }
-
-                let output = try await LayeredExtensionManager.shared.execute(extension: ext, with: inputFiles)
-
-                await MainActor.run {
-                    // Update message with success
-                    let successMessage = AIChatMessage(
-                        role: .assistant,
-                        content: """
-                        ✅ Extension '\(name)' created and executed!
-
-                        📋 Results:
-                        \(output)
-
-                        The extension has been saved to your Extensions directory and can be used again anytime.
-                        """
-                    )
-                    l2ChatMessages.append(successMessage)
-                    l2IsLoading = false
-                }
-
-            } catch {
-                print("❌ [L2] Failed to create extension: \(error)")
-                await MainActor.run {
-                    let errorMessage = AIChatMessage(
-                        role: .assistant,
-                        content: "❌ Failed to create extension: \(error.localizedDescription)",
-                        isError: true
-                    )
-                    l2ChatMessages.append(errorMessage)
-                    l2IsLoading = false
-                }
-            }
-
-        case .directAnswer(let answer):
-            print("💬 [L2] Showing direct answer")
-            await MainActor.run {
-                let message = AIChatMessage(role: .assistant, content: answer)
-                // Only append if not already added
-                if l2ChatMessages.last?.content != answer {
-                    l2ChatMessages.append(message)
-                }
-                l2IsLoading = false
-            }
-        }
-    }
 
     // Store suggested extension code for easy copying
     @State private var suggestedExtensionCode: String? = nil
