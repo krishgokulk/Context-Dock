@@ -175,7 +175,7 @@ final class AppAdapterManager: ObservableObject {
     /// Execute an adapter action, showing an approval sheet if needed.
     /// For `.aiPrompt` actions this returns the resolved prompt string as output
     /// so ContentView can inject it into the search field.
-    func execute(_ action: AdapterAction, context: AXContext) async -> (Bool, String) {
+    func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil) async -> (Bool, String) {
         if action.requiresApproval {
             guard let adp = adapters.first(where: { $0.actions.contains(where: { $0.id == action.id }) }) else {
                 return (false, "Adapter not found")
@@ -187,7 +187,7 @@ final class AppAdapterManager: ObservableObject {
                     onApprove: { [weak self] in
                         Task { @MainActor [weak self] in
                             self?.pendingApproval = nil
-                            let result = await self?.runAction(action, context: context) ?? (false, "")
+                            let result = await self?.runAction(action, context: context, targetBundleId: targetBundleId) ?? (false, "")
                             self?.lastResult = result
                             continuation.resume(returning: result)
                         }
@@ -199,7 +199,7 @@ final class AppAdapterManager: ObservableObject {
                 )
             }
         }
-        let result = await runAction(action, context: context)
+        let result = await runAction(action, context: context, targetBundleId: targetBundleId)
         lastResult = result
         return result
     }
@@ -285,20 +285,75 @@ final class AppAdapterManager: ObservableObject {
         await loadUserAdapters()
     }
 
+    /// Append a new action to an adapter (built-in or user), saving as a user JSON override.
+    /// Built-in adapters are "forked" — all existing actions are preserved plus the new one.
+    func appendAction(_ action: AdapterAction, to bundleId: String) async {
+        guard let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }
+        let safe = base.appName.replacingOccurrences(of: "/", with: "-")
+
+        // Determine target file: existing user file OR new file
+        let fileURL = base.sourceFileURL
+            ?? adaptersDirectory.appendingPathComponent("\(safe).json")
+
+        // Build merged action list (deduped by id)
+        var merged = base.actions.filter { $0.id != action.id }
+        merged.append(action)
+
+        // Encode to JSON
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        var export = base
+        export.isBuiltIn = false
+        export.actions = merged
+        if let data = try? encoder.encode(export),
+           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json["isBuiltIn"] = false
+            if let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                try? pretty.write(to: fileURL)
+            }
+        }
+        await loadUserAdapters()
+    }
+
+    /// Delete a custom action from an adapter (no-op for pure built-in adapters with no user file).
+    func deleteAction(id actionId: String, from bundleId: String) async {
+        guard let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }
+        let safe = base.appName.replacingOccurrences(of: "/", with: "-")
+        let fileURL = base.sourceFileURL
+            ?? adaptersDirectory.appendingPathComponent("\(safe).json")
+
+        var filtered = base.actions.filter { $0.id != actionId }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        var export = base
+        export.isBuiltIn = false
+        export.actions = filtered
+        if let data = try? encoder.encode(export),
+           var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json["isBuiltIn"] = false
+            if let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                try? pretty.write(to: fileURL)
+            }
+        }
+        await loadUserAdapters()
+    }
+
     // MARK: - Private execution
 
-    private func runAction(_ action: AdapterAction, context: AXContext) async -> (Bool, String) {
+    private func runAction(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil) async -> (Bool, String) {
         switch action.type {
 
         case .menubar:
             guard let path = action.menuPath else { return (false, "No menu path defined") }
-            guard let frontApp = AppDelegate.shared?.previousFrontmostApp else {
-                return (false, "No frontmost app")
+            let explicitTargetApp = await resolveOrLaunchTargetApp(for: targetBundleId)
+            let targetApp = explicitTargetApp ?? AppDelegate.shared?.previousFrontmostApp
+            guard let frontApp = targetApp else {
+                return (false, "No target app")
             }
             let pid = frontApp.processIdentifier
             // Bring the target app to front so the menu press registers correctly,
             // then click via the AX API on a background thread (it uses Thread.sleep).
-            frontApp.activate(options: [.activateIgnoringOtherApps])
+            frontApp.activate()
             try? await Task.sleep(nanoseconds: 80_000_000) // 0.08 s — let activation settle
             let success = await Task.detached(priority: .userInitiated) { () -> Bool in
                 AXMenuReader.shared.clickMenuItem(path: path, in: pid)
@@ -339,6 +394,44 @@ final class AppAdapterManager: ObservableObject {
             let tmpl = action.aiPromptTemplate ?? action.description
             return (true, inject(tmpl, context: context))
         }
+    }
+
+    private func resolvedTargetApp(for bundleId: String?) -> NSRunningApplication? {
+        guard let bundleId, !bundleId.isEmpty else { return nil }
+
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            .first { !$0.isTerminated }
+        return running
+    }
+
+    private func resolveOrLaunchTargetApp(for bundleId: String?) async -> NSRunningApplication? {
+        guard let bundleId, !bundleId.isEmpty else { return nil }
+
+        if let running = resolvedTargetApp(for: bundleId) {
+            return running
+        }
+
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            return nil
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
+        } catch {
+            return nil
+        }
+
+        for _ in 0..<10 {
+            if let running = resolvedTargetApp(for: bundleId) {
+                return running
+            }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+        }
+
+        return nil
     }
 
     // MARK: - Script runners
@@ -1735,7 +1828,97 @@ end tell
         icon: "gearshape.2.fill",
         actions: [
 
-            // ── Most-used ─────────────────────────────────────────────────────
+            // ── Apple Account ─────────────────────────────────────────────────
+            AdapterAction(id: "sysprefs.appleaccount",
+                          name: "Apple Account",
+                          icon: "person.crop.circle",
+                          description: "Open Apple Account (Apple ID) settings",
+                          triggers: ["apple id", "apple account", "icloud account", "sign in"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.appleaccount.personalinfo",
+                          name: "Personal Information",
+                          icon: "person.text.rectangle",
+                          description: "Apple Account > Personal Information",
+                          triggers: ["personal information", "name address", "birthday"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?loadPersonalInfoUI",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.appleaccount.siginsecurity",
+                          name: "Sign-In & Security",
+                          icon: "lock.shield",
+                          description: "Apple Account > Sign-In & Security",
+                          triggers: ["sign in security", "two factor", "trusted phone", "apple id password"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?loadPasswordSecurityUI",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.appleaccount.payment",
+                          name: "Payment & Shipping",
+                          icon: "creditcard",
+                          description: "Apple Account > Payment & Shipping",
+                          triggers: ["payment", "shipping address", "billing", "credit card apple"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?loadPaymentUI",
+                          accentColor: "green"),
+            AdapterAction(id: "sysprefs.icloud",
+                          name: "iCloud",
+                          icon: "icloud",
+                          description: "Open iCloud settings",
+                          triggers: ["icloud", "cloud storage", "icloud drive", "sync"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?iCloud",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.icloud.storage",
+                          name: "iCloud Storage",
+                          icon: "icloud.and.arrow.up",
+                          description: "iCloud > Manage Storage",
+                          triggers: ["icloud storage", "manage storage", "storage plan"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?email/prefs/storage?path=STORAGE_AND_BACKUP",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.icloud.privaterelay",
+                          name: "iCloud Private Relay",
+                          icon: "network.badge.shield.half.filled",
+                          description: "iCloud+ > Private Relay",
+                          triggers: ["private relay", "icloud plus", "ip address privacy"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?email/prefs/accountDetails?path=InternetPrivacy",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.icloud.hidemyemail",
+                          name: "Hide My Email",
+                          icon: "envelope.badge.shield.half.filled",
+                          description: "iCloud+ > Hide My Email",
+                          triggers: ["hide my email", "icloud email", "random email"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?email/prefs/storage?root=APPLE_ACCOUNT&path=ICLOUD_SERVICE/PRIVATE_EMAIL_MANAGE",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.icloud.adp",
+                          name: "Advanced Data Protection",
+                          icon: "checkmark.shield",
+                          description: "iCloud > Advanced Data Protection",
+                          triggers: ["advanced data protection", "end to end encryption", "adp"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?email/prefs/storage?root=APPLE_ACCOUNT&path=ICLOUD_SERVICE/ICLOUD_ADP_SPECIFIER_NAME",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.appleaccount.mediapurchases",
+                          name: "Media & Purchases",
+                          icon: "bag",
+                          description: "Apple Account > Media & Purchases",
+                          triggers: ["media purchases", "app store account", "itunes purchases"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?com.apple.AppleMediaServicesUI.SpyglassPurchases",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.appleaccount.signinwithapple",
+                          name: "Sign in with Apple",
+                          icon: "apple.logo",
+                          description: "Apple Account > Sign in with Apple",
+                          triggers: ["sign in with apple", "app logins", "third party login"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.systempreferences.AppleIDSettings?signInWithApple",
+                          accentColor: "gray"),
+
+            // ── Wi-Fi ─────────────────────────────────────────────────────────
             AdapterAction(id: "sysprefs.wifi",
                           name: "Wi-Fi",
                           icon: "wifi",
@@ -1743,6 +1926,22 @@ end tell
                           triggers: ["wifi", "wireless", "network wifi"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.wifi-settings-extension",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.wifi.details",
+                          name: "Wi-Fi Network Details",
+                          icon: "wifi.circle",
+                          description: "Wi-Fi > current network Details",
+                          triggers: ["wifi details", "network details", "wifi ip", "wifi info"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.wifi-settings-extension?NetworkDetails",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.wifi.advanced",
+                          name: "Wi-Fi Advanced",
+                          icon: "wifi.exclamationmark",
+                          description: "Wi-Fi > Advanced settings",
+                          triggers: ["wifi advanced", "preferred networks", "wifi proxy"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.wifi-settings-extension?Advanced",
                           accentColor: "blue"),
             AdapterAction(id: "sysprefs.bluetooth",
                           name: "Bluetooth",
@@ -1760,6 +1959,22 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Sound-Settings.extension",
                           accentColor: "red"),
+            AdapterAction(id: "sysprefs.sound.output",
+                          name: "Sound Output",
+                          icon: "speaker.wave.3",
+                          description: "Sound > Output tab",
+                          triggers: ["sound output", "speakers output", "audio output", "headphones output"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Sound-Settings.extension?output",
+                          accentColor: "red"),
+            AdapterAction(id: "sysprefs.sound.input",
+                          name: "Sound Input",
+                          icon: "mic",
+                          description: "Sound > Input tab",
+                          triggers: ["sound input", "microphone input", "audio input", "mic settings"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input",
+                          accentColor: "red"),
             AdapterAction(id: "sysprefs.display",
                           name: "Displays",
                           icon: "display",
@@ -1767,6 +1982,22 @@ end tell
                           triggers: ["display", "displays", "resolution", "brightness", "screen"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Displays-Settings.extension",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.display.nightshift",
+                          name: "Night Shift",
+                          icon: "moon.stars",
+                          description: "Displays > Night Shift settings",
+                          triggers: ["night shift", "warm display", "blue light", "color temperature"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Displays-Settings.extension?nightShiftSection",
+                          accentColor: "orange"),
+            AdapterAction(id: "sysprefs.display.advanced",
+                          name: "Display Advanced",
+                          icon: "display.trianglebadge.exclamationmark",
+                          description: "Displays > Advanced settings",
+                          triggers: ["display advanced", "hdr", "variable refresh rate", "promoion"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Displays-Settings.extension?advancedSection",
                           accentColor: "blue"),
             AdapterAction(id: "sysprefs.appearance",
                           name: "Toggle Dark Mode",
@@ -1784,6 +2015,14 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
                           accentColor: "red"),
+            AdapterAction(id: "sysprefs.notifications.iphone",
+                          name: "iPhone Notifications on Mac",
+                          icon: "iphone.radiowaves.left.and.right",
+                          description: "Notifications > Allow Notifications from iPhone",
+                          triggers: ["iphone notifications", "phone notifications mac", "continuity notifications"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?RemoteNotifications",
+                          accentColor: "red"),
             AdapterAction(id: "sysprefs.privacy",
                           name: "Privacy & Security",
                           icon: "lock.shield",
@@ -1792,6 +2031,94 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
                           accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.location",
+                          name: "Location Services",
+                          icon: "location",
+                          description: "Privacy > Location Services",
+                          triggers: ["location", "location services", "gps", "location permission"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_LocationServices",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.camera",
+                          name: "Camera Permission",
+                          icon: "camera",
+                          description: "Privacy > Camera access permissions",
+                          triggers: ["camera permission", "camera access", "allow camera"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Camera",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.microphone",
+                          name: "Microphone Permission",
+                          icon: "mic.badge.plus",
+                          description: "Privacy > Microphone access permissions",
+                          triggers: ["microphone permission", "mic access", "allow microphone"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.screenrecording",
+                          name: "Screen Recording Permission",
+                          icon: "rectangle.dashed.badge.record",
+                          description: "Privacy > Screen & System Audio Recording",
+                          triggers: ["screen recording", "screen capture permission", "allow screen recording"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AudioCapture",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.fulldisk",
+                          name: "Full Disk Access",
+                          icon: "externaldrive.badge.checkmark",
+                          description: "Privacy > Full Disk Access",
+                          triggers: ["full disk access", "disk permission", "disk access"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.accessibility",
+                          name: "Accessibility Permission",
+                          icon: "figure.roll.circle",
+                          description: "Privacy > Accessibility permissions",
+                          triggers: ["accessibility permission", "accessibility access", "allow accessibility"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.automation",
+                          name: "Automation Permission",
+                          icon: "gearshape.arrow.triangle.2.circlepath",
+                          description: "Privacy > Automation permissions",
+                          triggers: ["automation permission", "applescript permission", "allow automation"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Automation",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.inputmonitoring",
+                          name: "Input Monitoring",
+                          icon: "keyboard.badge.eye",
+                          description: "Privacy > Input Monitoring",
+                          triggers: ["input monitoring", "keylogger permission", "keyboard monitoring"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.privacy.filevault",
+                          name: "FileVault",
+                          icon: "lock.laptopcomputer",
+                          description: "Privacy & Security > FileVault disk encryption",
+                          triggers: ["filevault", "disk encryption", "encrypt disk"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?FileVault",
+                          accentColor: "yellow"),
+            AdapterAction(id: "sysprefs.privacy.lockdown",
+                          name: "Lockdown Mode",
+                          icon: "lock.trianglebadge.exclamationmark",
+                          description: "Privacy & Security > Lockdown Mode",
+                          triggers: ["lockdown mode", "extreme security"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?LockdownMode",
+                          accentColor: "red"),
+            AdapterAction(id: "sysprefs.privacy.analytics",
+                          name: "Analytics & Improvements",
+                          icon: "chart.bar.xaxis",
+                          description: "Privacy > Analytics & Improvements",
+                          triggers: ["analytics", "diagnostics", "share with apple", "crash reports"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Analytics",
+                          accentColor: "gray"),
             AdapterAction(id: "sysprefs.battery",
                           name: "Battery",
                           icon: "battery.75",
@@ -1800,8 +2127,32 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Battery-Settings.extension",
                           accentColor: "green"),
+            AdapterAction(id: "sysprefs.battery.health",
+                          name: "Battery Health",
+                          icon: "battery.100.bolt",
+                          description: "Battery > Battery Health",
+                          triggers: ["battery health", "battery capacity", "battery condition"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Battery-Settings.extension?batteryhealth",
+                          accentColor: "green"),
+            AdapterAction(id: "sysprefs.battery.options",
+                          name: "Battery Options",
+                          icon: "slider.horizontal.3",
+                          description: "Battery > Options (low power mode, etc.)",
+                          triggers: ["battery options", "low power mode", "power nap"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Battery-Settings.extension?options",
+                          accentColor: "green"),
 
             // ── System & Updates ─────────────────────────────────────────────
+            AdapterAction(id: "sysprefs.about",
+                          name: "About This Mac",
+                          icon: "apple.logo",
+                          description: "Open About This Mac",
+                          triggers: ["about", "about this mac", "mac info", "serial number", "model"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.SystemProfiler.AboutExtension",
+                          accentColor: "gray"),
             AdapterAction(id: "sysprefs.softwareupdate",
                           name: "Software Update",
                           icon: "arrow.down.circle",
@@ -1809,6 +2160,14 @@ end tell
                           triggers: ["software update", "update", "upgrade", "macos update", "check update"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension",
+                          accentColor: "teal"),
+            AdapterAction(id: "sysprefs.softwareupdate.auto",
+                          name: "Automatic Updates",
+                          icon: "arrow.clockwise.circle",
+                          description: "Software Update > Automatic Updates settings",
+                          triggers: ["automatic update", "auto update", "background update"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension?action=showAdvancedOptions",
                           accentColor: "teal"),
             AdapterAction(id: "sysprefs.general",
                           name: "General",
@@ -1860,6 +2219,46 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension",
                           accentColor: "gray"),
+            AdapterAction(id: "sysprefs.keyboard.shortcuts.spotlight",
+                          name: "Spotlight Shortcut",
+                          icon: "magnifyingglass.circle",
+                          description: "Keyboard > Keyboard Shortcuts > Spotlight",
+                          triggers: ["spotlight shortcut", "spotlight hotkey", "command space"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Spotlight",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.keyboard.shortcuts.functionkeys",
+                          name: "Function Keys",
+                          icon: "fn",
+                          description: "Keyboard > Keyboard Shortcuts > Function keys",
+                          triggers: ["function keys", "fn keys", "f1 f2", "media keys"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?FunctionKeys",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.keyboard.shortcuts.modifiers",
+                          name: "Modifier Keys",
+                          icon: "keyboard.badge.ellipsis",
+                          description: "Keyboard > Modifier Keys (remap Caps Lock, etc.)",
+                          triggers: ["modifier keys", "caps lock", "remap keys", "control key"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?ModifierKeys",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.keyboard.inputsources",
+                          name: "Input Sources",
+                          icon: "globe",
+                          description: "Keyboard > Text Input > Input Sources",
+                          triggers: ["input sources", "keyboard language", "input language"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?InputSources",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.keyboard.textreplacements",
+                          name: "Text Replacements",
+                          icon: "text.badge.checkmark",
+                          description: "Keyboard > Text Replacements",
+                          triggers: ["text replacement", "autocorrect", "auto correct", "substitutions"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?TextReplacements",
+                          accentColor: "gray"),
             AdapterAction(id: "sysprefs.trackpad",
                           name: "Trackpad",
                           icon: "rectangle.and.hand.point.up.left",
@@ -1867,6 +2266,30 @@ end tell
                           triggers: ["trackpad", "touchpad", "gestures"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.trackpad.pointclick",
+                          name: "Trackpad Point & Click",
+                          icon: "cursorarrow.click",
+                          description: "Trackpad > Point & Click tab",
+                          triggers: ["click speed", "tap to click", "secondary click", "tracking speed"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension?PointAndClick",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.trackpad.scrollzoom",
+                          name: "Trackpad Scroll & Zoom",
+                          icon: "arrow.up.and.down.and.arrow.left.and.right",
+                          description: "Trackpad > Scroll & Zoom tab",
+                          triggers: ["scroll direction", "natural scrolling", "pinch zoom", "smart zoom"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension?ScrollAndZoom",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.trackpad.moregestures",
+                          name: "Trackpad More Gestures",
+                          icon: "hand.draw",
+                          description: "Trackpad > More Gestures tab",
+                          triggers: ["swipe gestures", "mission control gesture", "app expose", "more gestures"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension?MoreGestures",
                           accentColor: "gray"),
             AdapterAction(id: "sysprefs.mouse",
                           name: "Mouse",
@@ -1894,6 +2317,22 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Network-Settings.extension",
                           accentColor: "blue"),
+            AdapterAction(id: "sysprefs.network.dns",
+                          name: "Network DNS",
+                          icon: "network.badge.shield.half.filled",
+                          description: "Network > current connection DNS settings",
+                          triggers: ["dns", "nameserver", "custom dns"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Network-Settings.extension?DNS",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.network.proxies",
+                          name: "Network Proxies",
+                          icon: "arrow.triangle.swap",
+                          description: "Network > Proxies settings",
+                          triggers: ["proxy", "proxies", "http proxy", "socks"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Network-Settings.extension?Proxies",
+                          accentColor: "blue"),
             AdapterAction(id: "sysprefs.airdrop",
                           name: "AirDrop & Continuity",
                           icon: "point.3.connected.trianglepath.dotted",
@@ -1909,6 +2348,30 @@ end tell
                           triggers: ["sharing", "screen sharing", "file sharing", "remote"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Sharing-Settings.extension",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.sharing.screensharing",
+                          name: "Screen Sharing",
+                          icon: "display.and.arrow.down",
+                          description: "Sharing > Screen Sharing",
+                          triggers: ["screen sharing", "vnc", "remote screen", "share screen"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Sharing-Settings.extension?Services_ScreenSharing",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.sharing.remotelogin",
+                          name: "Remote Login (SSH)",
+                          icon: "terminal.fill",
+                          description: "Sharing > Remote Login (SSH access)",
+                          triggers: ["remote login", "ssh", "ssh access", "remote terminal"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Sharing-Settings.extension?Services_RemoteLogin",
+                          accentColor: "green"),
+            AdapterAction(id: "sysprefs.sharing.internetsharing",
+                          name: "Internet Sharing",
+                          icon: "wifi.router",
+                          description: "Sharing > Internet Sharing (hotspot)",
+                          triggers: ["internet sharing", "hotspot", "share internet", "wifi hotspot"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Sharing-Settings.extension?Internet",
                           accentColor: "blue"),
 
             // ── Account & Security ────────────────────────────────────────────
@@ -1944,6 +2407,14 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Users-Groups-Settings.extension",
                           accentColor: "teal"),
+            AdapterAction(id: "sysprefs.passwords",
+                          name: "Passwords",
+                          icon: "key",
+                          description: "AutoFill & Passwords settings",
+                          triggers: ["passwords", "autofill passwords", "keychain", "saved passwords"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Passwords-Settings.extension",
+                          accentColor: "yellow"),
             AdapterAction(id: "sysprefs.loginitems",
                           name: "Login Items & Extensions",
                           icon: "list.bullet.rectangle",
@@ -1951,6 +2422,22 @@ end tell
                           triggers: ["login items", "startup apps", "launch at login", "extensions"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+                          accentColor: "orange"),
+            AdapterAction(id: "sysprefs.loginitems.openatlogin",
+                          name: "Open at Login",
+                          icon: "power.circle",
+                          description: "Login Items > Open at Login section",
+                          triggers: ["open at login", "launch at startup", "startup items"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?UserItems",
+                          accentColor: "orange"),
+            AdapterAction(id: "sysprefs.loginitems.background",
+                          name: "Background App Activity",
+                          icon: "gearshape.2",
+                          description: "Login Items > App Background Activity",
+                          triggers: ["background activity", "background apps", "background refresh"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension?BackgroundItems",
                           accentColor: "orange"),
 
             // ── Focus & Screen Time ───────────────────────────────────────────
@@ -1970,6 +2457,38 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Screen-Time-Settings.extension",
                           accentColor: "purple"),
+            AdapterAction(id: "sysprefs.screentime.appusage",
+                          name: "App & Website Activity",
+                          icon: "chart.bar",
+                          description: "Screen Time > App & Website Activity",
+                          triggers: ["app usage", "website activity", "screen time stats"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Screen-Time-Settings.extension?path=app-usage",
+                          accentColor: "purple"),
+            AdapterAction(id: "sysprefs.screentime.downtime",
+                          name: "Downtime",
+                          icon: "moon.zzz",
+                          description: "Screen Time > Downtime schedule",
+                          triggers: ["downtime", "screen time schedule", "bedtime screen"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Screen-Time-Settings.extension?path=downtime",
+                          accentColor: "purple"),
+            AdapterAction(id: "sysprefs.screentime.applimits",
+                          name: "App Limits",
+                          icon: "hourglass.badge.plus",
+                          description: "Screen Time > App Limits",
+                          triggers: ["app limits", "time limit", "app time limit"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Screen-Time-Settings.extension?path=app-limits",
+                          accentColor: "purple"),
+            AdapterAction(id: "sysprefs.screentime.contentprivacy",
+                          name: "Content & Privacy Restrictions",
+                          icon: "lock.rectangle",
+                          description: "Screen Time > Content & Privacy",
+                          triggers: ["content restrictions", "parental controls", "content privacy"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Screen-Time-Settings.extension?path=content-and-privacy",
+                          accentColor: "purple"),
             AdapterAction(id: "sysprefs.lockscreen",
                           name: "Lock Screen",
                           icon: "lock.display",
@@ -1980,6 +2499,14 @@ end tell
                           accentColor: "gray"),
 
             // ── Personalisation ──────────────────────────────────────────────
+            AdapterAction(id: "sysprefs.appearance",
+                          name: "Appearance",
+                          icon: "paintpalette",
+                          description: "Open Appearance settings (Dark/Light mode, accent colour)",
+                          triggers: ["appearance", "accent color", "theme", "light dark"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Appearance-Settings.extension",
+                          accentColor: "purple"),
             AdapterAction(id: "sysprefs.wallpaper",
                           name: "Wallpaper",
                           icon: "photo",
@@ -1988,6 +2515,14 @@ end tell
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension",
                           accentColor: "blue"),
+            AdapterAction(id: "sysprefs.wallpaper.screensaver",
+                          name: "Screen Saver",
+                          icon: "sparkles.rectangle.stack",
+                          description: "Wallpaper > Screen Saver settings",
+                          triggers: ["screen saver", "screensaver", "idle display"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension?ScreenSaver",
+                          accentColor: "blue"),
             AdapterAction(id: "sysprefs.desktopDock",
                           name: "Desktop & Dock",
                           icon: "dock.rectangle",
@@ -1995,6 +2530,14 @@ end tell
                           triggers: ["dock", "desktop dock", "stage manager", "menu bar", "mission control"],
                           type: .urlScheme,
                           urlScheme: "x-apple.systempreferences:com.apple.Desktop-Settings.extension",
+                          accentColor: "gray"),
+            AdapterAction(id: "sysprefs.desktopDock.hotcorners",
+                          name: "Hot Corners",
+                          icon: "arrow.up.left.and.arrow.down.right.square",
+                          description: "Desktop & Dock > Hot Corners",
+                          triggers: ["hot corners", "screen corners", "mission control corner"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Desktop-Settings.extension?HotCorners",
                           accentColor: "gray"),
             AdapterAction(id: "sysprefs.menubar",
                           name: "Menu Bar",
@@ -2020,7 +2563,79 @@ end tell
                           description: "Open Accessibility settings",
                           triggers: ["accessibility", "voiceover", "zoom", "captions", "contrast"],
                           type: .urlScheme,
-                          urlScheme: "x-apple.systempreferences:com.apple.preference.universalaccess",
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.voiceover",
+                          name: "VoiceOver",
+                          icon: "speaker.badge.exclamationmark",
+                          description: "Accessibility > VoiceOver",
+                          triggers: ["voiceover", "screen reader", "voice over"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?VoiceOver",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.zoom",
+                          name: "Zoom",
+                          icon: "plus.magnifyingglass",
+                          description: "Accessibility > Zoom",
+                          triggers: ["zoom accessibility", "magnifier", "screen zoom"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Zoom",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.display",
+                          name: "Accessibility Display",
+                          icon: "eye",
+                          description: "Accessibility > Display (contrast, text size)",
+                          triggers: ["contrast", "reduce motion", "color filter", "text size accessibility"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Display",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.textsize",
+                          name: "Accessibility Text Size",
+                          icon: "textformat.size",
+                          description: "Accessibility > Display > Text Size",
+                          triggers: ["text size", "font size", "larger text"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?AX_FONT_SIZE",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.voicecontrol",
+                          name: "Voice Control",
+                          icon: "waveform.badge.mic",
+                          description: "Accessibility > Voice Control",
+                          triggers: ["voice control", "dictation control", "hands free"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?VoiceControl",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.captions",
+                          name: "Captions",
+                          icon: "captions.bubble",
+                          description: "Accessibility > Captions",
+                          triggers: ["captions", "subtitles", "closed captions"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?Captions",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.livecaptions",
+                          name: "Live Captions",
+                          icon: "text.bubble",
+                          description: "Accessibility > Live Captions",
+                          triggers: ["live captions", "real time captions", "live transcription"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?LiveCaptions",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.livespeech",
+                          name: "Live Speech",
+                          icon: "person.wave.2",
+                          description: "Accessibility > Live Speech",
+                          triggers: ["live speech", "type to speak", "speak text"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?LiveSpeech",
+                          accentColor: "blue"),
+            AdapterAction(id: "sysprefs.accessibility.personalvoice",
+                          name: "Personal Voice",
+                          icon: "person.badge.key",
+                          description: "Accessibility > Personal Voice",
+                          triggers: ["personal voice", "clone voice", "my voice"],
+                          type: .urlScheme,
+                          urlScheme: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?PersonalVoice",
                           accentColor: "blue"),
             AdapterAction(id: "sysprefs.language",
                           name: "Language & Region",
@@ -2448,6 +3063,12 @@ end tell
         bundleId: "com.microsoft.VSCode",
         icon: "chevron.left.forwardslash.chevron.right",
         actions: [
+            AdapterAction(id: "vscode.newFile",     name: "New File",
+                          icon: "doc.badge.plus",
+                          description: "Create a new file in VS Code",
+                          triggers: ["new file", "create file", "new text file"],
+                          type: .menubar, menuPath: ["File", "New Text File"],
+                          accentColor: "blue"),
             AdapterAction(id: "vscode.terminal",    name: "New Terminal",
                           icon: "terminal.fill",
                           description: "Open a new terminal pane",

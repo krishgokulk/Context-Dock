@@ -665,20 +665,49 @@ class AIProviderService: ObservableObject {
         if #available(macOS 26.0, *) {
             Task {
                 do {
-                    // Build the FULL context prompt (reads PDFs, text files, images, folders)
-                    let contextPrompt = await buildContextPrompt(for: context, originalQuery: message)
-                    let session = try await onDeviceSession(for: contextPrompt)
+                    // ── 1. For browser contexts: force-refresh page content first ──
+                    let browserBundles = ["com.apple.Safari","com.google.Chrome","com.brave.Browser",
+                                          "org.chromium.Chromium","com.microsoft.edgemac"]
+                    if case .url(let urlString) = context {
+                        let browser = AppDelegate.shared?.previousFrontmostApp
+                            ?? NSWorkspace.shared.runningApplications.first(where: { browserBundles.contains($0.bundleIdentifier ?? "") })
+                        if let pid = browser?.processIdentifier, pid != 0 {
+                            if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
+                                AXWebReader.shared.refresh(pid: pid, currentURL: urlString)
+                                try? await Task.sleep(nanoseconds: 600_000_000) // give AX 600ms to read
+                            }
+                        }
+                    } else if case .appFocused(_, let bid) = context,
+                              AXWebReader.shared.isBrowser(bundleId: bid),
+                              let browser = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bid }) {
+                        let pid = browser.processIdentifier
+                        let liveURL = AXContextReader.shared.current.currentURL ?? ""
+                        if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
+                            AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+                            try? await Task.sleep(nanoseconds: 600_000_000)
+                        }
+                    }
 
-                    // For image files: attach image to the prompt if Foundation Models supports it
-                    let imageURLs = extractImageURLs(from: context)
-                    let userMessage = message
+                    // ── 2. Build full context prompt with live page / file content ──
+                    let contextPrompt = await buildContextPrompt(for: context, originalQuery: message)
+
+                    // ── 3. Build the full prompt including conversation history ──
+                    var fullPrompt = contextPrompt + "\n\n"
+                    if !history.isEmpty {
+                        fullPrompt += "## Conversation History\n"
+                        for msg in history.suffix(6) { // last 6 turns
+                            let role = msg.role == .user ? "User" : "Assistant"
+                            fullPrompt += "\(role): \(msg.content)\n"
+                        }
+                        fullPrompt += "\n"
+                    }
+
+                    let session = try await onDeviceSession(for: fullPrompt)
 
                     var lastLength = 0
                     var finalContent = ""
 
-                    // Image context is already injected in the system prompt via buildContextPrompt
-                    _ = imageURLs  // referenced to avoid unused-variable warning
-                    let stream = session.streamResponse(to: userMessage)
+                    let stream = session.streamResponse(to: message)
                     for try await snapshot in stream {
                         let full = snapshot as? String ?? ""
                         let delta = String(full.dropFirst(lastLength))
@@ -686,6 +715,7 @@ class AIProviderService: ObservableObject {
                         finalContent = full
                         if !delta.isEmpty { onPartial(delta) }
                     }
+                    if finalContent.isEmpty { finalContent = "Done." }
                     onComplete(finalContent)
                 } catch {
                     onError("Apple Intelligence error: \(error.localizedDescription)")

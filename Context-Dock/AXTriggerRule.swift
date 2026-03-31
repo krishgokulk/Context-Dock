@@ -122,12 +122,17 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
     var pills: [AXRulePill]
     var priority: Int                    // higher → shown earlier in dock
 
+    /// Optional global hotkey that fires the first pill directly, without opening the dock.
+    /// Stored as "modifiers:keyChar" e.g. "cmd+shift:d" — nil means no hotkey assigned.
+    var hotkeyString: String? = nil
+
     init(name: String = "New Rule",
          isEnabled: Bool = true,
          conditions: [AXTriggerCondition] = [],
          conditionLogic: ConditionLogic = .all,
          pills: [AXRulePill] = [],
-         priority: Int = 0) {
+         priority: Int = 0,
+         hotkeyString: String? = nil) {
         self.id             = UUID()
         self.name           = name
         self.isEnabled      = isEnabled
@@ -135,6 +140,7 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
         self.conditionLogic = conditionLogic
         self.pills          = pills
         self.priority       = priority
+        self.hotkeyString   = hotkeyString
     }
 
     // MARK: Built-in example rules
@@ -281,7 +287,65 @@ struct AXResolvedPill {
 @MainActor
 final class AXTriggerRuleEngine {
     static let shared = AXTriggerRuleEngine()
-    private init() {}
+
+    private var ruleHotkeyMonitor: Any?
+
+    private init() {
+        startRuleHotkeyMonitor()
+    }
+
+    // MARK: - Global rule hotkey monitor
+
+    /// Listens for any keyDown globally. When a key combo matches a rule's hotkeyString,
+    /// refreshes AX context from the frontmost app and fires the first pill immediately —
+    /// the dock never opens.
+    func startRuleHotkeyMonitor() {
+        ruleHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            let rules = AppSettings.shared.axTriggerRules.filter { $0.isEnabled && $0.hotkeyString != nil && !$0.pills.isEmpty }
+            guard !rules.isEmpty else { return }
+
+            let pressed = Self.eventToHotkeyString(event)
+            guard !pressed.isEmpty else { return }
+
+            for rule in rules {
+                guard rule.hotkeyString == pressed else { continue }
+                // Evaluate rule against live context from the currently active app
+                Task { @MainActor in
+                    guard let frontApp = NSWorkspace.shared.frontmostApplication,
+                          frontApp.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+                    AXContextReader.shared.refresh(from: frontApp)
+                    let ctx = AXContextReader.shared.current
+                    let clipboard = NSPasteboard.general.string(forType: .string)
+                    // Execute the first matching pill directly — no dock open
+                    let pillDef = rule.pills[0]
+                    let action = self.interpolate(pillDef.actionValue, context: ctx, clipboard: clipboard)
+                    let envVars: [String: String] = [
+                        "CD_APP_NAME":      ctx.appName,
+                        "CD_BUNDLE_ID":     ctx.bundleId,
+                        "CD_WINDOW_TITLE":  ctx.windowTitle  ?? "",
+                        "CD_SELECTED_TEXT": ctx.selectedText ?? "",
+                        "CD_URL":           ctx.currentURL   ?? "",
+                        "CD_FILE":          ctx.selectedFilePaths.first ?? "",
+                        "CD_CLIPBOARD":     clipboard ?? "",
+                    ]
+                    self.run(type: pillDef.actionType, value: action, envVars: envVars)
+                }
+                break
+            }
+        }
+    }
+
+    /// Converts an NSEvent keyDown to the same "mod+mod:char" format stored in hotkeyString.
+    static func eventToHotkeyString(_ event: NSEvent) -> String {
+        guard let ch = event.charactersIgnoringModifiers?.lowercased(), !ch.isEmpty else { return "" }
+        var parts: [String] = []
+        if event.modifierFlags.contains(.command) { parts.append("cmd") }
+        if event.modifierFlags.contains(.shift)   { parts.append("shift") }
+        if event.modifierFlags.contains(.option)  { parts.append("opt") }
+        if event.modifierFlags.contains(.control) { parts.append("ctrl") }
+        return parts.joined(separator: "+") + ":" + ch
+    }
 
     /// Evaluate all enabled rules against the current context,
     /// return resolved pills ordered by rule priority (highest first).
@@ -353,17 +417,28 @@ final class AXTriggerRuleEngine {
         let label  = interpolate(def.label,       context: context, clipboard: clipboard)
         let action = interpolate(def.actionValue, context: context, clipboard: clipboard)
         let type   = def.actionType
+        // Snapshot context vars now so the closure captures fixed values, not live AX state
+        let envVars: [String: String] = [
+            "CD_APP_NAME":      context.appName,
+            "CD_BUNDLE_ID":     context.bundleId,
+            "CD_WINDOW_TITLE":  context.windowTitle  ?? "",
+            "CD_SELECTED_TEXT": context.selectedText ?? "",
+            "CD_URL":           context.currentURL   ?? "",
+            "CD_FILE":          context.selectedFilePaths.first ?? "",
+            "CD_CLIPBOARD":     clipboard ?? "",
+        ]
         return AXResolvedPill(
             id: "axrule-\(def.id)",
             name: label,
             icon: def.icon,
             accentColor: def.accentColor,
-            execute: { AXTriggerRuleEngine.shared.run(type: type, value: action) }
+            execute: { AXTriggerRuleEngine.shared.run(type: type, value: action, envVars: envVars) }
         )
     }
 
     private func interpolate(_ template: String, context: AXContext, clipboard: String?) -> String {
         let encoded = (context.selectedText ?? "").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encodedURL = (context.currentURL ?? "").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return template
             .replacingOccurrences(of: "{appName}",      with: context.appName)
             .replacingOccurrences(of: "{bundleId}",     with: context.bundleId)
@@ -371,13 +446,14 @@ final class AXTriggerRuleEngine {
             .replacingOccurrences(of: "{selectedText}", with: context.selectedText ?? "")
             .replacingOccurrences(of: "{encodedText}",  with: encoded)
             .replacingOccurrences(of: "{clipboard}",    with: clipboard ?? "")
+            .replacingOccurrences(of: "{encodedURL}",   with: encodedURL)
             .replacingOccurrences(of: "{url}",          with: context.currentURL ?? "")
             .replacingOccurrences(of: "{file}",         with: context.selectedFilePaths.first ?? "")
     }
 
     // MARK: - Execution
 
-    func run(type: AppShortcut.ActionType, value: String) {
+    func run(type: AppShortcut.ActionType, value: String, envVars: [String: String] = [:]) {
         switch type {
         case .openURL:
             if let url = URL(string: value) { NSWorkspace.shared.open(url) }
@@ -386,13 +462,31 @@ final class AXTriggerRuleEngine {
             NSWorkspace.shared.open(URL(fileURLWithPath: value))
 
         case .shellCommand:
+            let shortLabel = String(value.prefix(60))
             Task.detached(priority: .userInitiated) {
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 proc.arguments = ["-lc", value]
-                proc.environment = ProcessInfo.processInfo.environment
+                var env = ProcessInfo.processInfo.environment
+                envVars.forEach { env[$0] = $1 }
+                proc.environment = env
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError  = pipe
                 try? proc.run()
                 proc.waitUntilExit()
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let success = proc.terminationStatus == 0
+                await MainActor.run {
+                    ILauncherNotificationManager.shared.post(
+                        title: success ? "Done" : "Shell error",
+                        body: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              ? shortLabel
+                              : String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120)),
+                        icon: success ? "checkmark.circle.fill" : "xmark.circle.fill",
+                        accentColor: success ? "green" : "red"
+                    )
+                }
             }
 
         case .appleScript:
@@ -409,6 +503,57 @@ final class AXTriggerRuleEngine {
                 proc.arguments = ["-l", "JavaScript", tmp.path]
                 try? proc.run()
                 proc.waitUntilExit()
+            }
+
+        case .scriptFile:
+            // Execute an external script file with context injected as environment variables.
+            // Determines interpreter from file extension (.sh → zsh, .py → python3, .js → node, .rb → ruby).
+            let scriptPath = (value as NSString).expandingTildeInPath
+            let fileName = (scriptPath as NSString).lastPathComponent
+            Task.detached(priority: .userInitiated) {
+                guard FileManager.default.isExecutableFile(atPath: scriptPath) ||
+                      FileManager.default.fileExists(atPath: scriptPath) else {
+                    await MainActor.run {
+                        ILauncherNotificationManager.shared.post(
+                            title: "Script not found",
+                            body: scriptPath,
+                            icon: "xmark.circle.fill",
+                            accentColor: "red"
+                        )
+                    }
+                    return
+                }
+                let ext = (scriptPath as NSString).pathExtension.lowercased()
+                let interpreter: String
+                switch ext {
+                case "py":  interpreter = "/usr/bin/env python3"
+                case "js":  interpreter = "/usr/bin/env node"
+                case "rb":  interpreter = "/usr/bin/env ruby"
+                default:    interpreter = "/bin/zsh"   // .sh or no extension
+                }
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                proc.arguments = ["-lc", "\(interpreter) \"\(scriptPath)\""]
+                var env = ProcessInfo.processInfo.environment
+                envVars.forEach { env[$0] = $1 }
+                proc.environment = env
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError  = pipe
+                try? proc.run()
+                proc.waitUntilExit()
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let success = proc.terminationStatus == 0
+                await MainActor.run {
+                    ILauncherNotificationManager.shared.post(
+                        title: success ? fileName : "\(fileName) failed",
+                        body: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              ? (success ? "Completed" : "Exit code \(proc.terminationStatus)")
+                              : String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)),
+                        icon: success ? "checkmark.circle.fill" : "xmark.circle.fill",
+                        accentColor: success ? "green" : "red"
+                    )
+                }
             }
         }
     }

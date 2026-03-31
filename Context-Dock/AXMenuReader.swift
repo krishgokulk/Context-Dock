@@ -226,9 +226,16 @@ final class AXMenuReader {
                 return true
             }
 
-            // Open this menu item (AXMenuBarItem / AXMenuItem with submenu)
+            // Open this submenu and wait for children to appear (retry up to 150 ms)
             AXUIElementPerformAction(child, kAXPressAction as CFString)
-            Thread.sleep(forTimeInterval: 0.035) // wait for submenu to appear
+            var waited: TimeInterval = 0
+            while waited < 0.15 {
+                Thread.sleep(forTimeInterval: 0.04)
+                waited += 0.04
+                var testRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &testRef) == .success,
+                   let kids = testRef as? [AXUIElement], !kids.isEmpty { break }
+            }
             return traverse(element: child, path: rest)
         }
         return false

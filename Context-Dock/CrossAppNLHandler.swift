@@ -17,10 +17,12 @@ import Contacts
 // MARK: - Intent
 
 struct CrossAppIntent {
-    enum ActionType { case sendMessage, sendEmail, shareFile, openInApp }
+    enum ActionType { case sendMessage, sendEmail, shareFile, openInApp, captureToApp }
+    enum CaptureKind { case generic, page, link, bookmark }
     var action:         ActionType
     var recipientName:  String?   // "salman", "john doe"
     var targetAppName:  String?   // explicit app name when action == .openInApp
+    var captureKind:    CaptureKind = .generic
 }
 
 // MARK: - Resolved result
@@ -29,6 +31,7 @@ struct CrossAppResult {
     var intent:             CrossAppIntent
     var resolvedContact:    CNContact?
     var resolvedApp:        NSRunningApplication?
+    var resolvedBundleId:   String?
     var confirmationMessage: String
 }
 
@@ -40,6 +43,17 @@ final class CrossAppNLHandler {
     private init() {}
 
     private let store = CNContactStore()
+    private let appAliases: [String: String] = [
+        "notes": "com.apple.Notes",
+        "apple notes": "com.apple.Notes",
+        "notion": "com.notion.id",
+        "bear": "net.shinyfrog.bear",
+        "obsidian": "md.obsidian",
+        "reminders": "com.apple.reminders",
+        "messages": "com.apple.MobileSMS",
+        "mail": "com.apple.mail",
+        "safari": "com.apple.Safari"
+    ]
 
     // MARK: Parse
 
@@ -61,6 +75,18 @@ final class CrossAppNLHandler {
         if let app = appName(q, verbs: ["open in","open this in","open with"]) {
             return CrossAppIntent(action: .openInApp, targetAppName: app)
         }
+        if let app = appName(q, verbs: ["add this page to","save this page to","clip this page to"]) {
+            return CrossAppIntent(action: .captureToApp, targetAppName: app, captureKind: .page)
+        }
+        if let app = appName(q, verbs: ["save this link to","add this link to","clip this link to"]) {
+            return CrossAppIntent(action: .captureToApp, targetAppName: app, captureKind: .link)
+        }
+        if let app = appName(q, verbs: ["bookmark this in","bookmark this to"]) {
+            return CrossAppIntent(action: .captureToApp, targetAppName: app, captureKind: .bookmark)
+        }
+        if let app = appName(q, verbs: ["add this to","save this to","clip this to"]) {
+            return CrossAppIntent(action: .captureToApp, targetAppName: app, captureKind: .generic)
+        }
         return nil
     }
 
@@ -73,9 +99,8 @@ final class CrossAppNLHandler {
             r.resolvedContact = await lookupContact(name)
         }
         if let app = intent.targetAppName {
-            r.resolvedApp = NSWorkspace.shared.runningApplications.first {
-                ($0.localizedName ?? "").lowercased().contains(app)
-            }
+            r.resolvedBundleId = resolveBundleId(for: app)
+            r.resolvedApp = resolvedRunningApp(appName: app, bundleId: r.resolvedBundleId)
         }
 
         let displayName: String = {
@@ -90,6 +115,8 @@ final class CrossAppNLHandler {
         case .sendEmail:   r.confirmationMessage = "Compose email to \(displayName)?"
         case .shareFile:   r.confirmationMessage = "Share with \(displayName)?"
         case .openInApp:   r.confirmationMessage = "Open in \(displayName)?"
+        case .captureToApp:
+            r.confirmationMessage = "Save this in \(displayName)?"
         }
         return r
     }
@@ -102,6 +129,7 @@ final class CrossAppNLHandler {
         case .sendEmail:   return sendViaMailto(result, ctx: axContext)
         case .shareFile:   return shareSheet(ctx: axContext)
         case .openInApp:   return openInApp(result, ctx: axContext)
+        case .captureToApp: return captureInApp(result, ctx: axContext)
         }
     }
 
@@ -212,9 +240,7 @@ final class CrossAppNLHandler {
 
     private func openInApp(_ r: CrossAppResult, ctx: AXContext) -> String {
         let appName = r.intent.targetAppName ?? ""
-        let app = r.resolvedApp ?? NSWorkspace.shared.runningApplications.first {
-            ($0.localizedName ?? "").lowercased().contains(appName.lowercased())
-        }
+        let app = r.resolvedApp ?? resolvedRunningApp(appName: appName, bundleId: r.resolvedBundleId)
         for path in ctx.selectedFilePaths {
             if let appURL = app?.bundleURL {
                 NSWorkspace.shared.open(
@@ -227,8 +253,62 @@ final class CrossAppNLHandler {
         if let urlStr = ctx.currentURL, let url = URL(string: urlStr) {
             NSWorkspace.shared.open(url)
         }
-        app?.activate(options: [.activateIgnoringOtherApps])
+        app?.activate()
         return "✅ Opened in \(app?.localizedName ?? appName)"
+    }
+
+    private func captureInApp(_ r: CrossAppResult, ctx: AXContext) -> String {
+        guard let bundleId = r.resolvedBundleId ?? r.intent.targetAppName.flatMap(resolveBundleId) else {
+            return "❌ I couldn't identify the target app."
+        }
+
+        guard let payload = capturePayload(for: r.intent.captureKind, ctx: ctx) else {
+            return "❌ Nothing to save — select text, a file, or open a page first."
+        }
+
+        switch bundleId {
+        case "com.apple.Notes":
+            return captureInNotes(payload)
+        case "com.notion.id":
+            return openCaptureURL(
+                "notion://new?content=\(payload.encodedBody)",
+                success: "✅ Saved to Notion",
+                failure: "❌ Couldn't open Notion capture."
+            )
+        case "net.shinyfrog.bear":
+            let url = "bear://x-callback-url/create?title=\(payload.encodedTitle)&text=\(payload.encodedBody)"
+            return openCaptureURL(url, success: "✅ Saved to Bear", failure: "❌ Couldn't open Bear capture.")
+        case "md.obsidian":
+            let url = "obsidian://new?name=\(payload.encodedTitle)&content=\(payload.encodedBody)"
+            return openCaptureURL(url, success: "✅ Saved to Obsidian", failure: "❌ Couldn't open Obsidian capture.")
+        case "com.apple.reminders":
+            let url = "x-apple-reminderkit://"
+            return openCaptureURL(url, success: "✅ Opened Reminders", failure: "❌ Couldn't open Reminders.")
+        default:
+            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+                return "❌ \(r.intent.targetAppName ?? "That app") is not installed."
+            }
+            NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, _ in }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(payload.body, forType: .string)
+            return "✅ Copied content and opened \(r.intent.targetAppName ?? "the app")."
+        }
+    }
+
+    private func captureInNotes(_ payload: CapturePayload) -> String {
+        let api = AppleAppsAPI.shared
+        if payload.sourceURL != nil {
+            let ok = api.saveLinkToNotes(url: payload.body, title: payload.title, folder: "Web Saves")
+            return ok ? "✅ Saved to Notes" : "❌ Couldn't save the link to Notes."
+        }
+
+        let ok = api.createNote(title: payload.title, body: payload.body, folder: "ILauncher")
+        return ok ? "✅ Created note in Notes" : "❌ Couldn't create the note in Notes."
+    }
+
+    private func openCaptureURL(_ raw: String, success: String, failure: String) -> String {
+        guard let url = URL(string: raw) else { return failure }
+        return NSWorkspace.shared.open(url) ? success : failure
     }
 
     // MARK: - Contacts
@@ -265,6 +345,84 @@ final class CrossAppNLHandler {
         guard let c = r.resolvedContact else { return nil }
         if let e = c.emailAddresses.first { return e.value as String }
         if let p = c.phoneNumbers.first   { return p.value.stringValue }
+        return nil
+    }
+
+    private func resolveBundleId(for appName: String) -> String? {
+        let normalized = appName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let mapped = appAliases[normalized] {
+            return mapped
+        }
+
+        if let running = resolvedRunningApp(appName: normalized, bundleId: nil)?.bundleIdentifier {
+            return running
+        }
+
+        return nil
+    }
+
+    private func resolvedRunningApp(appName: String, bundleId: String?) -> NSRunningApplication? {
+        if let bundleId {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+                .first { !$0.isTerminated }
+            if let running { return running }
+        }
+
+        return NSWorkspace.shared.runningApplications.first {
+            ($0.localizedName ?? "").lowercased().contains(appName.lowercased())
+        }
+    }
+
+    private struct CapturePayload {
+        let title: String
+        let body: String
+        let sourceURL: String?
+
+        var encodedTitle: String {
+            title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        }
+
+        var encodedBody: String {
+            body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        }
+    }
+
+    private func capturePayload(for kind: CrossAppIntent.CaptureKind, ctx: AXContext) -> CapturePayload? {
+        let urlString = ctx.currentURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedText = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let windowTitle = (ctx.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+
+        switch kind {
+        case .page, .link, .bookmark:
+            if let urlString, !urlString.isEmpty {
+                let title = windowTitle ?? URL(string: urlString)?.host ?? "Saved Link"
+                let body = [title, urlString].joined(separator: "\n")
+                return CapturePayload(title: title, body: body, sourceURL: urlString)
+            }
+            if let selectedText, !selectedText.isEmpty {
+                let title = String(selectedText.prefix(60))
+                return CapturePayload(title: title, body: selectedText, sourceURL: nil)
+            }
+        case .generic:
+            break
+        }
+
+        if let selectedText, !selectedText.isEmpty {
+            let title = String(selectedText.prefix(60))
+            return CapturePayload(title: title, body: selectedText, sourceURL: nil)
+        }
+
+        if let urlString, !urlString.isEmpty {
+            let title = windowTitle ?? URL(string: urlString)?.host ?? "Saved Link"
+            let body = [title, urlString].joined(separator: "\n")
+            return CapturePayload(title: title, body: body, sourceURL: urlString)
+        }
+
+        if let path = ctx.selectedFilePaths.first {
+            let fileURL = URL(fileURLWithPath: path)
+            return CapturePayload(title: fileURL.lastPathComponent, body: path, sourceURL: nil)
+        }
+
         return nil
     }
 

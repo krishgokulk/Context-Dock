@@ -50,6 +50,15 @@ enum L2Intent: Equatable {
     // Media Control (browser / music apps)
     case mediaControl(action: MediaAction)
 
+    // Adapter-backed app actions
+    case appAction(query: String)
+
+    // Cross-app content transfer actions
+    case crossAppAction(query: String)
+
+    // Semantic fallback wants user disambiguation
+    case semanticDisambiguation(options: [String], originalQuery: String)
+
     enum MediaAction: String, Equatable {
         case pause, play, next, previous, mute, volumeUp, volumeDown
     }
@@ -125,6 +134,9 @@ class L2UnifiedAssistant: ObservableObject {
     private let appleAppsAPI = AppleAppsAPI.shared
     private let settings = AppSettings.shared
     private let packageManager = TerminalPackageManager.shared
+    private let adapterManager = AppAdapterManager.shared
+    private let crossAppHandler = CrossAppNLHandler.shared
+    private let semanticResolver = L2SemanticResolver.shared
 
     // MARK: - State
 
@@ -205,7 +217,12 @@ class L2UnifiedAssistant: ObservableObject {
         ))
 
         // Parse intent
-        let intent = parseIntent(from: query)
+        var intent = parseIntent(from: query)
+        if case .askQuestion = intent {
+            let axContext = AXContextReader.shared.current
+            let decision = await semanticResolver.resolve(query: query, context: currentContext, axContext: axContext)
+            intent = remapSemanticDecision(decision, originalQuery: query, axContext: axContext) ?? intent
+        }
 
         // Execute intent
         let response = await executeIntent(intent, originalQuery: query)
@@ -239,6 +256,14 @@ class L2UnifiedAssistant: ObservableObject {
            q.contains("my day") || q.contains("today's schedule") ||
            q.contains("what do i have today") {
             return .dailyBriefing
+        }
+
+        if crossAppHandler.parse(query) != nil {
+            return .crossAppAction(query: query)
+        }
+
+        if L2AppActionRouter.shared.resolve(query: query) != nil {
+            return .appAction(query: query)
         }
 
         // Calendar queries
@@ -475,6 +500,15 @@ class L2UnifiedAssistant: ObservableObject {
         case .mediaControl(let action):
             return await executeMediaControl(action: action)
 
+        case .crossAppAction(let query):
+            return await executeCrossAppAction(query: query)
+
+        case .appAction(let query):
+            return await executeAppAction(query: query)
+
+        case .semanticDisambiguation(let options, let originalQuery):
+            return executeSemanticDisambiguation(options: options, originalQuery: originalQuery)
+
         default:
             return await executeAskQuestion(question: originalQuery)
         }
@@ -545,6 +579,182 @@ class L2UnifiedAssistant: ObservableObject {
                 "Prepare for my next meeting"
             ]
         )
+    }
+
+    private func executeAppAction(query: String) async -> L2Response {
+        guard let resolution = L2AppActionRouter.shared.resolve(query: query) else {
+            return await executeAskQuestion(question: query)
+        }
+
+        let match = resolution.primary
+        let context = AXContextReader.shared.current
+        let result = await adapterManager.execute(
+            match.action,
+            context: context,
+            targetBundleId: match.adapter.bundleId
+        )
+        let followUps = resolution.alternatives.map { "\($0.adapter.appName) \($0.action.name)" }
+
+        let message: String
+        if result.0 {
+            message = "Executed \(match.adapter.appName) → \(match.action.name).\n\(result.1)"
+        } else {
+            message = "Couldn’t run \(match.adapter.appName) → \(match.action.name).\n\(result.1)"
+        }
+
+        return L2Response(
+            message: message,
+            data: [
+                "bundleId": match.adapter.bundleId,
+                "appName": match.adapter.appName,
+                "actionId": match.action.id,
+                "actionName": match.action.name,
+                "matchedAppPhrase": match.matchedAppPhrase,
+                "matchedActionPhrase": match.matchedActionPhrase,
+                "success": result.0
+            ],
+            actions: [],
+            suggestedFollowUps: followUps
+        )
+    }
+
+    private func executeCrossAppAction(query: String) async -> L2Response {
+        guard let intent = crossAppHandler.parse(query) else {
+            return await executeAskQuestion(question: query)
+        }
+
+        guard let resolved = await crossAppHandler.resolve(intent) else {
+            return L2Response(
+                message: "Couldn’t resolve that cross-app action.",
+                data: nil,
+                actions: [],
+                suggestedFollowUps: []
+            )
+        }
+
+        let context = AXContextReader.shared.current
+        let output = await crossAppHandler.execute(resolved, axContext: context)
+
+        var data: [String: Any] = [
+            "confirmationMessage": resolved.confirmationMessage,
+            "output": output
+        ]
+        if let recipient = resolved.intent.recipientName {
+            data["recipientName"] = recipient
+        }
+        if let appName = resolved.intent.targetAppName {
+            data["targetAppName"] = appName
+        }
+        if let currentURL = context.currentURL {
+            data["currentURL"] = currentURL
+        }
+        if let selectedText = context.selectedText, !selectedText.isEmpty {
+            data["selectedTextPreview"] = String(selectedText.prefix(200))
+        }
+        if !context.selectedFilePaths.isEmpty {
+            data["selectedFiles"] = context.selectedFilePaths
+        }
+
+        let followUps = suggestedFollowUps(for: resolved, context: context)
+
+        return L2Response(
+            message: output,
+            data: data,
+            actions: [],
+            suggestedFollowUps: followUps
+        )
+    }
+
+    private func remapSemanticDecision(_ decision: L2SemanticDecision, originalQuery: String, axContext: AXContext) -> L2Intent? {
+        switch decision {
+        case .appAction(let appName, let actionPhrase):
+            return .appAction(query: "\(appName) \(actionPhrase)")
+
+        case .crossApp(let targetApp, let mode):
+            return .crossAppAction(query: canonicalCrossAppQuery(targetApp: targetApp, mode: mode, axContext: axContext))
+
+        case .terminal(let query):
+            return .intelligentTerminalQuery(query: query)
+
+        case .askUser(let options):
+            return .semanticDisambiguation(options: options, originalQuery: originalQuery)
+
+        case .noMatch:
+            return nil
+        }
+    }
+
+    private func canonicalCrossAppQuery(targetApp: String, mode: String, axContext: AXContext) -> String {
+        switch mode.lowercased() {
+        case "page":
+            return "add this page to \(targetApp)"
+        case "link":
+            return "save this link to \(targetApp)"
+        case "bookmark":
+            return "bookmark this in \(targetApp)"
+        case "open":
+            return "open this in \(targetApp)"
+        case "send":
+            return "send this to \(targetApp)"
+        default:
+            if axContext.currentURL != nil {
+                return "add this page to \(targetApp)"
+            }
+            return "add this to \(targetApp)"
+        }
+    }
+
+    private func executeSemanticDisambiguation(options: [String], originalQuery: String) -> L2Response {
+        let lines = options.prefix(4).map { "- \($0)" }.joined(separator: "\n")
+        return L2Response(
+            message: """
+            I found a few likely interpretations for "\(originalQuery)":
+            \(lines)
+            """,
+            data: [
+                "options": options,
+                "originalQuery": originalQuery
+            ],
+            actions: [],
+            suggestedFollowUps: Array(options.prefix(4))
+        )
+    }
+
+    private func suggestedFollowUps(for result: CrossAppResult, context: AXContext) -> [String] {
+        switch result.intent.action {
+        case .sendMessage:
+            if let recipient = result.intent.recipientName {
+                return ["email this to \(recipient)", "open this in Messages"]
+            }
+            return ["email this", "share this"]
+
+        case .sendEmail:
+            if let recipient = result.intent.recipientName {
+                return ["send this to \(recipient) in Messages", "share this with \(recipient)"]
+            }
+            return ["send this in Messages", "share this"]
+
+        case .shareFile:
+            return ["send this to Messages", "email this"]
+
+        case .openInApp:
+            if context.currentURL != nil {
+                return ["add this page to Notes", "bookmark this in Notion"]
+            }
+            if context.selectedText != nil {
+                return ["add this to Notes", "send this to Messages"]
+            }
+            return ["share this", "open in another app"]
+
+        case .captureToApp:
+            if context.currentURL != nil {
+                return ["bookmark this in Notion", "save this page to Bear"]
+            }
+            if context.selectedText != nil {
+                return ["add this to Obsidian", "email this"]
+            }
+            return ["open this in Safari", "share this"]
+        }
     }
 
     private func executeShowTodaySchedule() async -> L2Response {

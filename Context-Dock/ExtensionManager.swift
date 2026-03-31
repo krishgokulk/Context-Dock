@@ -84,33 +84,8 @@ class ExtensionManager {
     // MARK: - Built-In Extensions Registration
     
     private func registerBuiltInExtensions() {
-        print("📦 [ExtensionManager] Registering built-in extensions...")
-        
-        builtInExtensions = [
-            // File operations
-            BuiltInExtension.fileInfo.toScriptExtension(),
-            BuiltInExtension.copyPath.toScriptExtension(),
-            BuiltInExtension.revealInFinder.toScriptExtension(),
-            BuiltInExtension.getInfo.toScriptExtension(),
-            
-            // Text operations
-            BuiltInExtension.copy.toScriptExtension(),
-            BuiltInExtension.countWords.toScriptExtension(),
-            BuiltInExtension.summarize.toScriptExtension(),
-            BuiltInExtension.uppercase.toScriptExtension(),
-            BuiltInExtension.lowercase.toScriptExtension(),
-            
-            // App operations
-            BuiltInExtension.appInfo.toScriptExtension(),
-            
-            // Clipboard operations
-            BuiltInExtension.pasteFromClipboard.toScriptExtension(),
-        ]
-        
-        print("✅ [ExtensionManager] Registered \(builtInExtensions.count) built-in extensions")
-        for (index, ext) in builtInExtensions.enumerated() {
-            print("   \(index + 1). \(ext.displayName) (\(ext.category.displayName))")
-        }
+        // Built-in extensions disabled — users add their own via Settings > Extensions
+        builtInExtensions = []
     }
     
     // MARK: - File-Based Extensions Scanning

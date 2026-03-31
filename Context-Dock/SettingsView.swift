@@ -378,11 +378,11 @@ struct GeneralSettingsView: View {
             }
 
             // ── Layer 3 ────────────────────────────────────────────────────────
-            CardSection(title: "Layer 3 — Browser", systemImage: "globe") {
+            CardSection(title: "Layer 3 — Media Dock", systemImage: "music.note.tv") {
                 HStack {
                     GeneralToggleLabel(
-                        "Enable Browser Layer",
-                        caption: "Swipe up from Layer 2 to open bookmarks and web search."
+                        "Enable Media Dock",
+                        caption: "Swipe up from Layer 2 to open the now playing controller for active media."
                     )
                     Spacer()
                     Toggle("", isOn: $settings.enableLayer3).labelsHidden()
@@ -409,7 +409,7 @@ struct GeneralSettingsView: View {
                         LayerArrow(enabled: settings.enableLayer2)
                         LayerChip(number: "2", label: "Context", color: .purple, enabled: settings.enableLayer2)
                         LayerArrow(enabled: settings.enableLayer3)
-                        LayerChip(number: "3", label: "Browser", color: .teal,   enabled: settings.enableLayer3)
+                        LayerChip(number: "3", label: "Media", color: .teal,   enabled: settings.enableLayer3)
                     }
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -2250,7 +2250,8 @@ private struct AdapterRowView: View {
 private struct AdapterDetailView: View {
     let adapter: AppAdapter
     @ObservedObject private var adapterManager = AppAdapterManager.shared
-    @State private var selectedActionId: String? = nil
+    @State private var showAddActionSheet = false
+    @State private var editingAction: AdapterAction? = nil
 
     var currentAdapter: AppAdapter {
         adapterManager.adapters.first(where: { $0.id == adapter.id }) ?? adapter
@@ -2259,7 +2260,8 @@ private struct AdapterDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // App header
+
+                // ── App header ────────────────────────────────────────────────
                 HStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2277,7 +2279,6 @@ private struct AdapterDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    // "Edit JSON" for user (non-built-in) adapters
                     if let fileURL = currentAdapter.sourceFileURL {
                         Button {
                             NSWorkspace.shared.open(fileURL)
@@ -2291,7 +2292,7 @@ private struct AdapterDetailView: View {
                         .controlSize(.small)
                         .help("Open \(fileURL.lastPathComponent) in your default editor")
                     }
-                    Toggle("Enable Adapter", isOn: Binding(
+                    Toggle("Adapter", isOn: Binding(
                         get: { currentAdapter.isEnabled },
                         set: { adapterManager.setEnabled($0, for: currentAdapter.bundleId) }
                     ))
@@ -2302,38 +2303,62 @@ private struct AdapterDetailView: View {
 
                 Divider()
 
-                // Actions list
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Actions")
+                // ── Actions header with + button ─────────────────────────────
+                HStack {
+                    Text("Adapter Actions")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 14)
-                        .padding(.bottom, 8)
+                    Text("\(currentAdapter.actions.count)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button {
+                        editingAction = nil
+                        showAddActionSheet = true
+                    } label: {
+                        Label("Add Action", systemImage: "plus")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
 
-                    ForEach(currentAdapter.actions) { action in
-                        AdapterActionRowView(action: action)
-                        if action.id != currentAdapter.actions.last?.id {
-                            Divider().padding(.leading, 44)
+                // ── Action rows ───────────────────────────────────────────────
+                ForEach(currentAdapter.actions) { action in
+                    AdapterActionRowView(action: action,
+                                        isCustom: !currentAdapter.isBuiltIn || currentAdapter.sourceFileURL != nil)
+                    .contextMenu {
+                        Button {
+                            editingAction = action
+                            showAddActionSheet = true
+                        } label: {
+                            Label("Edit Action", systemImage: "pencil")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            Task { await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId) }
+                        } label: {
+                            Label("Delete Action", systemImage: "trash")
                         }
                     }
-                }
-
-                // User adapter instructions
-                if !currentAdapter.isBuiltIn {
-                    Divider().padding(.top, 12)
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                        Text("This is a user adapter. Edit the JSON file in the Adapters folder to modify it.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                    if action.id != currentAdapter.actions.last?.id {
+                        Divider().padding(.leading, 44)
                     }
-                    .padding(14)
                 }
 
                 Spacer(minLength: 20)
+            }
+        }
+        .sheet(isPresented: $showAddActionSheet) {
+            AdapterActionEditorSheet(
+                bundleId: currentAdapter.bundleId,
+                existing: editingAction
+            ) {
+                showAddActionSheet = false
+                editingAction = nil
             }
         }
     }
@@ -2343,6 +2368,7 @@ private struct AdapterDetailView: View {
 
 private struct AdapterActionRowView: View {
     let action: AdapterAction
+    var isCustom: Bool = false
 
     private var typeIcon: String {
         switch action.type {
@@ -2431,6 +2457,205 @@ private struct AdapterActionRowView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Adapter Action Editor Sheet
+
+private struct AdapterActionEditorSheet: View {
+    let bundleId: String
+    let existing: AdapterAction?
+    let onDone: () -> Void
+
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+
+    // Form fields
+    @State private var name: String        = ""
+    @State private var description: String = ""
+    @State private var iconName: String    = "bolt"
+    @State private var triggersRaw: String = ""
+    @State private var actionType: AdapterActionType = .urlScheme
+    @State private var urlScheme: String   = ""
+    @State private var script: String      = ""
+    @State private var requiresApproval: Bool = false
+
+    @State private var isSaving = false
+    @State private var previewIconValid = true
+
+    var isEditing: Bool { existing != nil }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Title bar ────────────────────────────────────────────────────
+            HStack {
+                Text(isEditing ? "Edit Action" : "Add Action")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Cancel") { onDone() }
+                    .keyboardShortcut(.cancelAction)
+                Button(isEditing ? "Save" : "Add") {
+                    save()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.isEmpty || payloadEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+
+                    // ── Name & Icon ──────────────────────────────────────────
+                    HStack(alignment: .top, spacing: 12) {
+                        // Icon preview
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.accentColor.opacity(0.12))
+                                .frame(width: 40, height: 40)
+                            Image(systemName: previewIconValid ? iconName : "questionmark")
+                                .font(.system(size: 16))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            LabeledField("Name") {
+                                TextField("e.g. Open Wi-Fi", text: $name)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            LabeledField("SF Symbol") {
+                                TextField("e.g. wifi", text: $iconName)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onChange(of: iconName) { v in
+                                        previewIconValid = NSImage(systemSymbolName: v, accessibilityDescription: nil) != nil
+                                    }
+                            }
+                        }
+                    }
+
+                    // ── Description ──────────────────────────────────────────
+                    LabeledField("Description") {
+                        TextField("Short description shown in settings", text: $description)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    // ── Trigger Keywords ─────────────────────────────────────
+                    LabeledField("Trigger Keywords") {
+                        TextField("comma-separated: wifi, wireless, network", text: $triggersRaw)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Text("When the user types any of these keywords in the dock, this action surfaces automatically.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, -8)
+
+                    Divider()
+
+                    // ── Action Type ──────────────────────────────────────────
+                    LabeledField("Type") {
+                        Picker("", selection: $actionType) {
+                            Text("URL Scheme").tag(AdapterActionType.urlScheme)
+                            Text("AppleScript").tag(AdapterActionType.applescript)
+                            Text("Shell").tag(AdapterActionType.shell)
+                            Text("AI Prompt").tag(AdapterActionType.aiPrompt)
+                            Text("Menu Bar").tag(AdapterActionType.menubar)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    // ── Payload ──────────────────────────────────────────────
+                    switch actionType {
+                    case .urlScheme:
+                        LabeledField("URL Scheme") {
+                            TextField("x-apple.systempreferences:com.apple...", text: $urlScheme)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+                        Text("Supports $CURRENT_URL, $SELECTED_TEXT variables.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
+
+                    case .applescript, .shell, .aiPrompt:
+                        LabeledField(actionType == .shell ? "Shell Script" : actionType == .aiPrompt ? "AI Prompt Template" : "AppleScript") {
+                            TextEditor(text: $script)
+                                .font(.system(size: 11, design: .monospaced))
+                                .frame(minHeight: 80)
+                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.1)))
+                        }
+
+                    case .menubar:
+                        LabeledField("Menu Path (comma-separated)") {
+                            TextField("File, New Tab", text: $script)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Text("e.g. \"View, Zoom In\" clicks View › Zoom In in the menu bar.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
+
+                    default:
+                        EmptyView()
+                    }
+
+                    // ── Options ──────────────────────────────────────────────
+                    Toggle("Require confirmation before running", isOn: $requiresApproval)
+                        .font(.system(size: 12))
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 500, alignment: .leading)
+        .onAppear { prefill() }
+    }
+
+    private var payloadEmpty: Bool {
+        switch actionType {
+        case .urlScheme: return urlScheme.trimmingCharacters(in: .whitespaces).isEmpty
+        case .menubar:   return script.trimmingCharacters(in: .whitespaces).isEmpty
+        default:         return script.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    private func prefill() {
+        guard let a = existing else { return }
+        name        = a.name
+        description = a.description
+        iconName    = a.icon
+        triggersRaw = a.triggers.joined(separator: ", ")
+        actionType  = a.type
+        urlScheme   = a.urlScheme ?? ""
+        script      = a.script ?? a.menuPath?.joined(separator: ", ") ?? a.aiPromptTemplate ?? ""
+        requiresApproval = a.requiresApproval
+    }
+
+    private func save() {
+        isSaving = true
+        let triggers = triggersRaw
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        let id = existing?.id ?? "\(bundleId.components(separatedBy: ".").last ?? "custom").\(name.lowercased().replacingOccurrences(of: " ", with: "."))"
+
+        let menuPath: [String]? = actionType == .menubar
+            ? script.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            : nil
+
+        let action = AdapterAction(
+            id: id,
+            name: name,
+            icon: iconName,
+            description: description,
+            triggers: triggers,
+            type: actionType,
+            menuPath: menuPath,
+            script: (actionType == .applescript || actionType == .shell || actionType == .aiPrompt) ? script : nil,
+            urlScheme: actionType == .urlScheme ? urlScheme : nil,
+            aiPromptTemplate: actionType == .aiPrompt ? script : nil,
+            requiresApproval: requiresApproval
+        )
+
+        Task {
+            await adapterManager.appendAction(action, to: bundleId)
+            await MainActor.run { onDone() }
+        }
     }
 }
 
@@ -6464,6 +6689,11 @@ struct AppShortcutEditSheet: View {
     @State private var fileTypeFilter: String        // comma-separated file extensions for File Actions
     @State private var triggerKeywordStr: String     // comma-separated trigger keywords
     @State private var installedApps: [(key: String, name: String, bundleId: String)] = []
+    @State private var selectedTemplateID: String = ""
+    @State private var templateFolderName: String = ""
+    @State private var templateNoteFolderName: String = ""
+    @State private var templateReminderDelayMinutes: String = "5"
+    @State private var templateRecipientName: String = ""
 
     init(appKey: String, shortcut: AppShortcut?, onSave: @escaping (AppShortcut) -> Void) {
         self.appKey = appKey
@@ -6484,6 +6714,235 @@ struct AppShortcutEditSheet: View {
         actionType == .shellCommand || actionType == .appleScript || actionType == .jxa
     }
 
+    private struct ShortcutTemplate: Identifiable {
+        let id: String
+        let name: String
+        let iconName: String
+        let actionType: AppShortcut.ActionType
+        let placement: AppShortcut.Placement
+        let targetAppKeys: [String]
+        let triggerKeywords: [String]
+    }
+
+    private var availableTemplates: [ShortcutTemplate] {
+        switch appKey {
+        case "notes":
+            return [
+                ShortcutTemplate(
+                    id: "notes_save_link_bookmarks",
+                    name: "Save Link to Bookmark Notes",
+                    iconName: "bookmark",
+                    actionType: .appleScript,
+                    placement: .contextDock,
+                    targetAppKeys: ["safari"],
+                    triggerKeywords: ["bookmark", "save link", "save page"]
+                ),
+                ShortcutTemplate(
+                    id: "notes_save_selection",
+                    name: "Save Selection to Notes",
+                    iconName: "note.text.badge.plus",
+                    actionType: .appleScript,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["save note", "save this", "quick note"]
+                )
+            ]
+        case "mail":
+            return [
+                ShortcutTemplate(
+                    id: "mail_compose_link",
+                    name: "Compose Mail with Link",
+                    iconName: "envelope.badge",
+                    actionType: .openURL,
+                    placement: .contextDock,
+                    targetAppKeys: ["safari"],
+                    triggerKeywords: ["email link", "mail this page", "share by email"]
+                ),
+                ShortcutTemplate(
+                    id: "mail_compose_selection",
+                    name: "Compose Mail with Selection",
+                    iconName: "envelope.open",
+                    actionType: .openURL,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["email this", "send by mail"]
+                )
+            ]
+        case "reminders":
+            return [
+                ShortcutTemplate(
+                    id: "reminders_5_min",
+                    name: "Remind Me in 5 Minutes",
+                    iconName: "clock.badge",
+                    actionType: .appleScript,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["remind later", "5 min", "5 minutes"]
+                ),
+                ShortcutTemplate(
+                    id: "reminders_from_selection",
+                    name: "Create Reminder from Selection",
+                    iconName: "list.bullet.clipboard",
+                    actionType: .appleScript,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["remind me", "create reminder", "later"]
+                )
+            ]
+        case "messages":
+            return [
+                ShortcutTemplate(
+                    id: "messages_share_page",
+                    name: "Share Current Page via Messages",
+                    iconName: "message.badge",
+                    actionType: .openURL,
+                    placement: .contextDock,
+                    targetAppKeys: ["safari"],
+                    triggerKeywords: ["message this page", "send page", "share page"]
+                )
+            ]
+        case "finder":
+            return [
+                ShortcutTemplate(
+                    id: "finder_reveal_file",
+                    name: "Reveal Selected File in Finder",
+                    iconName: "folder",
+                    actionType: .shellCommand,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["reveal file", "show in finder"]
+                ),
+                ShortcutTemplate(
+                    id: "finder_move_to_folder",
+                    name: "Move Selected File to Folder",
+                    iconName: "folder.badge.plus",
+                    actionType: .shellCommand,
+                    placement: .contextDock,
+                    targetAppKeys: [],
+                    triggerKeywords: ["move file", "move to folder", "organize file"]
+                )
+            ]
+        default:
+            return []
+        }
+    }
+
+    private var selectedTemplate: ShortcutTemplate? {
+        availableTemplates.first(where: { $0.id == selectedTemplateID })
+    }
+
+    private var selectedTemplateParameterLabels: [(key: String, label: String, placeholder: String)] {
+        switch selectedTemplateID {
+        case "notes_save_link_bookmarks", "notes_save_selection":
+            return [("noteFolder", "Note Folder Name", "Bookmarks")]
+        case "reminders_5_min":
+            return [("delay", "Reminder Delay (minutes)", "5")]
+        case "messages_share_page":
+            return [("recipient", "Recipient / Handle", "Ruby")]
+        case "finder_move_to_folder":
+            return [("folder", "Folder Name", "Invoices")]
+        default:
+            return []
+        }
+    }
+
+    private func renderedTemplateActionValue(for templateID: String) -> String {
+        let safeNoteFolder = templateNoteFolderName.isEmpty ? "ILauncher" : templateNoteFolderName
+        let safeFolderName = templateFolderName.isEmpty ? "Organized" : templateFolderName
+        let safeDelay = Int(templateReminderDelayMinutes) ?? 5
+        let safeRecipient = templateRecipientName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch templateID {
+        case "notes_save_link_bookmarks":
+            return """
+            set noteURL to "$CURRENT_URL"
+            if noteURL is "" then set noteURL to "$AX_SELECTED_TEXT"
+            set noteTitle to "$WINDOW_TITLE"
+            if noteTitle is "" then set noteTitle to noteURL
+            if noteURL is "" then error "No current URL or selected text found."
+
+            tell application "Notes"
+                activate
+                try
+                    set targetFolder to folder "\(safeNoteFolder)" of default account
+                on error
+                    set targetFolder to make new folder at default account with properties {name:"\(safeNoteFolder)"}
+                end try
+                make new note at targetFolder with properties {name:noteTitle, body:noteTitle & return & noteURL}
+            end tell
+            """
+        case "notes_save_selection":
+            return """
+            set noteBody to "$AX_SELECTED_TEXT"
+            if noteBody is "" then set noteBody to "$CURRENT_URL"
+            if noteBody is "" then error "No selected text or current URL found."
+
+            tell application "Notes"
+                activate
+                try
+                    set targetFolder to folder "\(safeNoteFolder)" of default account
+                on error
+                    set targetFolder to make new folder at default account with properties {name:"\(safeNoteFolder)"}
+                end try
+                make new note at targetFolder with properties {name:"Quick Save", body:noteBody}
+            end tell
+            """
+        case "mail_compose_link":
+            return "mailto:?subject=$WINDOW_TITLE&body=$CURRENT_URL"
+        case "mail_compose_selection":
+            return "mailto:?body=$AX_SELECTED_TEXT"
+        case "reminders_5_min":
+            return """
+            set reminderText to "$AX_SELECTED_TEXT"
+            if reminderText is "" then set reminderText to "$WINDOW_TITLE"
+            if reminderText is "" then set reminderText to "$CURRENT_URL"
+            if reminderText is "" then error "No selected text, title, or URL found."
+            set dueDate to (current date) + (\(safeDelay) * minutes)
+
+            tell application "Reminders"
+                activate
+                tell default list
+                    make new reminder with properties {name:reminderText, remind me date:dueDate}
+                end tell
+            end tell
+            """
+        case "reminders_from_selection":
+            return """
+            set reminderText to "$AX_SELECTED_TEXT"
+            if reminderText is "" then set reminderText to "$CURRENT_URL"
+            if reminderText is "" then error "No selected text or URL found."
+
+            tell application "Reminders"
+                activate
+                tell default list
+                    make new reminder with properties {name:reminderText}
+                end tell
+            end tell
+            """
+        case "messages_share_page":
+            return safeRecipient.isEmpty
+                ? "sms:&body=$CURRENT_URL"
+                : "sms:\(safeRecipient)&body=$CURRENT_URL"
+        case "finder_reveal_file":
+            return "if [ -n \"$1\" ]; then open -R \"$1\"; elif [ -n \"$CD_FILE\" ]; then open -R \"$CD_FILE\"; fi"
+        case "finder_move_to_folder":
+            return "if [ -n \"$1\" ]; then mkdir -p \"$(dirname \"$1\")/\(safeFolderName)\" && mv \"$1\" \"$(dirname \"$1\")/\(safeFolderName)/\"; elif [ -n \"$CD_FILE\" ]; then mkdir -p \"$(dirname \"$CD_FILE\")/\(safeFolderName)\" && mv \"$CD_FILE\" \"$(dirname \"$CD_FILE\")/\(safeFolderName)/\"; fi"
+        default:
+            return actionValue
+        }
+    }
+
+    private func applySelectedTemplate() {
+        guard let template = selectedTemplate else { return }
+        name = template.name
+        iconName = template.iconName
+        actionType = template.actionType
+        actionValue = renderedTemplateActionValue(for: template.id)
+        placement = template.placement
+        targetAppKeys = template.targetAppKeys
+        triggerKeywordStr = template.triggerKeywords.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(shortcut == nil ? "Add Action" : "Edit Action")
@@ -6493,6 +6952,43 @@ struct AppShortcutEditSheet: View {
                 TextField("Name (e.g. Center Window)", text: $name)
 
                 SFSymbolPickerButton(selected: $iconName)
+
+                if !availableTemplates.isEmpty {
+                    Picker("Starter Template", selection: $selectedTemplateID) {
+                        Text("Custom").tag("")
+                        ForEach(availableTemplates) { template in
+                            Text(template.name).tag(template.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text("Templates prefill common cross-app actions using live context like $CURRENT_URL, $AX_SELECTED_TEXT, and $WINDOW_TITLE.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !selectedTemplateParameterLabels.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Template Parameters")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        ForEach(selectedTemplateParameterLabels, id: \.key) { parameter in
+                            switch parameter.key {
+                            case "folder":
+                                TextField(parameter.placeholder, text: $templateFolderName)
+                            case "noteFolder":
+                                TextField(parameter.placeholder, text: $templateNoteFolderName)
+                            case "delay":
+                                TextField(parameter.placeholder, text: $templateReminderDelayMinutes)
+                            case "recipient":
+                                TextField(parameter.placeholder, text: $templateRecipientName)
+                            default:
+                                EmptyView()
+                            }
+                        }
+                    }
+                }
 
                 // SHOWS IN — segmented picker (mirrors Extensions layer picker)
                 VStack(alignment: .leading, spacing: 6) {
@@ -6536,6 +7032,7 @@ struct AppShortcutEditSheet: View {
                     Text("Shell Command").tag(AppShortcut.ActionType.shellCommand)
                     Text("AppleScript").tag(AppShortcut.ActionType.appleScript)
                     Text("JXA (JavaScript for Automation)").tag(AppShortcut.ActionType.jxa)
+                    Text("Script File (.sh/.py/.js/.rb)").tag(AppShortcut.ActionType.scriptFile)
                 }
                 .pickerStyle(.menu)
 
@@ -6569,6 +7066,23 @@ struct AppShortcutEditSheet: View {
                             .frame(minHeight: 120)
                             .border(.separator)
                         contextVarHints
+                    }
+                case .scriptFile:
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            TextField("~/Scripts/my-script.sh", text: $actionValue)
+                            Button("Choose…") {
+                                let panel = NSOpenPanel()
+                                panel.allowsOtherFileTypes = true
+                                panel.canChooseDirectories = false
+                                panel.begin { r in
+                                    if r == .OK, let url = panel.url { actionValue = url.path }
+                                }
+                            }
+                            .buttonStyle(.bordered).controlSize(.small)
+                        }
+                        Text("Script receives context as $CD_URL, $CD_SELECTED_TEXT, $CD_FILE, $CD_APP_NAME, $CD_WINDOW_TITLE, $CD_CLIPBOARD, $CD_BUNDLE_ID")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -6619,6 +7133,28 @@ struct AppShortcutEditSheet: View {
             }
             installedApps = (builtIn + custom).filter { $0.key != appKey }
         }
+        .onChange(of: selectedTemplateID) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            switch newValue {
+            case "notes_save_link_bookmarks":
+                templateNoteFolderName = "Bookmarks"
+            case "notes_save_selection":
+                templateNoteFolderName = "ILauncher"
+            case "reminders_5_min":
+                templateReminderDelayMinutes = "5"
+            case "messages_share_page":
+                templateRecipientName = ""
+            case "finder_move_to_folder":
+                templateFolderName = "Organized"
+            default:
+                break
+            }
+            applySelectedTemplate()
+        }
+        .onChange(of: templateFolderName) { _, _ in if !selectedTemplateID.isEmpty { applySelectedTemplate() } }
+        .onChange(of: templateNoteFolderName) { _, _ in if !selectedTemplateID.isEmpty { applySelectedTemplate() } }
+        .onChange(of: templateReminderDelayMinutes) { _, _ in if !selectedTemplateID.isEmpty { applySelectedTemplate() } }
+        .onChange(of: templateRecipientName) { _, _ in if !selectedTemplateID.isEmpty { applySelectedTemplate() } }
     }
 
     @ViewBuilder
@@ -6737,6 +7273,8 @@ struct AppShortcutEditSheet: View {
                 ("$CURRENT_URL",      "URL currently open in the frontmost browser window (AX-read)"),
                 ("$WINDOW_TITLE",     "title of the frontmost window (AX-read)"),
                 ("$AX_SELECTED_TEXT", "selected text read via Accessibility API (more reliable)"),
+                ("$CD_FILE",          "selected file path passed to script-file actions"),
+                ("$CD_URL",           "current URL env var used by script-file actions"),
             ]
         default:
             return [
@@ -6750,6 +7288,9 @@ struct AppShortcutEditSheet: View {
                 ("$CURRENT_URL",      "URL currently open in the frontmost browser (AX-read, no script needed)"),
                 ("$WINDOW_TITLE",     "title of the frontmost window (AX-read)"),
                 ("$AX_SELECTED_TEXT", "selected text via Accessibility API (works in more apps than clipboard)"),
+                ("$CD_FILE",          "selected file path used in script-file env vars"),
+                ("$CD_URL",           "current URL used in script-file env vars"),
+                ("$CD_SELECTED_TEXT", "selected text used in script-file env vars"),
             ]
         }
     }
@@ -7328,6 +7869,8 @@ private struct ContextDockAppDetailView: View {
     let bundleId: String
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @ObservedObject private var settings = AppSettings.shared
+    @State private var showAddActionSheet = false
+    @State private var editingAction: AdapterAction? = nil
 
     private var adapter: AppAdapter? {
         adapterManager.adapters.first { $0.bundleId == bundleId }
@@ -7357,6 +7900,11 @@ private struct ContextDockAppDetailView: View {
         return nil
     }
 
+    private var isBuiltInWithoutOverride: Bool {
+        guard let adapter else { return false }
+        return adapter.isBuiltIn && adapter.sourceFileURL == nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -7383,6 +7931,22 @@ private struct ContextDockAppDetailView: View {
                     Spacer()
                     // Adapter controls (enable toggle + edit JSON) if adapter exists
                     if let adp = adapter {
+                        if isBuiltInWithoutOverride {
+                            Button {
+                                editingAction = nil
+                                showAddActionSheet = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "slider.horizontal.3")
+                                        .font(.system(size: 11))
+                                    Text("Customize")
+                                        .font(.system(size: 11))
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Create a user override for this built-in adapter")
+                        }
                         if let fileURL = adp.sourceFileURL {
                             Button {
                                 NSWorkspace.shared.open(fileURL)
@@ -7421,6 +7985,15 @@ private struct ContextDockAppDetailView: View {
                             Text("\(adp.actions.count)")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.tertiary)
+                            Button {
+                                editingAction = nil
+                                showAddActionSheet = true
+                            } label: {
+                                Label("Add Action", systemImage: "plus")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 14)
@@ -7428,12 +8001,40 @@ private struct ContextDockAppDetailView: View {
 
                         ForEach(adp.actions) { action in
                             AdapterActionRowView(action: action)
+                                .contextMenu {
+                                    Button {
+                                        editingAction = action
+                                        showAddActionSheet = true
+                                    } label: {
+                                        Label("Edit Action", systemImage: "pencil")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        Task {
+                                            await adapterManager.deleteAction(id: action.id, from: bundleId)
+                                        }
+                                    } label: {
+                                        Label("Delete Action", systemImage: "trash")
+                                    }
+                                }
                             if action.id != adp.actions.last?.id {
                                 Divider().padding(.leading, 44)
                             }
                         }
 
-                        if !adp.isBuiltIn {
+                        if adp.isBuiltIn && adp.sourceFileURL == nil {
+                            Divider().padding(.top, 8)
+                            HStack(spacing: 8) {
+                                Image(systemName: "wand.and.stars")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.accentColor)
+                                Text("Built-in adapter. Add, edit, or delete actions here to create a user override you can keep customizing.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                        } else if !adp.isBuiltIn {
                             Divider().padding(.top, 8)
                             HStack(spacing: 8) {
                                 Image(systemName: "info.circle")
@@ -7522,6 +8123,15 @@ private struct ContextDockAppDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $showAddActionSheet) {
+            AdapterActionEditorSheet(
+                bundleId: bundleId,
+                existing: editingAction
+            ) {
+                showAddActionSheet = false
+                editingAction = nil
+            }
+        }
     }
 }
 

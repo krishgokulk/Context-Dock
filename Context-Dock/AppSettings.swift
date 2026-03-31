@@ -349,9 +349,10 @@ struct AppShortcut: Codable, Identifiable, Equatable {
     enum ActionType: String, Codable {
         case openURL       // open a URL or deep-link
         case openFile      // open a file/app path
-        case shellCommand  // run a shell command
+        case shellCommand  // run a shell command inline
         case appleScript   // run an AppleScript snippet
         case jxa           // JavaScript for Automation (osascript -l JavaScript)
+        case scriptFile    // run an external script file (.sh/.py/.js/.rb) with context env vars
     }
 
     /// Where this shortcut appears in the launcher UI.
@@ -703,7 +704,7 @@ class AppSettings: ObservableObject {
     // Layer Toggles — controls which layers are accessible via swipe and hotkeys
     // Layer 1 (search + pinned apps) is always on and cannot be disabled.
     @AppStorage("enableLayer2") var enableLayer2: Bool = true    // Context Layer (app panel / shortcuts dock)
-    @AppStorage("enableLayer3") var enableLayer3: Bool = true    // Browser Layer
+    @AppStorage("enableLayer3") var enableLayer3: Bool = true    // Media Layer (L3)
     /// True only when the persistent context dock is active — derived, never stored separately.
     var l2OnlyMode: Bool { persistentContextDock }
     @AppStorage("l2ScrollPassthrough") var l2ScrollPassthrough: Bool = false // Forward scroll events to frontmost app while in context dock

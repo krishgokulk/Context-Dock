@@ -123,6 +123,15 @@ struct AXTriggerRuleSettingsView: View {
 
             Spacer()
 
+            // Hotkey badge
+            if let sym = hotkeyDisplaySymbol(rule.wrappedValue.hotkeyString) {
+                Text(sym)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4).padding(.vertical, 2)
+                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 4))
+            }
+
             // Pill count badge
             if !rule.wrappedValue.pills.isEmpty {
                 Text("\(rule.wrappedValue.pills.count)")
@@ -182,6 +191,21 @@ struct AXTriggerRuleSettingsView: View {
         let count = rule.conditions.count
         return "\(count) condition\(count == 1 ? "" : "s") (\(logic)) · \(rule.pills.count) pill\(rule.pills.count == 1 ? "" : "s")"
     }
+
+    /// Converts "cmd+shift:d" → "⌘⇧D", returns nil if hotkeyString is nil.
+    func hotkeyDisplaySymbol(_ hotkeyString: String?) -> String? {
+        guard let hs = hotkeyString, !hs.isEmpty else { return nil }
+        let parts = hs.split(separator: ":").map(String.init)
+        guard parts.count == 2 else { return hs }
+        let mods = parts[0].split(separator: "+").map(String.init)
+        var sym = ""
+        if mods.contains("ctrl")  { sym += "⌃" }
+        if mods.contains("opt")   { sym += "⌥" }
+        if mods.contains("shift") { sym += "⇧" }
+        if mods.contains("cmd")   { sym += "⌘" }
+        sym += parts[1].uppercased()
+        return sym
+    }
 }
 
 // MARK: - Detail / Inline Editor
@@ -212,6 +236,15 @@ struct AXRuleDetailView: View {
                         HStack {
                             Text("Enabled").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
                             Toggle("", isOn: $rule.isEnabled).labelsHidden()
+                        }
+                        HStack(alignment: .top) {
+                            Text("Hotkey").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HotkeyRecorderView(hotkeyString: $rule.hotkeyString)
+                                Text("Press hotkey from any app to fire the first pill instantly — dock stays hidden.")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(12)
@@ -317,8 +350,10 @@ struct AXRuleDetailView: View {
                 ("{selectedText}", "Text selected via AX API"),
                 ("{clipboard}",    "Current clipboard content"),
                 ("{url}",          "Browser URL (Safari/Chrome)"),
+                ("{encodedURL}",   "URL-encoded browser URL"),
                 ("{file}",         "Selected file path (Finder)"),
                 ("{encodedText}",  "URL-encoded selected text"),
+                ("$CD_*",          "Script File env vars (CD_URL, CD_FILE…)"),
             ]
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(vars, id: \.0) { pair in
@@ -439,17 +474,23 @@ struct PillRow: View {
             }
 
             HStack(spacing: 8) {
-                // Action type
+                // Action type picker
                 Picker("", selection: $pill.actionType) {
                     Text("Open URL").tag(AppShortcut.ActionType.openURL)
                     Text("Open File").tag(AppShortcut.ActionType.openFile)
                     Text("Shell").tag(AppShortcut.ActionType.shellCommand)
                     Text("AppleScript").tag(AppShortcut.ActionType.appleScript)
                     Text("JXA").tag(AppShortcut.ActionType.jxa)
+                    Text("Script File").tag(AppShortcut.ActionType.scriptFile)
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 420)
+            }
 
+            // Action value row — special UI for scriptFile
+            if pill.actionType == .scriptFile {
+                scriptFileRow
+            } else {
                 TextField(actionPlaceholder, text: $pill.actionValue)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.caption, design: .monospaced))
@@ -459,6 +500,89 @@ struct PillRow: View {
         .background(Color(NSColor.windowBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
     }
 
+    @ViewBuilder
+    private var scriptFileRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("~/Scripts/download.sh", text: $pill.actionValue)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.title = "Select Script File"
+                    panel.allowedContentTypes = []          // allow any file
+                    panel.allowsOtherFileTypes = true
+                    panel.canChooseDirectories = false
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url {
+                            pill.actionValue = url.path
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("New…") {
+                    let savePanel = NSSavePanel()
+                    savePanel.title = "Create New Script"
+                    savePanel.nameFieldStringValue = "script.sh"
+                    savePanel.begin { response in
+                        if response == .OK, let url = savePanel.url {
+                            let starter = """
+                            #!/bin/zsh
+                            # Context-Dock automation script
+                            # Available environment variables:
+                            #   CD_APP_NAME      — frontmost app name
+                            #   CD_BUNDLE_ID     — frontmost app bundle ID
+                            #   CD_WINDOW_TITLE  — current window title
+                            #   CD_SELECTED_TEXT — selected text (AX API)
+                            #   CD_URL           — current browser URL
+                            #   CD_FILE          — selected file path (Finder)
+                            #   CD_CLIPBOARD     — clipboard content
+
+                            echo "Running for: $CD_APP_NAME"
+                            echo "URL: $CD_URL"
+                            """
+                            try? starter.write(to: url, atomically: true, encoding: .utf8)
+                            try? FileManager.default.setAttributes(
+                                [.posixPermissions: 0o755],
+                                ofItemAtPath: url.path
+                            )
+                            pill.actionValue = url.path
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            // Script preview / edit button
+            if !pill.actionValue.isEmpty,
+               FileManager.default.fileExists(atPath: (pill.actionValue as NSString).expandingTildeInPath) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
+                    Text((pill.actionValue as NSString).lastPathComponent)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Edit in Editor") {
+                        NSWorkspace.shared.open(
+                            URL(fileURLWithPath: (pill.actionValue as NSString).expandingTildeInPath)
+                        )
+                    }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.blue)
+                }
+            }
+
+            // Env vars hint
+            Text("Script receives context as $CD_APP_NAME, $CD_URL, $CD_SELECTED_TEXT, $CD_FILE, $CD_WINDOW_TITLE, $CD_CLIPBOARD, $CD_BUNDLE_ID")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var actionPlaceholder: String {
         switch pill.actionType {
         case .openURL:      return "https://… or scheme://…"
@@ -466,6 +590,7 @@ struct PillRow: View {
         case .shellCommand: return "echo '{selectedText}' | pbcopy"
         case .appleScript:  return "tell application \"Finder\" to ..."
         case .jxa:          return "Application(\"Safari\").openLocation(\"{url}\")"
+        case .scriptFile:   return "~/Scripts/download.sh"
         }
     }
 }
@@ -635,5 +760,69 @@ struct AXRuleTestSheet: View {
         case .isEmpty:       return hay.isEmpty
         case .isNotEmpty:    return !hay.isEmpty
         }
+    }
+}
+
+// MARK: - Hotkey Recorder
+
+/// A button that records a single keyboard shortcut (e.g. ⌘⇧D) and stores it
+/// in the compact "mod+mod:char" format used by AXTriggerRuleEngine.
+struct HotkeyRecorderView: View {
+    @Binding var hotkeyString: String?
+    @State private var isRecording = false
+    @State private var monitor: Any?
+
+    private var displayLabel: String {
+        guard let hs = hotkeyString, !hs.isEmpty else { return "Click to record…" }
+        // Convert "cmd+shift:d" → "⌘⇧D"
+        let parts = hs.split(separator: ":").map(String.init)
+        guard parts.count == 2 else { return hs }
+        let mods = parts[0].split(separator: "+").map(String.init)
+        var sym = ""
+        if mods.contains("ctrl")  { sym += "⌃" }
+        if mods.contains("opt")   { sym += "⌥" }
+        if mods.contains("shift") { sym += "⇧" }
+        if mods.contains("cmd")   { sym += "⌘" }
+        sym += parts[1].uppercased()
+        return sym
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(isRecording ? "Press a key…" : displayLabel) {
+                startRecording()
+            }
+            .buttonStyle(.bordered)
+            .foregroundStyle(isRecording ? .orange : (hotkeyString == nil ? .secondary : .primary))
+            .controlSize(.small)
+
+            if hotkeyString != nil {
+                Button {
+                    hotkeyString = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func startRecording() {
+        isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let captured = AXTriggerRuleEngine.eventToHotkeyString(event)
+            if !captured.isEmpty {
+                hotkeyString = captured
+            }
+            stopRecording()
+            return nil   // consume the key
+        }
+        // Also stop if user clicks elsewhere
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { stopRecording() }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
     }
 }

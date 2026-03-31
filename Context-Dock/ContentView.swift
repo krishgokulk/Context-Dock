@@ -13,7 +13,7 @@ import Combine // For ObservableObject
 import FoundationModels
 import Contacts
 import AddressBook
-import WebKit // For inline browser in L3
+// WebKit removed — L3 is now the media player layer
 import SwiftTerm // For terminal integration
 
 struct SearchResult: Identifiable {
@@ -496,7 +496,10 @@ struct LauncherView: View {
     @ObservedObject private var adapterManager = AppAdapterManager.shared
 
     @ObservedObject private var notificationManager = ILauncherNotificationManager.shared
+    @ObservedObject private var mediaObserver = MediaPlayerObserver.shared
     @State private var showNotificationPanel = false
+    @State private var showNotificationDock = false
+    @State private var notifDockTab: Int = 0          // 0=Alerts 1=Recent 2=Messages 3=Actions
     @State private var runningRegularApps: [NSRunningApplication] = []
     @StateObject private var taskExecutor = L2AITaskExecutor.shared
     @StateObject private var selectionModel = SelectionObserverModel()
@@ -512,11 +515,8 @@ struct LauncherView: View {
     @State private var searchContextApp: SearchContextApp? = nil
     @State private var showContactPreview = false
     @State private var contactPreviewData: SearchResult? = nil
-    @State private var showWebSearch = false
-    @State private var webSearchQuery: String = ""
     @State private var quickLookDataSource: QuickLookDataSource? = nil
     @State private var quickLookEventMonitor: Any? = nil // Monitor for Space key Quick Look
-    @State private var browserShortcutMonitor: Any? = nil // L3: Cmd+T/W/R etc. forwarded to browser
     @State private var showShortcutSheet = false          // Cmd long-press shortcut overlay
     @State private var shortcutSheetFocusedIdx: Int? = nil // Up/Down nav inside shortcut sheet
     @State private var cmdHoldTask: Task<Void, Never>? = nil
@@ -529,6 +529,7 @@ struct LauncherView: View {
     @State private var currentAITask: Task<Void, Never>? = nil // Current AI request task
     @State private var frontmostAppName: String = ""
     @State private var pendingTerminalCommand: PendingTerminalCommand?
+    @State private var pendingFinderOperation: PendingFinderOperation?
     @State private var frontmostAppIcon: NSImage? = nil
     @State private var frontmostAppBundleID: String = ""
     @State private var isFrontmostSectionExpanded: Bool = false
@@ -597,6 +598,8 @@ struct LauncherView: View {
     @State private var accumulatedSwipeDeltaY: CGFloat = 0
     @State private var accumulatedSwipeDeltaX: CGFloat = 0
     @State private var isHoveringDockArea = false // Track if mouse is over dock area (pinned apps/shortcuts)
+    @State private var isHoveringNowPlayingIcon = false  // Hover over Now Playing icon
+    @State private var showMediaHoverDock = false         // Popover-style media dock on hover
     @State private var isSharingSheetActive = false // True while share sheet is open — suppresses our arrow-key monitor
     @State private var axContextRefreshTimer: Timer? = nil
 
@@ -613,26 +616,12 @@ struct LauncherView: View {
     // Arrow-key pill navigation: index into the unified pill list
     @State private var focusedPillIndex: Int? = nil
 
-    // Browser layer state (3rd layer - swipe up from shortcuts)
-    @State private var showBrowserLayer = false
-    @State private var browserSearchText = ""
-    // Removed: @State private var recentWebSearches - now using settings.recentWebSearches
-    @State private var browserSearchResults: [SearchResult] = [] // L3 inline search results
-    @State private var currentBrowserQuery: String = "" // Current search query for L3
-    @FocusState private var isBrowserFieldFocused: Bool
+    // Media layer state (L3 - swipe up from L2 when media is playing)
+    @State private var showMediaLayer = false
 
-    // Smart search state tracking
-    @State private var isInSmartMode = false // Track if we're currently in smart search mode
-    @State private var lastSmartQuery: String = "" // Track last query that triggered smart mode
-    @State private var showInlineBrowser = false // Show inline browser in L3
-    @State private var inlineBrowserQuery = "" // Query for inline browser
-    @State private var isInlineBrowserLoading = true
-
-    // Browser content for right side (bookmarks, quick tabs, pinned sites)
-    @State private var browserBookmarks: [BrowserItem] = []
-    @State private var quickTabs: [BrowserItem] = []
-    @State private var pinnedWebsites: [BrowserItem] = []
-
+    // Smart search mode tracking
+    @State private var isInSmartMode = false
+    @State private var lastSmartQuery: String = ""
 
     // Removed: Smart positioning logic - results always show below dock now
     @State private var isInitialLaunch = true // Track first appearance to skip animation
@@ -696,6 +685,9 @@ struct LauncherView: View {
     
     // Calculate dynamic height based on content
     private var calculatedHeight: CGFloat {
+        // Notification dock replaces all content — fixed height, no search bar
+        if showNotificationDock { return (settings.enableStatusBar ? 45 : 0) + 320 }
+
         // Pinned apps are now rendered inline as a horizontal icon strip next to the search bar,
         // so they should not contribute extra height.
         let pinnedAppsHeight: CGFloat = 0
@@ -704,7 +696,7 @@ struct LauncherView: View {
         let searchBarHeight: CGFloat = isSearchBarExpanded ? 70 : 55 // Matches actual pill height
         let indexingBarHeight: CGFloat = fileIndexManager.progress.isIndexing ? 30 : 0
         let l2ChatHeight: CGFloat = {
-            guard showContextInDock && !showBrowserLayer else { return 0 }
+            guard showContextInDock && !showMediaLayer else { return 0 }
             if l2ChatMessages.isEmpty {
                 return l2IsLoading ? 50 : 0
             }
@@ -729,8 +721,8 @@ struct LauncherView: View {
 
         // Context chip height (only in L1 search mode with context and suggestions)
         let contextChipHeight: CGFloat = {
-            // Not applicable in AI mode, L2 context mode, or L3 browser layer
-            if isAIMode || showContextInDock || showBrowserLayer { return 0 }
+            // Not applicable in AI mode, L2 context mode, or the L3 media dock
+            if isAIMode || showContextInDock || showMediaLayer { return 0 }
             
             // If context awareness is disabled, return 0
             guard settings.enableContextAIExtensions else { return 0 }
@@ -779,24 +771,15 @@ struct LauncherView: View {
         }
 
         // L2 context dock with chat results
-        if showContextInDock && !showBrowserLayer && (l2ChatHeight > 0) {
+        if showContextInDock && !showMediaLayer && (l2ChatHeight > 0) {
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + l2ChatHeight + 16
         }
 
-        // L3 Browser layer height calculation
-        if showBrowserLayer {
-            if showInlineBrowser {
-                // Inline browser showing - needs full height
-                let browserHeight: CGFloat = 400 // Header + WebView + Button
-                return statusBarHeight + pinnedAppsHeight + searchBarHeight + browserHeight + 10
-            } else if !searchText.isEmpty {
-                // Search results showing in L3
-                let resultsHeight: CGFloat = 350 // Recent searches + bookmarks + search button
-                return statusBarHeight + pinnedAppsHeight + searchBarHeight + resultsHeight + 10
-            } else {
-                // Empty L3 - just dock
-                return statusBarHeight + pinnedAppsHeight + searchBarHeight + 10
-            }
+        // L3 Media dock — same compact pill height as normal dock
+        if showMediaLayer {
+            let progressStrip: CGFloat = mediaObserver.duration > 0 ? 3 : 0
+            // 48 (row) + progressStrip + 20 (pill outer padding top+bottom) = same as searchBarHeight
+            return statusBarHeight + 48 + progressStrip + 20
         }
 
         if !searchResults.isEmpty {
@@ -828,7 +811,7 @@ struct LauncherView: View {
             searchText.isEmpty &&
             searchResults.isEmpty &&
             !isAIMode &&
-            !showBrowserLayer &&
+            !showMediaLayer &&
             !showFolderPreview &&
             activeSmartQueryKey == nil
 
@@ -958,7 +941,7 @@ struct LauncherView: View {
                 }
                 updateWindowSize()
             }
-            .onChange(of: showBrowserLayer) { _, newValue in
+            .onChange(of: showMediaLayer) { _, newValue in
                 if newValue {
                     l2ExtensionResults = []
                     l2ChatMessages = []
@@ -979,7 +962,6 @@ struct LauncherView: View {
 
     private var contentLifecycleView: some View {
         contentWithModifiers
-            .blur(radius: showWebSearch ? 3 : 0)
             .onAppear {
                 // Load running apps immediately so the dock bar shows them on first launch
                 runningRegularApps = NSWorkspace.shared.runningApplications.filter {
@@ -993,7 +975,6 @@ struct LauncherView: View {
                 setupQuickLookEventMonitor()
                 setupSwipeGestureMonitor()     // swipe up/down for layer switching
                 setupDockPillKeyMonitor()         // Left/Right/Enter for dock pill navigation
-                setupBrowserShortcutPassthrough() // Cmd+T/W/R forwarded to browser in L3
                 setupCmdHoldMonitor()             // Cmd held 1.5s → shortcut sheet
                 loadShortcutMetadata()
 
@@ -1111,7 +1092,7 @@ struct LauncherView: View {
                     searchResults = []
                     selectedResultIndex = nil
                     isAIMode = false
-                    showBrowserLayer = false
+                    showMediaLayer = false
                     showFolderPreview = false
                     // Always open in L2 when dock-at-bottom or L2-only mode is active
                     showContextInDock = settings.l2OnlyMode || settings.effectiveDockAtBottom
@@ -1141,7 +1122,7 @@ struct LauncherView: View {
                 searchText = ""
                 searchResults = []
                 selectedResultIndex = nil
-                showBrowserLayer = false
+                showMediaLayer = false
                 showFolderPreview = false
                 activateSearchField()
             }
@@ -1168,7 +1149,7 @@ struct LauncherView: View {
                 searchText = text
                 isAIMode = true
                 showContextInDock = false
-                showBrowserLayer = false
+                showMediaLayer = false
                 AppDelegate.shared?.showLauncher()
             }
             .onReceive(NotificationCenter.default.publisher(for: .frontmostAppDetected)) { notification in
@@ -1247,7 +1228,7 @@ struct LauncherView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateContextDock)) { _ in
                 // Instant switch — no animation so the layer change feels immediate
-                showBrowserLayer = false
+                showMediaLayer = false
                 isAIMode = false
                 showContextInDock = true
             }
@@ -1293,16 +1274,10 @@ struct LauncherView: View {
     private var contentKeyHandlersView: some View {
         contentNotificationHandlersView
             .onExitCommand {
-                if showInlineBrowser {
-                    // Back from inline browser
+                if showMediaLayer {
+                    // Close media layer (L3 → L2)
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        showInlineBrowser = false
-                        inlineBrowserQuery = ""
-                    }
-                } else if showBrowserLayer {
-                    // Close browser layer (L3 → L2)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        showBrowserLayer = false
+                        showMediaLayer = false
                     }
                 } else if showAIExtensionSuggestions {
                     withAnimation(.spring(response: 0.3)) {
@@ -1369,18 +1344,20 @@ struct LauncherView: View {
                             // Filter mode: Enter executes the top matching action
                             executeL2FilteredItem(filtered[0])
                         } else {
-                            enforceL2ContextMode()
-                            handleL2Query()
+                            // Check rule pills before falling through to AI query
+                            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                            let rulePills = buildDockPills(query: q).filter { !$0.isSeparator }
+                            if !rulePills.isEmpty {
+                                let idx = min(focusedPillIndex ?? 0, rulePills.count - 1)
+                                rulePills[idx].execute()
+                                searchText = ""
+                            } else {
+                                enforceL2ContextMode()
+                                handleL2Query()
+                            }
                         }
                     } else if isAIMode {
                         submitAIQuery()
-                    } else if showBrowserLayer {
-                        // L3: Open search in inline dock browser
-                        if showInlineBrowser {
-                            // Already showing browser, ignore
-                            return .handled
-                        }
-                        openInDockBrowser()
                     } else {
                         // L1/L2: Execute selected result
                         executeSelectedResult()
@@ -1413,16 +1390,16 @@ struct LauncherView: View {
                 if !isAIMode {
                     // Remember layer before entering chat
                     chatReturnContextInDock = showContextInDock
-                    chatReturnBrowserLayer = showBrowserLayer
+                    chatReturnBrowserLayer = showMediaLayer
                 }
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                     isAIMode.toggle()
                     if isAIMode {
                         showContextInDock = false
-                        showBrowserLayer = false
+                        showMediaLayer = false
                     } else {
                         showContextInDock = chatReturnContextInDock
-                        showBrowserLayer = chatReturnBrowserLayer
+                        showMediaLayer = chatReturnBrowserLayer
                     }
                 }
 
@@ -1528,28 +1505,7 @@ struct LauncherView: View {
                     .zIndex(10)
             }
 
-            // Web Search Overlay
-            if showWebSearch {
-                ZStack {
-                    // Dim background
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showWebSearch = false
-                            }
-                        }
 
-                    // Web Search View with WebKit
-                    WebSearchView(
-                        query: webSearchQuery,
-                        userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script },
-                        isPresented: $showWebSearch
-                    )
-                    .frame(width: 900)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-            }
         }
         .onReceive(TerminalAIBridge.shared.$pendingApproval) { pending in
             if let pending = pending {
@@ -1609,6 +1565,110 @@ struct LauncherView: View {
     private struct PendingTerminalCommand {
         let command: String
         let purpose: String
+    }
+
+    private struct PendingFinderOperation {
+        let intent: FinderIntent
+        let folderPath: String
+    }
+
+    private enum FinderIntent {
+        case showRecentFiles(limit: Int)
+        case filterFiles(category: FinderFileCategory)
+        case organizeByType
+    }
+
+    private enum FinderFileCategory: CaseIterable {
+        case pdf
+        case image
+        case video
+        case audio
+        case archive
+        case app
+        case folder
+        case document
+
+        var displayName: String {
+            switch self {
+            case .pdf: return "PDF"
+            case .image: return "image"
+            case .video: return "video"
+            case .audio: return "audio"
+            case .archive: return "archive"
+            case .app: return "app"
+            case .folder: return "folder"
+            case .document: return "document"
+            }
+        }
+
+        var resultTitle: String {
+            switch self {
+            case .pdf: return "PDF Files"
+            case .image: return "Images"
+            case .video: return "Videos"
+            case .audio: return "Audio Files"
+            case .archive: return "Archives"
+            case .app: return "Apps"
+            case .folder: return "Folders"
+            case .document: return "Documents"
+            }
+        }
+
+        var destinationFolderName: String {
+            switch self {
+            case .pdf: return "PDFs"
+            case .image: return "Images"
+            case .video: return "Videos"
+            case .audio: return "Audio"
+            case .archive: return "Archives"
+            case .app: return "Apps"
+            case .folder: return "Folders"
+            case .document: return "Documents"
+            }
+        }
+
+        func matches(_ url: URL) -> Bool {
+            let ext = url.pathExtension.lowercased()
+            switch self {
+            case .pdf:
+                return ext == "pdf"
+            case .image:
+                return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic", "webp", "svg"].contains(ext)
+            case .video:
+                return ["mp4", "mov", "m4v", "avi", "mkv", "webm"].contains(ext)
+            case .audio:
+                return ["mp3", "wav", "aac", "m4a", "flac", "aiff"].contains(ext)
+            case .archive:
+                return ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "dmg", "pkg", "torrent"].contains(ext)
+            case .app:
+                return ext == "app"
+            case .folder:
+                return url.hasDirectoryPath
+            case .document:
+                return ["doc", "docx", "pages", "txt", "md", "rtf", "ppt", "pptx", "xls", "xlsx", "csv"].contains(ext)
+            }
+        }
+
+        static func detect(in query: String) -> FinderFileCategory? {
+            let normalized = query.lowercased()
+            let mappings: [(FinderFileCategory, [String])] = [
+                (.pdf, [" pdf", "pdfs", "pdf file", "pdfs from", "pdf files"]),
+                (.image, ["image", "images", "photo", "photos", "picture", "pictures", "screenshot", "screenshots"]),
+                (.video, ["video", "videos", "movie", "movies"]),
+                (.audio, ["audio", "music", "song", "songs", "mp3"]),
+                (.archive, ["archive", "archives", "zip", "zips", "dmg", "dmgs", "torrent", "torrents", ".torrent"]),
+                (.app, ["app", "apps", "application", "applications"]),
+                (.folder, ["folder", "folders", "directory", "directories"]),
+                (.document, ["document", "documents", "doc", "docs", "text file", "text files"])
+            ]
+
+            for (category, keywords) in mappings {
+                if keywords.contains(where: normalized.contains) {
+                    return category
+                }
+            }
+            return nil
+        }
     }
 
 
@@ -1930,16 +1990,12 @@ struct LauncherView: View {
     private var isL2ContextActive: Bool {
         // L2 is active whenever the context dock is showing, we're not in pure AI mode,
         // and we're not in L3 browser layer. L3 must stay independent from L2.
-        showContextInDock && !isAIMode && !showBrowserLayer
+        showContextInDock && !isAIMode && !showMediaLayer
     }
 
     private func enforceL2ContextMode() {
-        if showBrowserLayer {
-            showBrowserLayer = false
-        }
-        if showInlineBrowser {
-            showInlineBrowser = false
-            inlineBrowserQuery = ""
+        if showMediaLayer {
+            showMediaLayer = false
         }
     }
 
@@ -2357,6 +2413,492 @@ struct LauncherView: View {
         axContext = AXContextReader.shared.current
     }
 
+    // MARK: - Finder AI — natural language over current folder
+
+    private func handleFinderAIQuery(query: String) {
+        guard !query.isEmpty else { return }
+
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let folderPath = currentFinderFolderPath()
+
+        if let pending = pendingFinderOperation {
+            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+            if isAffirmativeResponse(normalized) {
+                pendingFinderOperation = nil
+                runFinderIntent(pending.intent, folderPath: pending.folderPath, confirmed: true)
+                return
+            }
+            if isNegativeResponse(normalized) {
+                pendingFinderOperation = nil
+                l2ChatMessages.append(AIChatMessage(role: .assistant, content: "Okay, I won't reorganize that folder."))
+                return
+            }
+        }
+
+        if let intent = parseFinderIntent(query: normalized) {
+            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+            l2IsLoading = true
+            searchText = ""
+            enforceL2ContextMode()
+            runFinderIntent(intent, folderPath: folderPath, confirmed: false, originalQuery: normalized)
+            return
+        }
+
+        l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+        l2IsLoading = true
+        searchText = ""
+        enforceL2ContextMode()
+
+        // Snapshot everything we know about Finder right now
+        let fallbackFolderPath  = axContext.currentURL?
+            .replacingOccurrences(of: "file://", with: "")
+            .removingPercentEncoding
+            ?? axContext.windowTitle
+            ?? "unknown folder"
+        let selectedFiles = axContext.selectedFilePaths
+        let menuTitles = liveMenuItems.filter(\.isEnabled).map(\.title)
+
+        // Read all visible filenames in the current folder via AppleScript
+        l2CurrentTask = Task {
+            // 1. Get visible files in current Finder window
+            let visibleFilesScript = """
+            tell application "Finder"
+                try
+                    set theItems to every item of (target of front window) as alias
+                    set nameList to {}
+                    repeat with i in theItems
+                        set end of nameList to name of i
+                    end repeat
+                    return nameList as string
+                end try
+            end tell
+            """
+            var visibleFiles: [String] = []
+            if let raw = await runAppleScript(visibleFilesScript), !raw.isEmpty {
+                visibleFiles = raw.components(separatedBy: ", ").filter { !$0.isEmpty }
+            }
+
+            // 2. Build the AI prompt
+            let systemPrompt = """
+            You are a macOS Finder assistant embedded in Context-Dock.
+            You help users perform file operations using natural language.
+
+            CURRENT STATE:
+            - Folder: \(fallbackFolderPath)
+            - Selected files: \(selectedFiles.isEmpty ? "none" : selectedFiles.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", "))
+            - Visible files in window: \(visibleFiles.isEmpty ? "unknown" : visibleFiles.prefix(30).joined(separator: ", "))
+            - Available Finder menu actions: \(menuTitles.prefix(20).joined(separator: ", "))
+
+            RULES:
+            1. Respond with EITHER:
+               a) ACTION:APPLESCRIPT:<applescript code on one line using \\n for newlines>
+               b) ACTION:SHELL:<shell command>
+               c) ACTION:MENU:<exact menu item title from the available actions list>
+               d) ANSWER:<plain text answer if it's an informational question>
+
+            2. For file operations prefer AppleScript (it integrates with Finder natively).
+            3. For conversions, compressions, bulk renames prefer SHELL.
+            4. For menu items that exist in the available list, prefer MENU.
+            5. Use the EXACT filenames from the visible files list when referencing files.
+            6. For selected files use: \(selectedFiles.map { "\"\($0)\"" }.joined(separator: ", "))
+            7. Shell commands run in bash. $HOME = /Users/\(NSUserName()). Current dir = \(fallbackFolderPath)
+            8. NEVER explain yourself. Output ONLY the ACTION line.
+
+            EXAMPLES:
+            User: move selected files to desktop
+            ACTION:APPLESCRIPT:tell application "Finder" to move selection to (path to desktop)
+
+            User: rename all jpg files to add today's date
+            ACTION:SHELL:cd "\(fallbackFolderPath)" && for f in *.jpg; do mv "$f" "$(date +%Y-%m-%d)_$f"; done
+
+            User: compress the dmg files
+            ACTION:SHELL:cd "\(fallbackFolderPath)" && zip ~/Desktop/dmgs.zip *.dmg
+
+            User: show me only pdfs
+            ACTION:MENU:Sort By
+
+            User: how many files are here
+            ANSWER:There are \(visibleFiles.count) visible items in \(fallbackFolderPath).
+            """
+
+            let provider = await MainActor.run { self.settings.selectedAIProvider }
+
+            do {
+                let context: [[String: String]] = [
+                    ["role": "system", "content": systemPrompt],
+                    ["role": "user",   "content": query]
+                ]
+                let response = try await self.sendToProvider(query: query, context: context)
+
+                await MainActor.run {
+                    self.l2IsLoading = false
+                    self.l2CurrentTask = nil
+                    self.executeFinderAIResponse(response, folderPath: fallbackFolderPath)
+                }
+            } catch {
+                await MainActor.run {
+                    self.l2ChatMessages.append(AIChatMessage(
+                        role: .assistant,
+                        content: "❌ \(error.localizedDescription)",
+                        isError: true
+                    ))
+                    self.l2IsLoading = false
+                    self.l2CurrentTask = nil
+                }
+            }
+        }
+    }
+
+    private func parseFinderIntent(query: String) -> FinderIntent? {
+        if query.contains("organize"), query.contains("type") || query.contains("types") || query.contains("category") {
+            return .organizeByType
+        }
+
+        if query.contains("recent") {
+            return .showRecentFiles(limit: 30)
+        }
+
+        // Natural language: "any X?", "is there any X", "are there X", "check for X",
+        // "do i have X", "how many X", "look for X", "search for X", "count X"
+        let listWords = ["show", "list", "find", "display", "any", "there any", "check", "search",
+                         "how many", "count", "look for", "do i have", "have any", "got any"]
+        if listWords.contains(where: query.contains), let category = FinderFileCategory.detect(in: query) {
+            return .filterFiles(category: category)
+        }
+
+        // Also catch bare category mentions: "torrent files?", "pdf files?"
+        if let category = FinderFileCategory.detect(in: query), query.contains("file") || query.contains("files") {
+            return .filterFiles(category: category)
+        }
+
+        return nil
+    }
+
+    private func runFinderIntent(_ intent: FinderIntent, folderPath: String, confirmed: Bool, originalQuery: String = "") {
+        l2CurrentTask?.cancel()
+        l2CurrentTask = Task {
+            switch intent {
+            case .showRecentFiles(let limit):
+                let urls = recentFinderItems(in: folderPath, limit: limit)
+                let summary: String
+                if urls.isEmpty {
+                    summary = "No recent files found in \(URL(fileURLWithPath: folderPath).lastPathComponent)."
+                } else {
+                    summary = "Found \(urls.count) recent item\(urls.count == 1 ? "" : "s") in \(URL(fileURLWithPath: folderPath).lastPathComponent). Showing newest first."
+                }
+                let results = buildFinderSearchResults(from: urls, subtitle: "Recent Files")
+                await MainActor.run {
+                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: summary))
+                    updateL2Results(results)
+                    l2IsLoading = false
+                    l2CurrentTask = nil
+                }
+
+            case .filterFiles(let category):
+                // For archives, further filter by a specific extension if the original query mentions one
+                let lowerQuery = originalQuery.lowercased()
+                let specificExt: String? = {
+                    if category == .archive {
+                        if lowerQuery.contains("torrent") { return "torrent" }
+                        if lowerQuery.contains("dmg")     { return "dmg" }
+                        if lowerQuery.contains("zip")     { return "zip" }
+                    }
+                    return nil
+                }()
+                let all = finderItems(in: folderPath).filter { category.matches($0) }
+                let urls = specificExt != nil
+                    ? all.filter { $0.pathExtension.lowercased() == specificExt! }
+                    : all
+                let typeName = specificExt ?? category.displayName
+                let folderName = URL(fileURLWithPath: folderPath).lastPathComponent
+                let summary: String
+                if urls.isEmpty {
+                    summary = "No \(typeName) files found in \(folderName)."
+                } else {
+                    let names = urls.prefix(5).map { $0.lastPathComponent }.joined(separator: "\n• ")
+                    summary = "Found \(urls.count) \(typeName) file\(urls.count == 1 ? "" : "s") in \(folderName):\n• \(names)"
+                        + (urls.count > 5 ? "\n…and \(urls.count - 5) more." : "")
+                }
+                let results = buildFinderSearchResults(from: urls, subtitle: category.resultTitle)
+                await MainActor.run {
+                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: summary))
+                    updateL2Results(results)
+                    l2IsLoading = false
+                    l2CurrentTask = nil
+                }
+
+            case .organizeByType:
+                if !confirmed {
+                    let preview = previewOrganizeFinderItems(in: folderPath)
+                    await MainActor.run {
+                        if preview.moveCount == 0 {
+                            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "Nothing to reorganize in \(URL(fileURLWithPath: folderPath).lastPathComponent)."))
+                        } else {
+                            pendingFinderOperation = PendingFinderOperation(intent: intent, folderPath: folderPath)
+                            l2ChatMessages.append(AIChatMessage(role: .assistant, content: preview.message))
+                        }
+                        l2IsLoading = false
+                        l2CurrentTask = nil
+                    }
+                    return
+                }
+
+                let result = organizeFinderItemsByType(in: folderPath)
+                await MainActor.run {
+                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: result.message, isError: !result.success))
+                    if !result.createdFolders.isEmpty {
+                        updateL2Results(buildFinderSearchResults(from: result.createdFolders, subtitle: "Organized Folders"))
+                    }
+                    l2IsLoading = false
+                    l2CurrentTask = nil
+                }
+            }
+        }
+    }
+
+    private func currentFinderFolderPath() -> String {
+        let candidate = ContextDetector.shared.getCurrentFinderDirectory()
+            ?? axContext.currentURL?.replacingOccurrences(of: "file://", with: "").removingPercentEncoding
+            ?? axContext.windowTitle
+        return candidate?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? candidate!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : NSHomeDirectory()
+    }
+
+    private func finderItems(in folderPath: String) -> [URL] {
+        let folderURL = URL(fileURLWithPath: folderPath)
+        let keys: [URLResourceKey] = [.isDirectoryKey, .contentModificationDateKey, .localizedNameKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls.sorted {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    private func recentFinderItems(in folderPath: String, limit: Int) -> [URL] {
+        finderItems(in: folderPath)
+            .sorted {
+                let lhs = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhs = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhs > rhs
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    private func buildFinderSearchResults(from urls: [URL], subtitle: String) -> [SearchResult] {
+        urls.map { url in
+            let path = url.path
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let resultType: SearchResult.ResultType = {
+                if isDirectory { return .folder }
+                let ext = url.pathExtension.lowercased()
+                if ["pdf", "txt", "md", "doc", "docx", "pages", "rtf"].contains(ext) { return .document }
+                return .file
+            }()
+
+            return SearchResult(
+                title: url.lastPathComponent,
+                subtitle: subtitle,
+                icon: NSWorkspace.shared.icon(forFile: path),
+                action: { NSWorkspace.shared.open(url) },
+                score: 0.0,
+                type: resultType,
+                filePath: path,
+                contactData: nil
+            )
+        }
+    }
+
+    private func previewOrganizeFinderItems(in folderPath: String) -> (moveCount: Int, message: String) {
+        let items = finderItems(in: folderPath).filter { !($0.hasDirectoryPath) }
+        var bucketCounts: [(FinderFileCategory, Int)] = []
+        var examples: [String] = []
+
+        for category in FinderFileCategory.allCases where category != .folder {
+            let matches = items.filter { category.matches($0) }
+            guard !matches.isEmpty else { continue }
+            bucketCounts.append((category, matches.count))
+            for url in matches.prefix(2) {
+                examples.append("• \(url.lastPathComponent) → \(category.destinationFolderName)/")
+            }
+        }
+
+        let moveCount = bucketCounts.reduce(0) { $0 + $1.1 }
+        guard moveCount > 0 else {
+            return (0, "")
+        }
+
+        var lines = ["I can organize \(URL(fileURLWithPath: folderPath).lastPathComponent) by type:"]
+        lines.append(contentsOf: bucketCounts.map { "- \($0.0.destinationFolderName): \($0.1)" })
+        if !examples.isEmpty {
+            lines.append("")
+            lines.append("Preview:")
+            lines.append(contentsOf: examples.prefix(6))
+        }
+        lines.append("")
+        lines.append("Shall I proceed?")
+        return (moveCount, lines.joined(separator: "\n"))
+    }
+
+    private func organizeFinderItemsByType(in folderPath: String) -> (success: Bool, message: String, createdFolders: [URL]) {
+        let items = finderItems(in: folderPath).filter { !($0.hasDirectoryPath) }
+        guard !items.isEmpty else {
+            return (true, "No files found to organize in \(URL(fileURLWithPath: folderPath).lastPathComponent).", [])
+        }
+
+        let baseURL = URL(fileURLWithPath: folderPath)
+        let fileManager = FileManager.default
+        var movedCount = 0
+        var createdFolders: [URL] = []
+        var failures: [String] = []
+
+        for fileURL in items {
+            guard let category = FinderFileCategory.allCases.first(where: { $0 != .folder && $0.matches(fileURL) }) else {
+                continue
+            }
+
+            let destinationFolder = baseURL.appendingPathComponent(category.destinationFolderName, isDirectory: true)
+            if !fileManager.fileExists(atPath: destinationFolder.path) {
+                do {
+                    try fileManager.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+                    createdFolders.append(destinationFolder)
+                } catch {
+                    failures.append("Couldn't create \(category.destinationFolderName)")
+                    continue
+                }
+            }
+
+            let destinationURL = uniqueFinderDestination(for: fileURL, in: destinationFolder)
+            do {
+                try fileManager.moveItem(at: fileURL, to: destinationURL)
+                movedCount += 1
+            } catch {
+                failures.append("Couldn't move \(fileURL.lastPathComponent)")
+            }
+        }
+
+        let folderLabel = URL(fileURLWithPath: folderPath).lastPathComponent
+        if movedCount == 0 {
+            let failureText = failures.isEmpty ? "No matching files needed organizing." : failures.joined(separator: "\n")
+            return (false, failureText, createdFolders)
+        }
+
+        var lines = ["Organized \(movedCount) file\(movedCount == 1 ? "" : "s") in \(folderLabel)."]
+        if !createdFolders.isEmpty {
+            lines.append("Created \(createdFolders.count) folder\(createdFolders.count == 1 ? "" : "s").")
+        }
+        if !failures.isEmpty {
+            lines.append("")
+            lines.append("Some items were skipped:")
+            lines.append(contentsOf: failures.prefix(5))
+        }
+        return (failures.isEmpty, lines.joined(separator: "\n"), createdFolders)
+    }
+
+    private func uniqueFinderDestination(for fileURL: URL, in folderURL: URL) -> URL {
+        let fileManager = FileManager.default
+        let ext = fileURL.pathExtension
+        let baseName = fileURL.deletingPathExtension().lastPathComponent
+        var candidate = folderURL.appendingPathComponent(fileURL.lastPathComponent)
+        var index = 2
+
+        while fileManager.fileExists(atPath: candidate.path) {
+            let name = ext.isEmpty ? "\(baseName) \(index)" : "\(baseName) \(index).\(ext)"
+            candidate = folderURL.appendingPathComponent(name)
+            index += 1
+        }
+
+        return candidate
+    }
+
+    private func executeFinderAIResponse(_ response: String, folderPath: String) {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.hasPrefix("ACTION:APPLESCRIPT:") {
+            let script = String(trimmed.dropFirst("ACTION:APPLESCRIPT:".count))
+                .replacingOccurrences(of: "\\n", with: "\n")
+            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "```applescript\n\(script)\n```"))
+            Task.detached(priority: .userInitiated) {
+                var err: NSDictionary?
+                NSAppleScript(source: script)?.executeAndReturnError(&err)
+                if let e = err { await MainActor.run {
+                    self.l2ChatMessages.append(AIChatMessage(role: .assistant,
+                        content: "⚠️ \(e["NSAppleScriptErrorMessage"] as? String ?? "Script error")", isError: true))
+                }}
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                await MainActor.run {
+                    if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.finder" }) {
+                        AXMenuReader.shared.invalidateCache(for: app.processIdentifier)
+                        self.reloadMenuForApp(app)
+                    }
+                }
+            }
+
+        } else if trimmed.hasPrefix("ACTION:SHELL:") {
+            let cmd = String(trimmed.dropFirst("ACTION:SHELL:".count))
+            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "```bash\n\(cmd)\n```"))
+            Task.detached(priority: .userInitiated) {
+                let process = Process()
+                process.launchPath = "/bin/bash"
+                process.arguments = ["-c", cmd]
+                process.currentDirectoryPath = folderPath
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = pipe
+                try? process.run()
+                process.waitUntilExit()
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                await MainActor.run {
+                    let status = process.terminationStatus == 0 ? "✅ Done" : "❌ Failed (exit \(process.terminationStatus))"
+                    let msg = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? status
+                        : "\(status)\n```\n\(output.prefix(500))\n```"
+                    self.l2ChatMessages.append(AIChatMessage(role: .assistant, content: msg))
+                    ILauncherNotificationManager.shared.shellFinished(
+                        command: cmd,
+                        exitCode: process.terminationStatus
+                    )
+                }
+            }
+
+        } else if trimmed.hasPrefix("ACTION:MENU:") {
+            let menuTitle = String(trimmed.dropFirst("ACTION:MENU:".count))
+            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "▶ \(menuTitle)"))
+            if let item = liveMenuItems.first(where: { $0.title.lowercased() == menuTitle.lowercased() }),
+               let pid = NSWorkspace.shared.runningApplications
+                   .first(where: { $0.bundleIdentifier == "com.apple.finder" })?.processIdentifier {
+                Task.detached(priority: .userInitiated) {
+                    AXMenuReader.shared.clickMenuItem(path: item.path, in: pid)
+                }
+            }
+
+        } else if trimmed.hasPrefix("ANSWER:") {
+            let answer = String(trimmed.dropFirst("ANSWER:".count))
+            l2ChatMessages.append(AIChatMessage(role: .assistant, content: answer))
+
+        } else {
+            // Model didn't follow the format — show the raw response
+            l2ChatMessages.append(AIChatMessage(role: .assistant, content: trimmed))
+        }
+    }
+
+    @discardableResult
+    private func runAppleScript(_ source: String) async -> String? {
+        return await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var err: NSDictionary?
+                guard let s = NSAppleScript(source: source) else { cont.resume(returning: nil); return }
+                let result = s.executeAndReturnError(&err)
+                cont.resume(returning: result.stringValue)
+            }
+        }
+    }
+
     // MARK: - Apple menu recent apps sync
 
     /// Reads "Recent Items > Applications" from the already-loaded liveMenuItems and
@@ -2510,6 +3052,8 @@ struct LauncherView: View {
     /// This is the single source of truth for both rendering and keyboard navigation.
     func buildDockPills(query q: String) -> [DockPill] {
         var pills: [DockPill] = []
+        let explicitAppTarget = q.isEmpty ? nil : L2AppActionRouter.shared.explicitAppTarget(for: q)
+        let isExplicitAppScope = explicitAppTarget != nil
 
         let appKey = activeSmartQueryKey ?? settings.autoDetectedAppKey ?? ""
         let allQuickActions = settings.contextDockShortcuts(for: appKey).isEmpty
@@ -2518,20 +3062,33 @@ struct LauncherView: View {
         let allAppTools = frontmostAppL2Extensions
         let allCtxExts  = l2ContextExtensions
 
-        let quickActions = q.isEmpty ? allQuickActions : allQuickActions.filter { $0.name.lowercased().contains(q) }
-        let appTools     = q.isEmpty ? allAppTools     : allAppTools.filter {
+        let quickActions = isExplicitAppScope ? [] : (q.isEmpty ? allQuickActions : allQuickActions.filter { $0.name.lowercased().contains(q) })
+        let appTools     = isExplicitAppScope ? [] : (q.isEmpty ? allAppTools     : allAppTools.filter {
             $0.displayName.lowercased().contains(q) || $0.toolName.lowercased().contains(q)
-        }
-        let ctxExts      = q.isEmpty ? allCtxExts : allCtxExts.filter { $0.ilExtension.name.lowercased().contains(q) }
-        let baseAdapters = adapterManager.actions(for: axContext.bundleId, query: q)
+        })
+        let ctxExts      = isExplicitAppScope ? [] : (q.isEmpty ? allCtxExts : allCtxExts.filter { $0.ilExtension.name.lowercased().contains(q) })
+
+        let activeBundleId = explicitAppTarget?.bundleId ?? (frontmostAppBundleID.isEmpty ? axContext.bundleId : frontmostAppBundleID)
+        let adapterQuery = explicitAppTarget?.actionQuery ?? q
+        let baseAdapters = adapterManager.actions(for: activeBundleId, query: adapterQuery)
         let adapterActs  = Array(sessionRankedAdapterActions(base: Array(baseAdapters.prefix(12))).prefix(8))
 
-        // Use frontmostAppBundleID (always current) rather than axContext.bundleId (may lag on dock open)
-        let activeBundleId = frontmostAppBundleID.isEmpty ? axContext.bundleId : frontmostAppBundleID
         let favs = settings.favouriteMenuPills(for: activeBundleId)
 
         // Live menu items: primary (frontmost app) + optional cross-app when query targets another app
         let menuMatches: [AXMenuItem] = q.isEmpty ? [] : {
+            if let explicitAppTarget,
+               let targetApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == explicitAppTarget.bundleId }) {
+                loadCrossAppMenu(for: targetApp)
+                let filterQ = explicitAppTarget.actionQuery
+                let matches = crossAppMenuItems.filter { item in
+                    item.title.lowercased().contains(filterQ) ||
+                    item.path.contains { $0.lowercased().contains(filterQ) }
+                }
+                return Array(matches.sorted {
+                    ($0.title.lowercased().hasPrefix(filterQ) ? 0 : 1) < ($1.title.lowercased().hasPrefix(filterQ) ? 0 : 1)
+                }.prefix(8))
+            }
             // Check if query starts with a known app name → cross-app mode (requires Cross-App Connect)
             if settings.crossAppPills, let (targetApp, actionQuery) = detectCrossAppQuery(q) {
                 loadCrossAppMenu(for: targetApp)
@@ -2561,7 +3118,9 @@ struct LauncherView: View {
         }()
 
         // Finder selected-file pills come FIRST — most contextual
-        pills += buildFinderFilePills(query: q)
+        if !isExplicitAppScope {
+            pills += buildFinderFilePills(query: q)
+        }
 
         // Context-reactive pills — menu items that just became enabled after a selection change.
         // Only shown when the user hasn't typed a query (they'd surface via menuMatches otherwise).
@@ -2582,17 +3141,21 @@ struct LauncherView: View {
                     accentColorName: "blue",
                     badge: badge,
                     execute: {
-                        guard sourcePID != 0, sourceApp != nil else { return }
-                        Task {
-                            sourceApp?.activate(options: [.activateIgnoringOtherApps])
-                            try? await Task.sleep(nanoseconds: 180_000_000)
-                            await Task.detached(priority: .userInitiated) {
-                                if let ch = sc, !ch.isEmpty {
-                                    AXMenuReader.shared.executeShortcut(char: ch, modifiers: mod, in: sourcePID)
-                                } else {
-                                    AXMenuReader.shared.clickMenuItem(path: path, in: sourcePID)
+                        guard sourcePID != 0 else { return }
+                        Task.detached(priority: .userInitiated) {
+                            if let ch = sc, !ch.isEmpty {
+                                AXMenuReader.shared.executeShortcut(char: ch, modifiers: mod, in: sourcePID)
+                            } else {
+                                AXMenuReader.shared.clickMenuItem(path: path, in: sourcePID)
+                            }
+                            try? await Task.sleep(nanoseconds: 250_000_000)
+                            AXMenuReader.shared.invalidateCache(for: sourcePID)
+                            await MainActor.run {
+                                if let app = NSWorkspace.shared.runningApplications
+                                    .first(where: { $0.processIdentifier == sourcePID }) {
+                                    self.reloadMenuForApp(app)
                                 }
-                            }.value
+                            }
                         }
                     }
                 ))
@@ -2631,7 +3194,7 @@ struct LauncherView: View {
         for action in adapterActs {
             pills.append(DockPill(id: "adp-\(action.id)", name: action.name,
                                   icon: action.icon, accentColorName: action.accentColor, badge: nil,
-                                  execute: { executeAdapterAction(action) }))
+                                  execute: { executeAdapterAction(action, targetBundleId: activeBundleId) }))
         }
         for item in menuMatches {
             let path      = item.path
@@ -2659,17 +3222,22 @@ struct LauncherView: View {
                                 accentColorName: isFav ? "yellow" : "gray",
                                 badge: shortcutHint ?? pillBadge,
                                 execute: {
-                guard sourcePID != 0, sourceApp != nil else { return }
-                Task {
-                    sourceApp?.activate(options: [.activateIgnoringOtherApps])
-                    try? await Task.sleep(nanoseconds: 180_000_000)
-                    await Task.detached(priority: .userInitiated) {
-                        if let ch = shortcutChar, !ch.isEmpty {
-                            AXMenuReader.shared.executeShortcut(char: ch, modifiers: shortcutMods, in: sourcePID)
-                        } else {
-                            AXMenuReader.shared.clickMenuItem(path: path, in: sourcePID)
+                guard sourcePID != 0 else { return }
+                Task.detached(priority: .userInitiated) {
+                    if let ch = shortcutChar, !ch.isEmpty {
+                        AXMenuReader.shared.executeShortcut(char: ch, modifiers: shortcutMods, in: sourcePID)
+                    } else {
+                        AXMenuReader.shared.clickMenuItem(path: path, in: sourcePID)
+                    }
+                    // Invalidate cache and reload titles after toggle items (Show/Hide, Enable/Disable…)
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    AXMenuReader.shared.invalidateCache(for: sourcePID)
+                    await MainActor.run {
+                        if let app = NSWorkspace.shared.runningApplications
+                            .first(where: { $0.processIdentifier == sourcePID }) {
+                            self.reloadMenuForApp(app)
                         }
-                    }.value
+                    }
                 }
             })
             pill.isFavourited    = isFav
@@ -2690,17 +3258,21 @@ struct LauncherView: View {
             pills.append(pill)
         }
         // Cross-app target pills — gated solely by the user toggle
-        pills += buildCrossAppPills(query: q)
+        if !isExplicitAppScope {
+            pills += buildCrossAppPills(query: q)
+        }
         // Clipboard-aware pills — only in l2OnlyMode (always-context-dock)
-        if settings.l2OnlyMode {
+        if settings.l2OnlyMode && !isExplicitAppScope {
             pills += buildClipboardPills(query: q)
         }
 
         // AX Trigger Rules — user-defined "when I see X → show pill Y"
         let resolvedRulePills = AXTriggerRuleEngine.shared.evaluate(context: axContext)
-        let filteredRulePills = q.isEmpty ? resolvedRulePills : resolvedRulePills.filter { $0.name.lowercased().contains(q) }
-        pills += filteredRulePills.map { r in
-            DockPill(id: r.id, name: r.name, icon: r.icon, accentColorName: r.accentColor, badge: nil, execute: r.execute)
+        if !isExplicitAppScope {
+            let filteredRulePills = q.isEmpty ? resolvedRulePills : resolvedRulePills.filter { $0.name.lowercased().contains(q) }
+            pills += filteredRulePills.map { r in
+                DockPill(id: r.id, name: r.name, icon: r.icon, accentColorName: r.accentColor, badge: nil, execute: r.execute)
+            }
         }
 
         // When filtering: promote starred pills to the front.
@@ -2897,7 +3469,7 @@ struct LauncherView: View {
     }
 
     /// Execute an `AppAdapter` action, handling the `.aiPrompt` type inline.
-    private func executeAdapterAction(_ action: AdapterAction) {
+    private func executeAdapterAction(_ action: AdapterAction, targetBundleId: String? = nil) {
         if action.type == .aiPrompt {
             // Resolve context vars and pre-fill the AI chat
             let tmpl = action.aiPromptTemplate ?? action.description
@@ -2913,7 +3485,7 @@ struct LauncherView: View {
             return
         }
         Task {
-            let (success, output) = await adapterManager.execute(action, context: axContext)
+            let (success, output) = await adapterManager.execute(action, context: axContext, targetBundleId: targetBundleId)
             guard success, !output.isEmpty, output != "Done",
                   action.type != .menubar, action.type != .urlScheme else { return }
             // Show non-trivial output (AppleScript result, shell output, URL) as an AI message
@@ -3160,7 +3732,7 @@ struct LauncherView: View {
 
         switch sc.actionType {
         case .openURL:
-            if let url = URL(string: sc.actionValue) { NSWorkspace.shared.open(url) }
+            if let url = URL(string: inject(sc.actionValue)) { NSWorkspace.shared.open(url) }
         case .openFile:
             NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: sc.actionValue),
                                                configuration: NSWorkspace.OpenConfiguration())
@@ -3211,6 +3783,18 @@ struct LauncherView: View {
                     }
                 }
             }
+        case .scriptFile:
+            // Delegate to AXTriggerRuleEngine which handles all script file execution + notifications
+            let envVars: [String: String] = [
+                "CD_APP_NAME":      frontmostAppName,
+                "CD_BUNDLE_ID":     frontmostAppBundleID,
+                "CD_WINDOW_TITLE":  axContext.windowTitle  ?? "",
+                "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
+                "CD_URL":           axContext.currentURL   ?? "",
+                "CD_FILE":          axContext.selectedFilePaths.first ?? selectedFilePaths.first ?? "",
+                "CD_CLIPBOARD":     NSPasteboard.general.string(forType: .string) ?? "",
+            ]
+            AXTriggerRuleEngine.shared.run(type: .scriptFile, value: sc.actionValue, envVars: envVars)
         }
     }
 
@@ -3311,85 +3895,43 @@ struct LauncherView: View {
         }
     }
 
-    // MARK: - Browser Dock View (Layer 3) - Recent Searches (scrollable chips like pinned apps)
-    @ViewBuilder
-    private var browserDockView: some View {
-        // Show recent searches and bookmarks as horizontal scrollable chips (like pinned apps)
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                // Recent searches (first 5)
-                ForEach(settings.recentWebSearches.prefix(5), id: \.self) { search in
-                    Button(action: {
-                        searchText = search
-                        openInDockBrowser()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.gray)
-                            Text(search)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.gray.opacity(0.12))
-                        )
-                        .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Recent: \(search)")
-                }
-
-                // Bookmarks (first 5)
-                ForEach(settings.importedBookmarks.prefix(5)) { bookmark in
-                    Button(action: {
-                        // Open bookmark URL in inline browser
-                        searchText = bookmark.url
-                        openInDockBrowser()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.yellow)
-                            Text(bookmark.title)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.blue.opacity(0.12))
-                        )
-                        .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(bookmark.url)
-                }
-
-                // Show hint if both are empty
-                if settings.recentWebSearches.isEmpty && settings.importedBookmarks.isEmpty {
-                    Text("Recent searches and bookmarks will appear here")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary.opacity(0.5))
-                        .padding(.horizontal, 8)
-                }
-            }
-        }
-    }
 
     private var searchBarSection: some View {
         Group {
-            if settings.effectiveDockAtBottom {
+            if showNotificationDock {
+                NotificationDockView(
+                    selectedTab: $notifDockTab,
+                    onClose: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            showNotificationDock = false
+                        }
+                        updateWindowSize()
+                    },
+                    onOpenSettings: { openSettings() }
+                )
+                .background(GlassBackground(cornerRadius: 20))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .ifLet(resolvedColorScheme) { view, scheme in
+                    view.environment(\.colorScheme, scheme)
+                }
+            } else if showMediaLayer {
+                // L3 — Media Dock: replaces entire dock with NowPlayingL3View
+                NowPlayingL3View(observer: mediaObserver)
+                .background(GlassBackground(cornerRadius: 20))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .center)))
+                .ifLet(resolvedColorScheme) { view, scheme in
+                    view.environment(\.colorScheme, scheme)
+                }
+                // Required so swipe gesture monitor fires when hovering L3
+                .onHover { isHoveringDockArea = $0 }
+            } else if settings.effectiveDockAtBottom {
                 // Dock mode: Results above, dock pinned at bottom — all in one sheet
-                let hasResultsToShowBottom = !searchResults.isEmpty || (!searchText.isEmpty && !isL2ContextActive) || isAIMode || showBrowserLayer || showFolderPreview
+                let hasResultsToShowBottom = !searchResults.isEmpty || (!searchText.isEmpty && !isL2ContextActive) || isAIMode || showFolderPreview
                 VStack(spacing: 0) {
                     if hasResultsToShowBottom {
                         resultsContentView
-                            .frame(minHeight: showBrowserLayer && showInlineBrowser ? 380 : 0, maxHeight: showFolderPreview ? 600 : 400)
+                            .frame(minHeight: 0, maxHeight: showFolderPreview ? 600 : 400)
                             .transition(.opacity)
                         Divider().opacity(0.12)
                     }
@@ -3400,9 +3942,8 @@ struct LauncherView: View {
             } else {
                 // Normal mode: Dock + results in ONE unified sheet
                 let hasResultsToShow = !searchResults.isEmpty
-                    || (!searchText.isEmpty && !isL2ContextActive)   // L2: no results sheet on typing
+                    || (!searchText.isEmpty && !isL2ContextActive)
                     || isAIMode
-                    || showBrowserLayer
                     || showFolderPreview
                     || (showContextInDock && (!l2ChatMessages.isEmpty || l2IsLoading))
                     || activeSmartQueryKey != nil
@@ -3413,7 +3954,7 @@ struct LauncherView: View {
                     if hasResultsToShow {
                         Divider().opacity(0.12)
                         resultsContentView
-                            .frame(minHeight: showBrowserLayer && showInlineBrowser ? 380 : 0, maxHeight: showFolderPreview ? 600 : 400)
+                            .frame(minHeight: 0, maxHeight: showFolderPreview ? 600 : 400)
                             .transition(.opacity)
                     }
                 }
@@ -3492,7 +4033,7 @@ struct LauncherView: View {
                         updateWindowSize()
                     }) {
                         // Globe on L3, app icon on L2, magnifying glass on L1
-                        if showBrowserLayer {
+                        if showMediaLayer {
                             Image(systemName: "globe")
                                 .foregroundStyle(.blue.opacity(isHoveringSearchIcon ? 1.0 : 0.8))
                                 .font(.system(size: 18, weight: .semibold))
@@ -3517,7 +4058,7 @@ struct LauncherView: View {
                             expandSearchBar()
                         }
                     }
-                    .help(showBrowserLayer ? "Search Web" : "Search")
+                    .help(showMediaLayer ? "Search Web" : "Search")
                 }
 
                 // Spotlight-style app context chip — shown after Tab/→ on app result
@@ -3611,7 +4152,7 @@ struct LauncherView: View {
                                     .font(.system(size: 15, weight: .regular))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
-                            } else if showBrowserLayer {
+                            } else if showMediaLayer {
                                 Text("Browse Web")
                                     .foregroundStyle(.secondary.opacity(0.5))
                                     .font(.system(size: 15, weight: .regular))
@@ -3676,10 +4217,6 @@ struct LauncherView: View {
                                         submitAIQuery()
                                     } else {
                                         handleL2Query()
-                                    }
-                                } else if showBrowserLayer {
-                                    if !searchText.isEmpty {
-                                        performBrowserSearch()
                                     }
                                 } else if isAIMode {
                                     submitAIQuery()
@@ -3789,11 +4326,7 @@ struct LauncherView: View {
             // Pinned apps or context chips/AI extensions or browser (3-layer swipeable)
             HStack(spacing: 8) {
                     Group {
-                        if showBrowserLayer {
-                            // Layer 3: Browser — recent searches + bookmarks
-                            browserDockView
-                                .transition(.opacity)
-                        } else if showFolderPreview && !fileTypeShortcutsForSelection.isEmpty {
+                        if showFolderPreview && !fileTypeShortcutsForSelection.isEmpty {
                             // File selected inside folder preview — show file-type extensions in pinned slot
                             fileTypeExtensionsInDock
                                 .transition(.opacity)
@@ -3825,18 +4358,16 @@ struct LauncherView: View {
                     .frame(maxWidth: 400)
                     .frame(height: pinnedRowHeight) // Fixed height to prevent jumping
 
-                    // User profile picture / notification bell
+                    // Right icon: profile/bell (media only lives in L3 — no indicator here)
                     if settings.enableLayer2 || (isAIMode && hasAIExtensionsToShow) || notificationManager.unreadCount > 0 {
-                        Button(action: {
-                            if notificationManager.unreadCount > 0 {
-                                showNotificationPanel = true
-                            } else {
+                        ZStack(alignment: .topTrailing) {
+                            Button(action: {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                    showContextInDock.toggle()
+                                    showNotificationDock.toggle()
+                                    if showNotificationDock { notifDockTab = 0 }
                                 }
-                            }
-                        }) {
-                            ZStack(alignment: .topTrailing) {
+                                updateWindowSize()
+                            }) {
                                 if let profileImage = userProfileImage {
                                     Image(nsImage: profileImage)
                                         .resizable()
@@ -3850,28 +4381,22 @@ struct LauncherView: View {
                                         .foregroundStyle(notificationManager.unreadCount > 0
                                                          ? Color.primary : Color.secondary.opacity(0.6))
                                 }
-                                // Notification badge
-                                if notificationManager.unreadCount > 0 {
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color.red)
-                                            .frame(width: 14, height: 14)
-                                        Text(notificationManager.unreadCount > 9 ? "9+" :
-                                             "\(notificationManager.unreadCount)")
-                                            .font(.system(size: 8, weight: .bold))
-                                            .foregroundStyle(.white)
-                                    }
-                                    .offset(x: 4, y: -4)
-                                }
                             }
-                        }
-                        .buttonStyle(.plain)
-                        .help(notificationManager.unreadCount > 0
-                              ? "\(notificationManager.unreadCount) unread notification(s)"
-                              : (showContextInDock ? "Show Pinned Apps" : (isAIMode ? "Show AI Extensions" : "Show Context Shortcuts")))
-                        .popover(isPresented: $showNotificationPanel, arrowEdge: .bottom) {
-                            NotificationPanelView()
-                                .frame(width: 340, height: 420)
+                            .buttonStyle(.plain)
+                            .help(showNotificationDock ? "Close Notifications"
+                                  : notificationManager.unreadCount > 0
+                                    ? "\(notificationManager.unreadCount) unread notification(s)"
+                                    : "Notifications")
+
+                            // Notification badge
+                            if notificationManager.unreadCount > 0 {
+                                ZStack {
+                                    Circle().fill(Color.red).frame(width: 14, height: 14)
+                                    Text(notificationManager.unreadCount > 9 ? "9+" : "\(notificationManager.unreadCount)")
+                                        .font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                                }
+                                .offset(x: 4, y: -4)
+                            }
                         }
                     }
                 }
@@ -3905,18 +4430,18 @@ struct LauncherView: View {
     @ViewBuilder
     private var resultsContentView: some View {
         // Show different content based on current mode (AI vs Normal)
-        // L3 browser layer shows web search results, not browser content
+        // The L3 media dock can still surface search results while typing.
         let content = Group {
             if isAIMode {
                 // AI mode: AI Chat section (works on L1/L2/L3)
                 aiChatSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else if showContextInDock && !showBrowserLayer {
+            } else if showContextInDock && !showMediaLayer {
                 l2ChatSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
                 // Normal mode: Search results (works on L1/L2/L3)
-                // L3 browser layer shows web search results when user types
+                // L3 stays media-first, but search typing still uses the shared results list.
                 indexingProgressSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 resultsSection
@@ -3939,9 +4464,9 @@ struct LauncherView: View {
     // MARK: - Separator (for smart positioning)
     @ViewBuilder
     private var separatorView: some View {
-        let shouldShowSeparator = if showBrowserLayer {
-            // Show separator on L3 if browser content exists
-            !pinnedWebsites.isEmpty || !quickTabs.isEmpty || !browserBookmarks.isEmpty
+        let shouldShowSeparator = if showMediaLayer {
+            // Show separator on L3 if media is playing
+            mediaObserver.isPlaying
         } else if isAIMode {
             // Show separator for AI mode
             hasUserSentMessageInCurrentSession && (!aiChatMessages.isEmpty || isAILoading)
@@ -5012,6 +5537,52 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             - Never dump raw output — always give a clean plain-English summary.\(destructiveWarning)
             \(toolRules)
             """
+        } else if activeKey == "safari" {
+            let safariTab = AppleAppsAPI.shared.getCurrentTab()
+            let pageURL = (safariTab["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let pageTitle = (safariTab["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let pageText = fetchSafariPageText() ?? ""
+            let pageLinks = fetchSafariPageLinks()
+            let pageImages = fetchSafariPageImages()
+            let lowerQuery = query.lowercased()
+            let selectedText = AXContextReader.shared.current.selectedText?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let shouldIncludeLinks = lowerQuery.contains("link")
+                || lowerQuery.contains("url")
+                || lowerQuery.contains("href")
+            let shouldIncludeImages = lowerQuery.contains("image")
+                || lowerQuery.contains("photo")
+                || lowerQuery.contains("picture")
+                || lowerQuery.contains("logo")
+            let pageTextSection = pageText.isEmpty
+                ? "\nPAGE TEXT: (unavailable — Safari page content could not be read)"
+                : "\nPAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))"
+            let selectedTextSection = selectedText.isEmpty
+                ? ""
+                : "\nSELECTED TEXT:\n\(String(selectedText.prefix(1500)))"
+            let linksSection = shouldIncludeLinks && !pageLinks.isEmpty
+                ? "\nPAGE LINKS:\n" + pageLinks.prefix(40).map { "  • \($0)" }.joined(separator: "\n")
+                : ""
+            let imagesSection = shouldIncludeImages && !pageImages.isEmpty
+                ? "\nPAGE IMAGE URLS:\n" + pageImages.prefix(40).map { "  • \($0)" }.joined(separator: "\n")
+                : ""
+            systemPrompt = """
+            You are a Safari page assistant inside ILauncher.
+            Answer questions about the CURRENT Safari page using the provided page context.
+            Do not say you cannot see the page if page context is present below.
+            If the user asks what the page is about, summarize the page text.
+            If the user asks for images or links, use the provided PAGE IMAGE URLS or PAGE LINKS sections.
+            If the requested data is unavailable, say exactly what is missing.
+
+            CURRENT TAB TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
+            CURRENT TAB URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedTextSection)\(pageTextSection)\(linksSection)\(imagesSection)
+
+            RULES:
+            - Stay focused on the current Safari page.
+            - Prefer the page text and tab metadata over generic guesses.
+            - If the user asks for a list of images or links, return the actual URLs you were given.
+            - Be concise and directly answer the question.
+            """
         } else if activeKey == "finder" {
             let finderDir = ContextDetector.shared.getCurrentFinderDirectory() ?? NSHomeDirectory()
             let selectedFiles = ContextDetector.shared.getFinderSelectedFiles()
@@ -5306,6 +5877,12 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
+        // ── Finder AI — natural language over current folder / selection ──────
+        if frontmostAppBundleID == "com.apple.finder" || frontmostAppName == "Finder" {
+            handleFinderAIQuery(query: query)
+            return
+        }
+
         // ── Cross-app natural language ────────────────────────────────────────
         // "send this to salman", "email this to john", "open this in xcode", etc.
         if let intent = CrossAppNLHandler.shared.parse(normalizedQuery) {
@@ -5479,15 +6056,23 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
         if matches.isEmpty { updateL2Results([]) }
 
-        // Build intelligent context prompt
-        print("🔍 [L2 Query] Current context when building prompt: \(currentContext.description)")
-        print("🔍 [L2 Query] Frontmost app: \(frontmostName ?? "none")")
-        let intelligentPrompt = buildIntelligentL2Prompt(query: query, context: currentContext, frontmostApp: frontmostName)
-        print("📝 [L2 Query] Prompt length: \(intelligentPrompt.count) characters")
-        if case .textSelected(let text) = currentContext {
-            print("✅ [L2 Query] Including selected text in prompt: \(text.prefix(100))...")
-        } else {
-            print("⚠️ [L2 Query] NO selected text in context!")
+        // ── Ensure browser context is set correctly for Safari / Chrome ──────
+        // If frontmost app is a browser but currentContext isn't .url yet, fix it now.
+        let browserBundles = ["com.apple.Safari","com.google.Chrome","com.brave.Browser",
+                              "org.chromium.Chromium","com.microsoft.edgemac"]
+        if browserBundles.contains(frontmostAppBundleID) {
+            let liveURL = axContext.currentURL ?? frontmostAppBundleID
+            if case .url = currentContext { /* already set */ }
+            else { currentContext = .url(liveURL) }
+            // Prime the AXWebReader cache for on-device AI if needed
+            if let browser = AppDelegate.shared?.previousFrontmostApp, !liveURL.isEmpty {
+                let pid = browser.processIdentifier
+                if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
+                    Task.detached(priority: .userInitiated) {
+                        AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+                    }
+                }
+            }
         }
 
         // Display only the user's actual query in the chat UI (not the full context prompt)
@@ -5507,44 +6092,11 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
         l2CurrentTask = Task {
             do {
-                print("🧠 [L2 AI] Provider: \(provider.shortName), sendWithTools path")
+                print("🧠 [L2 AI] Provider: \(provider.shortName), direct message path")
 
-                // Browser/URL contexts: answer directly from page content — never run shell commands
-                let isBrowserContext: Bool = {
-                    switch currentContext {
-                    case .url: return true
-                    case .appFocused(_, let bid): return AXWebReader.shared.isBrowser(bundleId: bid)
-                    default: return false
-                    }
-                }()
-
-                // Cloud providers: use real tool_use loop so AI can chain cross-app commands
-                // (e.g. get Safari URL → save to Notes in two connected steps)
-                // Skip tools for browser contexts — page content is already in the system prompt.
-                if provider != .onDevice && provider != .shortcuts && !isBrowserContext {
-                    let (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
-                        intelligentPrompt,
-                        context: currentContext,
-                        provider: provider,
-                        apiKey: apiKey,
-                        conversationHistory: chatHistory,
-                        commandExecutor: { [self] cmd, purpose in
-                            await MainActor.run {
-                                self.l2ChatMessages.append(AIChatMessage(role: .tool, content: "$ \(cmd)"))
-                            }
-                            return await TerminalAIBridge.shared.processAICommand(cmd, purpose: purpose)
-                        }
-                    )
-                    if Task.isCancelled { return }
-                    await MainActor.run {
-                        l2ChatMessages.append(AIChatMessage(role: .assistant, content: finalResponse))
-                        l2IsLoading = false
-                        l2CurrentTask = nil
-                    }
-                } else if provider != .onDevice && provider != .shortcuts && isBrowserContext {
-                    // Browser context — plain send, no tools, answers from page content in system prompt
+                if provider != .onDevice && provider != .shortcuts {
                     let finalResponse = try await AIProviderService.shared.sendMessage(
-                        intelligentPrompt,
+                        query,
                         context: currentContext,
                         provider: provider,
                         apiKey: apiKey,
@@ -5562,7 +6114,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                     await MainActor.run { l2ChatMessages.append(placeholder) }
                     let msgId = placeholder.id
 
-                    var finalResponse = ""
                     await withCheckedContinuation { cont in
                         AIProviderService.shared.streamOnDeviceResponse(
                             message: query,
@@ -5579,7 +6130,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                                 }
                             },
                             onComplete: { response in
-                                finalResponse = response
+                                _ = response
                                 cont.resume()
                             },
                             onError: { errText in
@@ -6143,101 +6694,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
     }
 
-    // MARK: - Browser Content Section (L3 right side)
-    @ViewBuilder
-    private var browserContentSection: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Pinned Websites Section
-                if !pinnedWebsites.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Pinned Websites")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-
-                        LazyVGrid(columns: [
-                            GridItem(.adaptive(minimum: 100), spacing: 12)
-                        ], spacing: 12) {
-                            ForEach(pinnedWebsites) { item in
-                                BrowserItemCard(item: item, onTap: {
-                                    if let url = URL(string: item.url) {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                })
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
-                // Quick Tabs Section
-                if !quickTabs.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Quick Tabs")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-
-                        VStack(spacing: 8) {
-                            ForEach(quickTabs) { item in
-                                BrowserItemRow(item: item, onTap: {
-                                    if let url = URL(string: item.url) {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                })
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
-                // Bookmarks Section
-                if !browserBookmarks.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Bookmarks")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-
-                        VStack(spacing: 8) {
-                            ForEach(browserBookmarks) { item in
-                                BrowserItemRow(item: item, onTap: {
-                                    if let url = URL(string: item.url) {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                })
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-
-                // Empty state when no browser content
-                if pinnedWebsites.isEmpty && quickTabs.isEmpty && browserBookmarks.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.secondary.opacity(0.5))
-
-                        Text("Browser Content")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-
-                        Text("Pinned websites, quick tabs, and bookmarks will appear here")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 60)
-                }
-            }
-            .padding(.vertical, 12)
-        }
-        .frame(maxWidth: .infinity, maxHeight: 400)
-    }
 
     // Meta info for the active smart query app panel
     private var smartQueryMeta: (icon: String, label: String, appPath: String) {
@@ -8887,10 +9343,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                 .frame(minHeight: 400, maxHeight: 600)
                 .transition(.opacity.combined(with: .move(edge: settings.effectiveDockAtBottom ? .bottom : .top)))
         }
-        // L3: Show web search prompt (homepage or search results)
-        else if showBrowserLayer {
-            webSearchPromptView
-        }
         // App panel: full-screen split view — hides normal search results entirely
         else if activeSmartQueryKey != nil {
             appPanelView
@@ -8983,639 +9435,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
     }
 
-    // MARK: - Web Search Prompt View (L3)
-    @ViewBuilder
-    private var webSearchPromptView: some View {
-        if showInlineBrowser {
-            // Show inline browser with search results in dock
-            VStack(spacing: 0) {
-                // Browser header with back button
-                HStack {
-                    Button(action: {
-                        showInlineBrowser = false
-                        inlineBrowserQuery = ""
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Back")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
 
-                    Spacer()
-
-                    Text("Web Search: \(inlineBrowserQuery)")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    if isInlineBrowserLoading {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-
-                Divider()
-
-                // Compact mini web preview panel
-                WebView(
-                    url: getSearchURL(for: inlineBrowserQuery),
-                    userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script },
-                    isLoading: $isInlineBrowserLoading
-                )
-                .frame(height: 320) // Fixed height for web preview
-
-                // Open in full browser button at bottom
-                Divider()
-
-                Button(action: {
-                    // Open in separate browser window
-                    if let url = URL(string: inlineBrowserQuery.hasPrefix("http") ? inlineBrowserQuery : "https://\(inlineBrowserQuery)") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }) {
-                    HStack(spacing: 8) {
-                        Spacer()
-                        Image(systemName: "arrow.up.forward.square")
-                            .font(.system(size: 12))
-                        Text("Open in Browser")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                    }
-                    .padding(.vertical, 8)
-                    .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-                .background(.ultraThinMaterial)
-            }
-        } else if !searchText.isEmpty {
-            // Show filtered recent searches and bookmarks in result panel
-            VStack(spacing: 0) {
-                // Filter recent searches that match current input
-                let matchingSearches = settings.recentWebSearches.filter { search in
-                    search.lowercased().contains(searchText.lowercased())
-                }
-
-                // Filter bookmarks that match current input
-                let matchingBookmarks = settings.importedBookmarks.filter { bookmark in
-                    bookmark.title.lowercased().contains(searchText.lowercased()) ||
-                    bookmark.url.lowercased().contains(searchText.lowercased())
-                }
-
-                ScrollView {
-                    VStack(spacing: 0) {
-                        // Show matching recent searches
-                        if !matchingSearches.isEmpty {
-                            // Section header
-                            HStack {
-                                Text("Recent Searches")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                    .textCase(.uppercase)
-                                    .tracking(0.5)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 12)
-                            .padding(.bottom, 4)
-
-                            // Recent search results
-                            ForEach(Array(matchingSearches.prefix(3).enumerated()), id: \.element) { index, search in
-                                Button(action: {
-                                    searchText = search
-                                    openInDockBrowser()
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "clock.arrow.circlepath")
-                                            .foregroundStyle(.gray)
-                                            .font(.system(size: 16))
-                                            .frame(width: 40)
-
-                                        Text(search)
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-
-                                        Spacer()
-
-                                        Image(systemName: "arrow.up.left")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                }
-                                .buttonStyle(.plain)
-                                .contentShape(Rectangle())
-
-                                if index < matchingSearches.prefix(3).count - 1 {
-                                    Divider()
-                                        .padding(.leading, 60)
-                                }
-                            }
-                        }
-
-                        // Show matching bookmarks
-                        if !matchingBookmarks.isEmpty {
-                            // Section header
-                            HStack {
-                                Text("Bookmarks")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                    .textCase(.uppercase)
-                                    .tracking(0.5)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.top, matchingSearches.isEmpty ? 12 : 16)
-                            .padding(.bottom, 4)
-
-                            // Bookmark results
-                            ForEach(Array(matchingBookmarks.prefix(3).enumerated()), id: \.element.id) { index, bookmark in
-                                Button(action: {
-                                    searchText = bookmark.url
-                                    openInDockBrowser()
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "star.fill")
-                                            .foregroundStyle(.yellow)
-                                            .font(.system(size: 16))
-                                            .frame(width: 40)
-
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(bookmark.title)
-                                                .font(.system(size: 13))
-                                                .foregroundStyle(.primary)
-                                                .lineLimit(1)
-                                            Text(bookmark.url)
-                                                .font(.system(size: 11))
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                }
-                                .buttonStyle(.plain)
-                                .contentShape(Rectangle())
-
-                                if index < matchingBookmarks.prefix(3).count - 1 {
-                                    Divider()
-                                        .padding(.leading, 60)
-                                }
-                            }
-                        }
-
-                        // Always show "Search web for" option at bottom
-                        Divider()
-                            .padding(.vertical, 8)
-
-                        // Web search button
-                        Button(action: {
-                            openInDockBrowser()
-                        }) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "globe")
-                                    .foregroundStyle(.blue)
-                                    .font(.system(size: 16))
-                                    .frame(width: 40)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Search web for \"\(searchText)\"")
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                    Text("Press ⏎ to open in browser")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Spacer()
-
-                            // Small browser icon in corner
-                            Image(systemName: "safari")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.blue.opacity(0.7))
-                                .padding(6)
-                                .background(Circle().fill(.blue.opacity(0.1)))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(Color.blue.opacity(0.05))
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-
-                    Spacer() // Push content to top, fill remaining space
-                }
-                .padding(.bottom, 8)
-            }
-            .frame(maxHeight: 350) // Scrollable content area
-            }
-            .frame(minHeight: 200, maxHeight: 350) // Ensure consistent panel size
-        } else {
-            // Show homepage with bookmarks and recent searches when search field is empty
-            browserHomepageView
-        }
-    }
-
-    @ViewBuilder
-    private var browserHomepageView: some View {
-        // Don't show anything when search is empty (like L1)
-        EmptyView()
-    }
-
-    // MARK: - L3 Browser Layer Full Screen View
-    @ViewBuilder
-    private var browserLayerFullScreenView: some View {
-        VStack(spacing: 0) {
-            // Main content area - shows browser or suggestions
-            if showInlineBrowser {
-                // Inline browser view
-                VStack(spacing: 0) {
-                    // Browser header
-                    HStack {
-                        Button(action: {
-                            showInlineBrowser = false
-                            inlineBrowserQuery = ""
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 14, weight: .semibold))
-                                Text("Back")
-                                    .font(.system(size: 14, weight: .medium))
-                            }
-                            .foregroundStyle(.blue)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.leading, 16)
-
-                        Spacer()
-
-                        Text("Web Search: \(inlineBrowserQuery)")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        if isInlineBrowserLoading {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                                .padding(.trailing, 16)
-                        } else {
-                            Spacer()
-                                .frame(width: 60)
-                        }
-                    }
-                    .padding(.vertical, 12)
-                    .background(.ultraThinMaterial)
-
-                    Divider()
-
-                    // WebView
-                    WebView(
-                        url: getSearchURL(for: inlineBrowserQuery),
-                        userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script },
-                        isLoading: $isInlineBrowserLoading
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !searchText.isEmpty {
-                // Search suggestions
-                VStack(spacing: 0) {
-                    // Header
-                    HStack {
-                        Image(systemName: "globe")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.blue)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 40)
-                    .padding(.top, 60)
-
-                    Text("Search the web for \"\(searchText)\"")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .padding(.top, 20)
-
-                    Text("Press Enter to open in browser")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 8)
-
-                    // Recent searches matching query
-                    let matchingSearches = settings.recentWebSearches.filter { search in
-                        search.lowercased().contains(searchText.lowercased())
-                    }
-
-                    if !matchingSearches.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Recent Searches")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                                .padding(.top, 40)
-                                .padding(.leading, 40)
-
-                            VStack(spacing: 0) {
-                                ForEach(matchingSearches.prefix(5), id: \.self) { search in
-                                    Button(action: {
-                                        searchText = search
-                                        openInDockBrowser()
-                                    }) {
-                                        HStack(spacing: 16) {
-                                            Image(systemName: "clock.arrow.circlepath")
-                                                .font(.system(size: 16))
-                                                .foregroundStyle(.gray)
-                                                .frame(width: 24)
-                                            Text(search)
-                                                .font(.system(size: 15))
-                                                .foregroundStyle(.primary)
-                                            Spacer()
-                                        }
-                                        .padding(.horizontal, 40)
-                                        .padding(.vertical, 14)
-                                        .background(Color.primary.opacity(0.0))
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    if search != matchingSearches.prefix(5).last {
-                                        Divider()
-                                            .padding(.leading, 80)
-                                    }
-                                }
-                            }
-                            .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-                            .padding(.horizontal, 40)
-                        }
-                    }
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // Homepage with bookmarks and recent searches
-                ScrollView {
-                    VStack(spacing: 32) {
-                        // Bookmarks
-                        if !settings.importedBookmarks.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                                HStack {
-                                    Image(systemName: "bookmark.fill")
-                                        .foregroundStyle(.blue)
-                                        .font(.system(size: 18))
-                                    Text("Bookmarks")
-                                        .font(.system(size: 20, weight: .semibold))
-                                    Spacer()
-                                    Text("\(settings.importedBookmarks.count)")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 40)
-
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 16) {
-                                        ForEach(settings.importedBookmarks.prefix(20)) { bookmark in
-                                            BookmarkCard(bookmark: bookmark) {
-                                                openBookmark(bookmark)
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 40)
-                                }
-                            }
-                        }
-
-                        // Recent Searches
-                        if !settings.recentWebSearches.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                                HStack {
-                                    Image(systemName: "clock")
-                                        .foregroundStyle(.purple)
-                                        .font(.system(size: 18))
-                                    Text("Recent Searches")
-                                        .font(.system(size: 20, weight: .semibold))
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 40)
-
-                                VStack(spacing: 0) {
-                                    ForEach(settings.recentWebSearches.prefix(10), id: \.self) { search in
-                                        Button(action: {
-                                            searchText = search
-                                            openInDockBrowser()
-                                        }) {
-                                            HStack(spacing: 16) {
-                                                Image(systemName: "magnifyingglass")
-                                                    .font(.system(size: 16))
-                                                    .foregroundStyle(.gray)
-                                                    .frame(width: 24)
-                                                Text(search)
-                                                    .font(.system(size: 15))
-                                                    .foregroundStyle(.primary)
-                                                Spacer()
-                                                Image(systemName: "arrow.up.left")
-                                                    .font(.system(size: 12))
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                            .padding(.horizontal, 40)
-                                            .padding(.vertical, 14)
-                                        }
-                                        .buttonStyle(.plain)
-
-                                        if search != settings.recentWebSearches.prefix(10).last {
-                                            Divider()
-                                                .padding(.leading, 80)
-                                        }
-                                    }
-                                }
-                                .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
-                                .padding(.horizontal, 40)
-                            }
-                        }
-                    }
-                    .padding(.top, 60)
-                    .padding(.bottom, 40)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            // Search bar at bottom
-            HStack(spacing: 12) {
-                // Globe icon
-                Image(systemName: "globe")
-                    .font(.system(size: 20))
-                    .foregroundStyle(.blue)
-                    .frame(width: 28)
-
-                // Search field
-                TextField("", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 16))
-                    .focused($isSearchFieldFocused)
-
-                // Clear button
-                if !searchText.isEmpty {
-                    Button(action: {
-                        searchText = ""
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // User profile icon
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(.ultraThinMaterial)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.ultraThinMaterial)
-            )
-            .padding(.horizontal, 120)
-            .padding(.bottom, 20)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.black.opacity(0.3))
-    }
-
-    @ViewBuilder
-    private var browserContentView: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Imported Bookmarks Section
-                if !settings.importedBookmarks.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Image(systemName: "bookmark.fill")
-                                .foregroundStyle(.blue)
-                            Text("Bookmarks")
-                                .font(.system(size: 14, weight: .semibold))
-                            Spacer()
-                            Text("\(settings.importedBookmarks.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 16)
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(settings.importedBookmarks.prefix(20)) { bookmark in
-                                    BookmarkCard(bookmark: bookmark) {
-                                        openBookmark(bookmark)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                        .frame(height: 120)
-                    }
-                }
-
-                // Recent Web Searches Section
-                if !settings.recentWebSearches.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .foregroundStyle(.gray)
-                            Text("Recent Searches")
-                                .font(.system(size: 14, weight: .semibold))
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-
-                        VStack(spacing: 0) {
-                            ForEach(Array(settings.recentWebSearches.prefix(8).enumerated()), id: \.element) { index, search in
-                                Button(action: {
-                                    performWebSearch(search)
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "magnifyingglass")
-                                            .foregroundStyle(.gray)
-                                            .font(.system(size: 14))
-                                            .frame(width: 40)
-
-                                        Text(search)
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(1)
-
-                                        Spacer()
-
-                                        Image(systemName: "arrow.up.right")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
-                                }
-                                .buttonStyle(.plain)
-                                .contentShape(Rectangle())
-
-                                if index < min(7, settings.recentWebSearches.count - 1) {
-                                    Divider()
-                                        .padding(.leading, 56)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Empty state
-                if settings.importedBookmarks.isEmpty && settings.recentWebSearches.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.blue.opacity(0.6))
-                            .padding(.top, 40)
-
-                        Text("Browser Layer")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.primary)
-
-                        Text("Import bookmarks in Settings or start searching the web")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 300)
-                }
-            }
-            .padding(.vertical, 12)
-        }
-        .frame(maxHeight: 400)
-    }
-
-    private func openBookmark(_ bookmark: BrowserItem) {
-        guard let url = URL(string: bookmark.url) else { return }
-        NSWorkspace.shared.open(url)
-
-        // Clear search text (which will auto-collapse the dock)
-        searchText = ""
-    }
-
-    private func performWebSearch(_ query: String) {
-        searchText = query
-        performBrowserSearch()
-    }
 
     // Helper to find global index for a result (for selection tracking)
     private func getGlobalIndex(for result: SearchResult) -> Int {
@@ -9877,35 +9697,33 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                                     if self.searchText.isEmpty && !self.isSearchFieldFocused {
                                         self.startCollapseTimer()
                                     }
-                                } else if !self.settings.enableLayer2 && self.settings.enableLayer3 {
-                                    // Layer 2 disabled — skip straight to Layer 3
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                        self.showBrowserLayer = true
-                                    }
-                                    print("🔼 Swipe up: L1→L3 (L2 disabled)")
-                                    if self.searchText.isEmpty && !self.isSearchFieldFocused {
-                                        self.startCollapseTimer()
-                                    }
                                 }
-                            } else if !self.showBrowserLayer {
-                                // Layer 2 -> Layer 3 (only if Layer 3 is enabled)
+                            } else if !self.showMediaLayer {
+                                // Layer 2 -> Layer 3 Media dock
                                 if self.settings.enableLayer3 {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                        self.showBrowserLayer = true
-                                    }
-                                    print("🔼 Swipe up: L2→L3 (accumulated: \(self.accumulatedSwipeDeltaY))")
-                                    if self.searchText.isEmpty && !self.isSearchFieldFocused {
-                                        self.startCollapseTimer()
+                                    Task {
+                                        await self.mediaObserver.refreshNowPlaying()
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                            self.showMediaLayer = true
+                                        }
+                                        print("🔼 Swipe up: L2→L3 Media")
+                                        if self.searchText.isEmpty && !self.isSearchFieldFocused {
+                                            self.startCollapseTimer()
+                                        }
                                     }
                                 }
+                            } else if self.showMediaLayer && self.settings.enableAIMode {
+                                // Layer 3 -> AI chat (swipe up from media dock)
+                                self.toggleAIModeViaSwipe()
+                                print("🔼 Swipe up: L3→AI chat")
                             }
                         }
                         // Swipe DOWN (positive deltaY) = show previous layer
                         else {
-                            if self.showBrowserLayer {
+                            if self.showMediaLayer {
                                 // Layer 3 -> Layer 2 (or skip to L1 if L2 disabled)
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                    self.showBrowserLayer = false
+                                    self.showMediaLayer = false
                                     if !self.settings.enableLayer2 {
                                         self.showContextInDock = false
                                     }
@@ -9962,7 +9780,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         if !isAIMode {
             // Opening chat — remember current layer so we can return to it
             chatReturnContextInDock = showContextInDock
-            chatReturnBrowserLayer = showBrowserLayer
+            chatReturnBrowserLayer = showMediaLayer
         }
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -9970,11 +9788,11 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             if isAIMode {
                 // Chat is standalone — clear L2/L3
                 showContextInDock = false
-                showBrowserLayer = false
+                showMediaLayer = false
             } else {
                 // Restore the layer we came from
                 showContextInDock = chatReturnContextInDock
-                showBrowserLayer = chatReturnBrowserLayer
+                showMediaLayer = chatReturnBrowserLayer
             }
         }
 
@@ -10500,9 +10318,33 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
         cmdHoldMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [self] event in
             if event.type == .keyDown {
-                // Any keyDown while Cmd held → cancel the timer (user is doing a shortcut, not long-press)
+                // Any keyDown while Cmd held → cancel the long-press timer
                 cmdHoldTask?.cancel()
                 cmdHoldTask = nil
+
+                // Shortcut passthrough: when L2 context dock is open, forward Cmd+key combos
+                // to the frontmost app using liveMenuItems shortcut index — no focus switch needed.
+                if showContextInDock && !isAIMode,
+                   event.modifierFlags.contains(.command),
+                   let ch = event.charactersIgnoringModifiers?.lowercased(), !ch.isEmpty,
+                   let targetApp = AppDelegate.shared?.previousFrontmostApp {
+                    let pid = targetApp.processIdentifier
+                    let shift   = event.modifierFlags.contains(.shift)   ? 1 : 0
+                    let option  = event.modifierFlags.contains(.option)  ? 2 : 0
+                    let control = event.modifierFlags.contains(.control) ? 4 : 0
+                    let mods    = shift | option | control
+                    // Look up the matching menu item shortcut in the live cache
+                    let match = liveMenuItems.first { item in
+                        item.shortcutChar?.lowercased() == ch && item.shortcutModifiers == mods
+                    }
+                    if let item = match, item.isEnabled {
+                        Task.detached(priority: .userInitiated) {
+                            AXMenuReader.shared.clickMenuItem(path: item.path, in: pid)
+                        }
+                        return nil  // consume — don't pass to dock's text field
+                    }
+                }
+
                 return event
             }
 
@@ -10531,78 +10373,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
     }
 
-    // MARK: - Browser shortcut passthrough (L3)
 
-    /// Intercepts Cmd+T/W/R/L/[/] when L3 is active and forwards them to
-    /// the background browser via AppleScript — ILauncher stays visible.
-    private func setupBrowserShortcutPassthrough() {
-        if let existing = browserShortcutMonitor {
-            NSEvent.removeMonitor(existing)
-            browserShortcutMonitor = nil
-        }
-        browserShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            guard self.showBrowserLayer else { return event }
-            guard event.modifierFlags.contains(.command) else { return event }
-            // Ignore if option/control also held (system shortcuts)
-            guard event.modifierFlags.intersection([.option, .control]).isEmpty else { return event }
-
-            let shift    = event.modifierFlags.contains(.shift)
-            let bundleId = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? ""
-            let appName  = AppDelegate.shared?.previousFrontmostApp?.localizedName ?? ""
-
-            let isSafari  = bundleId == "com.apple.Safari" || bundleId.hasPrefix("com.apple.Safari")
-            let isChrome  = ["com.google.Chrome","com.microsoft.edgemac","com.brave.Browser",
-                             "org.chromium.Chromium"].contains(bundleId)
-                         || bundleId.lowercased().contains("chrome")
-            let isArc     = bundleId == "company.thebrowser.Browser"
-            let isFirefox = bundleId == "org.mozilla.firefox"
-            guard isSafari || isChrome || isArc || isFirefox else { return event }
-
-            // (menu, item) tuples per key code
-            typealias MA = (String, String)
-            var action: MA? = nil
-
-            if isSafari {
-                switch event.keyCode {
-                case 17: action = shift ? ("History","Reopen Last Closed Tab") : ("File","New Tab")
-                case 13: action = ("File",    "Close Tab")
-                case 15: action = ("View",    "Reload Page")
-                case 37: action = ("File",    "Open Location…")
-                case 33: action = ("History", "Back")
-                case 30: action = ("History", "Forward")
-                default: break
-                }
-            } else if isChrome {
-                switch event.keyCode {
-                case 17: action = shift ? ("History","Reopen Closed Tab") : ("File","New Tab")
-                case 13: action = ("File",    "Close Tab")
-                case 15: action = ("View",    "Reload This Page")
-                case 37: action = ("File",    "Open Location…")
-                case 33: action = ("History", "Back")
-                case 30: action = ("History", "Forward")
-                default: break
-                }
-            } else {                              // Arc / Firefox
-                switch event.keyCode {
-                case 17: action = ("File", "New Tab")
-                case 13: action = ("File", "Close Tab")
-                case 15: action = ("View", "Reload Page")
-                default: break
-                }
-            }
-
-            guard let (menu, item) = action else { return event }
-            let script = """
-            tell application "\(appName)"
-                do menu item "\(item)" of menu "\(menu)" of menu bar 1
-            end tell
-            """
-            Task.detached(priority: .userInitiated) {
-                if let s = NSAppleScript(source: script) { var e: NSDictionary?; s.executeAndReturnError(&e) }
-            }
-            return nil  // consume — don't pass to ILauncher
-        }
-    }
 
     private func updateWindowSize() {
         // Use asyncAfter to break out of the current layout pass
@@ -10625,9 +10396,26 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                 return
             }
             
-            // Adjust the y position to keep the window anchored at the top
-            let newY = currentFrame.maxY - newHeight
             let newX = currentFrame.midX - (newWidth / 2)
+
+            // Smart vertical positioning — flip down if near the bottom (like macOS context menus)
+            let screen = window.screen ?? NSScreen.main
+            let visibleFrame = screen?.visibleFrame ?? NSScreen.main!.visibleFrame
+            let spaceBelow = currentFrame.minY - visibleFrame.minY   // px available below dock top
+            let spaceAbove = visibleFrame.maxY - currentFrame.maxY   // px available above dock bottom
+
+            let newY: CGFloat
+            if settings.effectiveDockAtBottom {
+                // Bottom-anchored: grow upward, keep bottom fixed
+                newY = currentFrame.minY
+            } else if spaceBelow >= newHeight || spaceBelow >= spaceAbove {
+                // Enough room below (or more room below than above) — anchor top, grow down
+                newY = currentFrame.maxY - newHeight
+            } else {
+                // Not enough room below — anchor bottom, grow up (flip like context menu)
+                newY = currentFrame.minY
+            }
+
             let newFrame = NSRect(
                 x: newX,
                 y: newY,
@@ -11565,7 +11353,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
 
     private func updateL2Results(_ results: [SearchResult]) {
         l2ExtensionResults = results
-        if showContextInDock && !showBrowserLayer {
+        if showContextInDock && !showMediaLayer {
             if !isSearchBarExpanded && !results.isEmpty {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isSearchBarExpanded = true
@@ -13687,14 +13475,12 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
     }
 
     func performWebSearch(query: String) {
-        print("🌐 Starting web search for: \(query)")
-
-        // Show web search in a separate NSWindow with WebKit and user scripts
-        WebSearchWindowManager.shared.showWebSearch(
-            query: query,
-            userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script }
-        )
-
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "https://www.google.com/search?q=\(encodedQuery)"
+        if let url = URL(string: urlString) {
+            settings.addRecentWebSearch(query)
+            NSWorkspace.shared.open(url)
+        }
         searchText = ""
         onClose()
     }
@@ -13818,16 +13604,14 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             enforceL2ContextMode()
         }
 
-        // L3: browser layer handles its own suggestions via webSearchPromptView.
-        // Don't put history into searchResults — that causes the selected-result overlay
-        // to replace the user's typed text with a history item title.
-        if showBrowserLayer {
+        // L3 media layer is active — suppress search results entirely
+        if showMediaLayer {
             searchResults = []
             selectedResultIndex = nil
             return
         }
 
-        if showContextInDock && !showBrowserLayer {
+        if showContextInDock && !showMediaLayer {
             // In L2 context dock: pills filter in the dock row — don't touch the result sheet.
             // Results only appear when the user submits via Enter (handleL2Query).
             return
@@ -13906,8 +13690,8 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
             }
         }
 
-        // L3 (Browser layer): Show browser search results (recent searches + bookmarks)
-        if showBrowserLayer {
+        // L3 media dock: keep the legacy web suggestions path when the user types.
+        if showMediaLayer {
             var browserResults: [SearchResult] = []
 
             // Filter recent searches that match current input
@@ -13929,7 +13713,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                     icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil),
                     action: {
                         searchText = search
-                        openInDockBrowser()
+                        openInDefaultBrowser()
                     },
                     type: .webSearch,
                     filePath: nil,
@@ -13945,7 +13729,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                     icon: NSImage(systemSymbolName: "star.fill", accessibilityDescription: nil),
                     action: {
                         searchText = bookmark.url
-                        openInDockBrowser()
+                        openInDefaultBrowser()
                     },
                     type: .webSearch,
                     filePath: nil,
@@ -13960,7 +13744,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                 indexedFileResults = []
             }
 
-            print("🌐 L3 Browser layer: Showing \(browserResults.count) browser results")
+            print("🎵 L3 Media: Showing \(browserResults.count) web results while media dock is active")
             return
         }
 
@@ -14200,6 +13984,8 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
                         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
                         p.arguments = ["-l", "JavaScript", tmp.path]
                         try? p.run()
+                    case .scriptFile:
+                        AXTriggerRuleEngine.shared.run(type: .scriptFile, value: sc.actionValue)
                     }
                 },
                 type: .shortcut,
@@ -14554,7 +14340,7 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         // Fuzzy match and score all items (apps + shortcuts + indexed file results + extension commands)
         var scoredItems: [(item: SearchResult, score: Double)] = []
 
-        if showContextInDock && !showBrowserLayer {
+        if showContextInDock && !showMediaLayer {
             updateL2Results(l2ExtensionResults)
             return
         }
@@ -14564,10 +14350,10 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         // L2: Context-only extensions (no standard search results)
         // L3: Exclude shortcuts (web/browser search)
         let searchableItems: [SearchResult]
-        if showContextInDock && !showBrowserLayer {
+        if showContextInDock && !showMediaLayer {
             searchableItems = []
         } else {
-            searchableItems = showBrowserLayer ? allItems.filter { $0.type != .shortcut } : allItems
+            searchableItems = showMediaLayer ? allItems.filter { $0.type != .shortcut } : allItems
         }
 
         // Calendar events, reminders, and messages are only surfaced in app panels (L2 smart query)
@@ -14716,11 +14502,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         // This function is kept for compatibility but does nothing
     }
 
-    private func performBrowserSearch() {
-        // Default: Open in default browser (same as pressing Enter)
-        openInDefaultBrowser()
-    }
-
     private func openInDefaultBrowser() {
         guard !searchText.isEmpty else { return }
 
@@ -14759,145 +14540,16 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         print("🌐 Opening in default browser: \(urlString)")
     }
 
-    private func openInCustomBrowser() {
-        guard !searchText.isEmpty else { return }
-
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-
-        // Add to recent searches using AppSettings
-        settings.addRecentWebSearch(query)
-
-        // Open in ILauncher's custom browser window
-        WebSearchWindowManager.shared.showWebSearch(
-            query: query,
-            userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script }
-        )
-
-        // Clear search text
-        searchText = ""
-
-        print("🌐 Opening in ILauncher browser: \(query)")
-    }
-
-    /// Open search in inline dock browser (L3)
-    private func openInDockBrowser() {
-        guard !searchText.isEmpty else { return }
-
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-
-        // Add to recent searches using AppSettings
-        settings.addRecentWebSearch(query)
-
-        // Show inline browser in L3
-        inlineBrowserQuery = query
-        showInlineBrowser = true
-        isInlineBrowserLoading = true
-
-        print("🌐 Opening in dock browser: \(query)")
-    }
 
     /// Get search URL for a query
     private func getSearchURL(for query: String) -> URL {
-        // Determine if it's a URL or search query
-        var urlString: String
-
-        if query.contains(".") && !query.contains(" ") {
-            // Looks like a URL
-            if query.hasPrefix("http://") || query.hasPrefix("https://") {
-                urlString = query
-            } else {
-                urlString = "https://\(query)"
-            }
-        } else {
-            // Search query - use Google
-            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-            urlString = "https://www.google.com/search?q=\(encodedQuery)"
-        }
-
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = query.contains(".") && !query.contains(" ")
+            ? (query.hasPrefix("http") ? query : "https://\(query)")
+            : "https://www.google.com/search?q=\(encodedQuery)"
         return URL(string: urlString) ?? URL(string: "https://www.google.com")!
     }
 
-    private func updateBrowserSearchSuggestions() {
-        let query = browserSearchText.trimmingCharacters(in: .whitespaces).lowercased()
-
-        // Clear results if search text is empty
-        if query.isEmpty {
-            browserSearchResults = []
-            currentBrowserQuery = ""
-            return
-        }
-
-        // Filter recent searches that match the query
-        let matchingSearches = settings.recentWebSearches.filter { search in
-            search.lowercased().contains(query)
-        }
-
-        // If we have matching recent searches, show them
-        if !matchingSearches.isEmpty {
-            var results: [SearchResult] = []
-
-            for search in matchingSearches.prefix(5) {
-                results.append(SearchResult(
-                    title: search,
-                    subtitle: "Recent search",
-                    icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil),
-                    action: {
-                        self.browserSearchText = search
-                        self.performBrowserSearch()
-                    },
-                    score: 100.0,
-                    type: .webSearch,
-                    filePath: nil,
-                    contactData: nil
-                ))
-            }
-
-            withAnimation(.easeInOut(duration: 0.2)) {
-                browserSearchResults = results
-                currentBrowserQuery = ""  // No query header for suggestions
-            }
-        } else {
-            // No matching recent searches - clear results
-            // User will need to press Enter to perform actual search
-            browserSearchResults = []
-            currentBrowserQuery = ""
-        }
-    }
-
-    private func openBrowserSearch() {
-        guard !browserSearchText.isEmpty else { return }
-
-        // Add to recent searches using AppSettings
-        settings.addRecentWebSearch(browserSearchText)
-
-        // Determine if it's a URL or search query
-        let searchQuery = browserSearchText
-        var urlString: String
-
-        if searchQuery.contains(".") && !searchQuery.contains(" ") {
-            // Looks like a URL
-            if searchQuery.hasPrefix("http://") || searchQuery.hasPrefix("https://") {
-                urlString = searchQuery
-            } else {
-                urlString = "https://\(searchQuery)"
-            }
-        } else {
-            // Search query - use Google
-            let encodedQuery = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? searchQuery
-            urlString = "https://www.google.com/search?q=\(encodedQuery)"
-        }
-
-        // Open in WebSearchWindow using WebSearchWindowManager
-        WebSearchWindowManager.shared.showWebSearch(
-            query: urlString,
-            userScripts: settings.webExtensions.filter { $0.enabled }.map { $0.script }
-        )
-
-        // Clear the input field after opening
-        browserSearchText = ""
-
-        print("🌐 Opening browser: \(urlString)")
-    }
 
     private func launchPinnedApp(_ app: PinnedApp) {
         // Check if it's a folder - show folder preview instead of opening
@@ -14999,29 +14651,6 @@ NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writin
         }
     }
 
-    private func loadSampleBrowserContent() {
-        // Sample pinned websites
-        self.pinnedWebsites = [
-            BrowserItem(title: "YouTube", url: "https://youtube.com", favicon: "play.rectangle.fill", type: .pinnedSite),
-            BrowserItem(title: "GitHub", url: "https://github.com", favicon: "chevron.left.forwardslash.chevron.right", type: .pinnedSite),
-            BrowserItem(title: "ChatGPT", url: "https://chat.openai.com", favicon: "bubble.left.and.bubble.right.fill", type: .pinnedSite),
-            BrowserItem(title: "Gmail", url: "https://mail.google.com", favicon: "envelope.fill", type: .pinnedSite)
-        ]
-
-        // Sample quick tabs
-        self.quickTabs = [
-            BrowserItem(title: "Google Drive", url: "https://drive.google.com", favicon: "folder.fill", type: .quickTab),
-            BrowserItem(title: "Figma", url: "https://figma.com", favicon: "square.on.square", type: .quickTab),
-            BrowserItem(title: "Linear", url: "https://linear.app", favicon: "checkmark.circle.fill", type: .quickTab)
-        ]
-
-        // Sample bookmarks
-        self.browserBookmarks = [
-            BrowserItem(title: "Apple Developer", url: "https://developer.apple.com", favicon: "apple.logo", type: .bookmark),
-            BrowserItem(title: "Stack Overflow", url: "https://stackoverflow.com", favicon: "text.bubble.fill", type: .bookmark),
-            BrowserItem(title: "MDN Web Docs", url: "https://developer.mozilla.org", favicon: "doc.text.fill", type: .bookmark)
-        ]
-    }
 }
 
 // MARK: - Command Approval Window Host
@@ -17756,7 +17385,339 @@ struct CodeBlockView: View {
     }
 }
 
-// MARK: - Notification Panel
+// MARK: - Notification Dock View
+
+struct NotificationDockView: View {
+    @ObservedObject private var manager = ILauncherNotificationManager.shared
+    @Binding var selectedTab: Int
+    let onClose: () -> Void
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Tab content ───────────────────────────────────────────
+            Group {
+                switch selectedTab {
+                case 0:  alertsTab
+                case 1:  recentTab
+                case 2:  messagesTab
+                default: actionsTab
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(.easeInOut(duration: 0.18), value: selectedTab)
+
+            // ── Bottom dock bar ───────────────────────────────────────
+            HStack(spacing: 6) {
+                // Left: tab pills inside a frosted rounded dock strip
+                HStack(spacing: 2) {
+                    tabButton(icon: "bell.fill",   label: "Alerts",   idx: 0, badge: manager.unreadCount)
+                    tabButton(icon: "clock",       label: "Recent",   idx: 1, badge: 0)
+                    tabButton(icon: "bubble.left", label: "Messages", idx: 2, badge: 0)
+                    tabButton(icon: "bolt",        label: "Actions",  idx: 3, badge: 0)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 5)
+                .background {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75)
+                        )
+                }
+
+                Spacer()
+
+                // Right: settings + close as a second mini dock pill
+                HStack(spacing: 4) {
+                    Button {
+                        onClose()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { onOpenSettings() }
+                    } label: {
+                        Image(systemName: "gear")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Color.secondary.opacity(0.65))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings")
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.secondary.opacity(0.7))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close")
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 5)
+                .background {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75)
+                        )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.regularMaterial)
+            .overlay(alignment: .top) { Divider().opacity(0.10) }
+        }
+        .frame(height: 320)
+    }
+
+    // ── Tab button ────────────────────────────────────────────────────
+
+    @ViewBuilder
+    private func tabButton(icon: String, label: String, idx: Int, badge: Int) -> some View {
+        let isSelected = selectedTab == idx
+        Button {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.75)) { selectedTab = idx }
+        } label: {
+            VStack(spacing: 2) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
+                        .frame(width: 26, height: 24)
+                    if badge > 0 {
+                        Text(badge > 9 ? "9+" : "\(badge)")
+                            .font(.system(size: 7, weight: .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .background(Color.red, in: Capsule())
+                            .offset(x: 6, y: -4)
+                    }
+                }
+                Text(label)
+                    .font(.system(size: 9, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 0.75)
+                        )
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ── Tab 0: Alerts ─────────────────────────────────────────────────
+
+    @ViewBuilder
+    private var alertsTab: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Notifications").font(.system(size: 13, weight: .semibold))
+                if manager.unreadCount > 0 {
+                    Text("\(manager.unreadCount)")
+                        .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Color.red, in: Capsule())
+                }
+                Spacer()
+                if !manager.notifications.isEmpty {
+                    Button("Mark all read") { manager.markAllRead() }
+                        .font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(.secondary)
+                    Button { manager.clearAll() } label: {
+                        Image(systemName: "trash").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 6)
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+
+            if manager.notifications.isEmpty {
+                Spacer()
+                VStack(spacing: 6) {
+                    Image(systemName: "bell.slash").font(.system(size: 24)).foregroundStyle(.secondary)
+                    Text("No notifications").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(manager.notifications) { n in
+                            Button { manager.tap(n.id) } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: n.icon)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(accentColor(n.accentColor))
+                                        .frame(width: 22)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(n.title)
+                                            .font(.system(size: 12,
+                                                          weight: n.isRead ? .regular : .semibold))
+                                            .lineLimit(1)
+                                        Text(n.body)
+                                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                        Text(n.date, style: .relative)
+                                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                                    }
+                                    Spacer()
+                                    if !n.isRead {
+                                        Circle().fill(accentColor(n.accentColor))
+                                            .frame(width: 6, height: 6)
+                                    }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                                .background(n.isRead ? Color.clear : Color.white.opacity(0.04))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Mark as Read") { manager.markRead(n.id) }
+                                Button("Remove", role: .destructive) { manager.remove(n.id) }
+                            }
+                            Divider().opacity(0.2)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Tab 1: Running apps ────────────────────────────────────────────
+
+    @ViewBuilder
+    private var recentTab: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Running Apps").font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(
+                        NSWorkspace.shared.runningApplications
+                            .filter { $0.activationPolicy == .regular
+                                   && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+                            .prefix(12),
+                        id: \.processIdentifier
+                    ) { app in
+                        Button {
+                            app.activate(options: [.activateIgnoringOtherApps])
+                            onClose()
+                        } label: {
+                            HStack(spacing: 10) {
+                                if let icon = app.icon {
+                                    Image(nsImage: icon)
+                                        .resizable().aspectRatio(contentMode: .fit)
+                                        .frame(width: 24, height: 24)
+                                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                                }
+                                Text(app.localizedName ?? "Unknown")
+                                    .font(.system(size: 12)).lineLimit(1)
+                                Spacer()
+                                Image(systemName: "arrow.up.right.circle")
+                                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Divider().opacity(0.2)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Tab 2: Messages ────────────────────────────────────────────────
+
+    @ViewBuilder
+    private var messagesTab: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "message.fill")
+                .font(.system(size: 28)).foregroundStyle(.secondary.opacity(0.35))
+            Text("Messages").font(.subheadline).foregroundStyle(.secondary)
+            Text("Open Messages to see conversations")
+                .font(.caption).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+            Button("Open Messages") {
+                NSWorkspace.shared.launchApplication(withBundleIdentifier: "com.apple.MobileSMS",
+                    options: .async, additionalEventParamDescriptor: nil, launchIdentifier: nil)
+                onClose()
+            }
+            .buttonStyle(.bordered).controlSize(.small).padding(.top, 4)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+    }
+
+    // ── Tab 3: Quick actions ───────────────────────────────────────────
+
+    @ViewBuilder
+    private var actionsTab: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Quick Actions").font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    actionRow(icon: "checkmark.circle.fill", color: .green,
+                              title: "Mark all notifications read") { manager.markAllRead() }
+                    actionRow(icon: "trash.fill", color: .red,
+                              title: "Clear all notifications") { manager.clearAll() }
+                    actionRow(icon: "moon.fill", color: .indigo,
+                              title: "Focus Mode") { }
+                    actionRow(icon: "bell.slash.fill", color: .orange,
+                              title: "Mute for 1 hour") { }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionRow(icon: String, color: SwiftUI.Color,
+                           title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 15))
+                    .foregroundStyle(color).frame(width: 24)
+                Text(title).font(.system(size: 12))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func accentColor(_ name: String) -> SwiftUI.Color {
+        switch name {
+        case "green":  return .green
+        case "red":    return .red
+        case "orange": return .orange
+        case "purple": return .purple
+        case "teal":   return .teal
+        default:       return .blue
+        }
+    }
+}
+
+// MARK: - Old Notification Panel (popover, superseded by NotificationDockView)
 
 struct NotificationPanelView: View {
     @ObservedObject private var manager = ILauncherNotificationManager.shared
@@ -17981,183 +17942,6 @@ struct TwoFingerSwipeGestureView: NSViewRepresentable {
     }
 }
 
-// MARK: - Browser Item Components
-struct BrowserItemCard: View {
-    let item: BrowserItem
-    let onTap: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 8) {
-                // Favicon/Icon
-                Image(systemName: item.favicon ?? "globe")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.blue.opacity(0.8))
-                    .frame(width: 60, height: 60)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.blue.opacity(0.1))
-                    )
-
-                // Title
-                Text(item.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-            .frame(width: 100)
-            .scaleEffect(isHovering ? 1.05 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovering)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-    }
-}
-
-struct BrowserItemRow: View {
-    let item: BrowserItem
-    let onTap: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Favicon/Icon
-                Image(systemName: item.favicon ?? "globe")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.blue.opacity(0.8))
-                    .frame(width: 32, height: 32)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.blue.opacity(0.1))
-                    )
-
-                // Title and URL
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Text(item.url)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Arrow indicator
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary.opacity(isHovering ? 1.0 : 0.5))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovering ? Color.primary.opacity(0.05) : Color.clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-    }
-}
-
-// MARK: - Bookmark Card Component
-struct BookmarkCard: View {
-    let bookmark: BrowserItem
-    let onTap: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "safari")
-                        .foregroundStyle(.blue)
-                        .font(.title3)
-                    Spacer()
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(bookmark.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(2)
-                        .foregroundStyle(.primary)
-
-                    Text(bookmark.url)
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 180, height: 100)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isHovering ? Color.blue.opacity(0.1) : Color.primary.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isHovering ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Recent Search Row Component
-struct RecentSearchRow: View {
-    let search: String
-    let onTap: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.gray)
-                    .font(.system(size: 14))
-                    .frame(width: 20)
-
-                Text(search)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "arrow.up.left")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 11))
-                    .opacity(isHovering ? 1 : 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovering ? Color.primary.opacity(0.05) : Color.clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isHovering = hovering
-            }
-        }
-    }
-}
 
 // Preview commented out due to init parameter changes
 // #Preview {
@@ -18204,13 +17988,27 @@ struct GlassBackground: NSViewRepresentable {
             ve.appearance = nil
         }
 
-        // Specular top-edge highlight (looks like light catching the glass edge)
+        // ── Base fill: semi-opaque so dock is always visible regardless of wallpaper ──
+        ve.layer?.sublayers?.filter { $0.name == "baseFill" }.forEach { $0.removeFromSuperlayer() }
+        let base = CALayer()
+        base.name = "baseFill"
+        base.cornerRadius = cornerRadius
+        base.frame = ve.bounds
+        base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        if isLight {
+            base.backgroundColor = CGColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 0.62)
+        } else {
+            // Dark: bright enough to stand out from any wallpaper
+            base.backgroundColor = CGColor(red: 0.22, green: 0.22, blue: 0.26, alpha: 0.82)
+        }
+        ve.layer?.insertSublayer(base, at: 0)
+
+        // ── Specular top-edge highlight ──
         ve.layer?.sublayers?.filter { $0.name == "specularHighlight" }.forEach { $0.removeFromSuperlayer() }
         if ve.bounds.height > 0 {
             let highlight = CAGradientLayer()
             highlight.name = "specularHighlight"
-            // Light mode: strong white highlight; dark mode: subtle
-            let alpha: CGFloat = isLight ? 0.5 : 0.18
+            let alpha: CGFloat = isLight ? 0.70 : 0.45
             highlight.colors = [
                 CGColor(red: 1, green: 1, blue: 1, alpha: alpha),
                 CGColor(red: 1, green: 1, blue: 1, alpha: 0.0)
@@ -18221,6 +18019,19 @@ struct GlassBackground: NSViewRepresentable {
             highlight.cornerRadius = cornerRadius
             ve.layer?.addSublayer(highlight)
         }
+
+        // ── Border ring ──
+        ve.layer?.sublayers?.filter { $0.name == "borderRing" }.forEach { $0.removeFromSuperlayer() }
+        let border = CALayer()
+        border.name = "borderRing"
+        border.cornerRadius = cornerRadius
+        border.frame = ve.bounds
+        border.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        border.borderColor = isLight
+            ? CGColor(red: 0, green: 0, blue: 0, alpha: 0.09)
+            : CGColor(red: 1, green: 1, blue: 1, alpha: 0.22)
+        border.borderWidth = 1.0
+        ve.layer?.addSublayer(border)
     }
 
     private var isLightMode: Bool {

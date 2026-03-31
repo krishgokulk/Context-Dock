@@ -119,6 +119,11 @@ class MediaInfoProvider {
     // MARK: - Get Now Playing Info
 
     func getNowPlayingInfo() -> (title: String?, artist: String?, album: String?, state: String, duration: Double, position: Double, playbackRate: Double, hasArtwork: Bool) {
+        let info = getNowPlayingSourceInfo()
+        return (info.title, info.artist, info.album, info.state, info.duration, info.position, info.playbackRate, info.hasArtwork)
+    }
+
+    func getNowPlayingSourceInfo() -> (title: String?, artist: String?, album: String?, state: String, duration: Double, position: Double, playbackRate: Double, hasArtwork: Bool, bundleID: String?) {
 
         // Try MPNowPlayingInfoCenter first (works with most apps)
         if #available(macOS 10.12.2, *) {
@@ -135,21 +140,12 @@ class MediaInfoProvider {
                 let state = rate > 0 ? "playing" : "paused"
 
                 if title != nil {
-                    return (title, artist, album, state, duration, position, rate, artwork)
+                    return (title, artist, album, state, duration, position, rate, artwork, nil)
                 }
             }
         }
 
-        // Fallback to checking specific apps via AppleScript
-        if let musicInfo = checkMusicApp() {
-            return musicInfo
-        }
-
-        if let spotifyInfo = checkSpotifyApp() {
-            return spotifyInfo
-        }
-
-        return (nil, nil, nil, "stopped", 0, 0, 0, false)
+        return (nil, nil, nil, "stopped", 0, 0, 0, false, nil)
     }
 
     // MARK: - App-Specific Checks

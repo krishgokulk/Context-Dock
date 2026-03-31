@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AppKit
 import EventKit
 import Contacts
 import Photos
@@ -629,6 +630,59 @@ class AppleAppsAPI {
             let body = (note["body"] as? String ?? "").lowercased()
             return title.contains(queryLower) || body.contains(queryLower)
         }
+    }
+
+    func createNote(title: String, body: String, folder: String = "ILauncher") -> Bool {
+        let noteTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Note" : title
+        let script = """
+        tell application "Notes"
+            activate
+            try
+                set targetFolder to folder "\(escapeAppleScriptString(folder))" of default account
+            on error
+                set targetFolder to make new folder at default account with properties {name:"\(escapeAppleScriptString(folder))"}
+            end try
+
+            make new note at targetFolder with properties {name:"\(escapeAppleScriptString(noteTitle))", body:"\(escapeAppleScriptString(body))"}
+        end tell
+        """
+        return runAppleScript(script) != nil
+    }
+
+    func saveLinkToNotes(url: String, title: String?, folder: String = "Web Saves") -> Bool {
+        let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanURL.isEmpty else { return false }
+        let noteTitle = (title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title! : cleanURL)
+        let body = "\(noteTitle)\n\(cleanURL)"
+        return createNote(title: noteTitle, body: body, folder: folder)
+    }
+
+    func composeMail(subject: String, body: String) -> Bool {
+        var components = URLComponents(string: "mailto:")!
+        var queryItems: [URLQueryItem] = []
+        if !subject.isEmpty {
+            queryItems.append(URLQueryItem(name: "subject", value: subject))
+        }
+        if !body.isEmpty {
+            queryItems.append(URLQueryItem(name: "body", value: body))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components.url else { return false }
+        return NSWorkspace.shared.open(url)
+    }
+
+    func createReminder(title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let script = """
+        tell application "Reminders"
+            activate
+            tell default list
+                make new reminder with properties {name:"\(escapeAppleScriptString(trimmed))"}
+            end tell
+        end tell
+        """
+        return runAppleScript(script) != nil
     }
 
     // MARK: - Mail API

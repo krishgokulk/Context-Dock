@@ -98,6 +98,7 @@ final class CrossAppRouter {
             badgeColor: "yellow",
             category: .notes,
             acceptsText: true,
+            acceptsURL: true,
             acceptsSelection: true,
             appleScriptTemplate: "tell application \"Notes\" to make new note with properties {body:\"{text}\"}",
             actionLabel: "New Apple Note"
@@ -382,7 +383,7 @@ final class CrossAppRouter {
             if let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                front == cap.bundleId { continue }
 
-            let pill = makePill(cap: cap, contentType: contentType)
+            let pill = makePill(cap: cap, contentType: contentType, context: context)
             pills.append(pill)
         }
 
@@ -444,20 +445,24 @@ final class CrossAppRouter {
         }
     }
 
-    private func makePill(cap: CrossAppCapability, contentType: DetectedContentType) -> RoutedPill {
+    private func makePill(cap: CrossAppCapability, contentType: DetectedContentType, context: AXContext) -> RoutedPill {
         let action: () -> Void = { [weak self] in
-            self?.route(cap: cap, contentType: contentType)
+            self?.route(cap: cap, contentType: contentType, context: context)
         }
         return RoutedPill(
             bundleId: cap.bundleId,
             icon: cap.sfSymbol,
-            label: cap.actionLabel,
+            label: actionLabel(for: cap, contentType: contentType, context: context),
             badgeColor: cap.badgeColor,
             action: action
         )
     }
 
-    private func route(cap: CrossAppCapability, contentType: DetectedContentType) {
+    private func route(cap: CrossAppCapability, contentType: DetectedContentType, context: AXContext) {
+        if executeViaAdapter(cap: cap, contentType: contentType, context: context) {
+            return
+        }
+
         let rawText = extractText(from: contentType)
         let encoded = rawText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? rawText
 
@@ -496,6 +501,91 @@ final class CrossAppRouter {
                                              options: .async,
                                              additionalEventParamDescriptor: nil,
                                              launchIdentifier: nil)
+    }
+
+    private func actionLabel(for cap: CrossAppCapability, contentType: DetectedContentType, context: AXContext) -> String {
+        switch (cap.bundleId, contentType) {
+        case ("com.apple.Notes", .url):
+            return context.bundleId == "com.apple.Safari" ? "Save Page to Notes" : "Save Link to Notes"
+        case ("com.apple.Notes", .selection), ("com.apple.Notes", .plainText):
+            return "Create Note"
+        case ("com.apple.mail", .url):
+            return "Compose Mail with Link"
+        case ("com.apple.mail", .selection), ("com.apple.mail", .plainText):
+            return "Compose Mail"
+        case ("com.apple.reminders", .selection), ("com.apple.reminders", .plainText):
+            return "Add Reminder"
+        case ("com.apple.finder", .filePath):
+            return "Reveal in Finder"
+        default:
+            return cap.actionLabel
+        }
+    }
+
+    private func executeViaAdapter(cap: CrossAppCapability, contentType: DetectedContentType, context: AXContext) -> Bool {
+        let api = AppleAppsAPI.shared
+
+        switch cap.bundleId {
+        case "com.apple.Notes":
+            switch contentType {
+            case .url(let url):
+                let title = context.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return api.saveLinkToNotes(url: url.absoluteString, title: title, folder: "Web Saves")
+            case .plainText(let text), .selection(let text):
+                let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !body.isEmpty else { return false }
+                let title = String(body.prefix(60))
+                return api.createNote(title: title, body: body, folder: "ILauncher")
+            case .filePath(let path):
+                let fileURL = URL(fileURLWithPath: path)
+                let body = fileURL.lastPathComponent + "\n" + path
+                return api.createNote(title: fileURL.lastPathComponent, body: body, folder: "ILauncher")
+            case .none:
+                return false
+            }
+
+        case "com.apple.mail":
+            switch contentType {
+            case .url(let url):
+                let subject = context.windowTitle ?? "Link"
+                return api.composeMail(subject: subject, body: url.absoluteString)
+            case .plainText(let text), .selection(let text):
+                return api.composeMail(subject: "", body: text)
+            case .filePath(let path):
+                let fileName = URL(fileURLWithPath: path).lastPathComponent
+                return api.composeMail(subject: fileName, body: path)
+            case .none:
+                return false
+            }
+
+        case "com.apple.reminders":
+            switch contentType {
+            case .plainText(let text), .selection(let text):
+                return api.createReminder(title: text)
+            case .url(let url):
+                let title = context.windowTitle?.isEmpty == false ? context.windowTitle! : url.absoluteString
+                return api.createReminder(title: title)
+            case .filePath(let path):
+                return api.createReminder(title: URL(fileURLWithPath: path).lastPathComponent)
+            case .none:
+                return false
+            }
+
+        case "com.apple.finder":
+            if case .filePath(let path) = contentType {
+                return api.revealInFinder(path)
+            }
+            return false
+
+        case "com.apple.Safari":
+            if case .url(let url) = contentType {
+                return api.openSafariURL(url.absoluteString)
+            }
+            return false
+
+        default:
+            return false
+        }
     }
 
     private func extractText(from contentType: DetectedContentType) -> String {
