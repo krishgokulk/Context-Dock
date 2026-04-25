@@ -374,7 +374,6 @@ Current Status
 - No CI/CD pipeline
 - Microphone / voice command input (permission declared, feature not implemented)
 - Location-based suggestions (permission declared, feature not implemented)
-- L3 browser layer extensions are defined in the model but have no dedicated UI entry point
 - App Group entitlement on the main app target needs verification (extension target has it; main app target needs to match)
 
 ---
