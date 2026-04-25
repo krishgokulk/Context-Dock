@@ -395,6 +395,9 @@ Contact
 
 ## Changelog
 
+### 2026-04-25 (2)
+- **PDF global context fix** — "explain about this file" and other content questions on a selected PDF now read the document and answer directly; previously the AI emitted a `[TERMINAL_COMMAND:]` tag instead of answering from content. Fast-path now covers: explain, describe, what is, tell me about, this file, translate, analyze, overview, key points, highlight, summarize
+
 ### 2026-04-25
 - **SafariDeepContextReader** — implemented: reads Safari browsing history via AppleScript, ranks entries by query relevance, injects matched history into AI context block
 - **generateMailIntent** — implemented: keyword-based mail query classifier (detects subject/from/to/attachment/date token kinds, strips filler words, identifies questions vs searches); works without Apple Intelligence
