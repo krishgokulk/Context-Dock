@@ -31,7 +31,7 @@ final class SafariDeepContextReader {
         guard !history.isEmpty else { return "" }
 
         var lines = ["\n## Safari History (relevant to query)"]
-        for entry in history.prefix(maxMatched + maxRecentHistory) {
+        for entry in history.prefix(maxMatchedHistory + maxRecentHistory) {
             lines.append("- \(entry.title.isEmpty ? entry.url : entry.title) — \(entry.url)")
         }
         let block = lines.joined(separator: "\n")
