@@ -359,13 +359,12 @@ Current Status
 - **Settings UI** (AI provider config, hotkey, pinned apps, layer toggles)
 - **AX trigger rules** (auto-show extensions based on accessibility conditions)
 
-❌ Not Yet Implemented / Known Gaps
+❌ Known Gaps
 
 - No automated tests (unit or UI)
 - No CI/CD pipeline
 - Microphone / voice command input (permission declared, feature not implemented)
 - Location-based suggestions (permission declared, feature not implemented)
-- App Group entitlement on the main app target needs verification (extension target has it; main app target needs to match)
 
 ---
 
