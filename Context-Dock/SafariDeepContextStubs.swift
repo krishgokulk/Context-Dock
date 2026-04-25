@@ -89,8 +89,8 @@ final class SafariDeepContextReader {
         let recent = entries.filter {
             !$0.title.lowercased().contains(q) && !$0.url.lowercased().contains(q)
         }
-        return Array((matched.prefix(maxMatched) + recent.prefix(maxRecent))
-            .prefix(maxMatched + maxRecent))
+        let combined = Array(matched.prefix(maxMatched)) + Array(recent.prefix(maxRecent))
+        return Array(combined.prefix(maxMatched + maxRecent))
     }
 }
 
@@ -154,7 +154,7 @@ struct ContextAppSuggestionsRow: View {
             onRunExtension(suggestion.scriptExtension)
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: suggestion.scriptExtension.icon)
+                Image(systemName: suggestion.scriptExtension.type.icon)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Text(suggestion.scriptExtension.name)

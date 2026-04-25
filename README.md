@@ -390,3 +390,18 @@ Contact
 
 - **GitHub**: [@krishgokulk](https://github.com/krishgokulk)
 - **Issues**: [github.com/krishgokulk/Context-Dock/issues](https://github.com/krishgokulk/Context-Dock/issues)
+
+---
+
+## Changelog
+
+### 2026-04-25
+- **SafariDeepContextReader** — implemented: reads Safari browsing history via AppleScript, ranks entries by query relevance, injects matched history into AI context block
+- **generateMailIntent** — implemented: keyword-based mail query classifier (detects subject/from/to/attachment/date token kinds, strips filler words, identifies questions vs searches); works without Apple Intelligence
+- **ContextAppSuggestionsRow** — implemented: real scrollable chip row showing "Open With" app icons (via `DefaultAppResolver`) and relevant extension chips (via `IntelligentExtensionMatcher`); auto-refreshes when context changes
+- **MenuIntentRouter** — new: routes natural language → frontmost app's cached menus → click, with on-device AI disambiguation fallback (tiny ~20-token prompt, no cloud needed)
+- **SafariCommandBridge** — extended: menu-click tier via AppleScript `System Events`, NL alias table covering all File/Window menu actions, compact system prompt for cloud AI only
+- **Global context routing** — fixed: text/file/folder selections now always activate global context before menu routing; `hasActiveSelection` checked independently of dock scope
+- **Git repository** — initialized; LICENSE (all rights reserved) added
+- **Backup files removed**: `ContentView.swift.backup`, `ContentView.swift.bak2`, `SettingsView.swift.bak`
+- **Bug fixes**: `ArraySlice +` concatenation replaced with `Array(slice) + Array(slice)`; `ScriptExtension.icon` corrected to `ScriptExtension.type.icon`
