@@ -22,7 +22,7 @@ enum UserContext {
     var description: String {
         switch self {
         case .filesSelected(let urls):
-            return "filesSelected(\(urls.count) files)"
+            return "filesSelected(\(urls.count) \(urls.count == 1 ? "file" : "files"))"
         case .textSelected(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let preview = String(trimmed.prefix(80))
