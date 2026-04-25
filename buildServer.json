@@ -1,0 +1,19 @@
+{
+	"name": "xcode build server",
+	"version": "1.3.0",
+	"bspVersion": "2.2.0",
+	"languages": [
+		"c",
+		"cpp",
+		"objective-c",
+		"objective-cpp",
+		"swift"
+	],
+	"argv": [
+		"/opt/homebrew/bin/xcode-build-server"
+	],
+	"workspace": "/Users/gokulakannan/Desktop/Context-Dock/Context-Dock.xcodeproj/project.xcworkspace",
+	"build_root": "/Users/gokulakannan/Library/Developer/Xcode/DerivedData/Context-Dock-flfzqbpkpmlafvhhxwbudvrlitaa",
+	"scheme": "Context-Dock",
+	"kind": "xcode"
+}

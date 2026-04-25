@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDisplayName</key>
+	<string>Context-Dock</string>
+	<key>CFBundleName</key>
+	<string>Context-Dock</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>Context-Dock needs accessibility access to control other applications and respond to global keyboard shortcuts.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Context-Dock uses AppleScript to integrate with Mail, Notes, Messages, Calendar, Reminders, Finder, Safari, and other Apple applications to provide AI-powered automation.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Context-Dock needs access to your contacts to search and manage your address book through natural language commands.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Context-Dock needs access to your calendars to create events and view your schedule through natural language commands.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Context-Dock needs access to your reminders to create and manage tasks through natural language commands.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Context-Dock needs access to your photo library to search photos, create albums, and organize your media through natural language commands.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Context-Dock needs camera access to capture photos and use vision features.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Context-Dock needs microphone access to enable voice commands and dictation features.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Context-Dock needs location access to provide location-based suggestions and services.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Context-Dock needs access to your Desktop folder to search and manage files.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Context-Dock needs access to your Documents folder to search and manage files.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Context-Dock needs access to your Downloads folder to search and manage files.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Context-Dock needs access to network volumes to search and manage files.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Context-Dock needs access to removable volumes to search and manage files.</string>
+	<key>NSFileProviderDomainUsageDescription</key>
+	<string>Context-Dock needs access to cloud storage to search and manage your files.</string>
+	<key>LSBackgroundOnly</key>
+	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.yourcompany.ilauncher</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ilauncher</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Search with Context-Dock</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>searchWithContextDock</string>
+			<key>NSPortName</key>
+			<string>Context-Dock</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.utf8-plain-text</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Folder</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.folder</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
+</dict>
+</plist>
