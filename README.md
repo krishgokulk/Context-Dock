@@ -359,15 +359,6 @@ Current Status
 - **Settings UI** (AI provider config, hotkey, pinned apps, layer toggles)
 - **AX trigger rules** (auto-show extensions based on accessibility conditions)
 
-### 🚧 Partially Implemented / Stubbed
-
-| File | Status |
-|---|---|
-| `SafariDeepContextStubs.swift` | `SafariDeepContextReader` returns empty string — Safari history/bookmarks injection removed |
-| `OnDeviceStructuredStubs.swift` | `@Generable` structured output removed; `generateMailIntent` always returns `nil` |
-| `SafariDeepContextStubs.swift` → `ContextAppSuggestionsRow` | Renders `EmptyView()` — app suggestions row disabled |
-| `ContentView.swift.backup` / `.bak2`, `SettingsView.swift.bak` | Leftover backup files (not compiled) |
-
 ❌ Not Yet Implemented / Known Gaps
 
 - No automated tests (unit or UI)
