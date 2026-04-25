@@ -14842,8 +14842,17 @@ struct LauncherView: View {
             }
         }
 
-        if queryLower.contains("summarize") || queryLower.contains("summary")
-            || queryLower.contains("tldr"),
+        // PDF content questions — read the file and answer directly.
+        // Covers explain, summarize, describe, what is, translate, any content query.
+        let isFileContentQuery = queryLower.contains("summarize") || queryLower.contains("summary")
+            || queryLower.contains("tldr") || queryLower.contains("explain")
+            || queryLower.contains("describe") || queryLower.contains("what is")
+            || queryLower.contains("what does") || queryLower.contains("tell me about")
+            || queryLower.contains("about this") || queryLower.contains("this file")
+            || queryLower.contains("translate") || queryLower.contains("key point")
+            || queryLower.contains("highlight") || queryLower.contains("overview")
+            || queryLower.contains("analyse") || queryLower.contains("analyze")
+        if isFileContentQuery,
             case .filesSelected(let urls) = effectiveConversationUserContext,
             let pdf = ContextDetector.shared.analyzeFiles(urls).first(where: { $0.type == "pdf" }),
             let pdfContent = pdf.content,
@@ -14854,7 +14863,7 @@ struct LauncherView: View {
             l2CurrentTask = Task {
                 do {
                     let prompt =
-                        "Summarize this PDF content for the user request:\n\n\(pdfContent)\n\nUser request:\n\(query)"
+                        "Answer the user's question about this PDF document.\n\nPDF CONTENT:\n\(pdfContent)\n\nUser question: \(query)\n\nAnswer directly from the document content. Do not run any commands."
                     let response = try await sendToAIProviderWithContext(
                         query: prompt, messageHistory: l2ChatMessages)
                     if Task.isCancelled {
