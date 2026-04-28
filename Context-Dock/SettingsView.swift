@@ -161,7 +161,7 @@ struct GeneralSettingsView: View {
                         set: { settings.showMenuBarIcon = $0
                               NotificationCenter.default.post(name: .menuBarIconVisibilityChanged, object: nil) }
                     )) {
-                        GeneralToggleLabel("Show Menu Bar Icon", caption: "Display ILauncher icon in the menu bar")
+                        GeneralToggleLabel("Show Menu Bar Icon", caption: "Display Context Dock icon in the macOS menu bar")
                     }.toggleStyle(.switch)
 
                     Divider()
@@ -170,25 +170,18 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "Window", systemImage: "rectangle.on.rectangle") {
+            CardSection(title: "Dock Position", systemImage: "dock.rectangle") {
                 VStack(spacing: 16) {
-                    Toggle(isOn: $settings.alwaysDockAtBottom) {
-                        GeneralToggleLabel("Always Dock at Bottom",
-                            caption: "Pin results above the dock. Disable for smart auto-positioning based on screen space.")
-                    }.toggleStyle(.switch)
-
-                    Divider()
-
                     Toggle(isOn: $settings.persistentContextDock) {
-                        GeneralToggleLabel("Always Context Dock at Bottom",
-                            caption: "Keep the context dock permanently visible at the bottom of the screen, like the macOS Dock. Stays scoped to the frontmost app and its menu actions.")
+                        GeneralToggleLabel("Persistent Dock Mode",
+                            caption: "Keep the dock permanently visible at the bottom of the screen, like the macOS Dock. The dock stays locked to the frontmost app's actions.")
                     }.toggleStyle(.switch)
 
                     if settings.persistentContextDock {
                         VStack(alignment: .leading, spacing: 8) {
                             Toggle(isOn: $settings.persistentContextDockAutoHide) {
                                 GeneralToggleLabel("Auto-Hide",
-                                    caption: "Slide the dock out of view when the mouse moves away. It reappears when you move the cursor to the bottom of the screen.",
+                                    caption: "Slide the dock out of view when the mouse moves away. Move cursor to the bottom edge to reveal.",
                                     isSubItem: true)
                             }.toggleStyle(.switch)
                         }
@@ -200,17 +193,22 @@ struct GeneralSettingsView: View {
 
                     Toggle(isOn: $settings.enableFileContextOverlay) {
                         GeneralToggleLabel("File Context Pill",
-                            caption: "Show a floating action pill above the dock for selected files, folders, text, URLs, and clipboard content.")
+                            caption: "Show a floating action pill for selected files, folders, text, URLs, and clipboard content.")
                     }.toggleStyle(.switch)
                 }
             }
 
-            CardSection(title: "Danger Zone", systemImage: "power") {
+            CardSection(title: "Quit", systemImage: "power") {
                 HStack {
-                    Text("Quit ILauncher").font(.subheadline).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Quit Context Dock").font(.subheadline).fontWeight(.medium)
+                        Text("Completely exit the app and remove it from the menu bar.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Quit") { NSApplication.shared.terminate(nil) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
                 }
             }
         }
@@ -454,15 +452,47 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: - Shortcuts panel (merged from ShortcutsSettingsView)
+    // MARK: - Shortcuts panel
     private var shortcutsPanel: some View {
         VStack(spacing: 16) {
-            CardSection(title: "Keyboard Shortcuts", systemImage: "keyboard") {
+
+            // Default quick-launch shortcut
+            CardSection(title: "Default Activation", systemImage: "bolt.fill") {
+                VStack(spacing: 12) {
+                    HStack(spacing: 14) {
+                        Image(systemName: "option")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .frame(width: 32, height: 32)
+                            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Double-press ⌥ Option")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Tap Option twice quickly from anywhere to show the launcher")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { settings.useDoubleOptionLaunch },
+                            set: {
+                                settings.useDoubleOptionLaunch = $0
+                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                            }
+                        )).labelsHidden()
+                    }
+                }
+            }
+
+            // Custom hotkeys
+            CardSection(title: "Custom Shortcuts", systemImage: "keyboard") {
                 VStack(spacing: 0) {
                     HotkeyRecorderRow(
                         icon: "magnifyingglass", iconColor: .blue,
                         title: "Open Launcher",
-                        subtitle: "Show / hide the search bar from anywhere",
+                        subtitle: "Show / hide the search bar — overrides the default ⌥⌥",
                         displayString: settings.hotkeyDisplayString,
                         onClear: nil
                     ) { kc, mod in
@@ -475,7 +505,7 @@ struct GeneralSettingsView: View {
                     HotkeyRecorderRow(
                         icon: "rectangle.grid.1x2", iconColor: .purple,
                         title: "Context Dock",
-                        subtitle: "Jump straight to the frontmost app's one-tap actions",
+                        subtitle: "Jump directly to the frontmost app's one-tap actions",
                         displayString: settings.contextDockHotkeyDisplayString,
                         onClear: {
                             settings.contextDockHotkeyKeyCode = 0
@@ -486,35 +516,23 @@ struct GeneralSettingsView: View {
                         settings.contextDockHotkeyKeyCode = kc
                         settings.contextDockHotkeyModifiers = mod
                     }
-
-
                 }
             }
 
-            CardSection(title: "Quick Launch", systemImage: "bolt.fill") {
-                Toggle(isOn: Binding(
-                    get: { settings.useDoubleOptionLaunch },
-                    set: {
-                        settings.useDoubleOptionLaunch = $0
-                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+            CardSection(title: "How to Record", systemImage: "info.circle") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "cursorarrow.click").foregroundStyle(.blue).font(.system(size: 13))
+                        Text("Click the shortcut badge to start recording, then press your desired key combination.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                )) {
-                    GeneralToggleLabel(
-                        "Double-press ⌥ to open",
-                        caption: "Tap the Option key twice quickly to show the launcher from anywhere"
-                    )
-                }.toggleStyle(.switch)
-            }
-
-            CardSection(title: "Tips", systemImage: "lightbulb") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Use ⌘ ⌥ ⌃ ⇧ + any letter or Space. Click a badge to record a new shortcut.", systemImage: "keyboard")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Label("Context Dock opens the launcher directly in app-action mode — no searching needed.", systemImage: "rectangle.grid.1x2")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "keyboard").foregroundStyle(.purple).font(.system(size: 13))
+                        Text("Shortcuts require at least one modifier key: ⌘ Command, ⌥ Option, ⌃ Control, or ⇧ Shift.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
-
         }
     }
 
@@ -534,6 +552,52 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            CardSection(title: "Dock Logo", systemImage: "person.circle") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Choose which icon appears in the top-right corner of the dock.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Picker("Logo Style", selection: $settings.dockLogoStyle) {
+                        Text("D Logo").tag("d_logo")
+                        Text("Apple Logo").tag("apple")
+                        Text("System Photo").tag("system_photo")
+                    }
+                    .pickerStyle(.segmented)
+                    Button("Change System Photo in Settings…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preferences.users-groups") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            CardSection(title: "Dock Size", systemImage: "dock.rectangle") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "square.grid.3x3.square")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.blue)
+                            .frame(width: 18)
+                        Slider(value: $settings.dockIconSize, in: 28...72, step: 2) {
+                            Text("Icon Size")
+                        } minimumValueLabel: {
+                            Text("S").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Text("L").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        }
+                        Text("\(Int(settings.dockIconSize))pt")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 36, alignment: .trailing)
+                    }
+                    Text("App icon and pill size in the dock.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             CardSection(title: "Transparency", systemImage: "rectangle.on.rectangle") {
                 VStack(spacing: 12) {
                     GeneralSlider(icon: "magnifyingglass", iconColor: .blue,
@@ -541,6 +605,26 @@ struct GeneralSettingsView: View {
                     Divider()
                     GeneralSlider(icon: "folder", iconColor: .purple,
                                   label: "Folder Preview", value: $settings.folderPreviewOpacity)
+                }
+            }
+
+            CardSection(title: "Clipboard", systemImage: "doc.on.clipboard") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label("History Limit", systemImage: "clock.arrow.circlepath")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Stepper(value: $settings.clipboardHistoryLimit, in: 5...50, step: 5) {
+                            Text("\(settings.clipboardHistoryLimit) items")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 56, alignment: .trailing)
+                        }
+                    }
+                    Text("Number of clipboard entries kept in history. Press ↑ in the dock to expand clipboard inline.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -681,7 +765,7 @@ private struct GeneralSlider: View {
                 Text("\(Int(value * 100))%").font(.caption).foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Slider(value: $value, in: 0.5...1.0, step: 0.05)
+            Slider(value: $value, in: 0.0...1.0, step: 0.05)
         }
     }
 }
@@ -712,135 +796,54 @@ struct CardSection<Content: View>: View {
     }
 }
 
-// MARK: - File Index Status View
+// MARK: - File Index Status View (Spotlight-backed — always live)
 struct FileIndexStatusView: View {
     @ObservedObject var fileIndexManager = FileIndexManager.shared
-    @State private var isReindexing = false
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
                 Text("File Index")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
+                    .font(.subheadline.weight(.medium))
                 Spacer()
-                
-                if fileIndexManager.isReady {
+                if fileIndexManager.progress.isIndexing {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.6)
+                        Text("Loading…").font(.caption).foregroundStyle(.orange)
+                    }
+                } else if fileIndexManager.isReady {
                     HStack(spacing: 4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.system(size: 12))
-                        Text("Ready")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                } else if fileIndexManager.progress.isIndexing {
-                    HStack(spacing: 4) {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                        Text("Indexing...")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.green).font(.system(size: 12))
+                        Text("Ready").font(.caption).foregroundStyle(.green)
                     }
                 }
             }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                // Stats
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Files Indexed")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text("\(fileIndexManager.indexedFiles.count)")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-                    }
-                    
-                    if let lastIndex = fileIndexManager.metadata.lastFullIndexDate {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Last Updated")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Text(lastIndex, style: .relative)
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                }
-                
-                // Indexing progress
-                if fileIndexManager.progress.isIndexing {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: fileIndexManager.progress.progressPercentage, total: 100)
-                            .progressViewStyle(.linear)
-                        
-                        HStack {
-                            Text(fileIndexManager.progress.currentDirectory)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            
-                            Spacer()
-                            
-                            Text("\(fileIndexManager.progress.filesIndexed) files")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                
-                // Actions
-                HStack(spacing: 12) {
-                    Button(action: {
-                        Task {
-                            isReindexing = true
-                            await fileIndexManager.forceReindex()
-                            isReindexing = false
-                        }
-                    }) {
-                        Label("Rebuild Index", systemImage: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(fileIndexManager.progress.isIndexing)
-                    
-                    Button(action: {
-                        Task {
-                            await fileIndexManager.clearCache()
-                        }
-                    }) {
-                        Label("Clear Cache", systemImage: "trash")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(fileIndexManager.progress.isIndexing)
-                }
 
-                // Error display
-                if let error = fileIndexManager.progress.lastError {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .font(.caption2)
-                        Text(error)
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    .padding(8)
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(6)
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Files Indexed").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(fileIndexManager.indexedFiles.count)")
+                        .font(.system(size: 16, weight: .semibold))
                 }
+                if let last = fileIndexManager.metadata.lastFullIndexDate {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Last Updated").font(.caption2).foregroundStyle(.secondary)
+                        Text(last, style: .relative).font(.caption)
+                    }
+                }
+                Spacer()
             }
             .padding(12)
-            .background(Color.gray.opacity(0.06))
-            .cornerRadius(8)
+            .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
 
-            Text("Files are indexed at launch for instant search results. Re-index if you've added new files.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            // Spotlight badge
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass.circle.fill")
+                    .foregroundStyle(.blue).font(.system(size: 12))
+                Text("Powered by Spotlight — always up-to-date, no rebuild needed.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -3178,52 +3181,80 @@ struct AIProviderRow: View {
     let isSelected: Bool
     let isConfigured: Bool
     let onSelect: () -> Void
-    
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
-                // Selection indicator
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(isSelected ? .blue : .secondary)
                     .font(.system(size: 20))
-                
-                // Icon
-                Image(systemName: provider.iconName)
-                    .font(.system(size: 24))
-                    .foregroundStyle(isSelected ? .blue : .primary)
-                    .frame(width: 32, height: 32)
-                
-                // Text
-                VStack(alignment: .leading, spacing: 2) {
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(rowAccent.opacity(isSelected ? 0.18 : 0.09))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: provider.iconName)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(isSelected ? rowAccent : .primary)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(provider.displayName)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.primary)
-                        
+
                         if isConfigured && provider.requiresAPIKey {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 10))
+                            Label("Ready", systemImage: "checkmark.seal.fill")
+                                .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.green)
+                                .labelStyle(.iconOnly)
+                        } else if provider.requiresAPIKey && !isConfigured {
+                            Text("ADD KEY")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.14), in: Capsule())
                         }
                     }
-                    
+
                     Text(provider.description)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                
+
                 Spacer()
+
+                if isSelected {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(12)
-            .background(isSelected ? Color.blue.opacity(0.1) : Color.gray.opacity(0.05))
-            .cornerRadius(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? rowAccent.opacity(0.10) : Color.primary.opacity(0.04))
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+                    .stroke(isSelected ? rowAccent.opacity(0.5) : Color.clear, lineWidth: 1.5)
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var rowAccent: Color {
+        switch provider {
+        case .onDevice:     return .blue
+        case .googleGemini: return .indigo
+        case .openAI:       return .teal
+        case .anthropic:    return .orange
+        case .ollama:       return .green
+        case .shortcuts:    return .purple
+        }
     }
 }
 

@@ -159,45 +159,61 @@ final class SafariTabManager {
     // MARK: Execute JS in current tab
 
     /// Run arbitrary JavaScript in Safari's frontmost tab and return the result string.
+    ///
+    /// Writes JS to a temp file so AppleScript reads it with `do shell script cat`,
+    /// bypassing all string-escaping issues (newlines, backslashes, double quotes, regex).
     func executeJS(_ js: String) async -> String? {
-        let escaped = js.replacingOccurrences(of: "\"", with: "\\\"")
+        guard let tmpURL = writeTempJS(js) else { return nil }
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        let path = tmpURL.path
         let script = """
+        set jsCode to (do shell script "cat " & quoted form of "\(path)")
         tell application "Safari"
-            try
-                return execute JavaScript "\(escaped)" in current tab of front window
-            end try
+            return execute JavaScript jsCode in current tab of front window
         end tell
         """
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                guard let s = NSAppleScript(source: script) else {
-                    continuation.resume(returning: nil); return
-                }
-                var err: NSDictionary?
-                let res = s.executeAndReturnError(&err)
-                continuation.resume(returning: err == nil ? res.stringValue : nil)
-            }
-        }
+        return await runAppleScript(script)
     }
 
     /// Run JavaScript in a specific tab (by window/tab index) and return the result.
     func executeJS(_ js: String, windowIndex: Int, tabIndex: Int) async -> String? {
-        let escaped = js.replacingOccurrences(of: "\"", with: "\\\"")
+        guard let tmpURL = writeTempJS(js) else { return nil }
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        let path = tmpURL.path
         let script = """
+        set jsCode to (do shell script "cat " & quoted form of "\(path)")
         tell application "Safari"
-            try
-                return execute JavaScript "\(escaped)" in tab \(tabIndex) of window \(windowIndex)
-            end try
+            return execute JavaScript jsCode in tab \(tabIndex) of window \(windowIndex)
         end tell
         """
-        return await withCheckedContinuation { continuation in
+        return await runAppleScript(script)
+    }
+
+    // MARK: - Private helpers
+
+    private func writeTempJS(_ js: String) -> URL? {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cdock_js_\(UUID().uuidString.prefix(8)).js")
+        guard let data = js.data(using: .utf8),
+              (try? data.write(to: url)) != nil else { return nil }
+        return url
+    }
+
+    private func runAppleScript(_ source: String) async -> String? {
+        await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let s = NSAppleScript(source: script) else {
+                guard let s = NSAppleScript(source: source) else {
                     continuation.resume(returning: nil); return
                 }
                 var err: NSDictionary?
                 let res = s.executeAndReturnError(&err)
-                continuation.resume(returning: err == nil ? res.stringValue : nil)
+                if let err {
+                    let msg = (err[NSAppleScript.errorMessage] as? String)
+                        ?? err.description
+                    continuation.resume(returning: "JS error: \(msg)")
+                    return
+                }
+                continuation.resume(returning: res.stringValue)
             }
         }
     }

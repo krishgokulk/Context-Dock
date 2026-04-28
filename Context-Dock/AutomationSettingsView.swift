@@ -606,12 +606,13 @@ struct AutomationSettingsView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Examples")
+                    Text("Sample recipes — tap a type to expand")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    exampleRow("Summarise selection", "echo '{{selection}}' | llm summarise")
-                    exampleRow("Copy file path", "echo {{file}} | pbcopy")
-                    exampleRow("Open in iTerm", "open -a iTerm {{file}}")
+                    Text("Copy any snippet into the \"script\" field of your adapter action.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    AppActionSamplesSection()
                 }
             }
             .padding(20)
@@ -719,6 +720,8 @@ struct AutomationSettingsView: View {
         }
         .padding(.vertical, 2)
     }
+
+    // MARK: - Samples Section (inserted between exampleRow and triggerTypeRow)
 
     private func triggerTypeRow(_ icon: String, _ name: String, _ description: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
@@ -1591,6 +1594,14 @@ struct AutomationAdapterDetailView: View {
         currentAdapter.visibleActions
     }
 
+    private var appOnlyActions: [AdapterAction] {
+        visibleActions.filter { $0.type != .pageJS }
+    }
+
+    private var browserExtensionActions: [AdapterAction] {
+        visibleActions.filter { $0.type == .pageJS }
+    }
+
     /// Extracts "yt-dlp" from bundleId "cli://yt-dlp", nil for real app adapters.
     private var cliCommandForAdapter: String? {
         let bid = currentAdapter.bundleId
@@ -1764,20 +1775,17 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
+                // MARK: App Actions section (non-pageJS)
                 VStack(alignment: .leading, spacing: 12) {
                     Text("App Actions")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
 
-                    if visibleActions.isEmpty {
+                    if appOnlyActions.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(linkedCLITools.isEmpty ? "No actions yet" : "No custom actions yet")
+                            Text(linkedCLITools.isEmpty && browserExtensionActions.isEmpty ? "No actions yet" : "No app actions yet")
                                 .font(.system(size: 13, weight: .medium))
-                            Text(
-                                linkedCLITools.isEmpty
-                                ? "Add actions for this app using Open URL / Deep Link, Open File / App, CLI Tool, Shell Command, AppleScript, JXA, Script File, or AI Prompt."
-                                : "Add app-specific actions here, including CLI Tool actions. Linked CLI tools for this app appear below and can already be used by scoped dock chat."
-                            )
+                            Text("Add actions using Open URL / Deep Link, Open File / App, CLI Tool, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                             Button("Add First Action") {
@@ -1789,7 +1797,7 @@ struct AutomationAdapterDetailView: View {
                         .padding(16)
                         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                     } else {
-                        ForEach(visibleActions) { action in
+                        ForEach(appOnlyActions) { action in
                             HStack(spacing: 10) {
                                 Image(systemName: action.icon)
                                     .font(.system(size: 13))
@@ -1820,13 +1828,74 @@ struct AutomationAdapterDetailView: View {
                                 .buttonStyle(.plain)
                             }
                             .padding(.vertical, 6)
-                            if action.id != visibleActions.last?.id {
+                            if action.id != appOnlyActions.last?.id {
                                 Divider()
                             }
                         }
                     }
                 }
                 .padding(16)
+
+                // MARK: Browser Extensions section (pageJS)
+                if !browserExtensionActions.isEmpty {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.orange)
+                            Text("Browser Extensions")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text("Page JS userscripts injected into the active browser tab.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+
+                        ForEach(browserExtensionActions) { action in
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(Color.orange.opacity(0.12))
+                                        .frame(width: 28, height: 28)
+                                    Image(systemName: action.icon)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.orange)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(action.type.displayName)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button {
+                                    editingAction = action
+                                    showAddActionSheet = true
+                                } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .buttonStyle(.plain)
+                                Button(role: .destructive) {
+                                    Task {
+                                        await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
+                                    }
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if action.id != browserExtensionActions.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(16)
+                }
 
                 Divider()
 
@@ -2644,6 +2713,201 @@ struct PromptEditorSheet: View {
             .padding(20)
         }
         .frame(width: 520, height: 440)
+    }
+}
+
+// MARK: - App Action Samples Section
+
+private struct AppActionSamplesSection: View {
+    @State private var expanded: String? = nil
+
+    struct Recipe: Identifiable {
+        var id: String { type }
+        let type: String
+        let badge: String
+        let icon: String
+        let color: Color
+        let tagline: String
+        let examples: [(title: String, code: String)]
+    }
+
+    private let recipes: [Recipe] = [
+        Recipe(
+            type: "shell", badge: "shell", icon: "terminal.fill", color: .green,
+            tagline: "Bash — use {{selection}}, {{file}}, {{url}}, {{query}}, {{clipboard}}",
+            examples: [
+                ("Copy selection to clipboard",   "echo '{{selection}}' | pbcopy"),
+                ("Read selected text aloud",      "say '{{selection}}'"),
+                ("Open file in VS Code",          "open -a 'Visual Studio Code' '{{file}}'"),
+                ("Word count of selection",       "echo '{{selection}}' | wc -w"),
+                ("Weather for typed city",        "curl -s 'https://wttr.in/{{query}}?format=3'"),
+                ("Google search in browser",      "open 'https://www.google.com/search?q={{query}}'"),
+            ]
+        ),
+        Recipe(
+            type: "pageJS", badge: "pageJS", icon: "safari", color: .cyan,
+            tagline: "JavaScript injected into Safari — $PAGE_TEXT, $CURRENT_URL, $PAGE_TITLE available",
+            examples: [
+                ("Scroll to top",                 "window.scrollTo({top:0,behavior:'smooth'});'Scrolled to top'"),
+                ("Scroll to bottom",              "window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});'Done'"),
+                ("Word count on page",            "(function(){return'Words: '+document.body.innerText.split(/\\s+/).length;})()"),
+                ("Click element by text",         "(function(){var el=Array.from(document.querySelectorAll('a,button')).find(e=>e.textContent.toLowerCase().includes('{{query}}'.toLowerCase()));if(el){el.scrollIntoView();el.click();return'Clicked: '+el.textContent.trim();}return'Not found';})()"),
+                ("Highlight text on page",        "(function(){document.body.innerHTML=document.body.innerHTML.replace(/{{query}}/gi,'<mark style=\"background:#FFD60A;color:#000\">$&</mark>');return'Highlighted';})()"),
+                ("Copy all links",                "(function(){var h=[...new Set(Array.from(document.querySelectorAll('a[href]')).map(a=>a.href).filter(h=>h.startsWith('http')))].slice(0,50);navigator.clipboard.writeText(h.join('\\n'));return'Copied '+h.length+' links';})()"),
+                ("Toggle dark mode",              "(function(){var el=document.documentElement;var f=el.style.filter||'';el.style.filter=f.includes('invert')?f.replace('invert(1) hue-rotate(180deg)','').trim():(f+' invert(1) hue-rotate(180deg)').trim();return'Toggled';})()"),
+                ("Extract prices on page",        "(function(){var p=(document.body.innerText.match(/[$€£¥₹][\\d,]+\\.?\\d{0,2}/g)||[]);return[...new Set(p)].slice(0,20).join('\\n')||'No prices found';})()"),
+            ]
+        ),
+        Recipe(
+            type: "applescript", badge: "applescript", icon: "applescript", color: .orange,
+            tagline: "Automate macOS apps with AppleScript — variables are plain text replacements",
+            examples: [
+                ("Save selection to Notes",       "tell application \"Notes\" to make new note with properties {name:\"{{query}}\", body:\"{{selection}}\"}"),
+                ("Add to Reminders",              "tell application \"Reminders\" to make new reminder with properties {name:\"{{selection}}\"}"),
+                ("Draft email with selection",    "tell application \"Mail\" to make new outgoing message with properties {subject:\"{{selection}}\", content:\"\"}"),
+                ("Open URL in Safari",            "tell application \"Safari\" to open location \"{{url}}\""),
+                ("Speak selected text",           "say \"{{selection}}\""),
+                ("Show alert dialog",             "tell application \"System Events\" to display dialog \"{{selection}}\""),
+            ]
+        ),
+        Recipe(
+            type: "jxa", badge: "jxa", icon: "curlybraces", color: .yellow,
+            tagline: "JavaScript for Automation — reads live app data, return value shows in dock",
+            examples: [
+                ("Current Safari URL",            "Application('Safari').windows[0].currentTab.url()"),
+                ("Current Safari page title",     "Application('Safari').windows[0].currentTab.name()"),
+                ("Finder selected file names",    "Application('Finder').selection().map(f=>f.name()).join(', ')"),
+                ("Frontmost app name",            "Application('System Events').frontmost.name()"),
+                ("Note count in Notes",           "Application('Notes').notes.length+' notes'"),
+                ("Volume level",                  "Application('System Events').audioVolume()+'%'"),
+            ]
+        ),
+        Recipe(
+            type: "aiPrompt", badge: "aiPrompt", icon: "sparkles", color: .indigo,
+            tagline: "Pre-fills the AI chat — {{selection}}, {{url}}, {{query}}, {{clipboard}} available",
+            examples: [
+                ("Summarise selection",           "Summarise this in 3 bullet points:\n{{selection}}"),
+                ("Translate to Tamil",            "Translate the following to Tamil:\n{{selection}}"),
+                ("Explain code",                  "Explain what this code does step by step:\n{{selection}}"),
+                ("Fix grammar",                   "Fix the grammar and spelling of this text:\n{{selection}}"),
+                ("Summarise web page",            "Summarise what this page is about: {{url}}"),
+                ("Answer about query",            "Answer this question concisely: {{query}}"),
+            ]
+        ),
+        Recipe(
+            type: "urlScheme", badge: "urlScheme", icon: "link", color: .teal,
+            tagline: "Open apps via URL deep-links — $CURRENT_URL, $AX_SELECTED_TEXT, {{query}} supported",
+            examples: [
+                ("New Obsidian note",             "obsidian://new?content={{selection}}"),
+                ("Google search",                 "https://www.google.com/search?q={{query}}"),
+                ("Google Translate selection",    "https://translate.google.com/?sl=auto&tl=en&text={{selection}}"),
+                ("Bear note with selection",      "bear://x-callback-url/create?title={{query}}&text={{selection}}"),
+                ("Open Privacy prefs",            "x-apple.systempreferences:com.apple.preference.security"),
+                ("Open current URL in Chrome",    "googlechrome://$CURRENT_URL"),
+            ]
+        ),
+        Recipe(
+            type: "menubar", badge: "menubar", icon: "menubar.rectangle", color: .blue,
+            tagline: "Clicks any macOS menu item by path — must match the menu hierarchy exactly",
+            examples: [
+                ("New tab (Safari)",              "[\"File\", \"New Tab\"]"),
+                ("Close tab (Safari)",            "[\"File\", \"Close Tab\"]"),
+                ("Reload page (Safari)",          "[\"View\", \"Reload Page\"]"),
+                ("Open Find panel (any app)",     "[\"Edit\", \"Find\", \"Find…\"]"),
+                ("Export as PDF (Safari)",        "[\"File\", \"Export as PDF…\"]"),
+                ("Zoom window (any app)",         "[\"Window\", \"Zoom\"]"),
+            ]
+        ),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(recipes) { recipe in
+                recipeRow(recipe)
+                if recipe.type != recipes.last?.type {
+                    Divider().padding(.leading, 36)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.09)))
+    }
+
+    private func recipeRow(_ recipe: Recipe) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    expanded = expanded == recipe.type ? nil : recipe.type
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: recipe.icon)
+                        .font(.system(size: 12))
+                        .foregroundStyle(recipe.color)
+                        .frame(width: 18)
+                    Text(recipe.badge)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(recipe.color)
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(recipe.tagline)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: expanded == recipe.type ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(expanded == recipe.type ? recipe.color.opacity(0.05) : Color.clear)
+
+            if expanded == recipe.type {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(recipe.examples, id: \.title) { ex in
+                        codeBlock(title: ex.title, code: ex.code, color: recipe.color)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+                .background(recipe.color.opacity(0.04))
+            }
+        }
+    }
+
+    private func codeBlock(title: String, code: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+            HStack(alignment: .center, spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(code)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize()
+                }
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                        .foregroundStyle(color.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .help("Copy code")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(NSColor.textBackgroundColor).opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
     }
 }
 

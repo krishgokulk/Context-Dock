@@ -64,14 +64,41 @@ private struct MenuEntry {
 }
 
 private let safariMenuMap: [MenuEntry] = [
+    // ── Window management ─────────────────────────────────────────────────────
+    MenuEntry(
+        aliases: ["minimise window", "minimize window", "minimise safari", "minimize safari", "minimise"],
+        menu: "Window", item: "Minimise",
+        tag: "[SAFARI_MENU: Window > Minimise]"
+    ),
+    MenuEntry(
+        aliases: ["zoom window", "zoom safari", "maximise window", "maximize window", "zoom"],
+        menu: "Window", item: "Zoom",
+        tag: "[SAFARI_MENU: Window > Zoom]"
+    ),
+    MenuEntry(
+        aliases: ["fill screen", "fill window", "fill"],
+        menu: "Window", item: "Fill",
+        tag: "[SAFARI_MENU: Window > Fill]"
+    ),
+    MenuEntry(
+        aliases: ["centre window", "center window", "centre", "center"],
+        menu: "Window", item: "Centre",
+        tag: "[SAFARI_MENU: Window > Centre]"
+    ),
+    MenuEntry(
+        aliases: ["bring all to front", "bring to front", "bring all windows"],
+        menu: "Window", item: "Bring All to Front",
+        tag: "[SAFARI_MENU: Window > Bring All to Front]"
+    ),
+
     // ── Tab navigation ────────────────────────────────────────────────────────
     MenuEntry(
-        aliases: ["next tab", "switch tab", "go to next", "show next tab", "forward tab"],
+        aliases: ["next tab", "switch tab", "go to next tab", "show next tab", "forward tab"],
         menu: "Window", item: "Show Next Tab",
         tag: "[SAFARI_MENU: Window > Show Next Tab]"
     ),
     MenuEntry(
-        aliases: ["previous tab", "prev tab", "go back tab", "show previous tab", "last tab", "prior tab"],
+        aliases: ["previous tab", "prev tab", "go back tab", "show previous tab", "last tab", "prior tab", "switch previous tab", "back tab"],
         menu: "Window", item: "Show Previous Tab",
         tag: "[SAFARI_MENU: Window > Show Previous Tab]"
     ),
@@ -106,6 +133,11 @@ private let safariMenuMap: [MenuEntry] = [
         aliases: ["mute tab", "mute this tab", "silence tab", "mute audio", "mute sound"],
         menu: "Window", item: "Mute This Tab",
         tag: "[SAFARI_MENU: Window > Mute This Tab]"
+    ),
+    MenuEntry(
+        aliases: ["mute other tabs", "mute all other tabs", "silence other tabs", "mute others"],
+        menu: "Window", item: "Mute Other Tabs",
+        tag: "[SAFARI_MENU: Window > Mute Other Tabs]"
     ),
     MenuEntry(
         aliases: ["arrange tabs", "sort tabs", "organize tabs"],
@@ -281,6 +313,51 @@ final class SafariCommandBridge {
     func parseIntent(_ query: String) -> SafariCommand? {
         let q = query.lowercased()
 
+        // ── "search X in new tab" — must run BEFORE menuMap so "new tab" alias
+        //    in the menuMap entry doesn't steal "search X in new tab" queries ─────
+        if q.contains("new tab") || q.contains("open tab") {
+            let engine = SearchEngine.detect(from: q)
+            let stripped = stripSearchNoise(q, engine: engine)
+            if !stripped.isEmpty {
+                return .searchNewTab(query: stripped, engine: engine)
+            }
+            return .menuItem(menu: "File", item: "New Tab")
+        }
+
+        // ── Click / tap / play element by visible text ───────────────────────
+        if q.hasPrefix("click ") || q.hasPrefix("tap ") || q.hasPrefix("press ")
+            || q.hasPrefix("play ") || q.hasPrefix("open video ") || q.hasPrefix("watch ")
+        {
+            var term = q
+                .replacingOccurrences(
+                    of: "^(click|tap|press|play|watch|open video)\\s+",
+                    with: "", options: .regularExpression
+                )
+                // Strip trailing context phrases
+                .replacingOccurrences(of: " from this page", with: "")
+                .replacingOccurrences(of: " on this page", with: "")
+                .replacingOccurrences(of: " on the page", with: "")
+                .replacingOccurrences(of: " from the page", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !term.isEmpty {
+                let esc = term.replacingOccurrences(of: "'", with: "\\'")
+                let js = """
+                (function(){
+                    var t='\(esc)'.toLowerCase();
+                    var hits=Array.from(document.querySelectorAll('a,button,[role="button"],[role="link"],[onclick]'));
+                    var el=hits.find(function(e){return e.textContent.toLowerCase().includes(t);});
+                    if(!el){
+                        var all=Array.from(document.querySelectorAll('*'));
+                        el=all.find(function(e){return e.childElementCount===0&&e.textContent.toLowerCase().trim().includes(t);});
+                    }
+                    if(el){el.scrollIntoView({block:'center'});el.click();return 'Clicked: '+el.textContent.trim().slice(0,60);}
+                    return 'No element found matching: \(esc)';
+                })()
+                """
+                return .runPageJS(script: js)
+            }
+        }
+
         // Menu map — O(n) alias scan, instant
         for entry in safariMenuMap {
             if entry.aliases.contains(where: { q.contains($0) }) {
@@ -288,22 +365,45 @@ final class SafariCommandBridge {
             }
         }
 
-        // Search / open URL
-        if q.contains("new tab") || q.contains("open tab") {
-            let engine = SearchEngine.detect(from: q)
-            let stripped = stripSearchNoise(q, engine: engine)
-            // Only treat as search if there's actual query text remaining
-            if !stripped.isEmpty && stripped != q.trimmingCharacters(in: .whitespaces) {
-                return .searchNewTab(query: stripped, engine: engine)
-            }
-            // Bare "new tab" / "open tab" with no query → File > New Tab
-            return .menuItem(menu: "File", item: "New Tab")
-        }
+        // YouTube / Amazon targeted searches (with engine keyword in query)
         if q.contains("youtube") && (q.contains("search") || q.contains("watch") || q.contains("find")) {
             return .searchNewTab(query: stripSearchNoise(q, engine: .youtube), engine: .youtube)
         }
         if q.contains("amazon") && (q.contains("search") || q.contains("buy") || q.contains("price") || q.contains("find")) {
             return .searchNewTab(query: stripSearchNoise(q, engine: .amazon), engine: .amazon)
+        }
+
+        // ── Bare "search X" / "find X" (no engine or "new tab" needed) ────────
+        if q.hasPrefix("search ") || q.hasPrefix("find ") {
+            let engine = SearchEngine.detect(from: q)
+            let stripped = stripSearchNoise(q, engine: engine)
+            if !stripped.isEmpty { return .searchNewTab(query: stripped, engine: engine) }
+        }
+
+        // ── "open <url or name>" ───────────────────────────────────────────────
+        // Exclude "open tab", "open a new tab" etc. — those are caught by menuMap above.
+        if q.hasPrefix("open ") && !q.contains("tab") && !q.contains("window") {
+            let term = String(q.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !term.isEmpty {
+                if !term.contains(" ") && term.contains(".") {
+                    let url = term.hasPrefix("http") ? term : "https://\(term)"
+                    return .openTab(url: url)
+                }
+                let engine = SearchEngine.detect(from: term)
+                return .searchNewTab(query: term, engine: engine)
+            }
+        }
+        // ── "go to <url or name>" ─────────────────────────────────────────────
+        if q.hasPrefix("go to ") {
+            let term = String(q.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !term.isEmpty {
+                if !term.contains(" ") && term.contains(".") {
+                    let url = term.hasPrefix("http") ? term : "https://\(term)"
+                    return .openTab(url: url)
+                }
+                let engine = SearchEngine.detect(from: term)
+                return .searchNewTab(query: term, engine: engine)
+            }
         }
 
         // Page content actions
@@ -378,6 +478,7 @@ final class SafariCommandBridge {
           [SAFARI_PRICES]  [SAFARI_HIGHLIGHT: text]  [SAFARI_SCRAPE: css]
           [SAFARI_CLICK: css]  [SAFARI_PAGE_JS: js]  [SAFARI_CLOSE_TAB]
         Rule: wrap in one sentence. Example: "Switching tabs. [SAFARI_MENU: Window > Show Next Tab]"
+        CRITICAL: NEVER emit [TERMINAL_COMMAND] or [EXECUTE_COMMAND] when Safari is frontmost. Always use SAFARI_ tags for every browser action, including clicking links, searching, and navigating.
         """
     }
 

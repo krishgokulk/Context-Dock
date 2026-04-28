@@ -517,8 +517,18 @@ final class AppAdapterManager: ObservableObject {
             // Resolve context vars (including $PAGE_TEXT and $SELECTED_TEXT from bridge)
             let resolved = injectPageContext(script, context: context, query: query)
             // Execute directly in the active Safari page via SafariTabManager
-            let result = await SafariTabManager.shared.executeJS(resolved) ?? ""
-            return (true, result.isEmpty ? "Script executed" : result)
+            let result = await SafariTabManager.shared.executeJS(resolved)
+            if result == nil {
+                return (false, "Failed to write script to disk")
+            }
+            let output = result!
+            if output.hasPrefix("JS error:") {
+                let hint = output.contains("1728") || output.contains("not allowed") || output.contains("JavaScript from Apple Events")
+                    ? "\(output)\n\nTip: In Safari, go to Develop menu → Allow JavaScript from Apple Events"
+                    : output
+                return (false, hint)
+            }
+            return (true, output.isEmpty ? "Script executed" : output)
         }
     }
 

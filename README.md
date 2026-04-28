@@ -395,6 +395,23 @@ Contact
 
 ## Changelog
 
+### 2026-04-25 (4)
+- **Auto-exit app scope when scoped app becomes frontmost** — if the user pinned Safari scope via Tab and then switches to Safari, the explicit scope dissolves automatically (search text cleared, `l2TargetApp` nil'd); the dock resumes normal frontmost-app mode without requiring "Exit Scope"
+- **"play X from this page" → page JS click** — `parseIntent` now handles `play / watch / open video` prefixes the same as `click`, stripping "from this page / on this page" context phrases; the matching element is scrolled into view and clicked (works on-device and offline, no AI call)
+- **Safari command pill for "play"** — pill shows with `play.circle` icon when query starts with "play" or "watch"
+
+### 2026-04-25 (3)
+- **Safari "click X" / "search X" / "open X" commands** — `parseIntent()` now handles:
+  - `click <text>` / `tap <text>` — injects page JS that finds and clicks any element (link, button, or text node) matching the visible text, with `scrollIntoView` first
+  - `search <query>` (bare, no "in new tab" required) — opens a new tab and searches Google/YouTube/Amazon depending on context
+  - `search <query> in new tab` — fixed: previously the `new tab` menuMap alias stole these queries before the search logic ran
+  - `open <name>` — if single-word with a dot, navigates to URL; otherwise searches on Google
+  - `go to <url or name>` — same URL-vs-search logic
+- **Safari excluded from MenuIntentRouter** — `menuRouteEligible` now skips menu routing when Safari is frontmost; Safari uses its own three-tier command system instead of the generic menu cache
+- **TERMINAL_COMMAND guard** — Safari compact system prompt now explicitly forbids `[TERMINAL_COMMAND]` and `[EXECUTE_COMMAND]` tags when Safari is frontmost
+- **safariMenuMap expanded** — added missing Window menu items: Minimise, Zoom, Fill, Centre, Bring All to Front, Mute Other Tabs; added "switch previous tab" / "back tab" aliases to Show Previous Tab
+- **Safari command pills** — `buildSafariCommandPills(query:)` now generates DockPill entries for page-level Safari commands (search, click, open, highlight, extract prices) as the user types, so they appear as pills in the suggestion row just like app menu items do; menu items are excluded from this path to avoid duplicates with the AX pill system
+
 ### 2026-04-25 (2)
 - **PDF global context fix** — "explain about this file" and other content questions on a selected PDF now read the document and answer directly; previously the AI emitted a `[TERMINAL_COMMAND:]` tag instead of answering from content. Fast-path now covers: explain, describe, what is, tell me about, this file, translate, analyze, overview, key points, highlight, summarize
 

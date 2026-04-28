@@ -715,6 +715,14 @@ class AppSettings: ObservableObject {
     @AppStorage("crossAppPills") var crossAppPills: Bool = true         // "Send to [running app]" pills based on context
     @AppStorage("clipboardAwarePills") var clipboardAwarePills: Bool = true  // Pills based on clipboard content type
     @AppStorage("sessionDetectionPills") var sessionDetectionPills: Bool = true // Pre-rank pills by detected work session type
+    @AppStorage("clipboardHistoryLimit") var clipboardHistoryLimit: Int = 10  // Max entries kept in clipboard history (5–50)
+    @AppStorage("dockIconSize") var dockIconSize: Double = 58  // App icon and pill size in dock (28–72, default 58)
+
+    // Notification Settings
+    @AppStorage("notifyOnActionCompleted") var notifyOnActionCompleted: Bool = true
+    @AppStorage("notifyOnActionFailed") var notifyOnActionFailed: Bool = true
+    @AppStorage("notifyOnAIResponse") var notifyOnAIResponse: Bool = false
+    @AppStorage("notifySystemBanners") var notifySystemBanners: Bool = false
 
     // AI Provider Settings
     @AppStorage("selectedAIProvider") private var _selectedAIProvider: String = AIProvider.onDevice.rawValue
@@ -743,6 +751,7 @@ class AppSettings: ObservableObject {
     @AppStorage("appearanceMode") var appearanceMode: String = "system" // "system", "light", "dark"
     @AppStorage("glassBlurRadius") var glassBlurRadius: Double = 1.0 // 0.0 = no blur (opaque), 1.0 = full system blur
     @AppStorage("launcherWindowOpacity") var launcherWindowOpacity: Double = 0.95 // Launcher window transparency (0.0 = fully transparent, 1.0 = opaque)
+    @AppStorage("dockLogoStyle") var dockLogoStyle: String = "d_logo" // "d_logo", "apple", "system_photo"
     @AppStorage("folderPreviewOpacity") var folderPreviewOpacity: Double = 0.98 // Folder preview window transparency
     @AppStorage("webSearchWindowOpacity") var webSearchWindowOpacity: Double = 0.98 // Web search window transparency
     @AppStorage("folderPreviewWidth") var folderPreviewWidth: Double = 800 // Folder preview window width

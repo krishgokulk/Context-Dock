@@ -621,13 +621,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func opacitySettingChanged() {
-        applyLauncherWindowOpacity()
-        applyAppearanceOverride()
-        applyPersistentDockBehavior()
+        // UserDefaults.didChangeNotification can fire on any thread — always dispatch to main
+        DispatchQueue.main.async { [weak self] in
+            self?.applyLauncherWindowOpacity()
+            self?.applyAppearanceOverride()
+            self?.applyPersistentDockBehavior()
+        }
     }
 
     func applyLauncherWindowOpacity() {
-        launcherWindow?.alphaValue = settings.launcherWindowOpacity
+        // Keep the window fully opaque — opacity is applied only to GlassBackground
+        // so pills, icons, and input fields remain crisp regardless of the slider.
+        launcherWindow?.alphaValue = 1.0
     }
 
     func applyPersistentDockBehavior() {
@@ -1016,10 +1021,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         applyPersistentDockBehavior()
 
-        // Auto-hide can leave the persistent window visible but fully transparent.
-        // Make the hotkey a recovery action instead of just making a hidden panel key.
-        let visibleAlpha = settings.launcherWindowOpacity > 0.05 ? settings.launcherWindowOpacity : 1.0
-        window.alphaValue = visibleAlpha
+        // Auto-hide can leave the persistent window at alphaValue 0 — restore it fully.
+        window.alphaValue = 1.0
         window.orderFrontRegardless()
         window.makeKey()
         NSApp.activate(ignoringOtherApps: true)

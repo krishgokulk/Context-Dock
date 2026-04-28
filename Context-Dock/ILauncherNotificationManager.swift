@@ -97,7 +97,9 @@ final class ILauncherNotificationManager: ObservableObject {
                     icon: String = "bell.fill", accentColor: String = "blue",
                     action: (() -> Void)? = nil) {
         post(title: title, body: body, icon: icon, accentColor: accentColor, action: action)
-        fireSystemBanner(title: title, body: body)
+        if AppSettings.shared.notifySystemBanners {
+            fireSystemBanner(title: title, body: body)
+        }
     }
 
     // MARK: - Reading

@@ -515,6 +515,27 @@ class AIProviderService: ObservableObject {
                 prompt += "Answer in the context of \(name).\n"
             }
 
+            // Inject learned usage patterns for this app (from AppInteractionStore)
+            let topActions = AppInteractionStore.shared.topActionIds(for: bundleID, limit: 6)
+            let recentQueries = AppInteractionStore.shared.recentQueries(for: bundleID, limit: 8)
+            if !topActions.isEmpty || !recentQueries.isEmpty {
+                prompt += "\n\n## \(name) — Learned Usage (from this device)\n"
+                if !topActions.isEmpty {
+                    prompt += "Most-used actions (prefer these when relevant):\n"
+                    for (id, count) in topActions {
+                        let label = id.components(separatedBy: " > ").last ?? id
+                        prompt += "• \(label) (used \(count)×)\n"
+                    }
+                }
+                if !recentQueries.isEmpty {
+                    prompt += "Recent queries for \(name):\n"
+                    for q in recentQueries.prefix(5) {
+                        prompt += "• \(q)\n"
+                    }
+                }
+                prompt += "Use this history to anticipate intent — prefer proven actions over guessing.\n"
+            }
+
         case .contactSelected(let contact):
             prompt += "\n\nThe user has selected a contact: \(contact)\n"
 
