@@ -137,6 +137,54 @@ final class ShareIntentRouter {
         }
     }
 
+    func executeText(
+        _ text: String,
+        resolution: ShareIntentResolution,
+        subject: String = "Shared from Context-Dock",
+        presentSharingPicker: (([Any]) -> Void)? = nil
+    ) async -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "❌ Nothing to send." }
+
+        switch resolution.intent.channelHint {
+        case .messages:
+            if let recipientHandle = resolution.recipientHandle,
+                AppSettings.shared.allowAutomation,
+                runMessagesTextAutomation(
+                    recipientHandle: recipientHandle,
+                    text: String(trimmed.prefix(3500))
+                )
+            {
+                return "✅ Sent summary to \(resolution.recipientDisplayName) via Messages"
+            }
+            if resolution.intent.recipientQuery != nil, resolution.recipientHandle == nil {
+                return "⚠️ I couldn't resolve \(resolution.recipientDisplayName)."
+            }
+            presentSharingPicker?([trimmed])
+            return "✅ Opening Messages share…"
+
+        case .mail:
+            if AppSettings.shared.allowAutomation,
+                runMailAutomation(
+                    recipient: resolution.recipientHandle,
+                    subject: subject,
+                    body: trimmed,
+                    attachmentPaths: []
+                )
+            {
+                return resolution.recipientHandle == nil
+                    ? "✅ Mail draft opened with summary."
+                    : "✅ Mail draft opened for \(resolution.recipientDisplayName)."
+            }
+            presentSharingPicker?([trimmed])
+            return "✅ Opening Mail share…"
+
+        case .airDrop, .picker:
+            presentSharingPicker?([trimmed])
+            return "✅ Opening share sheet…"
+        }
+    }
+
     private func executeMessages(
         _ resolution: ShareIntentResolution,
         axContext: AXContext,
@@ -403,6 +451,17 @@ final class ShareIntentRouter {
             activate
             set svc to 1st service whose service type = iMessage
             open (buddy "\(handle)" of svc)
+        end tell
+        """
+        return runAppleScript(script)
+    }
+
+    private func runMessagesTextAutomation(recipientHandle: String, text: String) -> Bool {
+        let script = """
+        tell application "Messages"
+            set svc to 1st service whose service type = iMessage
+            set buddyRef to buddy "\(escapeAppleScript(recipientHandle))" of svc
+            send "\(escapeAppleScript(text))" to buddyRef
         end tell
         """
         return runAppleScript(script)

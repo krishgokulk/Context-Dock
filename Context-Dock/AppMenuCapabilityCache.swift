@@ -155,6 +155,14 @@ final class AppMenuCapabilityCache {
         }
     }
 
+    nonisolated func record(path: [String], bundleIdentifier: String) -> AppMenuCapabilityRecord? {
+        lock.lock()
+        let records = snapshots[bundleIdentifier]?.records ?? []
+        lock.unlock()
+        let target = Self.normalize(path.joined(separator: " > "))
+        return records.first { $0.normalizedPath == target }
+    }
+
     nonisolated func hasSnapshot(bundleIdentifier: String) -> Bool {
         guard !bundleIdentifier.isEmpty else { return false }
         lock.lock()

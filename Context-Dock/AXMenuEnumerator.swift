@@ -9,45 +9,160 @@ struct AXMenuItemInfo: Identifiable, Codable, Equatable {
     let shortcutDisplay: String?  // e.g., "⌘T"
 }
 
+// MARK: - PersistedMenuSnapshot
+// Wraps cached menu items with version metadata for disk validation.
+// menuSignature is a cheap fingerprint of top-level bar titles (e.g. "File|Edit|View|…")
+// that can catch dynamic menu changes without a full re-enumeration.
+
+struct PersistedMenuSnapshot: Codable {
+    let bundleVersion: String
+    let menuSignature: String
+    let items: [AXMenuItemInfo]
+    let savedAt: Date
+}
+
+// MARK: - AXMenuCache (in-memory, session-scoped)
+
+private final class AXMenuCache {
+    private struct Entry {
+        let items: [AXMenuItemInfo]
+        let bundleVersion: String
+        let menuSignature: String
+    }
+
+    private var store: [String: Entry] = [:]
+    private let lock = NSLock()
+
+    func get(bundleId: String, bundleVersion: String) -> [AXMenuItemInfo]? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let e = store[bundleId], e.bundleVersion == bundleVersion else { return nil }
+        return e.items
+    }
+
+    func set(_ items: [AXMenuItemInfo], bundleId: String, bundleVersion: String, menuSignature: String = "") {
+        lock.lock()
+        store[bundleId] = Entry(items: items, bundleVersion: bundleVersion, menuSignature: menuSignature)
+        lock.unlock()
+    }
+
+    func invalidate(bundleId: String) {
+        lock.lock()
+        store.removeValue(forKey: bundleId)
+        lock.unlock()
+    }
+}
+
+// MARK: - AXMenuEnumerator
+
 final class AXMenuEnumerator {
     static let shared = AXMenuEnumerator()
 
+    private let memCache = AXMenuCache()
+
     private init() {}
 
+    // MARK: - Async cached API (three tiers)
+
+    /// memory → disk (version-validated) → live AX enumeration.
+    /// Does NOT invalidate on app switch — invalidation happens only on version change.
+    func getMenuAsync(for app: NSRunningApplication) async -> [AXMenuItemInfo] {
+        let bundleId = app.bundleIdentifier ?? ""
+        let version  = bundleVersionString(for: app)
+
+        // Tier 1: in-memory (zero cost, same session)
+        if let cached = memCache.get(bundleId: bundleId, bundleVersion: version) {
+            return cached
+        }
+
+        // Tier 2: disk snapshot (survives restarts, version-validated)
+        if let snapshot = ContextDockStore.shared.loadMenuSnapshot(bundleId: bundleId) {
+            if snapshot.bundleVersion == version {
+                memCache.set(snapshot.items, bundleId: bundleId,
+                             bundleVersion: version, menuSignature: snapshot.menuSignature)
+                return snapshot.items
+            }
+            // Version changed — disk cache stale, fall through to live enumeration
+        }
+
+        // Tier 3: live AX enumeration on background thread
+        let pid   = app.processIdentifier
+        let items = await Task.detached(priority: .utility) { [self] in
+            self.enumerateMenuItems(for: pid)
+        }.value
+
+        let sig = topLevelMenuSignature(for: pid)
+        memCache.set(items, bundleId: bundleId, bundleVersion: version, menuSignature: sig)
+
+        if !items.isEmpty {
+            let snapshot = PersistedMenuSnapshot(
+                bundleVersion: version,
+                menuSignature: sig,
+                items: items,
+                savedAt: Date()
+            )
+            ContextDockStore.shared.saveMenuSnapshot(snapshot, bundleId: bundleId)
+        }
+
+        return items
+    }
+
+    /// Force-clear both tiers — call only on explicit user action or bundle uninstall.
+    /// Do NOT call on every app switch; that defeats the disk cache entirely.
+    func invalidate(bundleId: String) {
+        memCache.invalidate(bundleId: bundleId)
+        ContextDockStore.shared.deleteMenuSnapshot(bundleId: bundleId)
+    }
+
+    // MARK: - Menu signature (fingerprint of top-level bar titles)
+
+    func topLevelMenuSignature(for pid: pid_t) -> String {
+        guard let menuBar = menuBarElement(for: pid) else { return "" }
+        var childRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(menuBar, "AXChildren" as CFString, &childRef) == .success,
+              let children = childRef as? [AXUIElement] else { return "" }
+        return children
+            .compactMap { stringAttr($0, "AXTitle") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "|")
+    }
+
+    // MARK: - Synchronous API (kept for compatibility)
+
     func enumerateMenuItemsForFrontmostApp() -> [AXMenuItemInfo] {
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return [] }
-        return enumerateMenuItems(for: frontmostApp.processIdentifier)
+        guard let front = NSWorkspace.shared.frontmostApplication else { return [] }
+        return enumerateMenuItems(for: front.processIdentifier)
     }
 
     func enumerateMenuItems(for pid: pid_t) -> [AXMenuItemInfo] {
         guard let menuBar = menuBarElement(for: pid) else { return [] }
-
         var results: [AXMenuItemInfo] = []
         var seenPaths = Set<String>()
-        recurse(menuElement: menuBar, currentPath: [], results: &results, seenPaths: &seenPaths)
+        recurse(menuElement: menuBar, currentPath: [], results: &results,
+                seenPaths: &seenPaths, depth: 0)
         return results
     }
 
-    // MARK: - Private
+    // MARK: - Private recursion
 
     private func recurse(menuElement: AXUIElement,
                          currentPath: [String],
                          results: inout [AXMenuItemInfo],
-                         seenPaths: inout Set<String>) {
+                         seenPaths: inout Set<String>,
+                         depth: Int) {
+        guard depth < 10 else { return }
+
         var childRef: AnyObject?
         guard AXUIElementCopyAttributeValue(menuElement, "AXChildren" as CFString, &childRef) == .success,
               let children = childRef as? [AXUIElement] else { return }
 
         for child in children {
             guard let title = stringAttr(child, "AXTitle"), !title.isEmpty else { continue }
-
             let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty || trimmed == "-" || trimmed == "separator" { continue }
+            if let role = stringAttr(child, "AXRole"), role == "AXMenuItemRole", trimmed == "-" { continue }
 
-            if let role = stringAttr(child, "AXRole"), role == "AXMenuItemRole",
-               trimmed == "-" { continue }
-
-            let enabled = boolAttr(child, "AXEnabled") ?? true
+            let enabled  = boolAttr(child, "AXEnabled") ?? true
             let fullPath = (currentPath + [trimmed]).joined(separator: " > ")
             guard !seenPaths.contains(fullPath) else { continue }
             seenPaths.insert(fullPath)
@@ -59,44 +174,34 @@ final class AXMenuEnumerator {
             }
 
             results.append(AXMenuItemInfo(
-                id: UUID(),
-                title: trimmed,
-                fullPath: fullPath,
-                enabled: enabled,
-                shortcutDisplay: shortcutDisplay
+                id: UUID(), title: trimmed, fullPath: fullPath,
+                enabled: enabled, shortcutDisplay: shortcutDisplay
             ))
 
-            // Recurse into submenu
             var subRef: AnyObject?
             if AXUIElementCopyAttributeValue(child, "AXChildren" as CFString, &subRef) == .success,
                let sub = subRef as? [AXUIElement], !sub.isEmpty {
                 recurse(menuElement: child, currentPath: currentPath + [trimmed],
-                        results: &results, seenPaths: &seenPaths)
+                        results: &results, seenPaths: &seenPaths, depth: depth + 1)
             } else if AXUIElementCopyAttributeValue(child, "AXMenu" as CFString, &subRef) == .success,
                       let subMenu = subRef as! AXUIElement? {
                 recurse(menuElement: subMenu, currentPath: currentPath + [trimmed],
-                        results: &results, seenPaths: &seenPaths)
+                        results: &results, seenPaths: &seenPaths, depth: depth + 1)
             }
         }
     }
 
-    // MARK: - Attribute helpers
+    // MARK: - AX attribute helpers
 
     private func menuBarElement(for pid: pid_t) -> AXUIElement? {
-        let appElement = AXUIElementCreateApplication(pid)
-        if let bar = elementAttr(appElement, "AXMenuBar") {
-            return bar
+        let appEl = AXUIElementCreateApplication(pid)
+        if let bar = elementAttr(appEl, "AXMenuBar") { return bar }
+        let sysWide = AXUIElementCreateSystemWide()
+        if let focusedApp = elementAttr(sysWide, kAXFocusedApplicationAttribute as String) {
+            var focPID: pid_t = 0
+            AXUIElementGetPid(focusedApp, &focPID)
+            if focPID == pid, let bar = elementAttr(focusedApp, "AXMenuBar") { return bar }
         }
-
-        let systemWide = AXUIElementCreateSystemWide()
-        if let focusedApp = elementAttr(systemWide, kAXFocusedApplicationAttribute as String) {
-            var focusedPID: pid_t = 0
-            AXUIElementGetPid(focusedApp, &focusedPID)
-            if focusedPID == pid, let bar = elementAttr(focusedApp, "AXMenuBar") {
-                return bar
-            }
-        }
-
         return nil
     }
 
@@ -133,5 +238,12 @@ final class AXMenuEnumerator {
         if (modifiers & (1 << 17)) != 0 { parts.append("⇧") }
         parts.append(char.uppercased())
         return parts.joined()
+    }
+
+    private func bundleVersionString(for app: NSRunningApplication) -> String {
+        guard let url = app.bundleURL, let bundle = Bundle(url: url) else { return "" }
+        return bundle.infoDictionary?["CFBundleShortVersionString"] as? String
+            ?? bundle.infoDictionary?["CFBundleVersion"] as? String
+            ?? ""
     }
 }

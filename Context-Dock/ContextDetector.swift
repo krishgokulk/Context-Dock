@@ -23,16 +23,18 @@ class ContextDetector {
     func getFinderSelectedFiles() -> [URL] {
         let script = """
         tell application "Finder"
-            if (count of windows) > 0 then
-                set selectedItems to selection
-                set filePaths to {}
-                repeat with anItem in selectedItems
+            set selectedItems to selection
+            set oldDelims to AppleScript's text item delimiters
+            set AppleScript's text item delimiters to linefeed
+            set filePaths to {}
+            repeat with anItem in selectedItems
+                try
                     set end of filePaths to POSIX path of (anItem as alias)
-                end repeat
-                return filePaths
-            else
-                return {}
-            end if
+                end try
+            end repeat
+            set joinedPaths to filePaths as text
+            set AppleScript's text item delimiters to oldDelims
+            return joinedPaths
         end tell
         """
 
@@ -40,8 +42,7 @@ class ContextDetector {
             return []
         }
 
-        // Parse result (comma-separated paths)
-        let paths = result.components(separatedBy: ", ")
+        let paths = result.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 

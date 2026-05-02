@@ -282,9 +282,175 @@ struct ListAppMenuActionsTool: Tool {
 }
 
 @available(macOS 26.0, *)
+private func normalizedMenuTokenText(_ text: String) -> String {
+    text
+        .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        .lowercased()
+        .replacingOccurrences(of: "…", with: "")
+        .replacingOccurrences(of: "...", with: "")
+        .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+@available(macOS 26.0, *)
+private func normalizedMenuPath(_ path: [String]) -> [String] {
+    path.map(normalizedMenuTokenText)
+}
+
+@available(macOS 26.0, *)
+private func menuIntentTokens(_ text: String) -> Set<String> {
+    let stopWords: Set<String> = [
+        "a", "an", "and", "app", "application", "do", "for", "in", "it", "me", "my",
+        "of", "on", "please", "that", "the", "this", "to", "with"
+    ]
+    let aliases: [String: [String]] = [
+        "bin": ["trash"],
+        "delete": ["remove", "trash"],
+        "find": ["search"],
+        "fullscreen": ["full", "screen"],
+        "minimise": ["minimize", "miniaturize"],
+        "new": ["create", "add"],
+        "prefs": ["preferences", "settings"],
+        "preference": ["settings"],
+        "preferences": ["settings"],
+        "quit": ["exit"],
+        "remove": ["delete"],
+        "search": ["find"],
+        "settings": ["preferences"],
+        "trash": ["bin", "delete"]
+    ]
+    var tokens = Set(
+        normalizedMenuTokenText(text)
+            .split(separator: " ")
+            .map(String.init)
+            .filter { $0.count > 1 && !stopWords.contains($0) }
+    )
+    for token in Array(tokens) {
+        for alias in aliases[token, default: []] {
+            tokens.insert(alias)
+        }
+    }
+    return tokens
+}
+
+@available(macOS 26.0, *)
+private func menuCandidates(
+    bundleId: String,
+    appName: String,
+    processIdentifier: pid_t,
+    query: String,
+    maxResults: Int = 80
+) -> [AXMenuItem] {
+    let runningApp = NSWorkspace.shared.runningApplications.first(where: {
+        $0.bundleIdentifier == bundleId && !$0.isTerminated
+    })
+    if let runningApp {
+        let live = AXMenuReader.shared.cachedAllMenuItems(
+            for: runningApp.processIdentifier,
+            maxDepth: 6
+        )
+        if !live.isEmpty {
+            AppMenuCapabilityCache.shared.store(items: live, for: runningApp)
+        }
+    }
+
+    let cached = AppMenuCapabilityCache.shared.menuItems(
+        bundleIdentifier: bundleId,
+        appName: appName,
+        processIdentifier: processIdentifier,
+        query: query,
+        maxResults: maxResults
+    )
+
+    let live = runningApp.map {
+        AXMenuReader.shared.cachedAllMenuItems(for: $0.processIdentifier, maxDepth: 6)
+    } ?? []
+
+    var seen = Set<String>()
+    return (cached + live).filter { item in
+        guard item.children.isEmpty,
+              !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        let key = normalizedMenuPath(item.path).joined(separator: ">")
+        return seen.insert(key).inserted
+    }
+}
+
+@available(macOS 26.0, *)
+private func bestMenuMatch(
+    intent: String,
+    bundleId: String,
+    appName: String,
+    processIdentifier: pid_t
+) -> AXMenuItem? {
+    let intentTokens = menuIntentTokens(intent)
+    guard !intentTokens.isEmpty else { return nil }
+    let normalizedIntent = normalizedMenuTokenText(intent)
+
+    let candidates = menuCandidates(
+        bundleId: bundleId,
+        appName: appName,
+        processIdentifier: processIdentifier,
+        query: normalizedIntent,
+        maxResults: 120
+    )
+
+    let scored = candidates.compactMap { item -> (AXMenuItem, Double)? in
+        let title = normalizedMenuTokenText(item.title)
+        let pathText = normalizedMenuTokenText(item.path.joined(separator: " "))
+        let pathTokens = menuIntentTokens(pathText)
+        let overlap = intentTokens.intersection(pathTokens).count
+        guard overlap > 0 || title.contains(normalizedIntent) || normalizedIntent.contains(title)
+        else { return nil }
+
+        var score = Double(overlap) * 12
+        if title == normalizedIntent { score += 80 }
+        if title.hasPrefix(normalizedIntent) || normalizedIntent.hasPrefix(title) { score += 32 }
+        if title.contains(normalizedIntent) || normalizedIntent.contains(title) { score += 22 }
+        if item.isEnabled { score += 8 } else { score -= 20 }
+        score -= Double(max(0, item.path.count - 2)) * 1.5
+        return (item, score)
+    }
+    .sorted {
+        if $0.1 != $1.1 { return $0.1 > $1.1 }
+        if $0.0.isEnabled != $1.0.isEnabled { return $0.0.isEnabled && !$1.0.isEnabled }
+        return $0.0.path.count < $1.0.path.count
+    }
+
+    guard let best = scored.first, best.1 >= 12 else { return nil }
+    return best.0
+}
+
+@available(macOS 26.0, *)
+private func menuSuggestions(
+    intent: String,
+    bundleId: String,
+    appName: String,
+    processIdentifier: pid_t
+) -> [String] {
+    let tokens = menuIntentTokens(intent)
+    return menuCandidates(
+        bundleId: bundleId,
+        appName: appName,
+        processIdentifier: processIdentifier,
+        query: intent,
+        maxResults: 40
+    )
+    .map { item -> (String, Int) in
+        let count = tokens.intersection(menuIntentTokens(item.path.joined(separator: " "))).count
+        let availability = item.isEnabled ? "" : " (disabled)"
+        return ("- \(item.path.joined(separator: " > "))\(availability)", count)
+    }
+    .filter { $0.1 > 0 }
+    .sorted { $0.1 > $1.1 }
+    .prefix(5)
+    .map(\.0)
+}
+
+@available(macOS 26.0, *)
 struct ExecuteAppMenuPathTool: Tool {
     let name = "execute_app_menu_path"
-    let description = "Execute an exact menu path in the current scoped app, for example: Edit > Find > Mailbox Search."
+    let description = "Execute an exact menu path from the current scoped app's known menu catalog. Only call this with a path returned by list_app_menu_actions or execute_app_menu_intent."
 
     private let bundleId: String
     private let appName: String
@@ -312,18 +478,15 @@ struct ExecuteAppMenuPathTool: Tool {
             return "❌ \(appName) is not running."
         }
 
-        _ = targetApp.activate(options: NSApplication.ActivationOptions.activateIgnoringOtherApps)
-        try? await Task.sleep(nanoseconds: 200_000_000)
-
         let validation = await MainActor.run { () -> AXMenuItem? in
-            let liveItems = AXMenuReader.shared.refreshAllMenuItems(
-                for: targetApp.processIdentifier,
-                maxDepth: 6
+            AppMenuCapabilityCache.shared.menuItems(
+                bundleIdentifier: bundleId,
+                appName: appName,
+                processIdentifier: targetApp.processIdentifier,
+                query: trimmedPath.last ?? "",
+                maxResults: 60
             )
-            if !liveItems.isEmpty {
-                AppMenuCapabilityCache.shared.store(items: liveItems, for: targetApp)
-            }
-            return AXMenuReader.shared.menuItem(path: trimmedPath, in: targetApp.processIdentifier)
+            .first { normalizedMenuPath($0.path) == normalizedMenuPath(trimmedPath) }
         }
 
         guard let validation else {
@@ -334,12 +497,80 @@ struct ExecuteAppMenuPathTool: Tool {
             return "⚠️ \(appName) menu is currently disabled: \(trimmedPath.joined(separator: " > ")). Change the app state and try again."
         }
 
-        let success = await MainActor.run {
-            AXMenuReader.shared.clickMenuItem(path: trimmedPath, in: targetApp.processIdentifier)
+        await MainActor.run {
+            AXActionResolver.shared.execute(menuPath: trimmedPath, in: targetApp)
         }
-        return success
-            ? "✅ Executed \(appName) menu: \(trimmedPath.joined(separator: " > "))"
-            : "❌ Couldn't execute \(appName) menu: \(trimmedPath.joined(separator: " > "))"
+        return "✅ Requested \(appName) menu: \(trimmedPath.joined(separator: " > "))"
+    }
+}
+
+@available(macOS 26.0, *)
+struct ExecuteAppMenuIntentTool: Tool {
+    let name = "execute_app_menu_intent"
+    let description = "Map a natural-language app command to the best matching menu path in the current scoped app, then execute it through the unified AX action resolver. Use this for app UI requests like export, find, archive, format, sort, view, window, tab, or settings commands."
+
+    private let bundleId: String
+    private let appName: String
+    private let processIdentifier: pid_t
+
+    init(bundleId: String, appName: String, processIdentifier: pid_t) {
+        self.bundleId = bundleId
+        self.appName = appName
+        self.processIdentifier = processIdentifier
+    }
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "The user's natural language intent, for example \"export as pdf\", \"open recent project\", \"show downloads\", or \"new reminder list\".")
+        var intent: String
+
+        init() {
+            self.intent = ""
+        }
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let intent = arguments.intent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !intent.isEmpty else { return "❌ No app menu intent provided." }
+
+        guard let targetApp = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleId && !$0.isTerminated
+        }) else {
+            return "❌ \(appName) is not running."
+        }
+
+        let match = await MainActor.run {
+            bestMenuMatch(
+                intent: intent,
+                bundleId: bundleId,
+                appName: appName,
+                processIdentifier: processIdentifier != 0 ? processIdentifier : targetApp.processIdentifier
+            )
+        }
+
+        guard let match else {
+            let suggestions = await MainActor.run {
+                menuSuggestions(
+                    intent: intent,
+                    bundleId: bundleId,
+                    appName: appName,
+                    processIdentifier: targetApp.processIdentifier
+                )
+            }
+            if suggestions.isEmpty {
+                return "❌ I couldn't map \"\(intent)\" to an available \(appName) menu action."
+            }
+            return "❌ I couldn't confidently execute \"\(intent)\". Closest \(appName) menu actions:\n" + suggestions.joined(separator: "\n")
+        }
+
+        guard match.isEnabled else {
+            return "⚠️ \(appName) menu is currently disabled: \(match.path.joined(separator: " > "))."
+        }
+
+        await MainActor.run {
+            AXActionResolver.shared.execute(menuPath: match.path, in: targetApp)
+        }
+        return "✅ Mapped \"\(intent)\" to \(appName) menu: \(match.path.joined(separator: " > "))"
     }
 }
 
@@ -598,6 +829,46 @@ final class OnDeviceToolSession {
         return lines
     }
 
+    private func appMenuInstructions(for bundleId: String, axContext: AXContext) -> String {
+        guard !bundleId.hasPrefix("cli://") else { return "" }
+        let appName = axContext.appName.isEmpty
+            ? (NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleId && !$0.isTerminated
+            })?.localizedName ?? bundleId)
+            : axContext.appName
+
+        let items = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: bundleId,
+            appName: appName,
+            processIdentifier: axContext.pid,
+            query: "",
+            maxResults: 36
+        )
+
+        let menuLines = items.prefix(24).map { item in
+            let shortcut = item.shortcutDisplay.map { " [\($0)]" } ?? ""
+            let disabled = item.isEnabled ? "" : " (disabled)"
+            return "- \(item.path.joined(separator: " > "))\(shortcut)\(disabled)"
+        }.joined(separator: "\n")
+
+        var prompt = """
+
+
+        ## APP MENU ACTION RULES
+        The user is scoped to \(appName). For app UI commands, map the natural-language request to this app's known menu catalog and execute a tool. Do not invent AppleScript or describe clicks.
+        - Prefer execute_app_menu_intent(intent:) for natural-language app menu requests.
+        - Use list_app_menu_actions(query:) when you need to inspect available paths.
+        - Use execute_app_menu_path(path:) only with an exact path from the menu catalog.
+        - If the best matching menu is disabled, say what state/selection is needed instead of trying random alternatives.
+        - After executing, summarize the exact menu path used in one short sentence.
+        """
+
+        if !menuLines.isEmpty {
+            prompt += "\n\nKnown \(appName) menu actions:\n\(menuLines)"
+        }
+        return prompt
+    }
+
     /// Returns the CLI command name for cli:// adapter bundle IDs (e.g. "yt-dlp").
     private func cliAdapterCommand(for bundleId: String) -> String? {
         guard bundleId.hasPrefix("cli://") else { return nil }
@@ -634,6 +905,11 @@ final class OnDeviceToolSession {
 
         var baseTools: [any Tool] = [
             ListAppMenuActionsTool(
+                bundleId: bundleId,
+                appName: resolvedAppName,
+                processIdentifier: resolvedPID
+            ),
+            ExecuteAppMenuIntentTool(
                 bundleId: bundleId,
                 appName: resolvedAppName,
                 processIdentifier: resolvedPID
@@ -713,7 +989,9 @@ final class OnDeviceToolSession {
         if let cliCmd = cliAdapterCommand(for: bundleId) {
             fullPrompt = cliScopeSystemPrompt(command: cliCmd)
         } else {
-            fullPrompt = systemPrompt + cliInstructions(for: bundleId)
+            fullPrompt = systemPrompt
+                + appMenuInstructions(for: bundleId, axContext: axContext)
+                + cliInstructions(for: bundleId)
         }
 
         // Regular tool-based response: adapter actions + shell + discovery
@@ -756,7 +1034,11 @@ final class OnDeviceToolSession {
                 if let cliCmd = self.cliAdapterCommand(for: bundleId) {
                     fullPrompt = self.cliScopeSystemPrompt(command: cliCmd)
                 } else {
-                    fullPrompt = self.systemPrompt(systemPrompt, appendingCLIFor: bundleId)
+                    fullPrompt = self.systemPrompt(
+                        systemPrompt,
+                        appendingMenuAndCLIFor: bundleId,
+                        axContext: axContext
+                    )
                 }
 
                 // Tool-based streaming
@@ -792,8 +1074,14 @@ final class OnDeviceToolSession {
         }
     }
 
-    private func systemPrompt(_ base: String, appendingCLIFor bundleId: String) -> String {
-        base + cliInstructions(for: bundleId)
+    private func systemPrompt(
+        _ base: String,
+        appendingMenuAndCLIFor bundleId: String,
+        axContext: AXContext
+    ) -> String {
+        base
+            + appMenuInstructions(for: bundleId, axContext: axContext)
+            + cliInstructions(for: bundleId)
     }
 }
 

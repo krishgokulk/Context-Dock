@@ -25,12 +25,11 @@ final class MenuIntentRouter {
     /// Returns the clicked menu path on success, nil if not a menu action.
     func resolve(query: String, app: NSRunningApplication) async -> String? {
         guard let bundleID = app.bundleIdentifier else { return nil }
-        let pid = app.processIdentifier
 
         // ── Tier 1: keyword score ─────────────────────────────────────────────
-        let candidates = scoredCandidates(query: query, bundleID: bundleID, pid: pid)
+        let candidates = scoredCandidates(query: query, bundleID: bundleID, pid: app.processIdentifier)
         if let top = candidates.first, top.score >= autoClickThreshold {
-            return click(item: top.item, pid: pid)
+            return click(item: top.item, app: app)
         }
 
         // ── Tier 2: on-device AI picks from top candidates ────────────────────
@@ -38,7 +37,7 @@ final class MenuIntentRouter {
         guard !candidates.isEmpty else { return nil }
         let shortList = candidates.prefix(10).map { $0.item }
         guard let picked = await askOnDeviceAI(query: query, candidates: shortList) else { return nil }
-        return click(item: picked, pid: pid)
+        return click(item: picked, app: app)
     }
 
     // MARK: - Scoring
@@ -140,10 +139,8 @@ final class MenuIntentRouter {
 
     // MARK: - Click
 
-    private func click(item: AXMenuItem, pid: pid_t) -> String {
-        Task.detached {
-            AXMenuReader.shared.clickMenuItem(path: item.path, in: pid)
-        }
+    private func click(item: AXMenuItem, app: NSRunningApplication) -> String {
+        AXActionResolver.shared.execute(menuPath: item.path, in: app)
         return item.pathString
     }
 }

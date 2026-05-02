@@ -42,14 +42,37 @@
 		FD1617D42ECEA5B500620C78 /* Context-Dock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Context-Dock.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		CAFE0000000000000000000E /* Exceptions for "Context-DockExtension" folder in "Context-DockExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CAFE00000000000000000002 /* Context-DockExtension */;
+		};
+		FD1617E22ECEA5B600620C78 /* Exceptions for "Context-Dock" folder in "Context-Dock" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FD1617D32ECEA5B500620C78 /* Context-Dock */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CAFE00000000000000000001 /* Context-DockExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				CAFE0000000000000000000E /* Exceptions for "Context-DockExtension" folder in "Context-DockExtension" target */,
+			);
 			path = "Context-DockExtension";
 			sourceTree = "<group>";
 		};
 		FD1617D62ECEA5B500620C78 /* Context-Dock */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FD1617E22ECEA5B600620C78 /* Exceptions for "Context-Dock" folder in "Context-Dock" target */,
+			);
 			path = "Context-Dock";
 			sourceTree = "<group>";
 		};
@@ -406,7 +429,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = "Context-Dock/Base.lproj/ILauncher.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -460,7 +483,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
-				CODE_SIGN_ENTITLEMENTS = "Context-Dock/Base.lproj/ILauncher.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;

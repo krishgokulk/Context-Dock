@@ -649,6 +649,8 @@ class AppSettings: ObservableObject {
     @AppStorage("hotkeyModifiers") private var _hotkeyModifiers: Int = Int(optionKey)
     @AppStorage("contextDockHotkeyKeyCode") private var _contextDockHotkeyKeyCode: Int = 0
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
+    @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
+    @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()
@@ -698,6 +700,7 @@ class AppSettings: ObservableObject {
     @AppStorage("persistentContextDockAutoHide") var persistentContextDockAutoHide: Bool = false
     @AppStorage("enableFileContextOverlay") var enableFileContextOverlay: Bool = true
     @AppStorage("showRunningAppsInBar") var showRunningAppsInBar: Bool = false
+    @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = true
 
     /// True when anything should anchor at the bottom and grow upward.
     /// Persistent context dock always implies bottom-anchored layout.
@@ -715,7 +718,9 @@ class AppSettings: ObservableObject {
     @AppStorage("crossAppPills") var crossAppPills: Bool = true         // "Send to [running app]" pills based on context
     @AppStorage("clipboardAwarePills") var clipboardAwarePills: Bool = true  // Pills based on clipboard content type
     @AppStorage("sessionDetectionPills") var sessionDetectionPills: Bool = true // Pre-rank pills by detected work session type
+    @AppStorage("enableLearnedGhostSuggestions") var enableLearnedGhostSuggestions: Bool = true // Ghost-text suggestions drawn from all frequently-used apps' cached menu commands
     @AppStorage("clipboardHistoryLimit") var clipboardHistoryLimit: Int = 10  // Max entries kept in clipboard history (5–50)
+    @AppStorage("clipboardHistoryRetentionHours") var clipboardHistoryRetentionHours: Int = 8  // Auto-remove clipboard history after N hours
     @AppStorage("dockIconSize") var dockIconSize: Double = 58  // App icon and pill size in dock (28–72, default 58)
 
     // Notification Settings
@@ -929,16 +934,39 @@ class AppSettings: ObservableObject {
     }
 
     func loadAXTriggerRules() {
+        // Prefer file-based store — it's the canonical source post-migration
+        let fileRules = ContextDockStore.shared.loadAllRules()
+        if !fileRules.isEmpty {
+            axTriggerRules = fileRules
+            return
+        }
+
+        // Fall back to legacy @AppStorage blob
         if axTriggerRulesData.isEmpty {
             axTriggerRules = AXTriggerRule.builtInExamples
+            // Seed the file store so future loads use it
+            ContextDockStore.shared.saveRules(axTriggerRules, bundleId: nil)
             return
         }
         if let decoded = try? JSONDecoder().decode([AXTriggerRule].self, from: axTriggerRulesData) {
             axTriggerRules = decoded
+            // Migrate legacy flat array into scoped file layout (runs once)
+            ContextDockStore.shared.migrateIfNeeded(legacyRules: decoded)
         }
     }
+
     private func saveAXTriggerRules() {
+        // Dual-write: @AppStorage for backward compat + file store as primary
         if let encoded = try? JSONEncoder().encode(axTriggerRules) { axTriggerRulesData = encoded }
+
+        // Partition rules by scope and write each to its correct directory
+        let globalRules = axTriggerRules.filter { $0.isGlobal }
+        ContextDockStore.shared.saveRules(globalRules, bundleId: nil)
+
+        let appGroups = Dictionary(grouping: axTriggerRules.filter { !$0.isGlobal }) { $0.bundleId! }
+        for (bundleId, rules) in appGroups {
+            ContextDockStore.shared.saveRules(rules, bundleId: bundleId)
+        }
     }
 
     // MARK: - App Tool Extensions
@@ -1255,6 +1283,16 @@ class AppSettings: ObservableObject {
         set { objectWillChange.send(); _contextDockHotkeyModifiers = Int(newValue) }
     }
     var contextDockHotkeyEnabled: Bool { _contextDockHotkeyKeyCode != 0 }
+
+    var clipboardScopeHotkeyKeyCode: UInt32 {
+        get { UInt32(_clipboardScopeHotkeyKeyCode) }
+        set { objectWillChange.send(); _clipboardScopeHotkeyKeyCode = Int(newValue) }
+    }
+    var clipboardScopeHotkeyModifiers: UInt32 {
+        get { UInt32(_clipboardScopeHotkeyModifiers) }
+        set { objectWillChange.send(); _clipboardScopeHotkeyModifiers = Int(newValue) }
+    }
+    var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
 
     init() {
         loadPinnedApps()
@@ -1805,6 +1843,7 @@ class AppSettings: ObservableObject {
         return result
     }
     var contextDockHotkeyDisplayString: String { hotkeyDisplayString(keyCode: contextDockHotkeyKeyCode, modifiers: contextDockHotkeyModifiers) }
+    var clipboardScopeHotkeyDisplayString: String { hotkeyDisplayString(keyCode: clipboardScopeHotkeyKeyCode, modifiers: clipboardScopeHotkeyModifiers) }
 
     // Computed property to get hotkey display string
     var hotkeyDisplayString: String {

@@ -283,6 +283,17 @@ struct GeneralSettingsView: View {
                         Spacer()
                         Toggle("", isOn: $settings.showRunningAppsInBar).labelsHidden()
                     }
+
+                    Divider()
+
+                    HStack {
+                        GeneralToggleLabel(
+                            "Floating App Logo",
+                            caption: "Show the separate app logo button beside the dock row."
+                        )
+                        Spacer()
+                        Toggle("", isOn: $settings.showFloatingAppLogo).labelsHidden()
+                    }
                 }
             }
 
@@ -333,6 +344,13 @@ struct GeneralSettingsView: View {
                                 GeneralToggleLabel(
                                     "Session Detection",
                                     caption: "Detects dev / browse / comms session and re-ranks adapter pills.",
+                                    isSubItem: true)
+                            }.toggleStyle(.switch)
+
+                            Toggle(isOn: $settings.enableLearnedGhostSuggestions) {
+                                GeneralToggleLabel(
+                                    "Learned Ghost Suggestions",
+                                    caption: "Shows inline ghost-text completions from all frequently-used apps' cached menu commands — even when no frontmost-app pill matches.",
                                     isSubItem: true)
                             }.toggleStyle(.switch)
                         }
@@ -516,6 +534,23 @@ struct GeneralSettingsView: View {
                         settings.contextDockHotkeyKeyCode = kc
                         settings.contextDockHotkeyModifiers = mod
                     }
+
+                    Divider().padding(.leading, 46)
+
+                    HotkeyRecorderRow(
+                        icon: "doc.on.clipboard", iconColor: .indigo,
+                        title: "Clipboard Scope",
+                        subtitle: "Open clipboard history as a chat-ready scope",
+                        displayString: settings.clipboardScopeHotkeyDisplayString,
+                        onClear: {
+                            settings.clipboardScopeHotkeyKeyCode = 0
+                            settings.clipboardScopeHotkeyModifiers = 0
+                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                        }
+                    ) { kc, mod in
+                        settings.clipboardScopeHotkeyKeyCode = kc
+                        settings.clipboardScopeHotkeyModifiers = mod
+                    }
                 }
             }
 
@@ -623,6 +658,22 @@ struct GeneralSettingsView: View {
                         }
                     }
                     Text("Number of clipboard entries kept in history. Press ↑ in the dock to expand clipboard inline.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    HStack {
+                        Label("Auto-Remove After", systemImage: "timer")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Stepper(value: $settings.clipboardHistoryRetentionHours, in: 1...24, step: 1) {
+                            Text("\(settings.clipboardHistoryRetentionHours)h")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .frame(minWidth: 56, alignment: .trailing)
+                        }
+                    }
+                    Text("Clipboard items and dropped file groups are removed automatically after this time.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

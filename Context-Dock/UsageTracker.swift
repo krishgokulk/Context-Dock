@@ -92,6 +92,11 @@ class UsageTracker {
         return record.calculateFrecencyScore()
     }
 
+    /// Get raw access count for an item.
+    func getAccessCount(for identifier: String) -> Int {
+        usageData[identifier]?.accessCount ?? 0
+    }
+
     /// Get all tracked items sorted by score
     func getTopItems(limit: Int = 20) -> [(identifier: String, score: Double)] {
         var items: [(String, Double)] = []
@@ -141,4 +146,3 @@ class UsageTracker {
         }
     }
 }
-

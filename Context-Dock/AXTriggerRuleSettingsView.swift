@@ -18,6 +18,14 @@ struct AXRuleEditSheet: View {
     @State private var conditions: [AXTriggerCondition]
     @State private var pills: [AXRulePill]
     @State private var priority: Int
+    @State private var scopeBundleId: String   // "" = global
+    @State private var scopeAppName: String
+
+    private var runningApps: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && !($0.localizedName ?? "").isEmpty }
+            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+    }
 
     init(rule: AXTriggerRule?, onCreate: @escaping (AXTriggerRule) -> Void) {
         self.rule = rule
@@ -28,6 +36,8 @@ struct AXRuleEditSheet: View {
         _conditions     = State(initialValue: rule?.conditions     ?? [AXTriggerCondition()])
         _pills          = State(initialValue: rule?.pills          ?? [AXRulePill()])
         _priority       = State(initialValue: rule?.priority       ?? 0)
+        _scopeBundleId  = State(initialValue: rule?.bundleId       ?? "")
+        _scopeAppName   = State(initialValue: rule?.appName        ?? "")
     }
 
     var body: some View {
@@ -47,6 +57,8 @@ struct AXRuleEditSheet: View {
                     r.conditions     = conditions
                     r.pills          = pills
                     r.priority       = priority
+                    r.bundleId       = scopeBundleId.isEmpty ? nil : scopeBundleId
+                    r.appName        = scopeAppName.isEmpty  ? nil : scopeAppName
                     onCreate(r)
                     dismiss()
                 }
@@ -75,6 +87,61 @@ struct AXRuleEditSheet: View {
                             HStack {
                                 Text("Enabled").frame(width: 80, alignment: .trailing)
                                 Toggle("", isOn: $isEnabled).labelsHidden()
+                            }
+                            Divider()
+                            // App scope — nil = global, bundleId = app-only
+                            HStack(alignment: .top, spacing: 0) {
+                                Text("App Scope").frame(width: 80, alignment: .trailing)
+                                    .padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Menu {
+                                        Button("Global (all apps)") {
+                                            scopeBundleId = ""
+                                            scopeAppName  = ""
+                                        }
+                                        Divider()
+                                        ForEach(runningApps, id: \.processIdentifier) { app in
+                                            Button(action: {
+                                                scopeBundleId = app.bundleIdentifier ?? ""
+                                                scopeAppName  = app.localizedName    ?? ""
+                                            }) {
+                                                Text(app.localizedName ?? app.bundleIdentifier ?? "")
+                                            }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            if scopeBundleId.isEmpty {
+                                                Image(systemName: "globe")
+                                                    .foregroundStyle(.secondary)
+                                                Text("Global — matches any app")
+                                                    .foregroundStyle(.secondary)
+                                            } else {
+                                                AppBundleIconView(
+                                                    bundleId: scopeBundleId,
+                                                    fallbackSymbol: "app.fill",
+                                                    size: 16, cornerRadius: 3
+                                                )
+                                                Text(scopeAppName.isEmpty ? scopeBundleId : scopeAppName)
+                                            }
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .fixedSize()
+
+                                    if !scopeBundleId.isEmpty {
+                                        Text("Only triggers in \(scopeAppName.isEmpty ? scopeBundleId : scopeAppName). App-scoped rules are evaluated before global rules.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text("Evaluates in every app. Use app-scoped rules to avoid false matches.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.leading, 8)
                             }
                         }
                         .padding(8)

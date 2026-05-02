@@ -41,12 +41,8 @@ extension AppShortcut {
             for (k, v) in envVars { resolved = resolved.replacingOccurrences(of: "{\(k)}", with: v) }
             let path = resolved.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
             guard let targetApp = menuTargetApp(from: envVars) else { return }
-            let pid = targetApp.processIdentifier
-            Task.detached(priority: .userInitiated) {
-                _ = targetApp.activate(options: [.activateIgnoringOtherApps])
-                Thread.sleep(forTimeInterval: 0.08)
-                _ = AXMenuReader.shared.clickMenuItem(path: path, in: pid)
-            }
+            // Unified resolver: shortcut → AX click → AppleScript, with notification-based activation
+            AXActionResolver.shared.execute(menuPath: path, in: targetApp, envVars: envVars)
 
         case .appleScript, .jxa:
             var script = value

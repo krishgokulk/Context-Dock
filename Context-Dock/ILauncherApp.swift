@@ -107,6 +107,9 @@ class KeyableWindow: NSWindow {
         case "c": return NSApp.sendAction(#selector(NSText.copy(_:)),      to: nil, from: nil)
         case "x": return NSApp.sendAction(#selector(NSText.cut(_:)),       to: nil, from: nil)
         case "z": return NSApp.sendAction(Selector(("undo:")),             to: nil, from: nil)
+        case ",":
+            AppDelegate.shared?.showSettings()
+            return true
         default:  return false
         }
     }
@@ -149,17 +152,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
 
     var launcherWindow: NSWindow?
+    var settingsWindow: NSWindow?
     var statusItem: NSStatusItem?
     var eventMonitor: Any?
     var localEventMonitor: Any?
     var hotKeyRef: EventHotKeyRef?
     var eventHandler: EventHandlerRef?
     var contextDockHotKeyRef: EventHotKeyRef?
+    var clipboardScopeHotKeyRef: EventHotKeyRef?
     var lastHotkeyFiredAt: TimeInterval = 0
     var doubleOptionMonitor: Any?
     var doubleOptionLocalMonitor: Any?
     var lastOptionPressTime: TimeInterval = 0
     var optionKeyDown = false
+    // Single Option-press focus: bring our search field to front without a hotkey
+    var singleOptionFocusMonitor: Any?
+    var singleOptionCancelMonitor: Any?
+    var optionAloneActive: Bool = false
+    var optionAloneDownTime: TimeInterval = 0
     /// True when the launcher was opened / switched via the context-dock shortcut.
     /// ContentView reads this on `launcherWindowOpened` to keep the app in L2.
     var isDockContextMode: Bool = false
@@ -242,13 +252,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Register global hotkeys
         registerGlobalHotkey()
         registerContextDockHotkey()
+        registerClipboardScopeHotkey()
         registerDoubleOptionMonitor()
+        registerSingleOptionFocusMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
 
         // Track frontmost app changes to capture context BEFORE ILauncher activates
         setupFrontmostAppTracking()
+
+        // Start event-driven AX observer pipeline
+        AXObserverManager.shared.startMonitoring()
 
         // Start binary watcher so L2 auto-discovers newly installed CLI tools
         Task { @MainActor in
@@ -329,6 +344,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         recordFrontmostApp(app)
+        // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
     }
     
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
@@ -411,6 +427,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         unregisterGlobalHotkey()
         registerGlobalHotkey()
         registerContextDockHotkey()
+        registerClipboardScopeHotkey()
         registerDoubleOptionMonitor()
     }
     
@@ -440,40 +457,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     @objc func showSettings() {
-        // IMPORTANT: Hide launcher window BEFORE showing settings to prevent conflicts
-        launcherWindow?.orderOut(nil)
-
-        // Lower the launcher window level temporarily
-        let originalLevel = launcherWindow?.level
-        launcherWindow?.level = .normal
-
-        // Activate the app and change policy to show in dock temporarily
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        if #available(macOS 14, *) {
-            // macOS 14+ (Sonnet and later) - try new API first
-        } else if #available(macOS 13, *) {
-            // macOS 13 (Ventura) - use Settings scene
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            // Fallback for older macOS versions
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        if let settingsWindow {
+            settingsWindow.makeKeyAndOrderFront(nil)
+            return
         }
 
-        // Restore launcher level and size settings window to 80% of screen, centered
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            // Fallback: open if still not visible
-            if NSApp.windows.allSatisfy({ !$0.title.contains("Settings") && !$0.title.contains("Preferences") }) {
-                NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-            }
+        let fixedW: CGFloat = 920
+        let fixedH: CGFloat = 680
+        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let frame = NSRect(
+            x: (screenFrame.midX - fixedW / 2).rounded(),
+            y: (screenFrame.midY - fixedH / 2).rounded(),
+            width: fixedW,
+            height: fixedH
+        )
 
-            if let level = originalLevel {
-                self.launcherWindow?.level = level
-            }
-
-            self.applySettingsWindowSize()
-        }
+        let window = NSWindow(
+            contentRect: frame,
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Context-Dock Settings"
+        window.contentViewController = NSHostingController(rootView: SettingsView())
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: fixedW, height: fixedH)
+        window.maxSize = NSSize(width: fixedW, height: fixedH)
+        window.level = .normal
+        window.collectionBehavior = [.fullScreenAuxiliary]
+        window.delegate = self
+        settingsWindow = window
+        window.center()
+        window.makeKeyAndOrderFront(nil)
     }
     
     /// Finds the settings window, sizes it to 80% of the screen, and installs a persistent
@@ -590,7 +608,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.backgroundColor = .clear
         launcherWindow?.isOpaque = false
         launcherWindow?.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
-        launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         launcherWindow?.isMovableByWindowBackground = true
         launcherWindow?.hasShadow = false
         launcherWindow?.delegate = self
@@ -746,6 +764,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Only hide on hotkey press or explicit close action
         // This allows buttons and interactions to work without closing the window
     }
+
+    func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === settingsWindow {
+            settingsWindow = nil
+        }
+    }
     
     func registerGlobalHotkey() {
         // Use Carbon API for reliable global hotkey registration
@@ -795,6 +819,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
         }
+        if let ref = clipboardScopeHotKeyRef {
+            UnregisterEventHotKey(ref)
+            clipboardScopeHotKeyRef = nil
+        }
 
         if let eventHandler = eventHandler {
             RemoveEventHandler(eventHandler)
@@ -828,6 +856,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
         RegisterEventHotKey(settings.contextDockHotkeyKeyCode, settings.contextDockHotkeyModifiers,
                             hotKeyID, GetApplicationEventTarget(), 0, &contextDockHotKeyRef)
+    }
+
+    func registerClipboardScopeHotkey() {
+        if let ref = clipboardScopeHotKeyRef { UnregisterEventHotKey(ref); clipboardScopeHotKeyRef = nil }
+        guard settings.clipboardScopeHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C636C), id: 3) // 'ILcl'
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, _, userData) -> OSStatus in
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else { return noErr }
+            delegate.activateClipboardScope()
+            return noErr
+        }
+        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        RegisterEventHotKey(settings.clipboardScopeHotkeyKeyCode, settings.clipboardScopeHotkeyModifiers,
+                            hotKeyID, GetApplicationEventTarget(), 0, &clipboardScopeHotKeyRef)
     }
 
     func registerDoubleOptionMonitor() {
@@ -866,6 +912,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // Single Option press (alone, no other modifiers, from another app) → focus our search field.
+    func registerSingleOptionFocusMonitor() {
+        if let m = singleOptionFocusMonitor  { NSEvent.removeMonitor(m); singleOptionFocusMonitor  = nil }
+        if let m = singleOptionCancelMonitor { NSEvent.removeMonitor(m); singleOptionCancelMonitor = nil }
+
+        // If any regular key fires while Option is held, the press is a modifier — cancel.
+        singleOptionCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
+            self?.optionAloneActive = false
+        }
+
+        singleOptionFocusMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self else { return }
+            let flags = event.modifierFlags
+            let optionNow = flags.contains(.option)
+            let extraMods  = flags.intersection([.command, .control, .shift])
+
+            if optionNow && !self.optionAloneActive && extraMods.isEmpty {
+                // Option pressed alone — record
+                self.optionAloneActive    = true
+                self.optionAloneDownTime  = Date().timeIntervalSince1970
+            } else if !optionNow && self.optionAloneActive {
+                // Option released — check duration
+                let duration = Date().timeIntervalSince1970 - self.optionAloneDownTime
+                self.optionAloneActive = false
+                guard duration > 0.05 && duration < 0.45 else { return }
+                DispatchQueue.main.async {
+                    if let window = self.launcherWindow, window.isVisible {
+                        window.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    } else {
+                        self.showLauncher()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) {
+                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
+                    }
+                }
+            } else if !optionNow {
+                self.optionAloneActive = false
+            }
+        }
+    }
+
     func activateContextDock() {
         guard settings.enableLayer2 else { return } // Layer 2 disabled — hotkey does nothing
         let now = Date().timeIntervalSinceReferenceDate
@@ -888,6 +976,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.showLauncher()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     NotificationCenter.default.post(name: .activateContextDock, object: nil)
+                }
+            }
+        }
+    }
+
+    func activateClipboardScope() {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        DispatchQueue.main.async {
+            if let window = self.launcherWindow, window.isVisible {
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
+            } else {
+                self.isDockContextMode = true
+                self.showLauncher()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
                 }
             }
         }
@@ -925,6 +1033,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.matchesContextDockHotkey(event) {
                 return event
             }
+            if self.matchesClipboardScopeHotkey(event) {
+                return event
+            }
             if self.matchesHotkey(event) {
                 self.toggleLauncher()
                 return nil // Consume the event
@@ -941,6 +1052,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if event.modifierFlags.contains(.control) { mods |= UInt32(controlKey) }
         if event.modifierFlags.contains(.shift)   { mods |= UInt32(shiftKey) }
         return UInt32(event.keyCode) == settings.contextDockHotkeyKeyCode && mods == settings.contextDockHotkeyModifiers
+    }
+
+    func matchesClipboardScopeHotkey(_ event: NSEvent) -> Bool {
+        guard settings.clipboardScopeHotkeyEnabled else { return false }
+        var mods: UInt32 = 0
+        if event.modifierFlags.contains(.command) { mods |= UInt32(cmdKey) }
+        if event.modifierFlags.contains(.option)  { mods |= UInt32(optionKey) }
+        if event.modifierFlags.contains(.control) { mods |= UInt32(controlKey) }
+        if event.modifierFlags.contains(.shift)   { mods |= UInt32(shiftKey) }
+        return UInt32(event.keyCode) == settings.clipboardScopeHotkeyKeyCode && mods == settings.clipboardScopeHotkeyModifiers
     }
 
     func matchesHotkey(_ event: NSEvent) -> Bool {
@@ -1035,6 +1156,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let window = launcherWindow, let screen = NSScreen.main else { return }
 
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
+        isDockContextMode = true
 
         // Capture the CURRENT frontmost app RIGHT NOW before we show the window
         // This is the app the user was using when they pressed the hotkey
@@ -1115,6 +1237,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Posting here (after makeKey) ensures NSApp.keyWindow is correct when
         // updateWindowSize() fires its 10ms-delayed check inside the handler.
         NotificationCenter.default.post(name: .launcherWindowOpened, object: nil, userInfo: nil)
+        NotificationCenter.default.post(name: .activateContextDock, object: nil)
 
         // Fade only. Resizing the window while NSVisualEffectView is initializing changes
         // the sampled wallpaper region and makes the dock glass tint drift on launch.

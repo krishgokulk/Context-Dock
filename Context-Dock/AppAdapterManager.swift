@@ -446,15 +446,8 @@ final class AppAdapterManager: ObservableObject {
             guard let frontApp = targetApp else {
                 return (false, "No target app")
             }
-            let pid = frontApp.processIdentifier
-            // Bring the target app to front so the menu press registers correctly,
-            // then click via the AX API on a background thread (it uses Thread.sleep).
-            frontApp.activate()
-            try? await Task.sleep(nanoseconds: 80_000_000) // 0.08 s — let activation settle
-            let success = await Task.detached(priority: .userInitiated) { () -> Bool in
-                AXMenuReader.shared.clickMenuItem(path: path, in: pid)
-            }.value
-            return (success, success ? "Done" : "Menu item '\(path.last ?? "")' not found")
+            AXActionResolver.shared.execute(menuPath: path, in: frontApp)
+            return (true, "Done")
 
         case .applescript:
             guard let script = action.script else { return (false, "No script defined") }

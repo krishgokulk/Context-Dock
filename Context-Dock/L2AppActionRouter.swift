@@ -234,7 +234,11 @@ final class L2AppActionRouter {
         let tokens = tokenize(q)
         guard let firstToken = tokens.first, firstToken.count >= 2 else { return nil }
         let actionQuery = tokens.dropFirst().joined(separator: " ")
-        guard !shouldSuppressPartialCompletion(firstToken: firstToken, actionQuery: actionQuery) else {
+        guard !shouldSuppressPartialCompletion(
+            fullQuery: q,
+            firstToken: firstToken,
+            actionQuery: actionQuery
+        ) else {
             return nil
         }
 
@@ -294,13 +298,56 @@ final class L2AppActionRouter {
         return (best.appName, best.bundleId, best.ghost, best.actionQuery)
     }
 
-    private func shouldSuppressPartialCompletion(firstToken: String, actionQuery: String) -> Bool {
+    private func shouldSuppressPartialCompletion(
+        fullQuery: String,
+        firstToken: String,
+        actionQuery: String
+    ) -> Bool {
         guard !actionQuery.isEmpty else { return false }
-        let genericLeadingVerbs: Set<String> = [
-            "find", "search", "open", "show", "list", "browse", "locate",
-            "go", "new", "create", "add", "view"
+        if isQuestionLikeQuery(fullQuery) { return true }
+        if isCommonLanguageStart(firstToken) && !looksLikeAppCommandRemainder(actionQuery) {
+            return true
+        }
+        return false
+    }
+
+    private func isQuestionLikeQuery(_ query: String) -> Bool {
+        let tokens = tokenize(query)
+        guard let first = tokens.first else { return false }
+        let questionStarts: Set<String> = [
+            "what", "whats", "who", "when", "where", "why", "how",
+            "is", "are", "do", "does", "did", "can", "could", "should",
+            "tell", "explain", "describe", "summarize", "analyse", "analyze"
         ]
-        return genericLeadingVerbs.contains(firstToken)
+        if questionStarts.contains(first) { return true }
+        if tokens.count >= 2 {
+            let firstTwo = tokens.prefix(2).joined(separator: " ")
+            if ["what is", "what are", "how do", "how can", "tell me"].contains(firstTwo) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func isCommonLanguageStart(_ token: String) -> Bool {
+        let commonStarts: Set<String> = [
+            "a", "an", "the", "this", "that", "these", "those",
+            "what", "whats", "who", "when", "where", "why", "how",
+            "is", "are", "do", "does", "did", "can", "could", "should",
+            "i", "me", "my", "we", "you", "it", "its",
+            "tell", "explain", "describe", "summarize", "analyse", "analyze"
+        ]
+        return commonStarts.contains(token)
+    }
+
+    private func looksLikeAppCommandRemainder(_ actionQuery: String) -> Bool {
+        guard let first = tokenize(actionQuery).first else { return false }
+        let commandStarts: Set<String> = [
+            "open", "new", "close", "send", "message", "call", "search", "find",
+            "show", "list", "compose", "create", "add", "play", "pause", "stop",
+            "next", "previous", "download", "share", "copy", "paste", "reply"
+        ]
+        return commandStarts.contains(first)
     }
 
     private func explicitAppMatches(for normalizedQuery: String) -> [L2AppActionMatch] {

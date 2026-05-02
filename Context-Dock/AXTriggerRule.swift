@@ -15,6 +15,7 @@
 
 import Foundation
 import AppKit
+import Combine
 
 // MARK: - Condition field
 
@@ -122,9 +123,19 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
     var pills: [AXRulePill]
     var priority: Int                    // higher → shown earlier in dock
 
+    /// App scope: nil = global rule (matches any app).
+    /// Set to a bundleId (e.g. "com.apple.Safari") to restrict matching to that app only.
+    /// Global rules always evaluate at lower priority than app-scoped rules for the active app.
+    var bundleId: String? = nil
+
+    /// Human-readable app name for UI display — derived from bundleId, not authoritative.
+    var appName: String? = nil
+
     /// Optional global hotkey that fires the first pill directly, without opening the dock.
     /// Stored as "modifiers:keyChar" e.g. "cmd+shift:d" — nil means no hotkey assigned.
     var hotkeyString: String? = nil
+
+    var isGlobal: Bool { bundleId == nil || bundleId?.isEmpty == true }
 
     init(name: String = "New Rule",
          isEnabled: Bool = true,
@@ -132,6 +143,8 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
          conditionLogic: ConditionLogic = .all,
          pills: [AXRulePill] = [],
          priority: Int = 0,
+         bundleId: String? = nil,
+         appName: String? = nil,
          hotkeyString: String? = nil) {
         self.id             = UUID()
         self.name           = name
@@ -140,6 +153,8 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
         self.conditionLogic = conditionLogic
         self.pills          = pills
         self.priority       = priority
+        self.bundleId       = bundleId
+        self.appName        = appName
         self.hotkeyString   = hotkeyString
     }
 
@@ -282,16 +297,60 @@ struct AXResolvedPill {
     let execute: () -> Void
 }
 
+// MARK: - RuleExecutionActor
+// Serial actor — replaces DispatchQueue for rule action execution.
+// Benefits over GCD serial queue:
+//   • Natively async — no thread blocking
+//   • Deduplicates rapid triggers for the same rule (cancel-and-replace semantics)
+//   • Swift concurrency isolation — no data races by construction
+
+actor RuleExecutionActor {
+    static let shared = RuleExecutionActor()
+    private var pending: [String: Task<Void, Never>] = [:]
+
+    func schedule(key: String, action: @escaping @Sendable () async -> Void) {
+        // Cancel any in-flight execution for this rule key before re-scheduling
+        pending[key]?.cancel()
+        let task = Task { [weak self] in
+            await action()
+            await self?.clearPending(key: key)
+        }
+        pending[key] = task
+    }
+
+    private func clearPending(key: String) {
+        pending.removeValue(forKey: key)
+    }
+}
+
 // MARK: - AXTriggerRuleEngine
 
 @MainActor
 final class AXTriggerRuleEngine {
     static let shared = AXTriggerRuleEngine()
 
+    /// Reactively updated resolved pills — re-evaluated on every context change (debounced 50ms).
+    @Published private(set) var currentPills: [AXResolvedPill] = []
+
     private var ruleHotkeyMonitor: Any?
+    private var contextCancellable: AnyCancellable?
 
     private init() {
         startRuleHotkeyMonitor()
+        subscribeToContextUpdates()
+    }
+
+    // MARK: - Reactive subscription
+
+    private func subscribeToContextUpdates() {
+        contextCancellable = AXContextReader.shared.contextPublisher
+            .dropFirst()
+            .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] ctx in
+                guard let self, !ctx.isEmpty else { return }
+                self.currentPills = self.evaluate(context: ctx)
+            }
     }
 
     // MARK: - Global rule hotkey monitor
@@ -349,11 +408,19 @@ final class AXTriggerRuleEngine {
 
     /// Evaluate all enabled rules against the current context,
     /// return resolved pills ordered by rule priority (highest first).
+    /// Resolution order: app-scoped rules for the active app → global rules.
     func evaluate(context: AXContext) -> [AXResolvedPill] {
         let clipboard = NSPasteboard.general.string(forType: .string)
-        let rules = AppSettings.shared.axTriggerRules
+        let allRules  = AppSettings.shared.axTriggerRules
             .filter { $0.isEnabled && !$0.conditions.isEmpty && !$0.pills.isEmpty }
+
+        // App-scoped rules for the current app come first, then global rules.
+        // Within each group, sort by priority descending.
+        let appRules    = allRules.filter { $0.bundleId == context.bundleId && !(context.bundleId.isEmpty) }
             .sorted { $0.priority > $1.priority }
+        let globalRules = allRules.filter { $0.isGlobal }
+            .sorted { $0.priority > $1.priority }
+        let rules = appRules + globalRules
 
         var result: [AXResolvedPill] = []
         for rule in rules {
@@ -383,6 +450,10 @@ final class AXTriggerRuleEngine {
     // MARK: - Matching
 
     private func matches(rule: AXTriggerRule, context: AXContext, clipboard: String?) -> Bool {
+        // Scope guard: app-scoped rules only match when the active app matches
+        if let ruleBundleId = rule.bundleId, !ruleBundleId.isEmpty {
+            guard ruleBundleId == context.bundleId else { return false }
+        }
         guard !rule.conditions.isEmpty else { return false }
         let results = rule.conditions.map { eval(condition: $0, context: context, clipboard: clipboard) }
         return rule.conditionLogic == .all
@@ -442,12 +513,23 @@ final class AXTriggerRuleEngine {
             "CD_FILE":          context.selectedFilePaths.first ?? "",
             "CD_CLIPBOARD":     clipboard ?? "",
         ]
+        let ruleKey = "axrule-\(def.id)"
         return AXResolvedPill(
-            id: "axrule-\(def.id)",
+            id: ruleKey,
             name: label,
             icon: def.icon,
             accentColor: def.accentColor,
-            execute: { AXTriggerRuleEngine.shared.run(type: type, value: action, envVars: envVars) }
+            execute: {
+                // Route through actor: cancels any in-flight execution for the same rule
+                // before scheduling the new one — prevents double-fires from rapid taps.
+                Task {
+                    await RuleExecutionActor.shared.schedule(key: ruleKey) {
+                        await MainActor.run {
+                            AXTriggerRuleEngine.shared.run(type: type, value: action, envVars: envVars)
+                        }
+                    }
+                }
+            }
         )
     }
 
