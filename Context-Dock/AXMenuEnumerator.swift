@@ -167,6 +167,17 @@ final class AXMenuEnumerator {
             guard !seenPaths.contains(fullPath) else { continue }
             seenPaths.insert(fullPath)
 
+            // Skip section-header style items: disabled, no shortcut, no submenu
+            var subCheckRef: AnyObject?
+            let hasSub = AXUIElementCopyAttributeValue(child, "AXChildren" as CFString, &subCheckRef) == .success
+                && (subCheckRef as? [AXUIElement])?.isEmpty == false
+            if !enabled, !hasSub {
+                if let role = stringAttr(child, "AXRole"), role != "AXMenuItem" { continue }
+                // If it has no shortcut either, it's a section label — skip it
+                let cmdChar = stringAttr(child, "AXMenuItemCmdChar") ?? ""
+                if cmdChar.isEmpty { continue }
+            }
+
             var shortcutDisplay: String? = nil
             if let cmdChar = stringAttr(child, "AXMenuItemCmdChar"), !cmdChar.isEmpty {
                 let mods = intAttr(child, "AXMenuItemCmdModifiers") ?? 0

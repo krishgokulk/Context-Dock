@@ -432,6 +432,15 @@ final class AXTriggerRuleEngine {
         return result
     }
 
+    /// Evaluate a single rule against a given context. Used by query-by-name matching
+    /// in the dock search bar so the caller can inject a browser-URL-augmented context.
+    func evaluate(rule: AXTriggerRule, context: AXContext) -> [AXResolvedPill] {
+        let clipboard = NSPasteboard.general.string(forType: .string)
+        guard rule.isEnabled, !rule.pills.isEmpty,
+              matches(rule: rule, context: context, clipboard: clipboard) else { return [] }
+        return rule.pills.map { makePill($0, context: context, clipboard: clipboard) }
+    }
+
     /// Test a single rule against the current frontmost screen state.
     /// Returns one result per condition: (field label, live value, matched).
     func testAgainstCurrentScreen(rule: AXTriggerRule) -> [(field: String, liveValue: String, matched: Bool)] {

@@ -31,11 +31,18 @@ final class AXActionResolver {
 
         if let char = record?.shortcutChar, !char.isEmpty,
            let mods = record.map({ $0.shortcutModifiers }) {
-            // Strategy 1: keyboard shortcut — no AX tree traversal at all
+            // Strategy 1: keyboard shortcut — no AX tree traversal at all.
+            // Falls through to Strategy 2 if the key code is unknown (e.g. special keys like ⌫).
             Task.detached(priority: .userInitiated) {
                 _ = app.activate(options: [.activateIgnoringOtherApps])
                 await AXActionResolver.waitForActivation(of: app)
-                AXMenuReader.shared.executeShortcut(char: char, modifiers: mods, in: pid)
+                let sent = AXMenuReader.shared.executeShortcut(char: char, modifiers: mods, in: pid)
+                guard !sent else { return }
+
+                // Strategy 1 couldn't map the key — fall back to AX click
+                let clicked = AXMenuReader.shared.clickMenuItem(path: menuPath, in: pid)
+                guard !clicked else { return }
+                await AXActionResolver.appleScriptClick(path: menuPath, appName: app.localizedName ?? "")
             }
         } else {
             // Strategy 2 → 3 fallback chain

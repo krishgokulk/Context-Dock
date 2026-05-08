@@ -17,7 +17,7 @@ import Contacts
 // MARK: - Intent
 
 struct CrossAppIntent {
-    enum ActionType { case sendMessage, sendEmail, shareFile, openInApp, captureToApp }
+    enum ActionType { case sendMessage, sendEmail, shareFile, openInApp, captureToApp, searchInApp }
     enum CaptureKind { case generic, page, link, bookmark }
     var action:         ActionType
     var recipientName:  String?   // "salman", "john doe"
@@ -25,6 +25,7 @@ struct CrossAppIntent {
     var targetAppName:  String?   // explicit app name when action == .openInApp
     var captureKind:    CaptureKind = .generic
     var shareIntent:    ShareIntent? = nil
+    var searchQuery:    String? = nil
 }
 
 // MARK: - Resolved result
@@ -55,7 +56,20 @@ final class CrossAppNLHandler {
         "reminders": "com.apple.reminders",
         "messages": "com.apple.MobileSMS",
         "mail": "com.apple.mail",
-        "safari": "com.apple.Safari"
+        "safari": "com.apple.Safari",
+        "contacts": "com.apple.AddressBook",
+        "finder": "com.apple.finder",
+        "calendar": "com.apple.iCal",
+        "music": "com.apple.Music",
+        "photos": "com.apple.Photos",
+        "maps": "com.apple.Maps",
+        "books": "com.apple.iBooksX",
+        "podcasts": "com.apple.podcasts",
+        "chrome": "com.google.Chrome",
+        "firefox": "org.mozilla.firefox",
+        "slack": "com.tinyspeck.slackmacgap",
+        "xcode": "com.apple.dt.Xcode",
+        "terminal": "com.apple.Terminal",
     ]
 
     // MARK: Parse
@@ -109,6 +123,19 @@ final class CrossAppNLHandler {
         if let app = appName(q, verbs: ["add this to","save this to","clip this to"]) {
             return CrossAppIntent(action: .captureToApp, targetAppName: app, captureKind: .generic)
         }
+
+        // Search/find — three patterns in specificity order:
+        //   "search for X in Y" / "find X in Y" / "look up X in Y"
+        if let (sq, app) = searchIntent(q) {
+            return CrossAppIntent(action: .searchInApp, targetAppName: app, searchQuery: sq)
+        }
+        //   "search {knownApp} {query}" — e.g. "search mail from linkedin"
+        if let intent = searchAppQuery(q) { return intent }
+        //   "search in Y" / "find in Y" — no explicit query, use selected text
+        if let app = appName(q, verbs: ["search in", "find in", "look in"]) {
+            return CrossAppIntent(action: .searchInApp, targetAppName: app)
+        }
+
         return nil
     }
 
@@ -189,6 +216,9 @@ final class CrossAppNLHandler {
         case .openInApp:   r.confirmationMessage = "Open in \(displayName)?"
         case .captureToApp:
             r.confirmationMessage = "Save this in \(displayName)?"
+        case .searchInApp:
+            let qLabel = intent.searchQuery.map { " for \"\($0)\"" } ?? ""
+            r.confirmationMessage = "Search\(qLabel) in \(displayName)?"
         }
         return r
     }
@@ -215,6 +245,7 @@ final class CrossAppNLHandler {
             return shareSheet(ctx: axContext, presentSharingPicker: presentSharingPicker)
         case .openInApp:   return openInApp(result, ctx: axContext)
         case .captureToApp: return captureInApp(result, ctx: axContext)
+        case .searchInApp: return await searchInApp(result, ctx: axContext)
         }
     }
 
@@ -227,7 +258,7 @@ final class CrossAppNLHandler {
             channelHint = .mail
         case .shareFile:
             channelHint = .picker
-        case .openInApp, .captureToApp:
+        case .openInApp, .captureToApp, .searchInApp:
             return nil
         }
 
@@ -597,6 +628,67 @@ final class CrossAppNLHandler {
         }
 
         return nil
+    }
+
+    // MARK: - Search in App
+
+    private func searchInApp(_ r: CrossAppResult, ctx: AXContext) async -> String {
+        let query = r.intent.searchQuery
+            ?? ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let query, !query.isEmpty else {
+            return QueryFailureGuide.shared.instant(for: .noPayload)
+        }
+        if let app = r.resolvedApp {
+            return await AXSearchFieldInjector.shared.inject(query: query, into: app)
+        }
+        // App not running — launch it and wait
+        if let bundleId = r.resolvedBundleId,
+           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, _ in }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if let launched = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleId).first {
+                return await AXSearchFieldInjector.shared.inject(query: query, into: launched)
+            }
+        }
+        let appName = r.intent.targetAppName ?? "the target app"
+        return QueryFailureGuide.shared.instant(for: .appNotFound(appName: appName))
+    }
+
+    // MARK: - Search parse helpers
+
+    /// Matches "search for X in Y" / "find X in Y" / "look up X in Y"
+    private func searchIntent(_ q: String) -> (query: String, app: String)? {
+        let pattern = #"^(?:search for|find|look up|look for)\s+(.+?)\s+in\s+(.+)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let range = NSRange(q.startIndex..<q.endIndex, in: q)
+        guard let match = regex.firstMatch(in: q, range: range),
+              match.numberOfRanges > 2,
+              let qRange = Range(match.range(at: 1), in: q),
+              let aRange = Range(match.range(at: 2), in: q) else { return nil }
+        return (String(q[qRange]), String(q[aRange]))
+    }
+
+    /// Matches "search {knownApp} {query}" — e.g. "search mail from linkedin"
+    /// The first token after "search"/"find" must be a known app alias.
+    private func searchAppQuery(_ q: String) -> CrossAppIntent? {
+        let verb: String
+        if q.hasPrefix("search ") { verb = "search " }
+        else if q.hasPrefix("find ") { verb = "find " }
+        else { return nil }
+
+        let rest = String(q.dropFirst(verb.count))
+        guard let spaceIdx = rest.firstIndex(of: " ") else { return nil }
+
+        let possibleApp = String(rest[rest.startIndex..<spaceIdx]).trimmingCharacters(in: .whitespaces)
+        let searchQuery = String(rest[rest.index(after: spaceIdx)...]).trimmingCharacters(in: .whitespaces)
+
+        guard appAliases[possibleApp] != nil, !searchQuery.isEmpty else { return nil }
+        return CrossAppIntent(
+            action: .searchInApp,
+            targetAppName: possibleApp,
+            searchQuery: searchQuery
+        )
     }
 
     private func recipient(_ q: String, verbs: [String]) -> String? {

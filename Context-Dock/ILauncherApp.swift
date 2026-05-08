@@ -114,6 +114,12 @@ class KeyableWindow: NSWindow {
         }
     }
 
+    // Escape key (via AppKit responder chain) — fires if SwiftUI doesn't capture it first.
+    // Posts a notification so ContentView can exit any active scope.
+    override func cancelOperation(_ sender: Any?) {
+        NotificationCenter.default.post(name: .escapePressed, object: nil)
+    }
+
     // Also override the animated version
     override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
         var adjustedFrame = frameRect
@@ -167,7 +173,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var optionKeyDown = false
     // Single Option-press focus: bring our search field to front without a hotkey
     var singleOptionFocusMonitor: Any?
+    var singleOptionLocalFocusMonitor: Any?
     var singleOptionCancelMonitor: Any?
+    var singleOptionLocalCancelMonitor: Any?
     var optionAloneActive: Bool = false
     var optionAloneDownTime: TimeInterval = 0
     /// True when the launcher was opened / switched via the context-dock shortcut.
@@ -838,6 +846,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(monitor)
             localEventMonitor = nil
         }
+        if let monitor = singleOptionFocusMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleOptionFocusMonitor = nil
+        }
+        if let monitor = singleOptionLocalFocusMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleOptionLocalFocusMonitor = nil
+        }
+        if let monitor = singleOptionCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleOptionCancelMonitor = nil
+        }
+        if let monitor = singleOptionLocalCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleOptionLocalCancelMonitor = nil
+        }
     }
 
     func registerContextDockHotkey() {
@@ -915,14 +939,50 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Single Option press (alone, no other modifiers, from another app) → focus our search field.
     func registerSingleOptionFocusMonitor() {
         if let m = singleOptionFocusMonitor  { NSEvent.removeMonitor(m); singleOptionFocusMonitor  = nil }
+        if let m = singleOptionLocalFocusMonitor  { NSEvent.removeMonitor(m); singleOptionLocalFocusMonitor  = nil }
         if let m = singleOptionCancelMonitor { NSEvent.removeMonitor(m); singleOptionCancelMonitor = nil }
+        if let m = singleOptionLocalCancelMonitor { NSEvent.removeMonitor(m); singleOptionLocalCancelMonitor = nil }
+
+        // Single Option — three-state toggle:
+        //   Dock hidden          → do nothing (double-press only to open)
+        //   Dock visible, key    → resign key + return focus to previous app (dock stays)
+        //   Dock visible, not key → bring dock to front and focus the search field
+        let toggleDockInputFocus: () -> Void = { [weak self] in
+            guard let self else { return }
+            guard let window = self.launcherWindow, window.isVisible else { return }
+            DispatchQueue.main.async {
+                if window.isKeyWindow {
+                    // Dock has focus → give it back to the previous app
+                    guard let app = self.previousFrontmostApp, !app.isTerminated else { return }
+                    window.resignKey()
+                    app.activate(options: [.activateIgnoringOtherApps])
+                } else {
+                    // Dock is visible but not focused → re-focus the search field
+                    if let currentApp = NSWorkspace.shared.frontmostApplication,
+                       currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                        self.recordFrontmostApp(currentApp)
+                    }
+                    window.alphaValue = 1.0
+                    window.orderFrontRegardless()
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
+                    }
+                }
+            }
+        }
 
         // If any regular key fires while Option is held, the press is a modifier — cancel.
         singleOptionCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
             self?.optionAloneActive = false
         }
+        singleOptionLocalCancelMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.optionAloneActive = false
+            return event
+        }
 
-        singleOptionFocusMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags
             let optionNow = flags.contains(.option)
@@ -937,20 +997,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let duration = Date().timeIntervalSince1970 - self.optionAloneDownTime
                 self.optionAloneActive = false
                 guard duration > 0.05 && duration < 0.45 else { return }
-                DispatchQueue.main.async {
-                    if let window = self.launcherWindow, window.isVisible {
-                        window.makeKeyAndOrderFront(nil)
-                        NSApp.activate(ignoringOtherApps: true)
-                    } else {
-                        self.showLauncher()
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) {
-                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                    }
-                }
+                toggleDockInputFocus()
             } else if !optionNow {
                 self.optionAloneActive = false
             }
+        }
+
+        singleOptionFocusMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            handleFlagsChanged($0)
+        }
+        singleOptionLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            handleFlagsChanged(event)
+            return event
         }
     }
 
@@ -1013,6 +1071,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Also monitor local events (when app is active)
         localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+                switch event.keyCode {
+                case 53: // Escape
+                    NotificationCenter.default.post(name: .escapePressed, object: nil)
+                    return nil
+                case 51: // Delete / Backspace
+                    NotificationCenter.default.post(name: .launcherBackspacePressed, object: nil)
+                    return event
+                default:
+                    break
+                }
+            }
             // In .accessory mode the app menu isn't always active, so Cmd+A/C/V/X/Z won't
             // reach the system Edit menu. Route them directly to the focused text view here.
             if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
@@ -1111,6 +1181,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         NotificationCenter.default.post(name: .activateContextDock, object: nil)
                     }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
+                    }
                 }
             } else {
                 self.setupLauncherWindow()
@@ -1118,6 +1191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.showLauncher()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     NotificationCenter.default.post(name: .activateContextDock, object: nil)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                    NotificationCenter.default.post(name: .focusSearchField, object: nil)
                 }
             }
         }

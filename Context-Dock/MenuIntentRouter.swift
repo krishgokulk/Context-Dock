@@ -10,6 +10,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 
 @MainActor
 final class MenuIntentRouter {
@@ -21,23 +22,24 @@ final class MenuIntentRouter {
 
     // MARK: - Main entry point
 
+    /// Find the best matching menu item for `query` WITHOUT executing it.
+    /// Returns the matched AXMenuItem, or nil if no good match found.
+    func findMatch(query: String, app: NSRunningApplication) async -> AXMenuItem? {
+        guard let bundleID = app.bundleIdentifier else { return nil }
+        let candidates = scoredCandidates(query: query, bundleID: bundleID, pid: app.processIdentifier)
+        if let top = candidates.first, top.score >= autoClickThreshold {
+            return top.item
+        }
+        guard !candidates.isEmpty else { return nil }
+        let shortList = candidates.prefix(10).map { $0.item }
+        return await askOnDeviceAI(query: query, candidates: shortList)
+    }
+
     /// Try to resolve `query` as a menu action for `app`.
     /// Returns the clicked menu path on success, nil if not a menu action.
     func resolve(query: String, app: NSRunningApplication) async -> String? {
-        guard let bundleID = app.bundleIdentifier else { return nil }
-
-        // ── Tier 1: keyword score ─────────────────────────────────────────────
-        let candidates = scoredCandidates(query: query, bundleID: bundleID, pid: app.processIdentifier)
-        if let top = candidates.first, top.score >= autoClickThreshold {
-            return click(item: top.item, app: app)
-        }
-
-        // ── Tier 2: on-device AI picks from top candidates ────────────────────
-        // Only if we have some candidates (i.e. it looks menu-related)
-        guard !candidates.isEmpty else { return nil }
-        let shortList = candidates.prefix(10).map { $0.item }
-        guard let picked = await askOnDeviceAI(query: query, candidates: shortList) else { return nil }
-        return click(item: picked, app: app)
+        guard let item = await findMatch(query: query, app: app) else { return nil }
+        return click(item: item, app: app)
     }
 
     // MARK: - Scoring
@@ -75,6 +77,10 @@ final class MenuIntentRouter {
         let tokens = q.split(separator: " ").map(String.init).filter { $0.count > 2 }
 
         return merged.compactMap { item -> ScoredItem? in
+            // Skip submenu containers (non-leaf) and currently-disabled items
+            guard item.children.isEmpty else { return nil }
+            guard item.isEnabled else { return nil }
+
             let title = AppMenuCapabilityCache.normalize(item.title)
             let path  = AppMenuCapabilityCache.normalize(item.pathString)
             var score = 0
@@ -92,9 +98,6 @@ final class MenuIntentRouter {
                 else if title.contains(token)  { score += 18 }
                 else if path.contains(token)   { score += 10 }
             }
-
-            // Disabled items can still be surfaced but get a penalty
-            if !item.isEnabled { score = max(0, score - 20) }
 
             guard score > 0 else { return nil }
             return ScoredItem(item: item, score: score)
@@ -140,6 +143,12 @@ final class MenuIntentRouter {
     // MARK: - Click
 
     private func click(item: AXMenuItem, app: NSRunningApplication) -> String {
+        if item.isChecked {
+            // Item is already toggled on — inform instead of executing silently
+            AppToast.show("Already on: \(item.pathString)", icon: "checkmark.circle.fill",
+                          tint: .green, centered: true)
+            return item.pathString
+        }
         AXActionResolver.shared.execute(menuPath: item.path, in: app)
         return item.pathString
     }

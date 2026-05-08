@@ -754,6 +754,10 @@ class L2UnifiedAssistant: ObservableObject {
                 return ["add this to Obsidian", "email this"]
             }
             return ["open this in Safari", "share this"]
+
+        case .searchInApp:
+            let app = result.intent.targetAppName ?? "this app"
+            return ["find in \(app)", "search in Finder", "search in Safari"]
         }
     }
 

@@ -722,6 +722,7 @@ class AppSettings: ObservableObject {
     @AppStorage("clipboardHistoryLimit") var clipboardHistoryLimit: Int = 10  // Max entries kept in clipboard history (5–50)
     @AppStorage("clipboardHistoryRetentionHours") var clipboardHistoryRetentionHours: Int = 8  // Auto-remove clipboard history after N hours
     @AppStorage("dockIconSize") var dockIconSize: Double = 58  // App icon and pill size in dock (28–72, default 58)
+    @AppStorage("useListViewForPills") var useListViewForPills: Bool = false // Show pills as vertical Spotlight-style list instead of horizontal scroll
 
     // Notification Settings
     @AppStorage("notifyOnActionCompleted") var notifyOnActionCompleted: Bool = true

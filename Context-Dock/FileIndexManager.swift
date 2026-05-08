@@ -31,14 +31,31 @@ struct IndexedFile: Codable, Identifiable {
         self.parentPath = url.deletingLastPathComponent().path
         self.modificationDate = (attributes[.modificationDate] as? Date) ?? Date()
         self.size = (attributes[.size] as? Int64) ?? 0
-        var isDir: ObjCBool = false
-        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-        self.isDirectory = isDir.boolValue
+        if let typeVal = attributes[.type] as? FileAttributeType {
+            self.isDirectory = typeVal == .typeDirectory
+        } else {
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            self.isDirectory = isDir.boolValue
+        }
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, path, isDirectory, fileExtension, parentPath, modificationDate, size
     }
+}
+
+struct AdvancedFileSearchQuery {
+    var rootPath: String
+    var residualQuery: String = ""
+    var allowedExtensions: Set<String>? = nil
+    var includeDirectories: Bool = true
+    var filesOnly: Bool = false
+    var minSizeBytes: Int64? = nil
+    var maxSizeBytes: Int64? = nil
+    var modifiedAfter: Date? = nil
+    var modifiedBefore: Date? = nil
+    var limit: Int = 50
 }
 
 // MARK: - Progress / Metadata stubs (keep UI compatibility)
@@ -162,6 +179,79 @@ final class FileIndexManager: ObservableObject {
         }
     }
 
+    func advancedSearch(_ query: AdvancedFileSearchQuery) -> [IndexedFile] {
+        let root = URL(fileURLWithPath: query.rootPath).standardizedFileURL.path
+        let residual = query.residualQuery.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let residualTerms = residual
+            .split(separator: " ")
+            .map(String.init)
+            .filter { $0.count >= 2 }
+
+        var scored: [(IndexedFile, Double)] = []
+
+        for file in indexedFiles {
+            guard file.path == root || file.path.hasPrefix(root + "/") else { continue }
+            if query.filesOnly && file.isDirectory { continue }
+            if !query.includeDirectories && file.isDirectory { continue }
+
+            if let allowedExtensions = query.allowedExtensions {
+                guard !file.isDirectory, allowedExtensions.contains(file.fileExtension) else { continue }
+            }
+
+            if let minSizeBytes = query.minSizeBytes, !file.isDirectory {
+                guard file.size >= minSizeBytes else { continue }
+            }
+            if let maxSizeBytes = query.maxSizeBytes, !file.isDirectory {
+                guard file.size > 0, file.size <= maxSizeBytes else { continue }
+            }
+            if let modifiedAfter = query.modifiedAfter {
+                guard file.modificationDate >= modifiedAfter else { continue }
+            }
+            if let modifiedBefore = query.modifiedBefore {
+                guard file.modificationDate < modifiedBefore else { continue }
+            }
+
+            let searchableText = "\(file.name) \(file.parentPath) \(file.fileExtension)".lowercased()
+            var score = 100.0
+
+            if !residual.isEmpty {
+                if file.name.lowercased() == residual {
+                    score += 900
+                } else if file.name.lowercased().hasPrefix(residual) {
+                    score += 760
+                } else if file.name.lowercased().contains(residual) {
+                    score += 650
+                } else if !residualTerms.isEmpty {
+                    let matchedTerms = residualTerms.filter { searchableText.contains($0) }
+                    guard !matchedTerms.isEmpty else { continue }
+                    score += Double(matchedTerms.count * 120)
+                } else {
+                    continue
+                }
+            }
+
+            if let minSizeBytes = query.minSizeBytes, file.size >= minSizeBytes {
+                score += min(350, Double(file.size) / 1_048_576.0)
+            }
+            if let maxSizeBytes = query.maxSizeBytes, file.size > 0, file.size <= maxSizeBytes {
+                score += max(0, 80 - Double(file.size) / 65_536.0)
+            }
+
+            let ageHours = max(0, Date().timeIntervalSince(file.modificationDate) / 3600)
+            score += max(0, 80 - min(80, ageHours / 12))
+            scored.append((file, score))
+        }
+
+        return scored
+            .sorted {
+                if $0.1 != $1.1 { return $0.1 > $1.1 }
+                if $0.0.size != $1.0.size { return $0.0.size > $1.0.size }
+                return $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending
+            }
+            .prefix(query.limit)
+            .map(\.0)
+    }
+
     // MARK: - Spotlight query lifecycle
 
     private func startSpotlightQuery() {
@@ -172,7 +262,7 @@ final class FileIndexManager: ObservableObject {
 
         // Predicate: exclude hidden files and known build/cache dirs
         q.predicate = NSPredicate(
-            format: "NOT kMDItemDisplayName BEGINSWITH '.' AND NOT kMDItemPath CONTAINS '/node_modules/' AND NOT kMDItemPath CONTAINS '/DerivedData/' AND NOT kMDItemPath CONTAINS '/Library/Caches/'"
+            format: "NOT kMDItemDisplayName BEGINSWITH '.' AND NOT kMDItemPath CONTAINS '/node_modules/' AND NOT kMDItemPath CONTAINS '/DerivedData/' AND NOT kMDItemPath CONTAINS '/Library/Caches/' AND NOT kMDItemPath CONTAINS '/.git/' AND NOT kMDItemPath CONTAINS '/Pods/' AND NOT kMDItemPath CONTAINS '/.build/' AND NOT kMDItemPath CONTAINS '/build/'"
         )
 
         // Sort by last-used date — most relevant files float up
@@ -242,6 +332,10 @@ final class FileIndexManager: ObservableObject {
             if let mod = item.value(forAttribute: NSMetadataItemFSContentChangeDateKey) as? Date {
                 attrs[.modificationDate] = mod
             }
+            // Derive isDirectory from Spotlight metadata — avoids a stat() syscall per file
+            let contentType = item.value(forAttribute: "kMDItemContentType") as? String ?? ""
+            let isDir = contentType == "public.folder"
+            attrs[.type] = isDir ? FileAttributeType.typeDirectory : FileAttributeType.typeRegular
             files.append(IndexedFile(url: url, attributes: attrs))
         }
 

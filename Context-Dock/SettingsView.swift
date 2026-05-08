@@ -38,43 +38,33 @@ struct SettingsView: View {
 }
 
 // MARK: - General Settings Tab
-// MARK: - General Settings (split-panel layout matching App Shortcuts / Extensions)
 
 enum GeneralSection: String, CaseIterable, Identifiable {
-    case launcher    = "Launcher"
-    case search      = "Search"
-    case layers      = "Layers"
-    case contextDock = "Context Dock"
-    case ai          = "AI"
-    case shortcuts   = "Shortcuts"
-    case appearance  = "Appearance"
-    case backup      = "Backup"
+    case launcher   = "Launcher"
+    case shortcuts  = "Shortcuts"
+    case layers     = "Layers"
+    case appearance = "Appearance"
+    case clipboard  = "Clipboard"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .launcher:    return "magnifyingglass"
-        case .search:      return "doc.text.magnifyingglass"
-        case .layers:      return "square.3.layers.3d"
-        case .contextDock: return "rectangle.grid.1x2"
-        case .ai:          return "brain.head.profile"
-        case .shortcuts:   return "keyboard"
-        case .appearance:  return "paintbrush"
-        case .backup:      return "arrow.up.arrow.down.circle"
+        case .launcher:   return "square.grid.2x2.fill"
+        case .shortcuts:  return "keyboard.fill"
+        case .layers:     return "square.3.layers.3d.top.filled"
+        case .appearance: return "paintpalette.fill"
+        case .clipboard:  return "doc.on.clipboard.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .launcher:    return .blue
-        case .search:      return .orange
-        case .layers:      return .cyan
-        case .contextDock: return .purple
-        case .ai:          return .indigo
-        case .shortcuts:   return .teal
-        case .appearance:  return .pink
-        case .backup:      return .gray
+        case .launcher:   return .blue
+        case .shortcuts:  return .teal
+        case .layers:     return .purple
+        case .appearance: return .pink
+        case .clipboard:  return .orange
         }
     }
 }
@@ -84,128 +74,252 @@ struct GeneralSettingsView: View {
     @State private var selected: GeneralSection = .launcher
 
     var body: some View {
-        HSplitView {
-            // ── Sidebar ────────────────────────────────────────────────────
-            List(selection: $selected) {
-                Section("Context-Dock") {
-                    ForEach([GeneralSection.launcher, .search, .shortcuts]) { sec in
-                        GeneralSidebarRow(section: sec)
-                            .tag(sec)
-                    }
+        HStack(spacing: 0) {
+            // ── Modern sidebar ──────────────────────────────────────────────
+            VStack(spacing: 0) {
+                // App branding header
+                HStack(spacing: 10) {
+                    Image(systemName: "dock.rectangle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.blue)
+                    Text("Context-Dock")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Spacer()
                 }
-                Section("Features") {
-                    ForEach([GeneralSection.layers, .contextDock, .ai]) { sec in
-                        GeneralSidebarRow(section: sec)
-                            .tag(sec)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 18)
+
+                Divider()
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        sidebarGroup("App") {
+                            sidebarItem(.launcher)
+                            sidebarItem(.shortcuts)
+                        }
+                        sidebarGroup("Navigation") {
+                            sidebarItem(.layers)
+                        }
+                        sidebarGroup("Customize") {
+                            sidebarItem(.appearance)
+                            sidebarItem(.clipboard)
+                        }
                     }
-                }
-                Section("Customize") {
-                    ForEach([GeneralSection.appearance, .backup]) { sec in
-                        GeneralSidebarRow(section: sec)
-                            .tag(sec)
-                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 10)
                 }
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 160, maxWidth: 190)
+            .frame(width: 200)
+            .background(Color(NSColor.windowBackgroundColor))
+
+            Divider()
 
             // ── Detail panel ───────────────────────────────────────────────
             VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Image(systemName: selected.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(selected.color)
-                        .frame(width: 28, height: 28)
-                        .background(selected.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                // Section header
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(selected.color.gradient)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: selected.icon)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
                     Text(selected.rawValue)
-                        .font(.title2).bold()
+                        .font(.system(size: 22, weight: .bold))
                     Spacer()
                 }
-                .padding()
+                .padding(.horizontal, 28)
+                .padding(.vertical, 20)
 
                 Divider()
 
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 24) {
                         detailContent
                     }
-                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
                 }
             }
-            .frame(minWidth: 480)
+            .frame(maxWidth: .infinity)
+            .background(Color(NSColor.controlBackgroundColor))
         }
+    }
+
+    @ViewBuilder
+    private func sidebarGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+                .padding(.horizontal, 10)
+                .padding(.top, 14)
+                .padding(.bottom, 3)
+            content()
+        }
+    }
+
+    private func sidebarItem(_ section: GeneralSection) -> some View {
+        Button { selected = section } label: {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(section.color.gradient)
+                        .frame(width: 28, height: 28)
+                    Image(systemName: section.icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                Text(section.rawValue)
+                    .font(.system(size: 13, weight: selected == section ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected == section ? Color.accentColor.opacity(0.15) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(selected == section ? Color.accentColor.opacity(0.25) : Color.clear, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: selected)
     }
 
     @ViewBuilder
     private var detailContent: some View {
         switch selected {
-        case .launcher:    launcherPanel
-        case .search:      searchPanel
-        case .layers:      layersPanel
-        case .contextDock: contextDockPanel
-        case .ai:          aiPanel
-        case .shortcuts:   shortcutsPanel
-        case .appearance:  appearancePanel
-        case .backup:      backupPanel
+        case .launcher:   launcherPanel
+        case .shortcuts:  shortcutsPanel
+        case .layers:     layersPanel
+        case .appearance: appearancePanel
+        case .clipboard:  clipboardPanel
         }
     }
 
     // MARK: - Launcher panel
     private var launcherPanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "System", systemImage: "gear") {
-                VStack(spacing: 16) {
-                    Toggle(isOn: Binding(
-                        get: { settings.showMenuBarIcon },
-                        set: { settings.showMenuBarIcon = $0
-                              NotificationCenter.default.post(name: .menuBarIconVisibilityChanged, object: nil) }
-                    )) {
-                        GeneralToggleLabel("Show Menu Bar Icon", caption: "Display Context Dock icon in the macOS menu bar")
-                    }.toggleStyle(.switch)
-
-                    Divider()
-
+        VStack(spacing: 20) {
+            CardSection(title: "Menu Bar Icon", systemImage: "menubar.rectangle") {
+                VStack(spacing: 0) {
+                    SettingsRow {
+                        GeneralToggleLabel("Show Menu Bar Icon",
+                            caption: "Display Context Dock icon in the macOS menu bar.")
+                        Toggle("", isOn: Binding(
+                            get: { settings.showMenuBarIcon },
+                            set: { settings.showMenuBarIcon = $0
+                                  NotificationCenter.default.post(name: .menuBarIconVisibilityChanged, object: nil) }
+                        )).labelsHidden()
+                    }
+                    SettingsDivider()
                     LaunchAtLoginToggle()
                 }
             }
 
             CardSection(title: "Dock Position", systemImage: "dock.rectangle") {
-                VStack(spacing: 16) {
-                    Toggle(isOn: $settings.persistentContextDock) {
+                VStack(spacing: 0) {
+                    SettingsRow {
                         GeneralToggleLabel("Persistent Dock Mode",
-                            caption: "Keep the dock permanently visible at the bottom of the screen, like the macOS Dock. The dock stays locked to the frontmost app's actions.")
-                    }.toggleStyle(.switch)
-
+                            caption: "Keep the dock permanently visible at the bottom of the screen, like the macOS Dock.")
+                        Toggle("", isOn: $settings.persistentContextDock).labelsHidden()
+                    }
                     if settings.persistentContextDock {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle(isOn: $settings.persistentContextDockAutoHide) {
-                                GeneralToggleLabel("Auto-Hide",
-                                    caption: "Slide the dock out of view when the mouse moves away. Move cursor to the bottom edge to reveal.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
+                        SettingsDivider()
+                        SettingsRow {
+                            GeneralToggleLabel("Auto-Hide",
+                                caption: "Slide the dock out of view when the mouse moves away.",
+                                isSubItem: true)
+                            Toggle("", isOn: $settings.persistentContextDockAutoHide).labelsHidden()
                         }
                         .padding(.leading, 20)
-                        .padding(.top, 4)
                     }
-
-                    Divider()
-
-                    Toggle(isOn: $settings.enableFileContextOverlay) {
+                    SettingsDivider()
+                    SettingsRow {
                         GeneralToggleLabel("File Context Pill",
                             caption: "Show a floating action pill for selected files, folders, text, URLs, and clipboard content.")
-                    }.toggleStyle(.switch)
+                        Toggle("", isOn: $settings.enableFileContextOverlay).labelsHidden()
+                    }
                 }
             }
 
-            CardSection(title: "Quit", systemImage: "power") {
-                HStack {
+            CardSection(title: "Smart Features", systemImage: "sparkles") {
+                VStack(spacing: 0) {
+                    SettingsRow {
+                        GeneralToggleLabel("Clipboard-Aware Pills",
+                            caption: "Surface one-tap actions from clipboard content (URL, text, file).")
+                        Toggle("", isOn: $settings.clipboardAwarePills).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Session Detection",
+                            caption: "Detects dev / browse / comms sessions and re-ranks adapter pills.")
+                        Toggle("", isOn: $settings.sessionDetectionPills).labelsHidden()
+                    }
+                }
+            }
+
+            CardSection(title: "Search Style", systemImage: "list.bullet.rectangle") {
+                SettingsRow {
+                    GeneralToggleLabel("List View",
+                        caption: "Show actions as a scrollable Spotlight-style list instead of horizontal pills.")
+                    Toggle("", isOn: $settings.useListViewForPills).labelsHidden()
+                }
+            }
+
+            CardSection(title: "Built-in Extensions", systemImage: "puzzlepiece.extension") {
+                SettingsRow {
+                    GeneralToggleLabel("Enable Built-in Extensions",
+                        caption: "Show AI-powered suggestions based on what's selected or open in the frontmost app.")
+                    Toggle("", isOn: $settings.enableContextAIExtensions).labelsHidden()
+                }
+            }
+
+            CardSection(title: "Backup & Restore", systemImage: "arrow.up.arrow.down.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Export all your settings, shortcuts, and extensions for safekeeping or to move to another Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Button {
+                            let result = SettingsBackupManager.shared.exportSettings().map { _ in () }
+                            showAlert(result: result, successMessage: "Settings exported successfully!")
+                        } label: {
+                            Label("Export Settings", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            let result = SettingsBackupManager.shared.importSettings().map { _ in () }
+                            showAlert(result: result, successMessage: "Settings imported! Some changes may require a restart.")
+                        } label: {
+                            Label("Import Settings", systemImage: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            CardSection(title: "Quit App", systemImage: "power") {
+                SettingsRow {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Quit Context Dock").font(.subheadline).fontWeight(.medium)
+                        Text("Quit Context Dock")
+                            .font(.system(size: 13, weight: .medium))
                         Text("Completely exit the app and remove it from the menu bar.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Spacer()
                     Button("Quit") { NSApplication.shared.terminate(nil) }
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
@@ -214,285 +328,24 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: - Search panel
-    private var searchPanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "File Search", systemImage: "doc.text.magnifyingglass") {
-                VStack(alignment: .leading, spacing: 16) {
-                    Toggle(isOn: $settings.enableSpotlightSearch) {
-                        GeneralToggleLabel("Enable File Search",
-                            caption: "Index and search files, folders and documents on this Mac")
-                    }.toggleStyle(.switch)
-
-                    if settings.enableSpotlightSearch {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle(isOn: $settings.enableL1DocumentSearch) {
-                                GeneralToggleLabel("Document Results",
-                                    caption: "Show documents in the base search layer.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-
-                            Toggle(isOn: $settings.enableL1FileSearch) {
-                                GeneralToggleLabel("File Results",
-                                    caption: "Show non-document files and folders in the base search layer.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-                        }
-                        .padding(.leading, 20)
-
-                        Divider()
-                        Toggle(isOn: $settings.useCustomSearchDirectories) {
-                            GeneralToggleLabel("Custom Directories Only",
-                                caption: "Only search specific folders — better privacy and speed",
-                                isSubItem: true)
-                        }.toggleStyle(.switch)
-                        if settings.useCustomSearchDirectories {
-                            SearchDirectoriesListView()
-                        }
-                        FileIndexStatusView()
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Layers panel
-    private var layersPanel: some View {
-        VStack(spacing: 16) {
-
-            // ── Layer 1 ────────────────────────────────────────────────────────
-            CardSection(title: "Layer 1 — Search", systemImage: "magnifyingglass") {
-                VStack(spacing: 10) {
-                    HStack {
-                        GeneralToggleLabel(
-                            "Pinned Apps, Files & Folders",
-                            caption: "Pinned apps stay available in the base search layer."
-                        )
-                        Spacer()
-                        Toggle("", isOn: .constant(true)).disabled(true).labelsHidden()
-                    }
-
-                    Divider()
-
-                    HStack {
-                        GeneralToggleLabel(
-                            "Show Running Apps",
-                            caption: "Display running apps next to pinned apps. Green dot marks running. Right-click to pin or quit."
-                        )
-                        Spacer()
-                        Toggle("", isOn: $settings.showRunningAppsInBar).labelsHidden()
-                    }
-
-                    Divider()
-
-                    HStack {
-                        GeneralToggleLabel(
-                            "Floating App Logo",
-                            caption: "Show the separate app logo button beside the dock row."
-                        )
-                        Spacer()
-                        Toggle("", isOn: $settings.showFloatingAppLogo).labelsHidden()
-                    }
-                }
-            }
-
-            // ── Layer 2 ────────────────────────────────────────────────────────
-            CardSection(title: "Layer 2 — Context Dock", systemImage: "rectangle.grid.1x2") {
-                VStack(alignment: .leading, spacing: 12) {
-                    // Master toggle
-                    HStack {
-                        GeneralToggleLabel(
-                            "Enable Context Layer",
-                            caption: "Swipe up from Layer 1 to connect to the frontmost app and surface one-tap actions."
-                        )
-                        Spacer()
-                        Toggle("", isOn: $settings.enableLayer2).labelsHidden()
-                    }
-
-                    if settings.enableLayer2 {
-                        Divider()
-
-                        // Context-Aware Actions
-                        Toggle(isOn: Binding(
-                            get: { settings.enableFrontmostDetection },
-                            set: { v in settings.enableFrontmostDetection = v; settings.enableContextAIExtensions = v }
-                        )) {
-                            GeneralToggleLabel(
-                                "Context-Aware Actions",
-                                caption: "Reads the frontmost app and surfaces adapter actions, live menu items, and smart pills — default behaviour of the Context Dock.",
-                                isSubItem: true)
-                        }.toggleStyle(.switch)
-
-                        // Sub-options — always under Context-Aware Actions
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle(isOn: $settings.crossAppPills) {
-                                GeneralToggleLabel(
-                                    "Cross-App Connect  ⚗️ In Development",
-                                    caption: "Route queries and context to other running apps. Type an app name + action (e.g. \"safari close tab\") or get 'Send to [App]' pills based on current context.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-
-                            Toggle(isOn: $settings.clipboardAwarePills) {
-                                GeneralToggleLabel(
-                                    "Clipboard-Aware Pills",
-                                    caption: "Surfaces one-tap actions from clipboard content (URL, text, file).",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-
-                            Toggle(isOn: $settings.sessionDetectionPills) {
-                                GeneralToggleLabel(
-                                    "Session Detection",
-                                    caption: "Detects dev / browse / comms session and re-ranks adapter pills.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-
-                            Toggle(isOn: $settings.enableLearnedGhostSuggestions) {
-                                GeneralToggleLabel(
-                                    "Learned Ghost Suggestions",
-                                    caption: "Shows inline ghost-text completions from all frequently-used apps' cached menu commands — even when no frontmost-app pill matches.",
-                                    isSubItem: true)
-                            }.toggleStyle(.switch)
-                        }
-                        .padding(.leading, 20)
-                        .padding(.top, 4)
-
-                        Divider()
-
-                    }
-                }
-            }
-
-            // ── Layer 3 ────────────────────────────────────────────────────────
-            CardSection(title: "Layer 3 — Media Dock", systemImage: "music.note.tv") {
-                HStack {
-                    GeneralToggleLabel(
-                        "Enable Media Dock",
-                        caption: "Swipe up from Layer 2 to open the now playing controller for active media."
-                    )
-                    Spacer()
-                    Toggle("", isOn: $settings.enableLayer3).labelsHidden()
-                }
-            }
-
-            // ── AI Chat ────────────────────────────────────────────────────────
-            CardSection(title: "AI Chat (Horizontal Swipe)", systemImage: "brain.head.profile") {
-                HStack {
-                    GeneralToggleLabel(
-                        "Enable AI Chat Mode",
-                        caption: "Swipe left/right — or press Tab — to open AI chat from any layer."
-                    )
-                    Spacer()
-                    Toggle("", isOn: $settings.enableAIMode).labelsHidden()
-                }
-            }
-
-            // ── Navigation diagram ─────────────────────────────────────────────
-            CardSection(title: "Navigation", systemImage: "arrow.up.arrow.down") {
-                VStack(spacing: 8) {
-                    HStack(spacing: 0) {
-                        LayerChip(number: "1", label: "Search",  color: .blue,   enabled: true)
-                        LayerArrow(enabled: settings.enableLayer2)
-                        LayerChip(number: "2", label: "Context", color: .purple, enabled: settings.enableLayer2)
-                        LayerArrow(enabled: settings.enableLayer3)
-                        LayerChip(number: "3", label: "Media", color: .teal,   enabled: settings.enableLayer3)
-                    }
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text("Swipe left/right on any layer →").font(.system(size: 10)).foregroundStyle(.secondary)
-                        LayerChip(number: "✦", label: "AI Chat", color: .indigo, enabled: settings.enableAIMode)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
-    }
-
-    // MARK: - Context Dock panel
-    private var contextDockPanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "Context Dock", systemImage: "rectangle.grid.1x2") {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "info.circle.fill").foregroundStyle(.purple).font(.system(size: 13))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("How it works").font(.caption).fontWeight(.semibold)
-                            Text("Swipe up on the launcher (or press your Context Dock hotkey) to activate Layer 2. Configure one-tap pills per app in **App Shortcuts**. Set a hotkey in **Shortcuts**. Toggle Context Layer on/off in **Layers**.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-                }
-            }
-
-            CardSection(title: "Context Extensions", systemImage: "extension") {
-                Toggle(isOn: $settings.enableContextAIExtensions) {
-                    GeneralToggleLabel("Built-in Context Extensions",
-                        caption: "Show AI-powered suggestions based on what's selected or open in the frontmost app.")
-                }.toggleStyle(.switch)
-            }
-        }
-    }
-
-    // MARK: - AI panel
-    private var aiPanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "AI Provider", systemImage: "cpu") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "info.circle.fill").foregroundStyle(.indigo).font(.system(size: 13))
-                        Text("Configure your AI provider and API keys in the **AI** tab. Enable or disable the AI Chat layer in **Layers**.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-                }
-            }
-
-            CardSection(title: "Chat History", systemImage: "bubble.left.and.bubble.right") {
-                HStack {
-                    GeneralToggleLabel("Saved Conversations",
-                        caption: "Your AI conversation history is stored locally on this device.")
-                    Spacer()
-                    Button(action: {
-                        settings.clearChatHistory()
-                        NotificationCenter.default.post(name: .chatHistoryCleared, object: nil)
-                    }) {
-                        Label("Clear All", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!settings.hasChatHistory())
-                }
-            }
-        }
-    }
-
     // MARK: - Shortcuts panel
     private var shortcutsPanel: some View {
-        VStack(spacing: 16) {
-
-            // Default quick-launch shortcut
-            CardSection(title: "Default Activation", systemImage: "bolt.fill") {
-                VStack(spacing: 12) {
-                    HStack(spacing: 14) {
-                        Image(systemName: "option")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.orange)
-                            .frame(width: 32, height: 32)
-                            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Double-press ⌥ Option")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Tap Option twice quickly from anywhere to show the launcher")
-                                .font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 20) {
+            CardSection(title: "Launch Shortcut", systemImage: "bolt.fill") {
+                VStack(spacing: 0) {
+                    SettingsRow {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.orange.opacity(0.15))
+                                    .frame(width: 34, height: 34)
+                                Text("⌥⌥")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundStyle(.orange)
+                            }
+                            GeneralToggleLabel("Double-press ⌥ Option",
+                                caption: "Tap Option twice quickly from anywhere to show the launcher.")
                         }
-
-                        Spacer()
-
                         Toggle("", isOn: Binding(
                             get: { settings.useDoubleOptionLaunch },
                             set: {
@@ -504,53 +357,20 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            // Custom hotkeys
             CardSection(title: "Custom Shortcuts", systemImage: "keyboard") {
-                VStack(spacing: 0) {
-                    HotkeyRecorderRow(
-                        icon: "magnifyingglass", iconColor: .blue,
-                        title: "Open Launcher",
-                        subtitle: "Show / hide the search bar — overrides the default ⌥⌥",
-                        displayString: settings.hotkeyDisplayString,
-                        onClear: nil
-                    ) { kc, mod in
-                        settings.hotkeyKeyCode = kc
-                        settings.hotkeyModifiers = mod
+                HotkeyRecorderRow(
+                    icon: "doc.on.clipboard", iconColor: .orange,
+                    title: "Clipboard Scope",
+                    subtitle: "Open clipboard history as a chat-ready scope",
+                    displayString: settings.clipboardScopeHotkeyDisplayString,
+                    onClear: {
+                        settings.clipboardScopeHotkeyKeyCode = 0
+                        settings.clipboardScopeHotkeyModifiers = 0
+                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                     }
-
-                    Divider().padding(.leading, 46)
-
-                    HotkeyRecorderRow(
-                        icon: "rectangle.grid.1x2", iconColor: .purple,
-                        title: "Context Dock",
-                        subtitle: "Jump directly to the frontmost app's one-tap actions",
-                        displayString: settings.contextDockHotkeyDisplayString,
-                        onClear: {
-                            settings.contextDockHotkeyKeyCode = 0
-                            settings.contextDockHotkeyModifiers = 0
-                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
-                        }
-                    ) { kc, mod in
-                        settings.contextDockHotkeyKeyCode = kc
-                        settings.contextDockHotkeyModifiers = mod
-                    }
-
-                    Divider().padding(.leading, 46)
-
-                    HotkeyRecorderRow(
-                        icon: "doc.on.clipboard", iconColor: .indigo,
-                        title: "Clipboard Scope",
-                        subtitle: "Open clipboard history as a chat-ready scope",
-                        displayString: settings.clipboardScopeHotkeyDisplayString,
-                        onClear: {
-                            settings.clipboardScopeHotkeyKeyCode = 0
-                            settings.clipboardScopeHotkeyModifiers = 0
-                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
-                        }
-                    ) { kc, mod in
-                        settings.clipboardScopeHotkeyKeyCode = kc
-                        settings.clipboardScopeHotkeyModifiers = mod
-                    }
+                ) { kc, mod in
+                    settings.clipboardScopeHotkeyKeyCode = kc
+                    settings.clipboardScopeHotkeyModifiers = mod
                 }
             }
 
@@ -571,138 +391,149 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: - Appearance panel
-    private var appearancePanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "Theme", systemImage: "circle.lefthalf.filled") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Picker("", selection: $settings.appearanceMode) {
-                        Label("System", systemImage: "desktopcomputer").tag("system")
-                        Label("Light",  systemImage: "sun.max").tag("light")
-                        Label("Dark",   systemImage: "moon").tag("dark")
+    // MARK: - Layers panel
+    private var layersPanel: some View {
+        VStack(spacing: 20) {
+            CardSection(title: "Layer 1 — Global Context", systemImage: "globe") {
+                VStack(spacing: 0) {
+                    SettingsRow {
+                        GeneralToggleLabel("Pinned Apps, Files & Folders",
+                            caption: "Pinned apps stay available in the base search layer.")
+                        Toggle("", isOn: .constant(true)).disabled(true).labelsHidden()
                     }
-                    .pickerStyle(.segmented).labelsHidden()
-                    Text("Glass adapts to the selected scheme. \"System\" follows macOS.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Show Running Apps",
+                            caption: "Display running apps next to pinned apps. Right-click to pin or quit.")
+                        Toggle("", isOn: $settings.showRunningAppsInBar).labelsHidden()
+                    }
                 }
             }
 
-            CardSection(title: "Dock Logo", systemImage: "person.circle") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Choose which icon appears in the top-right corner of the dock.")
+            CardSection(title: "Layer 2 — Context Dock", systemImage: "rectangle.grid.1x2") {
+                SettingsRow {
+                    GeneralToggleLabel("Enable Context Dock",
+                        caption: "Swipe up from Layer 1 to connect to the frontmost app and surface one-tap actions.")
+                    Toggle("", isOn: $settings.enableLayer2).labelsHidden()
+                }
+            }
+
+            CardSection(title: "Layer 3 — Media Dock", systemImage: "music.note.tv") {
+                SettingsRow {
+                    GeneralToggleLabel("Enable Media Dock",
+                        caption: "Swipe up from Layer 2 to open the now-playing controller for active media.")
+                    Toggle("", isOn: $settings.enableLayer3).labelsHidden()
+                }
+            }
+
+            CardSection(title: "AI Chat", systemImage: "brain.head.profile") {
+                SettingsRow {
+                    GeneralToggleLabel("Enable AI Chat Mode",
+                        caption: "Swipe left/right — or press Tab — to open AI chat from any layer.")
+                    Toggle("", isOn: $settings.enableAIMode).labelsHidden()
+                }
+            }
+
+            CardSection(title: "Navigation", systemImage: "arrow.up.arrow.down") {
+                VStack(spacing: 10) {
+                    HStack(spacing: 0) {
+                        LayerChip(number: "1", label: "Global\nContext", color: .blue,   enabled: true)
+                        LayerArrow(enabled: settings.enableLayer2)
+                        LayerChip(number: "2", label: "Context\nDock",  color: .purple, enabled: settings.enableLayer2)
+                        LayerArrow(enabled: settings.enableLayer3)
+                        LayerChip(number: "3", label: "Media\nDock",    color: .teal,   enabled: settings.enableLayer3)
+                    }
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("Swipe left / right from any layer")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                        LayerChip(number: "✦", label: "AI\nChat", color: .indigo, enabled: settings.enableAIMode)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+        }
+    }
+
+    // MARK: - Appearance panel
+    private var appearancePanel: some View {
+        VStack(spacing: 20) {
+            CardSection(title: "Dock Icon", systemImage: "person.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Icon shown in the top-right corner of the dock.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Picker("Logo Style", selection: $settings.dockLogoStyle) {
+                    Picker("", selection: $settings.dockLogoStyle) {
                         Text("D Logo").tag("d_logo")
                         Text("Apple Logo").tag("apple")
                         Text("System Photo").tag("system_photo")
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                     Button("Change System Photo in Settings…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preferences.users-groups") {
                             NSWorkspace.shared.open(url)
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.blue)
-                    .buttonStyle(.plain)
+                    .font(.caption).foregroundStyle(.blue).buttonStyle(.plain)
                 }
             }
 
             CardSection(title: "Dock Size", systemImage: "dock.rectangle") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
-                        Image(systemName: "square.grid.3x3.square")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.blue)
-                            .frame(width: 18)
-                        Slider(value: $settings.dockIconSize, in: 28...72, step: 2) {
-                            Text("Icon Size")
-                        } minimumValueLabel: {
-                            Text("S").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                        } maximumValueLabel: {
-                            Text("L").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                        }
+                        Text("S").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).frame(width: 14)
+                        Slider(value: $settings.dockIconSize, in: 28...72, step: 2)
+                        Text("L").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).frame(width: 14)
                         Text("\(Int(settings.dockIconSize))pt")
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(minWidth: 36, alignment: .trailing)
+                            .foregroundStyle(.secondary).frame(minWidth: 36, alignment: .trailing)
                     }
                     Text("App icon and pill size in the dock.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
-            CardSection(title: "Transparency", systemImage: "rectangle.on.rectangle") {
-                VStack(spacing: 12) {
-                    GeneralSlider(icon: "magnifyingglass", iconColor: .blue,
-                                  label: "Launcher Window", value: $settings.launcherWindowOpacity)
-                    Divider()
-                    GeneralSlider(icon: "folder", iconColor: .purple,
-                                  label: "Folder Preview", value: $settings.folderPreviewOpacity)
-                }
-            }
-
-            CardSection(title: "Clipboard", systemImage: "doc.on.clipboard") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("History Limit", systemImage: "clock.arrow.circlepath")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Stepper(value: $settings.clipboardHistoryLimit, in: 5...50, step: 5) {
-                            Text("\(settings.clipboardHistoryLimit) items")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .frame(minWidth: 56, alignment: .trailing)
-                        }
-                    }
-                    Text("Number of clipboard entries kept in history. Press ↑ in the dock to expand clipboard inline.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Divider()
-                    HStack {
-                        Label("Auto-Remove After", systemImage: "timer")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Stepper(value: $settings.clipboardHistoryRetentionHours, in: 1...24, step: 1) {
-                            Text("\(settings.clipboardHistoryRetentionHours)h")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .frame(minWidth: 56, alignment: .trailing)
-                        }
-                    }
-                    Text("Clipboard items and dropped file groups are removed automatically after this time.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            CardSection(title: "Floating App Logo", systemImage: "app.badge") {
+                SettingsRow {
+                    GeneralToggleLabel("Show Floating App Logo",
+                        caption: "Display a separate floating logo button beside the dock row.")
+                    Toggle("", isOn: $settings.showFloatingAppLogo).labelsHidden()
                 }
             }
         }
     }
 
-    // MARK: - Backup panel
-    private var backupPanel: some View {
-        VStack(spacing: 16) {
-            CardSection(title: "Backup & Restore", systemImage: "arrow.up.arrow.down.circle") {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Export all your settings, shortcuts, and extensions for safekeeping or to move to another Mac.")
-                        .font(.caption).foregroundStyle(.secondary)
-
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            let result = SettingsBackupManager.shared.exportSettings().map { _ in () }
-                            showAlert(result: result, successMessage: "Settings exported successfully!")
-                        }) {
-                            Label("Export Settings", systemImage: "square.and.arrow.up")
-                        }.buttonStyle(.bordered)
-
-                        Button(action: {
-                            let result = SettingsBackupManager.shared.importSettings().map { _ in () }
-                            showAlert(result: result, successMessage: "Settings imported! Some changes may require a restart.")
-                        }) {
-                            Label("Import Settings", systemImage: "square.and.arrow.down")
-                        }.buttonStyle(.bordered)
+    // MARK: - Clipboard panel
+    private var clipboardPanel: some View {
+        VStack(spacing: 20) {
+            CardSection(title: "History", systemImage: "clock.arrow.circlepath") {
+                VStack(spacing: 0) {
+                    SettingsRow {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("History Limit").font(.system(size: 13, weight: .medium))
+                            Text("Number of clipboard entries kept. Press ↑ in the dock to expand inline.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Stepper(value: $settings.clipboardHistoryLimit, in: 5...50, step: 5) {
+                            Text("\(settings.clipboardHistoryLimit) items")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(minWidth: 56, alignment: .trailing)
+                        }
+                    }
+                    SettingsDivider()
+                    SettingsRow {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Auto-Remove After").font(.system(size: 13, weight: .medium))
+                            Text("Items and dropped file groups are removed after this duration.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Stepper(value: $settings.clipboardHistoryRetentionHours, in: 1...24, step: 1) {
+                            Text("\(settings.clipboardHistoryRetentionHours)h")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(minWidth: 36, alignment: .trailing)
+                        }
                     }
                 }
             }
@@ -726,18 +557,22 @@ struct GeneralSettingsView: View {
     }
 }
 
-// MARK: - Sidebar row for General settings
-private struct GeneralSidebarRow: View {
-    let section: GeneralSection
+// MARK: - Row layout helpers
+
+private struct SettingsRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
     var body: some View {
-        Label {
-            Text(section.rawValue)
-                .font(.system(size: 13))
-        } icon: {
-            Image(systemName: section.icon)
-                .foregroundStyle(section.color)
-                .frame(width: 20)
+        HStack(alignment: .center, spacing: 12) {
+            content()
         }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SettingsDivider: View {
+    var body: some View {
+        Divider().padding(.leading, 0)
     }
 }
 
@@ -754,14 +589,17 @@ private struct LayerChip: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(enabled ? color.opacity(0.18) : Color.secondary.opacity(0.10))
-                    .frame(width: 56, height: 48)
+                    .frame(minWidth: 60, maxWidth: 80, minHeight: 48)
                 VStack(spacing: 2) {
                     Text(number)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(enabled ? color : .secondary)
                     Text(label)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundStyle(enabled ? color.opacity(0.8) : .secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 4)
                 }
             }
             if !enabled {
@@ -827,23 +665,36 @@ struct CardSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            // Section label
+            HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .foregroundStyle(.blue)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
                 Text(title)
-                    .font(.headline)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
+            .padding(.leading, 4)
 
-            VStack(alignment: .leading, spacing: 12) {
+            // Content card
+            VStack(alignment: .leading, spacing: 0) {
                 content()
             }
-            .padding(12)
-            .background(Color.gray.opacity(0.06))
-            .cornerRadius(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(NSColor.windowBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

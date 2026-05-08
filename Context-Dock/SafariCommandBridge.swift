@@ -51,6 +51,7 @@ enum SafariCommand {
     case extractPrices
     case fillField(selector: String, value: String)
     case clickElement(selector: String)
+    case answerInfo(message: String)                   // Instant native answer — no AI needed
 }
 
 // MARK: - Menu Map
@@ -303,6 +304,9 @@ final class SafariCommandBridge {
             let esc = selector.replacingOccurrences(of: "'", with: "\\'")
             let js = "(function(){var el=document.querySelector('\(esc)');if(!el)return 'Not found: \(esc)';el.click();return 'Clicked: \(esc)';})()";
             return await SafariTabManager.shared.executeJS(js) ?? "Done"
+
+        case .answerInfo(let message):
+            return message
         }
     }
 
@@ -312,6 +316,46 @@ final class SafariCommandBridge {
     /// Expand aliases here — never send a menu list to on-device AI.
     func parseIntent(_ query: String) -> SafariCommand? {
         let q = query.lowercased()
+
+        // ── Informational: answer from native AX / extension context — instant, zero AI ─────
+        // Covers: "last visited website", "current url", "what page am I on", "what's open", etc.
+        let isCurrentPageQuery =
+            q.contains("last visited") || q.contains("last website") || q.contains("last page")
+            || (q.contains("current") && (q.contains("url") || q.contains("page") || q.contains("site") || q.contains("website") || q.contains("tab")))
+            || (q.contains("what") && (q.contains("website") || q.contains("site") || q.contains("page") || q.contains("url") || q.contains("tab")))
+            || q.contains("what's open") || q.contains("what is open")
+            || (q.contains("url") && (q.contains("this") || q.contains("here") || q.contains("now")))
+            || (q.contains("website") && (q.contains("am i") || q.contains("on now") || q.contains("i'm on") || q.contains("i am")))
+
+        if isCurrentPageQuery {
+            let ctx  = SafariBrowserBridge.shared.currentContext()
+            let url  = ctx?.url  ?? AXContextReader.shared.current.currentURL  ?? ""
+            let title = ctx?.title ?? AXContextReader.shared.current.windowTitle ?? ""
+            if url.isEmpty { return .answerInfo(message: "No page loaded in Safari.") }
+            let msg = title.isEmpty ? url : "\(title)\n\(url)"
+            return .answerInfo(message: msg)
+        }
+
+        // ── Tab count ─────────────────────────────────────────────────────────
+        if (q.contains("how many") || q.contains("count")) && q.contains("tab") {
+            let js = "(function(){ return 'Open tabs: ' + document.querySelectorAll('*').length; })()"
+            // JS won't give tab count — use AppleScript
+            let script = """
+            tell application "Safari"
+                return count of tabs of front window
+            end tell
+            """
+            var err: NSDictionary?
+            let count = NSAppleScript(source: script)?.executeAndReturnError(&err).int32Value ?? 0
+            if err == nil { return .answerInfo(message: "Safari has \(count) tab\(count == 1 ? "" : "s") open.") }
+        }
+
+        // ── Page title ────────────────────────────────────────────────────────
+        if (q.contains("title") || q.contains("name")) && (q.contains("page") || q.contains("tab") || q.contains("this") || q.contains("current")) {
+            let title = SafariBrowserBridge.shared.currentContext()?.title
+                ?? AXContextReader.shared.current.windowTitle ?? ""
+            if !title.isEmpty { return .answerInfo(message: "Page title: \(title)") }
+        }
 
         // ── "search X in new tab" — must run BEFORE menuMap so "new tab" alias
         //    in the menuMap entry doesn't steal "search X in new tab" queries ─────

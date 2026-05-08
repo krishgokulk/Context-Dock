@@ -21,6 +21,7 @@ struct ToastItem: Identifiable {
     let persistent: Bool      // if true, won't auto-dismiss
     var isImage: Bool = false  // use NSImage instead of SF Symbol
     var nsImage: NSImage? = nil
+    var centered: Bool = false // position at screen centre instead of above dock
 }
 
 // MARK: - Manager
@@ -42,12 +43,13 @@ final class AppToast: ObservableObject {
         tint: Color = .white.opacity(0.85),
         duration: TimeInterval = 2.5,
         persistent: Bool = false,
+        centered: Bool = false,
         id: String = UUID().uuidString
     ) {
         Task { @MainActor in
             shared.present(ToastItem(
                 id: id, icon: icon, message: message,
-                tint: tint, persistent: persistent
+                tint: tint, persistent: persistent, centered: centered
             ), duration: duration)
         }
     }
@@ -63,7 +65,7 @@ final class AppToast: ObservableObject {
         toast = item
         if panel == nil { buildPanel() }
         sizePanel(for: item.message)
-        position()
+        position(centered: item.centered)
         if panel?.isVisible == false {
             panel?.alphaValue = 0
             panel?.orderFront(nil)
@@ -127,13 +129,19 @@ final class AppToast: ObservableObject {
         panel?.setContentSize(NSSize(width: w, height: 52))
     }
 
-    private func position() {
+    private func position(centered: Bool = false) {
         guard let screen = NSScreen.main, let panel else { return }
         let sf = screen.visibleFrame
         let pw = panel.frame.width
-        let dockClearance: CGFloat = 144   // above the file pill or dock
+        let ph = panel.frame.height
         let x = sf.minX + (sf.width - pw) / 2
-        let y = sf.minY + dockClearance
+        let y: CGFloat
+        if centered {
+            y = sf.minY + (sf.height - ph) / 2
+        } else {
+            let dockClearance: CGFloat = 144   // above the file pill or dock
+            y = sf.minY + dockClearance
+        }
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }
