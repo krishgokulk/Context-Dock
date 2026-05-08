@@ -1117,3 +1117,146 @@ struct ContextDockAIImportPayload: Codable {
         return lower.contains("safari") || lower.contains("chrome") || lower.contains("arc") || lower.contains("firefox") || lower.contains("edge")
     }
 }
+
+// MARK: - Simple AI Import (new prompt-based format)
+
+enum SimpleAIImportError: LocalizedError {
+    case emptyPayload
+    case invalidJSON(String)
+    case noExtensions
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyPayload:       return "Paste a JSON extension payload first."
+        case .invalidJSON(let m): return "JSON parse error: \(m)"
+        case .noExtensions:       return "No extensions found in the payload."
+        }
+    }
+}
+
+/// Decodes the simplified JSON schema produced by Context Dock's AI extension prompt.
+struct SimpleAIExtensionImport: Codable {
+
+    struct TriggerSpec: Codable {
+        var type: String
+        var value: String?
+    }
+
+    struct ExtensionSpec: Codable {
+        var id: String?
+        var name: String
+        var description: String
+        var icon: String?
+        var layer: String
+        var tags: [String]?
+        var triggers: [TriggerSpec]
+        var scriptType: String
+        var script: String
+        var permissions: [String]?
+        var outputMode: String?
+        var version: String?
+    }
+
+    var version: String
+    var source: String?
+    var extensions: [ExtensionSpec]
+
+    // MARK: Decode
+
+    static func decode(from text: String) throws -> SimpleAIExtensionImport {
+        var json = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Strip markdown code fences if present
+        if json.hasPrefix("```") {
+            let lines = json.components(separatedBy: .newlines)
+            json = lines.dropFirst().dropLast().joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !json.isEmpty else { throw SimpleAIImportError.emptyPayload }
+        guard let data = json.data(using: .utf8) else { throw SimpleAIImportError.emptyPayload }
+        do {
+            let payload = try JSONDecoder().decode(SimpleAIExtensionImport.self, from: data)
+            guard !payload.extensions.isEmpty else { throw SimpleAIImportError.noExtensions }
+            return payload
+        } catch let e as SimpleAIImportError { throw e }
+        catch { throw SimpleAIImportError.invalidJSON(error.localizedDescription) }
+    }
+
+    // MARK: Convert
+
+    func toILExtensions() -> [ILExtension] {
+        extensions.map { spec in
+            let layer    = parseLayer(spec.layer)
+            let sType    = parseScriptType(spec.scriptType)
+            let triggers = spec.triggers.compactMap { parseTrigger($0) }
+            let tags     = (spec.tags ?? []).compactMap { ExtensionTag(rawValue: $0) }
+
+            return ILExtension(
+                name:               spec.name,
+                description:        spec.description,
+                icon:               spec.icon ?? "gear",
+                layer:              layer,
+                tags:               tags,
+                category:           inferCategory(layer: layer, tags: spec.tags ?? []),
+                triggers:           triggers.isEmpty ? [.always] : triggers,
+                enabled:            true,
+                scriptPath:         "script.\(sType.fileExtension)",
+                scriptContent:      spec.script,
+                scriptType:         sType,
+                requiresPermissions: spec.permissions ?? [],
+                requiresInternet:   (spec.permissions ?? []).contains("network"),
+                author:             "AI Import",
+                version:            spec.version ?? "1.0",
+                isBuiltIn:          false
+            )
+        }
+    }
+
+    // MARK: Private helpers
+
+    private func parseLayer(_ s: String) -> ExtensionLayer {
+        switch s.uppercased().trimmingCharacters(in: .whitespaces) {
+        case "L1": return .l1_search
+        case "L2": return .l2_context
+        case "L3": return .l3_browser
+        case "CROSSLAYER", "CROSS", "CROSS-LAYER": return .crossLayer
+        default:   return .l2_context
+        }
+    }
+
+    private func parseScriptType(_ s: String) -> ILExtension.ScriptType {
+        switch s.lowercased() {
+        case "bash", "sh", "shell": return .bash
+        case "python", "python3":   return .python
+        case "applescript":         return .applescript
+        case "javascript", "js":    return .javascript
+        case "swift":               return .swift
+        default:                    return .bash
+        }
+    }
+
+    private func parseTrigger(_ spec: TriggerSpec) -> ExtensionTrigger? {
+        switch spec.type {
+        case "keyword":    return spec.value.map { .keyword([$0]) }
+        case "fileType":   return spec.value.map { .fileType([$0]) }
+        case "appContext": return spec.value.map { .appContext($0) }
+        case "selection":  return .selection
+        case "always":     return .always
+        case "urlPattern": return spec.value.map { .urlPattern($0) }
+        default:           return nil
+        }
+    }
+
+    private func inferCategory(layer: ExtensionLayer, tags: [String]) -> String {
+        if tags.contains(where: { ["video", "download", "media", "music", "audio"].contains($0) }) { return "media" }
+        if tags.contains("mail")    { return "mail" }
+        if tags.contains("finder")  { return "finder" }
+        if tags.contains(where: { ["safari", "chrome", "browser"].contains($0) }) { return "browser" }
+        if tags.contains(where: { ["compress", "zip", "archive"].contains($0) }) { return "file-actions" }
+        switch layer {
+        case .l3_browser: return "page-enhancers"
+        case .l2_context: return "context"
+        case .crossLayer: return "utilities"
+        default:          return "custom"
+        }
+    }
+}

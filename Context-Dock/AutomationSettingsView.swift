@@ -6,6 +6,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 
 // MARK: - Category
 
@@ -15,6 +16,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
     case cliTools        = "CLI Tools"
     case contextTriggers = "Context Triggers"
     case appActions      = "App Actions"
+    case systemCommands  = "System Commands"
 
     var id: String { rawValue }
 
@@ -25,6 +27,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return "terminal.fill"
         case .contextTriggers: return "scope"
         case .appActions:      return "app.connected.to.app.below.fill"
+        case .systemCommands:  return "slider.horizontal.3"
         }
     }
 
@@ -35,6 +38,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return .green
         case .contextTriggers: return .red
         case .appActions:      return .teal
+        case .systemCommands:  return .indigo
         }
     }
 
@@ -45,6 +49,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return "CLI binaries callable by the AI terminal"
         case .contextTriggers: return "Rules that fire based on screen context"
         case .appActions:      return "User-owned actions bound to installed apps"
+        case .systemCommands:  return "Global device controls: volume, appearance, display…"
         }
     }
 }
@@ -64,6 +69,8 @@ struct AutomationSettingsView: View {
     @State private var selectedPackageID: UUID?
     @State private var selectedAdapterID: String?
     @State private var selectedAdapterActionID: String?
+    @State private var selectedSystemCommandID: UUID?
+    @StateObject private var sysRegistry = SystemCommandsRegistryObservable.shared
     @State private var installedAppsByBundleId: [String: InstalledApplicationEntry] = [:]
     @State private var showExtensionSheet = false
     @State private var showPackageSheet = false
@@ -71,6 +78,7 @@ struct AutomationSettingsView: View {
     @State private var showAdapterSheet = false
     @State private var showAIImportSheet = false
     @State private var extensionSheetMode: AddAppExtensionSheet.Mode = .script
+    @State private var showingImportPanel = false
 
     var body: some View {
         HSplitView {
@@ -78,13 +86,22 @@ struct AutomationSettingsView: View {
             sidebar
                 .frame(minWidth: 200, idealWidth: 220, maxWidth: 240)
 
-            // ── Column 2: Item list ──────────────────────────────────
-            itemList
-                .frame(minWidth: 260, idealWidth: 300)
+            if showingImportPanel {
+                // ── Import panel (full width, replaces col 2+3) ──────
+                AutomationImportPanel(onClose: {
+                    showingImportPanel = false
+                    selectedCategory = .contextTriggers
+                })
+                .frame(minWidth: 600)
+            } else {
+                // ── Column 2: Item list ──────────────────────────────
+                itemList
+                    .frame(minWidth: 260, idealWidth: 300)
 
-            // ── Column 3: Detail / Editor ────────────────────────────
-            detailPane
-                .frame(minWidth: 340)
+                // ── Column 3: Detail / Editor ────────────────────────
+                detailPane
+                    .frame(minWidth: 340)
+            }
         }
         .sheet(isPresented: $showExtensionSheet) {
             AddAppExtensionSheet(appKey: "global", initialMode: extensionSheetMode) { ext in
@@ -162,15 +179,28 @@ struct AutomationSettingsView: View {
                         SidebarRow(
                             category: cat,
                             count: count(for: cat),
-                            isSelected: selectedCategory == cat
+                            isSelected: !showingImportPanel && selectedCategory == cat
                         )
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 selectedCategory = cat
+                                showingImportPanel = false
                                 clearSelection()
                             }
                         }
                     }
+
+                    // Divider before Import
+                    Divider().padding(.horizontal, 8).padding(.vertical, 4)
+
+                    // Import row
+                    AutomationImportSidebarRow(isSelected: showingImportPanel)
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                showingImportPanel = true
+                                clearSelection()
+                            }
+                        }
                 }
                 .padding(8)
             }
@@ -227,6 +257,7 @@ struct AutomationSettingsView: View {
             case .cliTools:        cliList
             case .contextTriggers: triggerList
             case .appActions:      adapterList
+            case .systemCommands:  systemCommandList
             }
         }
         .background(Color(NSColor.windowBackgroundColor))
@@ -276,6 +307,9 @@ struct AutomationSettingsView: View {
             } else {
                 appActionsEmptyDetail
             }
+
+        case .systemCommands:
+            SystemCommandDetailView(selectedID: $selectedSystemCommandID)
         }
     }
 
@@ -411,6 +445,35 @@ struct AutomationSettingsView: View {
         }
     }
 
+    private var systemCommandList: some View {
+        Group {
+            if sysRegistry.commands.isEmpty {
+                listEmpty(icon: "slider.horizontal.3", label: "No system commands", action: {})
+            } else {
+                let cmds: [SystemCommand] = searchText.isEmpty
+                    ? sysRegistry.commands
+                    : sysRegistry.commands.filter { $0.name.localizedCaseInsensitiveContains(searchText) || $0.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) } }
+                List(selection: $selectedSystemCommandID) {
+                    ForEach(cmds) { cmd in
+                        AutomationRow(
+                            icon: cmd.icon,
+                            color: AutomationCategory.systemCommands.color,
+                            title: cmd.name,
+                            subtitle: cmd.description,
+                            isEnabled: cmd.isEnabled
+                        )
+                        .tag(cmd.id)
+                    }
+                    .onDelete { idx in
+                        let toRemove = idx.map { cmds[$0] }
+                        toRemove.forEach { sysRegistry.remove($0) }
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
     // MARK: Filtered Data
 
     private var scriptExtensions: [AppToolExtension] {
@@ -467,6 +530,7 @@ struct AutomationSettingsView: View {
         case .cliTools:        return pkgMgr.packages.count
         case .contextTriggers: return settings.axTriggerRules.count
         case .appActions:      return appActionAdapters.count
+        case .systemCommands:  return sysRegistry.commands.count
         }
     }
 
@@ -781,6 +845,8 @@ struct AutomationSettingsView: View {
             showRuleSheet = true
         case .appActions:
             showAdapterSheet = true
+        case .systemCommands:
+            break // system commands are edited inline
         }
     }
 
@@ -2239,6 +2305,7 @@ struct NewAutomationSheet: View {
                     case .cliTools:        cliForm
                     case .contextTriggers: triggerForm
                     case .appActions:      appActionsInfo
+                    case .systemCommands:  appActionsInfo
                     }
                 }
                 .padding(24)
@@ -2378,6 +2445,7 @@ struct NewAutomationSheet: View {
         case .cliTools:        return !cliName.isEmpty && !cliCommand.isEmpty
         case .contextTriggers: return !ruleName.isEmpty
         case .appActions:      return false
+        case .systemCommands:  return false
         }
     }
 
@@ -2413,6 +2481,8 @@ struct NewAutomationSheet: View {
             settings.addAXRule(rule)
 
         case .appActions:
+            break
+        case .systemCommands:
             break
         }
 
@@ -2515,6 +2585,16 @@ struct AIExtensionImportSheet: View {
     }
 
     private func importPayload() {
+        // Try new simplified format first, then fall back to legacy ContextDockAIImportPayload
+        if let simple = try? SimpleAIExtensionImport.decode(from: rawJSON) {
+            let exts = simple.toILExtensions()
+            exts.forEach { LayeredExtensionManager.shared.addExtension($0) }
+            let layerName = exts.first?.layer.displayName ?? "Extensions"
+            importSummary = "Imported \(exts.count) extension\(exts.count == 1 ? "" : "s") into \(layerName)."
+            errorMessage = nil
+            dismiss()
+            return
+        }
         do {
             let payload = try ContextDockAIImportPayload.decode(from: rawJSON)
             let layer = payload.makeILExtension().layer.displayName
@@ -2914,4 +2994,675 @@ private struct AppActionSamplesSection: View {
 #Preview {
     AutomationSettingsView()
         .frame(width: 960, height: 680)
+}
+
+// MARK: - Import Destination
+
+enum ImportDestination: String, CaseIterable {
+    case globalContext = "Global Context"
+    case contextDock   = "Context Dock"
+
+    var icon: String {
+        switch self {
+        case .globalContext: return "globe"
+        case .contextDock:   return "dock.rectangle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .globalContext: return .purple
+        case .contextDock:   return .blue
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .globalContext: return "Runs on selected text or content in any app"
+        case .contextDock:   return "Auto-shows dock pill when URL, app, or file matches"
+        }
+    }
+
+    var savesAs: String {
+        switch self {
+        case .globalContext: return "→ saved as Script"
+        case .contextDock:   return "→ saved as Context Trigger"
+        }
+    }
+}
+
+// MARK: - Sidebar Import Row
+
+struct AutomationImportSidebarRow: View {
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected
+                          ? LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                          : LinearGradient(colors: [.purple.opacity(0.12), .blue.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 28, height: 28)
+                Image(systemName: "arrow.down.doc.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isSelected ? .white : .purple)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Import")
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                Text("Paste AI-generated JSON")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            isSelected
+            ? AnyView(LinearGradient(colors: [.purple.opacity(0.1), .blue.opacity(0.1)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing)
+                      .clipShape(RoundedRectangle(cornerRadius: 8)))
+            : AnyView(Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Automation Import Panel
+
+struct AutomationImportPanel: View {
+    var onClose: () -> Void
+
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var jsonText = ""
+    @State private var parsed: SimpleAIExtensionImport? = nil
+    @State private var parseError: String? = nil
+    @State private var destination: ImportDestination = .contextDock
+    @State private var didImport = false
+    @State private var importedName = ""
+    @State private var importedDest: ImportDestination = .contextDock
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(LinearGradient(colors: [.purple.opacity(0.15), .blue.opacity(0.15)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: "arrow.down.doc.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(LinearGradient(colors: [.purple, .blue],
+                                                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import Extension")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context or Context Dock")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !jsonText.isEmpty && !didImport {
+                    Button("Clear") { resetPanel() }
+                        .buttonStyle(.bordered).controlSize(.small).tint(.red)
+                }
+                Button(action: pasteFromClipboard) {
+                    Label("Paste", systemImage: "doc.on.clipboard").font(.system(size: 11))
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            if didImport {
+                successView
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+
+                        // Destination picker
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("SAVE TO")
+                                .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+
+                            HStack(spacing: 10) {
+                                ForEach(ImportDestination.allCases, id: \.self) { dest in
+                                    destinationCard(dest)
+                                        .onTapGesture { destination = dest }
+                                }
+                            }
+
+                            if parsed != nil {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
+                                    Text("Auto-detected from triggers")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+
+                        // JSON editor
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("JSON PAYLOAD")
+                                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                                Spacer()
+                                if parsed != nil {
+                                    Label("Valid", systemImage: "checkmark.circle.fill")
+                                        .font(.caption).foregroundStyle(.green)
+                                } else if parseError != nil && !jsonText.isEmpty {
+                                    Label("Check format", systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption).foregroundStyle(.orange)
+                                }
+                            }
+                            ZStack(alignment: .topLeading) {
+                                if jsonText.isEmpty {
+                                    Text("Paste JSON here…")
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.quaternary)
+                                        .padding(10).allowsHitTesting(false)
+                                }
+                                TextEditor(text: $jsonText)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .scrollContentBackground(.hidden)
+                                    .padding(6)
+                                    .frame(minHeight: 180, maxHeight: 300)
+                                    .onChange(of: jsonText) { _, new in parseAndDetect(new) }
+                            }
+                            .background(Color(NSColor.textBackgroundColor),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(
+                                parsed != nil ? .green.opacity(0.5) :
+                                (parseError != nil && !jsonText.isEmpty) ? .orange.opacity(0.4) :
+                                    .secondary.opacity(0.18), lineWidth: 1))
+                        }
+
+                        // Preview cards
+                        if let payload = parsed {
+                            let exts = payload.toILExtensions()
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("\(exts.count) extension\(exts.count == 1 ? "" : "s") ready",
+                                      systemImage: "checkmark.seal.fill")
+                                    .font(.caption.bold()).foregroundStyle(.green)
+
+                                ForEach(exts) { ext in
+                                    importPreviewCard(ext)
+                                }
+                            }
+                        }
+
+                        // Empty state tip
+                        if jsonText.isEmpty {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "lightbulb.fill").foregroundStyle(.orange).font(.caption)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("How to get extensions").font(.caption.bold())
+                                    Text("Ask any AI (Claude, ChatGPT, Gemini) using the Context Dock extension prompt. Paste the JSON here — it's imported and live immediately.")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(12)
+                            .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                    .padding(20)
+                }
+
+                Divider()
+
+                // Footer
+                HStack {
+                    HStack(spacing: 5) {
+                        Image(systemName: destination.icon).font(.caption).foregroundStyle(destination.color)
+                        Text(destination.savesAs).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Import & Save") { commitImport() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(LinearGradient(colors: [.purple, .blue],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .disabled(parsed == nil)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(Color(NSColor.controlBackgroundColor))
+            }
+        }
+        .background(Color(NSColor.windowBackgroundColor))
+        .onAppear { pasteFromClipboard() }
+    }
+
+    // MARK: Sub-views
+
+    @ViewBuilder
+    private func destinationCard(_ dest: ImportDestination) -> some View {
+        let isSelected = destination == dest
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: dest.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isSelected ? dest.color : .secondary)
+                Text(dest.rawValue)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(dest.color)
+                }
+            }
+            Text(dest.subtitle)
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+            Text(dest.savesAs)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(dest.color)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isSelected ? dest.color.opacity(0.08) : Color(NSColor.controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(isSelected ? dest.color.opacity(0.4) : .secondary.opacity(0.15), lineWidth: 1))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func importPreviewCard(_ ext: ILExtension) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(destination.color.opacity(0.1))
+                    .frame(width: 38, height: 38)
+                Image(systemName: ext.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(destination.color)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(ext.name).font(.system(size: 13, weight: .semibold))
+                    Text(ext.scriptType.rawValue.uppercased())
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(.secondary.opacity(0.1), in: Capsule())
+                }
+                Text(ext.description)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 4) {
+                    ForEach(Array(ext.triggers.prefix(3).enumerated()), id: \.offset) { _, t in
+                        Text(triggerLabel(t))
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.secondary.opacity(0.08), in: Capsule())
+                    }
+                }
+            }
+            Spacer()
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.green.opacity(0.2), lineWidth: 1))
+    }
+
+    private var successView: some View {
+        VStack(spacing: 24) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [.purple.opacity(0.12), .blue.opacity(0.12)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 80, height: 80)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(LinearGradient(colors: [.purple, .blue],
+                                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+            VStack(spacing: 6) {
+                Text("**\(importedName)** imported")
+                    .font(.title3)
+                Text("Saved to \(importedDest.rawValue) · active immediately")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                Button("Import Another") { resetPanel() }
+                    .buttonStyle(.bordered)
+                Button("Done") { onClose() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(LinearGradient(colors: [.purple, .blue],
+                                         startPoint: .leading, endPoint: .trailing))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: Logic
+
+    private func parseAndDetect(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { parsed = nil; parseError = nil; return }
+        do {
+            let payload = try SimpleAIExtensionImport.decode(from: t)
+            parsed = payload
+            parseError = nil
+            // Auto-detect destination from first extension's triggers
+            if let spec = payload.extensions.first {
+                destination = autoDetect(spec)
+            }
+        } catch {
+            parsed = nil
+            parseError = error.localizedDescription
+        }
+    }
+
+    private func autoDetect(_ spec: SimpleAIExtensionImport.ExtensionSpec) -> ImportDestination {
+        let hasContextTrigger = spec.triggers.contains {
+            ["urlPattern", "appContext", "fileType"].contains($0.type)
+        }
+        return hasContextTrigger ? .contextDock : .globalContext
+    }
+
+    private func pasteFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.hasPrefix("{") || t.hasPrefix("```") else { return }
+        jsonText = t
+        parseAndDetect(t)
+    }
+
+    private func commitImport() {
+        guard let payload = parsed else { return }
+        let exts = payload.toILExtensions()
+        guard let first = exts.first, let spec = payload.extensions.first else { return }
+
+        switch destination {
+        case .globalContext:
+            // Save as AppToolExtension (global script)
+            let lang = mapScriptLanguage(spec.scriptType)
+            let savedPath = settings.saveScript(
+                appKey: "global", name: first.name, language: lang, code: spec.script
+            ) ?? ""
+            let toolExt = AppToolExtension(
+                appKey: "global",
+                toolName: first.name,
+                toolPath: savedPath,
+                aiHint: first.description,
+                profile: AppToolProfile(capabilities: [], exampleCommands: [],
+                                        fileTypes: [], isDestructive: false),
+                kind: .script,
+                scriptLanguage: lang,
+                scriptCode: spec.script
+            )
+            settings.addToolExtension(toolExt)
+
+        case .contextDock:
+            // Save script file + create AXTriggerRule
+            let lang = mapScriptLanguage(spec.scriptType)
+            let savedPath = settings.saveScript(
+                appKey: "context-dock", name: first.name, language: lang, code: spec.script
+            ) ?? ""
+            let conditions = spec.triggers.compactMap { triggerToCondition($0) }
+            let pill = AXRulePill(
+                label: first.name,
+                icon: first.icon,
+                accentColor: "blue",
+                actionType: .scriptFile,
+                actionValue: savedPath
+            )
+            // Extract app scope if appContext trigger present
+            let appBundleId = spec.triggers.first(where: { $0.type == "appContext" })?.value
+            let rule = AXTriggerRule(
+                name: first.name,
+                isEnabled: true,
+                conditions: conditions,
+                conditionLogic: conditions.count == 1 ? .all : .any,
+                pills: [pill],
+                priority: 10,
+                bundleId: appBundleId
+            )
+            settings.addAXRule(rule)
+        }
+
+        importedName = exts.first?.name ?? "Extension"
+        importedDest = destination
+        withAnimation(.spring(duration: 0.35)) { didImport = true }
+    }
+
+    private func resetPanel() {
+        jsonText = ""; parsed = nil; parseError = nil; didImport = false
+    }
+
+    private func mapScriptLanguage(_ s: String) -> AppScriptLanguage {
+        switch s.lowercased() {
+        case "python", "python3": return .python
+        case "applescript":       return .applescript
+        case "javascript", "jxa": return .jxa
+        default:                  return .bash
+        }
+    }
+
+    private func triggerToCondition(_ spec: SimpleAIExtensionImport.TriggerSpec) -> AXTriggerCondition? {
+        switch spec.type {
+        case "urlPattern":
+            return AXTriggerCondition(field: .currentURL, op: .contains, value: spec.value ?? "")
+        case "appContext":
+            return AXTriggerCondition(field: .appName, op: .contains, value: spec.value ?? "")
+        case "fileType":
+            return AXTriggerCondition(field: .filePath, op: .endsWith, value: ".\(spec.value ?? "")")
+        case "keyword":
+            return AXTriggerCondition(field: .selectedText, op: .contains, value: spec.value ?? "")
+        case "selection":
+            return AXTriggerCondition(field: .selectedText, op: .isNotEmpty, value: "")
+        default:
+            return nil
+        }
+    }
+
+    private func triggerLabel(_ trigger: ExtensionTrigger) -> String {
+        switch trigger {
+        case .keyword(let kws):    return "keyword: \(kws.first ?? "")"
+        case .fileType(let types): return ".\(types.first ?? "")"
+        case .appContext(let app): return app
+        case .urlPattern(let p):   return "url: \(p)"
+        case .selection:           return "on select"
+        case .always:              return "always"
+        }
+    }
+}
+
+// MARK: - SystemCommandsRegistryObservable
+
+/// ObservableObject wrapper so SwiftUI views react to registry changes.
+final class SystemCommandsRegistryObservable: ObservableObject {
+    static let shared = SystemCommandsRegistryObservable()
+    @Published private(set) var commands: [SystemCommand] = []
+    private init() { reload() }
+    func reload() { commands = SystemCommandsRegistry.shared.commands }
+    func remove(_ cmd: SystemCommand) {
+        SystemCommandsRegistry.shared.remove(cmd)
+        reload()
+    }
+    func update(_ cmd: SystemCommand) {
+        SystemCommandsRegistry.shared.update(cmd)
+        reload()
+    }
+    func add(_ cmd: SystemCommand) {
+        SystemCommandsRegistry.shared.add(cmd)
+        reload()
+    }
+}
+
+// MARK: - System Command Detail View
+
+struct SystemCommandDetailView: View {
+    @Binding var selectedID: UUID?
+    @StateObject private var registry = SystemCommandsRegistryObservable.shared
+
+    private var selected: SystemCommand? {
+        guard let id = selectedID else { return nil }
+        return registry.commands.first { $0.id == id }
+    }
+
+    var body: some View {
+        if let cmd = selected {
+            SystemCommandEditorView(command: cmd, registry: registry)
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(.tertiary)
+                Text("Select a command")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                Text("System Commands are always available globally.\nType their name in the dock to run them instantly.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 260)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct SystemCommandEditorView: View {
+    let command: SystemCommand
+    @ObservedObject var registry: SystemCommandsRegistryObservable
+
+    @State private var name: String
+    @State private var description: String
+    @State private var icon: String
+    @State private var keywords: String
+    @State private var scriptType: String
+    @State private var script: String
+    @State private var isEnabled: Bool
+
+    init(command: SystemCommand, registry: SystemCommandsRegistryObservable) {
+        self.command  = command
+        self.registry = registry
+        _name        = State(initialValue: command.name)
+        _description = State(initialValue: command.description)
+        _icon        = State(initialValue: command.icon)
+        _keywords    = State(initialValue: command.keywords.joined(separator: ", "))
+        _scriptType  = State(initialValue: command.scriptType)
+        _script      = State(initialValue: command.script)
+        _isEnabled   = State(initialValue: command.isEnabled)
+    }
+
+    private var hasChanges: Bool {
+        name != command.name || description != command.description
+            || icon != command.icon || keywords != command.keywords.joined(separator: ", ")
+            || scriptType != command.scriptType || script != command.script
+            || isEnabled != command.isEnabled
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header
+                HStack(spacing: 10) {
+                    Image(systemName: icon.isEmpty ? "command" : icon)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(Color.indigo)
+                        .frame(width: 40, height: 40)
+                        .background(Color.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name.isEmpty ? "System Command" : name)
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Global · Always available · Natural language")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $isEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+
+                Divider()
+
+                // Fields
+                Group {
+                    labeledField("Name") {
+                        TextField("Command name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("Description") {
+                        TextField("Short description", text: $description)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("SF Symbol") {
+                        TextField("e.g. speaker.wave.3.fill", text: $icon)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("Keywords") {
+                        TextField("mute, audio, sound (comma-separated)", text: $keywords)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Used for natural language matching in the dock")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    labeledField("Script Type") {
+                        Picker("", selection: $scriptType) {
+                            Text("AppleScript").tag("applescript")
+                            Text("bash").tag("bash")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 200)
+                    }
+                }
+
+                labeledField("Script") {
+                    TextEditor(text: $script)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minHeight: 180)
+                        .scrollContentBackground(.hidden)
+                        .background(Color(NSColor.textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
+                        )
+                }
+
+                // Save button
+                if hasChanges {
+                    HStack {
+                        Spacer()
+                        Button("Save Changes") {
+                            var updated = command
+                            updated.name        = name.trimmingCharacters(in: .whitespaces)
+                            updated.description = description.trimmingCharacters(in: .whitespaces)
+                            updated.icon        = icon.trimmingCharacters(in: .whitespaces)
+                            updated.keywords    = keywords.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                            updated.scriptType  = scriptType
+                            updated.script      = script
+                            updated.isEnabled   = isEnabled
+                            registry.update(updated)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                    }
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    @ViewBuilder
+    private func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
 }

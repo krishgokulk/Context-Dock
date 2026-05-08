@@ -323,25 +323,51 @@ class LayeredExtensionManager: ObservableObject {
     }
 
     private func executeBashScript(_ ext: ILExtension, input: [URL]) async throws -> String {
-        guard let scriptContent = ext.scriptContent else {
+        guard var scriptContent = ext.scriptContent else {
             throw LayeredExtensionError.scriptNotFound
         }
 
-        // Create temporary script file
+        // Substitute {placeholder} → $CD_VAR so values arrive safely via env, not inline injection
+        let placeholderMap: [String: String] = [
+            "{currentURL}":    "$CD_URL",
+            "{selectedText}":  "$CD_TEXT",
+            "{selectedFile}":  "$CD_FILE",
+            "{selectedFiles}": "$CD_FILES",
+            "{appName}":       "$CD_APP",
+            "{bundleId}":      "$CD_BUNDLE",
+            "{windowTitle}":   "$CD_TITLE",
+            "{clipboardText}": "$CD_CLIPBOARD",
+            "{pageContent}":   "$CD_PAGE",
+        ]
+        for (placeholder, envVar) in placeholderMap {
+            scriptContent = scriptContent.replacingOccurrences(of: placeholder, with: envVar)
+        }
+
+        // Build context environment
+        let ctx = AXContextReader.shared.current
+        let filePaths = input.map { $0.path }
+        let contextEnv: [String: String] = [
+            "CD_URL":       ctx.currentURL ?? "",
+            "CD_TEXT":      ctx.selectedText ?? "",
+            "CD_FILE":      ctx.selectedFilePaths.first ?? filePaths.first ?? "",
+            "CD_FILES":     ctx.selectedFilePaths.isEmpty ? filePaths.joined(separator: "\n") : ctx.selectedFilePaths.joined(separator: "\n"),
+            "CD_APP":       ctx.appName,
+            "CD_BUNDLE":    ctx.bundleId,
+            "CD_TITLE":     ctx.windowTitle ?? "",
+            "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
+            "CD_PAGE":      "",
+        ]
+        let processEnv = ProcessInfo.processInfo.environment.merging(contextEnv) { _, new in new }
+
+        // Write temp script
         let tempScript = FileManager.default.temporaryDirectory.appendingPathComponent("ext_\(ext.id.uuidString).sh")
         try scriptContent.write(to: tempScript, atomically: true, encoding: .utf8)
-
-        // Make executable
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tempScript.path)
 
-        // Build arguments
-        let inputPaths = input.map { $0.path }.joined(separator: " ")
-        let command = "\(tempScript.path) \(inputPaths)"
-
-        // Execute
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", command]
+        process.arguments = [tempScript.path] + filePaths
+        process.environment = processEnv
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -353,9 +379,7 @@ class LayeredExtensionManager: ObservableObject {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
 
-        // Cleanup
         try? FileManager.default.removeItem(at: tempScript)
-
         return output
     }
 
@@ -368,8 +392,24 @@ class LayeredExtensionManager: ObservableObject {
     }
 
     private func executeAppleScript(_ ext: ILExtension, input: [URL]) async throws -> String {
-        guard let scriptContent = ext.scriptContent else {
+        guard var scriptContent = ext.scriptContent else {
             throw LayeredExtensionError.scriptNotFound
+        }
+
+        // Substitute {placeholder} with quoted AppleScript string literals
+        let ctx = AXContextReader.shared.current
+        let substitutions: [String: String] = [
+            "{currentURL}":    ctx.currentURL ?? "",
+            "{selectedText}":  ctx.selectedText ?? "",
+            "{selectedFile}":  ctx.selectedFilePaths.first ?? input.first?.path ?? "",
+            "{appName}":       ctx.appName,
+            "{bundleId}":      ctx.bundleId,
+            "{windowTitle}":   ctx.windowTitle ?? "",
+            "{clipboardText}": NSPasteboard.general.string(forType: .string) ?? "",
+        ]
+        for (placeholder, value) in substitutions {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\\\"")
+            scriptContent = scriptContent.replacingOccurrences(of: placeholder, with: escaped)
         }
 
         var error: NSDictionary?
@@ -378,11 +418,9 @@ class LayeredExtensionManager: ObservableObject {
         }
 
         let output = script.executeAndReturnError(&error)
-
         if let error = error {
             throw LayeredExtensionError.executionFailed(error.description)
         }
-
         return output.stringValue ?? ""
     }
 
