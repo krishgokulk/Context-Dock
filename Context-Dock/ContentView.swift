@@ -1057,11 +1057,16 @@ struct LauncherView: View {
     }
 
     private var contextDockRunningOnlyAppMatching: Bool {
-        isL2ContextActive && l2TargetApp == nil && !isGlobalContextActive
+        false
     }
 
     private var contextDockInstalledAppScopeMatching: Bool {
-        isL2ContextActive && l2TargetApp == nil && !isGlobalContextActive
+        false
+    }
+
+    private var isExplicitAppScopeLocked: Bool {
+        guard let target = l2TargetApp else { return false }
+        return target.bundleId != "scope://clipboard"
     }
 
     private func runningBundleIdsForContextDock() -> Set<String> {
@@ -1685,6 +1690,7 @@ struct LauncherView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .overlayAskAboutSelection)) {
                 notification in
+                guard !isExplicitAppScopeLocked else { return }
                 guard let text = notification.userInfo?["text"] as? String else { return }
                 searchText = text
                 isAIMode = true
@@ -1747,13 +1753,6 @@ struct LauncherView: View {
                         globalClipboardText = ""
                         // Stamp time so autoSwitch won't re-fire from the AX observer debounce
                         lastAppSwitchDate = Date()
-                        // Auto-exit explicit app scope when the scoped app becomes frontmost.
-                        // The scope was only needed to target a background app — once that app
-                        // is frontmost, the scope is redundant and should dissolve automatically.
-                        if let target = l2TargetApp, target.bundleId == bundleID {
-                            l2TargetApp = nil
-                            searchText = ""
-                        }
                     }
 
                     // Scope lock: when user explicitly entered an app scope (l2TargetApp set),
@@ -2116,6 +2115,9 @@ struct LauncherView: View {
                     {
                         return .handled
                     }
+                    if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
+                        return .handled
+                    }
                     if launchTypedAppMatchIfNeeded() {
                         return .handled
                     }
@@ -2142,6 +2144,9 @@ struct LauncherView: View {
                         if executeFocusedOrDirectAppPillIfNeeded() {
                             return .handled
                         }
+                        if executeFirstMatchingFinderFolderPillIfNeeded() {
+                            return .handled
+                        }
                         enforceL2ContextMode()
                         handleL2Query()
                     } else if isAIMode {
@@ -2155,6 +2160,10 @@ struct LauncherView: View {
                 return .ignored
             }
             .onKeyPress(.tab) {
+                if isL2ContextActive && !isGlobalContextActive {
+                    return .handled
+                }
+
                 // Tab on submenu ghost — lock parent if not yet locked; execute if already locked
                 if let subCtx = submenuGhostContext, !subCtx.children.isEmpty {
                     if lockedSubmenuParent == nil {
@@ -2187,12 +2196,11 @@ struct LauncherView: View {
                     return .handled
                 }
 
-                if isL2ContextActive {
-                    if let completion = l2AppCompletion, !completion.ghost.isEmpty {
-                        acceptL2AppCompletion(completion)
-                        return .handled
-                    }
+                if activateTypedAppScopeIfPossible() {
+                    return .handled
+                }
 
+                if isL2ContextActive {
                     let rawTrimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                     // Strip .app suffix so "Clock.app<Tab>" completes to "Clock "
                     let trimmed = rawTrimmed.lowercased().hasSuffix(".app")
@@ -2200,30 +2208,32 @@ struct LauncherView: View {
                         : rawTrimmed
                     // Tab = activate scope immediately and clear the app name (Spotlight-style).
                     // The search field stays focused so the user can type their query.
-                    if let target = L2AppActionRouter.shared.appScopeTarget(for: trimmed) {
-                        let activated = activateInlineDockAppScope(
-                            bundleIdentifier: target.bundleId,
-                            appName: target.appName,
-                            searchTextOverride: target.actionQuery
-                        )
-                        isGlobalContextActive = false
-                        if !activated { searchText = target.appName + " " }
-                        return .handled
-                    }
+                    if isGlobalContextActive {
+                        if let target = L2AppActionRouter.shared.appScopeTarget(for: trimmed) {
+                            let activated = activateInlineDockAppScope(
+                                bundleIdentifier: target.bundleId,
+                                appName: target.appName,
+                                searchTextOverride: target.actionQuery
+                            )
+                            isGlobalContextActive = false
+                            if !activated { searchText = target.appName + " " }
+                            return .handled
+                        }
 
-                    if let target = installedAppMenuTarget(
-                        for: trimmed,
-                        includeAppsWithoutMenuSnapshot: contextDockInstalledAppScopeMatching,
-                        allowPrefixAlias: contextDockInstalledAppScopeMatching
-                    ) {
-                        let activated = activateInlineDockAppScope(
-                            bundleIdentifier: target.bundleId,
-                            appName: target.appName,
-                            searchTextOverride: target.actionQuery
-                        )
-                        isGlobalContextActive = false
-                        if !activated { searchText = target.appName + " " }
-                        return .handled
+                        if let target = installedAppMenuTarget(
+                            for: trimmed,
+                            includeAppsWithoutMenuSnapshot: true,
+                            allowPrefixAlias: true
+                        ) {
+                            let activated = activateInlineDockAppScope(
+                                bundleIdentifier: target.bundleId,
+                                appName: target.appName,
+                                searchTextOverride: target.actionQuery
+                            )
+                            isGlobalContextActive = false
+                            if !activated { searchText = target.appName + " " }
+                            return .handled
+                        }
                     }
 
                     if focusFirstDockPillIfAvailable(for: searchText) {
@@ -3478,7 +3488,7 @@ struct LauncherView: View {
 
     private func typedL2AppIcon(for query: String) -> (icon: NSImage, bundleId: String)? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isL2ContextActive, !trimmed.isEmpty else { return nil }
+        guard isL2ContextActive, isGlobalContextActive, !trimmed.isEmpty else { return nil }
 
         let normalized = trimmed.lowercased()
         let installedScopeMode = contextDockInstalledAppScopeMatching
@@ -3673,6 +3683,8 @@ struct LauncherView: View {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
         guard normalized.count >= 2 else { return false }
+        guard !(isL2ContextActive && !isGlobalContextActive) else { return false }
+
         let installedScopeMode = contextDockInstalledAppScopeMatching
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
@@ -7413,7 +7425,7 @@ struct LauncherView: View {
         }
         scheduleClipboardIndicatorAutoHide()
         // Auto-switch to global context if we're in dock mode and not already there
-        if showContextInDock && !isGlobalContextActive && l2TargetApp == nil {
+        if showContextInDock && !isGlobalContextActive && !isExplicitAppScopeLocked && l2TargetApp == nil {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                 isGlobalContextActive = true
             }
@@ -7485,7 +7497,7 @@ struct LauncherView: View {
     /// Switches to Global Context automatically when files, text, or a URL are selected
     /// in the frontmost app. Checks both axContext (live AX state) and currentContext.
     private func autoSwitchGlobalContextIfNeeded() {
-        guard showContextInDock, l2TargetApp == nil, !isGlobalContextActive else { return }
+        guard showContextInDock, !isExplicitAppScopeLocked, l2TargetApp == nil, !isGlobalContextActive else { return }
         // Don't re-trigger within 600ms of an app switch — the AX observer fires for the
         // new app with stale/cursor-position state which would immediately flip back to global.
         guard Date().timeIntervalSince(lastAppSwitchDate) > 0.6 else { return }
@@ -8154,7 +8166,8 @@ struct LauncherView: View {
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
 
-        if let explicitTarget = L2AppActionRouter.shared.appScopeTarget(for: normalizedRawQuery),
+        if scope.isExplicitAppScope,
+           let explicitTarget = L2AppActionRouter.shared.appScopeTarget(for: normalizedRawQuery),
             (!runningOnly || runningBundleIds.contains(explicitTarget.bundleId)),
             explicitTarget.bundleId == scope.scopedBundleId
         {
@@ -8165,7 +8178,8 @@ struct LauncherView: View {
             )
         }
 
-        if let installedTarget = installedAppMenuTarget(
+        if scope.isExplicitAppScope,
+           let installedTarget = installedAppMenuTarget(
             for: normalizedRawQuery,
             runningOnly: runningOnly,
             includeAppsWithoutMenuSnapshot: installedScopeMode,
@@ -10180,7 +10194,7 @@ struct LauncherView: View {
         let installedScopeMode = contextDockInstalledAppScopeMatching
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
-        let explicitAppTarget: L2ExplicitAppTarget? = q.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: q).flatMap { target -> L2ExplicitAppTarget? in
+        let explicitAppTarget: L2ExplicitAppTarget? = (!isGlobalContextActive || q.isEmpty) ? nil : L2AppActionRouter.shared.appScopeTarget(for: q).flatMap { target -> L2ExplicitAppTarget? in
             if installedScopeMode,
                implicitContextDockAppScopeBlockedBundleIds.contains(target.bundleId) {
                 return nil
@@ -10188,7 +10202,7 @@ struct LauncherView: View {
             return (!runningOnly || runningBundleIds.contains(target.bundleId)) ? target : nil
         }
         let installedMenuTarget =
-            (explicitAppTarget == nil && l2TargetApp == nil)
+            (isGlobalContextActive && explicitAppTarget == nil && l2TargetApp == nil)
             ? installedAppMenuTarget(
                 for: q,
                 runningOnly: runningOnly,
@@ -12575,7 +12589,7 @@ struct LauncherView: View {
         let installedScopeMode = contextDockInstalledAppScopeMatching
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
-        let explicitAppTarget: L2ExplicitAppTarget? = q.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: q).flatMap { target -> L2ExplicitAppTarget? in
+        let explicitAppTarget: L2ExplicitAppTarget? = (!isGlobalContextActive || q.isEmpty) ? nil : L2AppActionRouter.shared.appScopeTarget(for: q).flatMap { target -> L2ExplicitAppTarget? in
             if installedScopeMode,
                implicitContextDockAppScopeBlockedBundleIds.contains(target.bundleId) {
                 return nil
@@ -12583,7 +12597,7 @@ struct LauncherView: View {
             return (!runningOnly || runningBundleIds.contains(target.bundleId)) ? target : nil
         }
         let installedMenuTarget =
-            (explicitAppTarget == nil && l2TargetApp == nil)
+            (isGlobalContextActive && explicitAppTarget == nil && l2TargetApp == nil)
             ? installedAppMenuTarget(
                 for: q,
                 runningOnly: runningOnly,
@@ -13711,6 +13725,7 @@ struct LauncherView: View {
     private func directAppActionQuery(for query: String) -> String? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
+        guard isGlobalContextActive || l2TargetApp != nil else { return nil }
         if let target = L2AppActionRouter.shared.explicitAppTarget(for: q) {
             return target.actionQuery
         }
@@ -13818,6 +13833,36 @@ struct LauncherView: View {
         return true
     }
 
+    private func firstMatchingFinderFolderPill(for rawQuery: String? = nil) -> DockPill? {
+        let q = (rawQuery ?? searchText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !q.isEmpty else { return nil }
+
+        let pills = buildDockPills(query: q)
+        let finderFolderKinds: Set<String> = ["finderGoTo", "finderCurrent", "finderSearch"]
+        return pills.first(where: { pill in
+            guard !pill.isSeparator else { return false }
+            guard pill.sourceBundleId == "com.apple.finder" else { return false }
+            guard finderFolderKinds.contains(pill.rankingKind) else { return false }
+            guard pill.icon.localizedCaseInsensitiveContains("folder") else { return false }
+
+            let name = pill.name
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return name.hasPrefix(q) || name.contains(q)
+        })
+    }
+
+    @discardableResult
+    private func executeFirstMatchingFinderFolderPillIfNeeded() -> Bool {
+        guard let pill = firstMatchingFinderFolderPill() else { return false }
+        executeDockPill(pill)
+        searchText = ""
+        focusedPillIndex = nil
+        return true
+    }
+
     @ViewBuilder
     private var l2UnifiedDockRow: some View {
         let q =
@@ -13907,6 +13952,7 @@ struct LauncherView: View {
                     let dx = value.translation.width
 
                     guard abs(dy) > abs(dx) else { return }
+                    guard !isExplicitAppScopeLocked else { return }
 
                     if dy > 30 {
                         // Swipe DOWN → Global Context (manual, should not auto-return)
@@ -14054,20 +14100,12 @@ struct LauncherView: View {
 
     private func finderInputSymbolForSearchText() -> String? {
         guard showContextInDock, !isGlobalContextActive, !isAIMode else { return nil }
-        guard finderFolderQueryModeActive, isFinderFolderSearchAttached() else { return nil }
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return nil }
         guard !query.hasPrefix("+") else { return nil }
 
-        if let pill = cachedDockPills.first(where: {
-            !$0.isSeparator
-                && $0.sourceBundleId == "com.apple.finder"
-                && ($0.rankingKind == "finderCurrent"
-                    || $0.rankingKind == "finderSearch"
-                    || $0.rankingKind == "finderGoTo")
-                && ($0.name.lowercased().hasPrefix(query) || $0.name.lowercased().contains(query))
-        }) {
+        if let pill = firstMatchingFinderFolderPill(for: query) {
             return pill.icon.contains("folder") ? "folder.fill" : pill.icon
         }
 
@@ -16011,6 +16049,7 @@ struct LauncherView: View {
 
                 // Ask About Page — send URL to AI
                 Button {
+                    guard !isExplicitAppScopeLocked else { return }
                     let prompt = "What is this page about? URL: \(url)"
                     searchText = prompt
                     isAIMode = true
@@ -16050,6 +16089,7 @@ struct LauncherView: View {
 
                 // Ask About Selection
                 Button {
+                    guard !isExplicitAppScopeLocked else { return }
                     let text = sel.count > 500 ? String(sel.prefix(500)) : sel
                     searchText = "Explain: \(text)"
                     isAIMode = true
@@ -17208,6 +17248,8 @@ struct LauncherView: View {
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 15))
                                 .focused($isSearchFieldFocused)
+                                .focusEffectDisabled()
+                                .background(FocusRingSuppressor())
                                 // For prefix match: TextField stays visible (shows typed text + cursor).
                                 // For fuzzy match or empty: hide it so the full result name shows cleanly.
                                 .opacity(
@@ -17251,7 +17293,7 @@ struct LauncherView: View {
                                         updateFinderGoToPills(for: newValue)
                                     }
                                     // Update partial app autocomplete for L2 (skip when submenu locked)
-                                    if isL2ContextActive && lockedSubmenuParent == nil {
+                                    if isL2ContextActive && isGlobalContextActive && lockedSubmenuParent == nil {
                                         let trimmed = newValue.trimmingCharacters(in: .whitespaces)
                                         let installedScopeMode = contextDockInstalledAppScopeMatching
                                         let dockOnlyMode = contextDockRunningOnlyAppMatching && !installedScopeMode
@@ -17290,7 +17332,7 @@ struct LauncherView: View {
                                                 }
                                             }
                                         }
-                                    } else if lockedSubmenuParent != nil {
+                                    } else if lockedSubmenuParent != nil || (isL2ContextActive && !isGlobalContextActive) {
                                         // Locked: clear any stale app completion
                                         l2AppCompletion = nil
                                     }
@@ -17348,6 +17390,9 @@ struct LauncherView: View {
                                         if focusedPillIndex != nil,
                                             executeFocusedOrDirectAppPillIfNeeded()
                                         {
+                                            return
+                                        }
+                                        if executeFirstMatchingFinderFolderPillIfNeeded() {
                                             return
                                         }
                                         if executeFirstAttachedFinderFolderResultIfNeeded() {
@@ -17475,8 +17520,8 @@ struct LauncherView: View {
                 .frame(maxWidth: (isSearchBarExpanded && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? .infinity : 44)
                 .frame(height: inputPillHeight)
                 .background {
-                    // Context dock: tint with frontmost/scoped app's dominant color
-                    // — matches the expanded pill visual from global context mode
+                    // Context dock: keep app scope readable without turning the
+                    // search capsule into a saturated app-colored panel.
                     // In list view mode the outer dockCard glass is the container; suppress the inner capsule.
                     let inContextDock = (showContextInDock || isGlobalContextActive || isAIMode) && !usesVerticalListDockLayout
                     let typedMatch = typedL2AppIcon(for: searchText)
@@ -17495,8 +17540,8 @@ struct LauncherView: View {
                                 .fill(
                                     LinearGradient(
                                         colors: [
-                                            Color.white.opacity(inAppScope ? 0.32 : 0.22),
-                                            Color.white.opacity(inAppScope ? 0.08 : 0.04)
+                                            Color.white.opacity(inAppScope ? 0.24 : 0.22),
+                                            Color.white.opacity(inAppScope ? 0.05 : 0.04)
                                         ],
                                         startPoint: .top,
                                         endPoint: .bottom
@@ -17507,8 +17552,8 @@ struct LauncherView: View {
                                 .fill(
                                     LinearGradient(
                                         colors: [
-                                            scopeColor.opacity(inAppScope ? 0.22 : 0.12),
-                                            scopeColor.opacity(inAppScope ? 0.06 : 0.02)
+                                            scopeColor.opacity(inAppScope ? 0.08 : 0.10),
+                                            scopeColor.opacity(inAppScope ? 0.015 : 0.02)
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
@@ -21117,7 +21162,7 @@ struct LauncherView: View {
         // Text selected, files selected, folders selected → user wants to TALK
         // about that content, not trigger a menu action. Activate global context
         // so the AI gets the selection as its primary subject.
-        if hasActiveSelection && !isGlobalContextActive {
+        if hasActiveSelection && !isGlobalContextActive && !isExplicitAppScopeLocked {
             isGlobalContextActive = true
             isGlobalContextAutoActivated = true
         }
@@ -25843,6 +25888,7 @@ struct LauncherView: View {
                 if totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
                     && self.isHoveringInputField
                 {
+                    guard !self.isExplicitAppScopeLocked else { return event }
                     if self.isAIMode || self.accumulatedSwipeDeltaX > 0 {
                         self.toggleAIModeViaSwipe()
                     }
@@ -25851,6 +25897,7 @@ struct LauncherView: View {
                 else if totalVertical > 30 && totalVertical > totalHorizontal * 0.8
                     && (self.isHoveringDockArea || self.isHoveringInputField)
                 {
+                    guard !self.isExplicitAppScopeLocked else { return event }
                     // Swipe UP (negative deltaY): Global → Context → Media
                     if self.accumulatedSwipeDeltaY < 0 {
                         if self.isGlobalContextActive {
@@ -25921,6 +25968,8 @@ struct LauncherView: View {
     }
 
     private func switchDockLayer(_ direction: DockLayerDirection) {
+        guard !isExplicitAppScopeLocked else { return }
+
         switch direction {
         case .up:
             if isAIMode {
@@ -25966,6 +26015,7 @@ struct LauncherView: View {
 
     private func toggleAIModePreservingLayer() {
         guard settings.enableAIMode else { return }
+        guard !isExplicitAppScopeLocked || isAIMode else { return }
 
         searchResults = []
         selectedResultIndex = nil
@@ -26690,6 +26740,62 @@ struct LauncherView: View {
         }
     }
 
+    @discardableResult
+    private func activateTypedAppScopeIfPossible(for query: String? = nil) -> Bool {
+        guard isGlobalContextActive else { return false }
+
+        let rawQuery = query ?? searchText
+        let rawTrimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard rawTrimmed.count >= 2 else { return false }
+
+        let normalized = rawTrimmed.lowercased().hasSuffix(".app")
+            ? String(rawTrimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            : rawTrimmed.lowercased()
+
+        if let completion = l2AppCompletion, !completion.ghost.isEmpty {
+            acceptL2AppCompletion(completion)
+            return true
+        }
+
+        if normalized == "clipboard" {
+            activateClipboardScope()
+            return true
+        }
+
+        if let target = L2AppActionRouter.shared.appScopeTarget(for: normalized) {
+            let activated = activateInlineDockAppScope(
+                bundleIdentifier: target.bundleId,
+                appName: target.appName,
+                searchTextOverride: target.actionQuery
+            )
+            if !activated { searchText = target.appName + " " }
+            return true
+        }
+
+        if let target = installedAppMenuTarget(
+            for: normalized,
+            runningOnly: false,
+            includeAppsWithoutMenuSnapshot: true,
+            allowPrefixAlias: true
+        ) {
+            let activated = activateInlineDockAppScope(
+                bundleIdentifier: target.bundleId,
+                appName: target.appName,
+                searchTextOverride: target.actionQuery
+            )
+            if !activated { searchText = target.appName + " " }
+            return true
+        }
+
+        if let completion = bestL2PartialAppCompletion(for: normalized, runningOnly: false),
+           !completion.ghost.isEmpty {
+            acceptL2AppCompletion(completion)
+            return true
+        }
+
+        return false
+    }
+
     private func menuDebugSummary(query: String) -> String {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let matches =
@@ -26836,6 +26942,10 @@ struct LauncherView: View {
                 return event
             }
 
+            if event.keyCode == 48, self.isL2ContextActive, !self.isGlobalContextActive {
+                return nil
+            }
+
             // Tab / Right-arrow: submenu parent lock takes absolute priority
             if (event.keyCode == 48 || event.keyCode == 124),
                let subCtx = self.submenuGhostContext,
@@ -26864,6 +26974,9 @@ struct LauncherView: View {
             }
             if let completion = self.l2AppCompletion, !completion.ghost.isEmpty, event.keyCode == 48 {
                 self.acceptL2AppCompletion(completion)
+                return nil
+            }
+            if event.keyCode == 48, self.activateTypedAppScopeIfPossible() {
                 return nil
             }
 
@@ -26898,6 +27011,15 @@ struct LauncherView: View {
                 guard !appPills.isEmpty else { return event }
 
                 switch event.keyCode {
+                case 48:  // Tab — enter/exit app pill navigation; never let macOS Full Keyboard Navigation take over
+                    if self.focusedAppPillIndex == nil {
+                        self.focusedAppPillIndex = 0
+                        self.pillNavViaKeyboard = true
+                    } else {
+                        self.focusedAppPillIndex = nil
+                        self.expandSearchBar()
+                    }
+                    return nil
                 case 123:  // Left — mirror context dock: wrap to input field at start
                     guard self.focusedAppPillIndex != nil else { return event }
                     let curLeft = self.focusedAppPillIndex ?? 0
@@ -26970,8 +27092,11 @@ struct LauncherView: View {
             guard !pills.isEmpty else { return event }
 
             switch event.keyCode {
-            case 48:  // Tab
-                return event
+            case 48:  // Tab — return focus to search field (prevents macOS Full Keyboard Navigation takeover)
+                self.focusedPillIndex = nil
+                self.pillNavViaKeyboard = false
+                DispatchQueue.main.async { self.isSearchFieldFocused = true }
+                return nil
 
             case 123:  // Left arrow — move focus left; wrap to input field at start
                 if self.showShortcutSheet {
@@ -27092,6 +27217,12 @@ struct LauncherView: View {
                 if self.focusedPillIndex != nil,
                     !self.showShortcutSheet,
                     self.executeFocusedOrDirectAppPillIfNeeded()
+                {
+                    return nil
+                }
+
+                if !self.showShortcutSheet,
+                    self.executeFirstMatchingFinderFolderPillIfNeeded()
                 {
                     return nil
                 }
@@ -35754,6 +35885,35 @@ private struct AdaptiveGlassBackground: View {
     }
 }
 
+private struct FocusRingSuppressor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            var root = view.superview
+            for _ in 0..<6 {
+                guard let current = root else { break }
+                suppressFocusRings(in: current)
+                root = current.superview
+            }
+        }
+    }
+
+    private func suppressFocusRings(in view: NSView) {
+        view.focusRingType = .none
+        if let textField = view as? NSTextField {
+            textField.focusRingType = .none
+            textField.isBordered = false
+            textField.drawsBackground = false
+        }
+        view.subviews.forEach { suppressFocusRings(in: $0) }
+    }
+}
+
 extension View {
     /// Wraps a view in the full glass-pill container: NSVisualEffectView blur + gradient + border stroke.
     func glassContainer(cornerRadius: CGFloat = 16) -> some View {
@@ -35823,9 +35983,14 @@ extension NSImage {
             .usingColorSpace(.deviceRGB) ?? NSColor(red: r, green: g, blue: b, alpha: 1)
         var hue: CGFloat = 0, sat: CGFloat = 0, bri: CGFloat = 0, alp: CGFloat = 0
         nsColor.getHue(&hue, saturation: &sat, brightness: &bri, alpha: &alp)
-        // Boost saturation so the glow reads as a colour tint, not grey
-        let boosted = NSColor(hue: hue, saturation: min(sat * 1.4 + 0.2, 1), brightness: min(bri * 1.1, 1), alpha: 1)
-        return SwiftUI.Color(boosted)
+        // Keep the sampled app color subtle; opacity is applied by the caller.
+        let softened = NSColor(
+            hue: hue,
+            saturation: min(sat * 0.75, 0.55),
+            brightness: min(max(bri, 0.35), 0.85),
+            alpha: 1
+        )
+        return SwiftUI.Color(softened)
     }
 }
 

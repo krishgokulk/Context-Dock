@@ -120,6 +120,10 @@ class KeyableWindow: NSWindow {
         NotificationCenter.default.post(name: .escapePressed, object: nil)
     }
 
+    // Disable Full Keyboard Navigation tab traversal.
+    override func selectKeyView(following aView: NSView) {}
+    override func selectKeyView(preceding aView: NSView) {}
+
     // Also override the animated version
     override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
         var adjustedFrame = frameRect
