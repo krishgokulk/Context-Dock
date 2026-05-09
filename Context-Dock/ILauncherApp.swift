@@ -182,6 +182,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var singleOptionLocalCancelMonitor: Any?
     var optionAloneActive: Bool = false
     var optionAloneDownTime: TimeInterval = 0
+    // Single Command-press focus: switch the visible dock to Global Context.
+    var singleCommandFocusMonitor: Any?
+    var singleCommandLocalFocusMonitor: Any?
+    var singleCommandCancelMonitor: Any?
+    var singleCommandLocalCancelMonitor: Any?
+    var commandAloneActive: Bool = false
+    var commandAloneDownTime: TimeInterval = 0
     /// True when the launcher was opened / switched via the context-dock shortcut.
     /// ContentView reads this on `launcherWindowOpened` to keep the app in L2.
     var isDockContextMode: Bool = false
@@ -267,6 +274,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerClipboardScopeHotkey()
         registerDoubleOptionMonitor()
         registerSingleOptionFocusMonitor()
+        registerSingleCommandGlobalContextMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
@@ -441,6 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerDoubleOptionMonitor()
+        registerSingleCommandGlobalContextMonitor()
     }
     
     func setupMenuBar() {
@@ -866,6 +875,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(monitor)
             singleOptionLocalCancelMonitor = nil
         }
+        if let monitor = singleCommandFocusMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleCommandFocusMonitor = nil
+        }
+        if let monitor = singleCommandLocalFocusMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleCommandLocalFocusMonitor = nil
+        }
+        if let monitor = singleCommandCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleCommandCancelMonitor = nil
+        }
+        if let monitor = singleCommandLocalCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            singleCommandLocalCancelMonitor = nil
+        }
     }
 
     func registerContextDockHotkey() {
@@ -1011,6 +1036,68 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             handleFlagsChanged($0)
         }
         singleOptionLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            handleFlagsChanged(event)
+            return event
+        }
+    }
+
+    // Single Command press (alone, no other modifiers, no regular key) → Global Context.
+    func registerSingleCommandGlobalContextMonitor() {
+        if let m = singleCommandFocusMonitor { NSEvent.removeMonitor(m); singleCommandFocusMonitor = nil }
+        if let m = singleCommandLocalFocusMonitor { NSEvent.removeMonitor(m); singleCommandLocalFocusMonitor = nil }
+        if let m = singleCommandCancelMonitor { NSEvent.removeMonitor(m); singleCommandCancelMonitor = nil }
+        if let m = singleCommandLocalCancelMonitor { NSEvent.removeMonitor(m); singleCommandLocalCancelMonitor = nil }
+
+        let activateGlobalContext: () -> Void = { [weak self] in
+            guard let self else { return }
+            guard let window = self.launcherWindow, window.isVisible else { return }
+            DispatchQueue.main.async {
+                if let currentApp = NSWorkspace.shared.frontmostApplication,
+                   currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                    self.recordFrontmostApp(currentApp)
+                }
+                window.alphaValue = 1.0
+                window.orderFrontRegardless()
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(name: .activateGlobalContext, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    NotificationCenter.default.post(name: .focusSearchField, object: nil)
+                }
+            }
+        }
+
+        singleCommandCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
+            self?.commandAloneActive = false
+        }
+        singleCommandLocalCancelMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.commandAloneActive = false
+            return event
+        }
+
+        let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            let flags = event.modifierFlags
+            let commandNow = flags.contains(.command)
+            let extraMods = flags.intersection([.option, .control, .shift])
+
+            if commandNow && !self.commandAloneActive && extraMods.isEmpty {
+                self.commandAloneActive = true
+                self.commandAloneDownTime = Date().timeIntervalSince1970
+            } else if !commandNow && self.commandAloneActive {
+                let duration = Date().timeIntervalSince1970 - self.commandAloneDownTime
+                self.commandAloneActive = false
+                guard duration > 0.05 && duration < 0.45 else { return }
+                activateGlobalContext()
+            } else if !commandNow {
+                self.commandAloneActive = false
+            }
+        }
+
+        singleCommandFocusMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            handleFlagsChanged($0)
+        }
+        singleCommandLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             handleFlagsChanged(event)
             return event
         }

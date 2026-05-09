@@ -1136,7 +1136,7 @@ struct LauncherView: View {
             let pills = lastPillQuery == pillQuery ? cachedDockPills : buildDockPills(query: pillQuery)
             return max(1, pills.filter { !$0.isSeparator }.count)
         }()
-        let contentHeight = min(CGFloat(rowCount) * 60 + 16, 320)
+        let contentHeight = min(CGFloat(rowCount) * 60 + 18, 500)
         let dockChromeHeight = CGFloat(settings.dockIconSize) + 20
         return dockChromeHeight + contentHeight + 12
     }
@@ -1833,6 +1833,20 @@ struct LauncherView: View {
                 showContextInDock = true
                 isGlobalContextActive = false
                 setFrontmostAppContextOnly(reason: "activate context dock")
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { _ in
+                showMediaLayer = false
+                isAIMode = false
+                showContextInDock = true
+                isGlobalContextActive = true
+                isGlobalContextAutoActivated = false
+                l2TargetApp = nil
+                focusedPillIndex = nil
+                focusedAppPillIndex = nil
+                lockedSubmenuParent = nil
+                showShortcutSheet = false
+                scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+                activateSearchField()
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 activateClipboardScope()
@@ -15317,7 +15331,7 @@ struct LauncherView: View {
                 }
                 .padding(6)
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 500)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: focusedPillIndex) { newIndex in
                 guard pillNavViaKeyboard, let idx = newIndex else { return }
@@ -16558,18 +16572,6 @@ struct LauncherView: View {
     }
 
     @ViewBuilder
-    private var actionListCardAlignedToDock: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .frame(width: resultsPanelLeadingInset)
-            l2UnifiedDockRow
-                .frame(width: resultsPanelWidth, alignment: .leading)
-            Spacer(minLength: 0)
-        }
-        .frame(width: calculatedWidth, alignment: .leading)
-    }
-
-    @ViewBuilder
     private var floatingAppLogoButton: some View {
         if shouldShowFloatingAppLogo {
             ZStack(alignment: .topTrailing) {
@@ -16623,26 +16625,53 @@ struct LauncherView: View {
     // Dock bar card: unified glass container when list view is active, transparent otherwise.
     @ViewBuilder
     private func dockCard(inDockMode: Bool) -> some View {
-        dockBaseView(inDockMode: inDockMode)
-            .frame(width: visibleDockWidth, alignment: .leading)
-            .background {
-                if usesVerticalListDockLayout {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.14), .white.opacity(0.03)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    }
-                    .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 8)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: usesVerticalListDockLayout ? 20 : 0, style: .continuous))
+        if usesVerticalListDockLayout {
+            unifiedListDockCard(inDockMode: inDockMode)
+        } else {
+            dockBaseView(inDockMode: inDockMode)
+                .frame(width: visibleDockWidth, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func unifiedListDockCard(inDockMode: Bool) -> some View {
+        VStack(spacing: 0) {
+            dockBaseView(inDockMode: inDockMode)
+                .frame(width: visibleDockWidth, alignment: .leading)
+
+            Rectangle()
+                .fill(Color.white.opacity(isEffectiveDark ? 0.12 : 0.16))
+                .frame(height: 1)
+                .padding(.horizontal, 18)
+
+            l2UnifiedDockRow
+                .frame(width: visibleDockWidth, alignment: .leading)
+                .frame(maxHeight: 500)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+        }
+        .frame(width: visibleDockWidth, alignment: .leading)
+        .background(alignment: .topLeading) {
+            GlassBackground(cornerRadius: 28, isDark: isEffectiveDark)
+                .frame(width: visibleDockWidth)
+        }
+        .mask(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .frame(width: visibleDockWidth)
+        }
+        .overlay(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.42), .white.opacity(0.08)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+                .frame(width: visibleDockWidth)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
     }
 
     private var panelGapBelowSearchBar: CGFloat {
@@ -16709,18 +16738,6 @@ struct LauncherView: View {
         let inputPillHeight: CGFloat = CGFloat(settings.dockIconSize) + 8
 
         VStack(spacing: 0) {
-            if usesVerticalListDockLayout && settings.effectiveDockAtBottom {
-                l2UnifiedDockRow
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 4)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                Divider()
-                    .padding(.horizontal, 14)
-                    .opacity(0.35)
-            }
-
             HStack(spacing: 12) {
                 // Left slot: full search input OR icon-only anchor during app/action pill keyboard nav
                 // In list view mode the pill list is a separate panel below the search bar,
@@ -17522,7 +17539,6 @@ struct LauncherView: View {
                 .background {
                     // Context dock: keep app scope readable without turning the
                     // search capsule into a saturated app-colored panel.
-                    // In list view mode the outer dockCard glass is the container; suppress the inner capsule.
                     let inContextDock = (showContextInDock || isGlobalContextActive || isAIMode) && !usesVerticalListDockLayout
                     let typedMatch = typedL2AppIcon(for: searchText)
                     let inAppScope = (l2TargetApp != nil || typedMatch != nil) && showContextInDock
@@ -17532,7 +17548,9 @@ struct LauncherView: View {
                         ?? frontmostAppIcon?.dominantSwiftUIColor
                         ?? .white
                     ZStack {
-                        if inContextDock {
+                        if usesVerticalListDockLayout {
+                            Color.clear
+                        } else if inContextDock {
                             // Capsule pill — identical shape to expanded appPillButton
                             Capsule()
                                 .fill(.ultraThinMaterial)
@@ -17663,18 +17681,6 @@ struct LauncherView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, outerVerticalPadding)
-
-            if usesVerticalListDockLayout && !settings.effectiveDockAtBottom {
-                Divider()
-                    .padding(.horizontal, 14)
-                    .opacity(0.35)
-                l2UnifiedDockRow
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 6)
-                    .padding(.bottom, 10)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
 
         }
         .frame(maxWidth: .infinity)
@@ -32078,6 +32084,7 @@ extension Notification.Name {
     static let userContextDetected = Notification.Name("userContextDetected")
     static let toggleAIExtensions = Notification.Name("toggleAIExtensions")
     static let focusSearchField = Notification.Name("focusSearchField")
+    static let activateGlobalContext = Notification.Name("activateGlobalContext")
     static let activateClipboardScope = Notification.Name("activateClipboardScope")
     static let escapePressed = Notification.Name("escapePressed")
     static let launcherBackspacePressed = Notification.Name("launcherBackspacePressed")

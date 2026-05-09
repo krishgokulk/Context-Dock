@@ -374,6 +374,26 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            CardSection(title: "Dock Key Map", systemImage: "command") {
+                VStack(spacing: 0) {
+                    DockKeyMapRow(keys: "⌥", action: "Focus or unfocus Context Dock input")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "⌘", action: "Switch to Global Context and focus input")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "Tab", action: "Global Context: activate app scope. Context Dock: ignored")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "→", action: "Complete ghost text")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "↩", action: "Run the visible result or pill")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "↑ / ↓", action: "Switch dock layers when available")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "Esc", action: "Clear or exit the current focused state")
+                    SettingsDivider()
+                    DockKeyMapRow(keys: "⌘ hold", action: "Show available menu command shortcuts")
+                }
+            }
+
             CardSection(title: "How to Record", systemImage: "info.circle") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 10) {
@@ -573,6 +593,34 @@ private struct SettingsRow<Content: View>: View {
 private struct SettingsDivider: View {
     var body: some View {
         Divider().padding(.leading, 0)
+    }
+}
+
+private struct DockKeyMapRow: View {
+    let keys: String
+    let action: String
+
+    var body: some View {
+        SettingsRow {
+            Text(keys)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
+                .frame(width: 58)
+                .frame(minHeight: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                )
+
+            Text(action)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
     }
 }
 
