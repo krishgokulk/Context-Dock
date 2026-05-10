@@ -1025,7 +1025,7 @@ struct LauncherView: View {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
-        let pills = lastPillQuery == pillQuery ? cachedDockPills : buildDockPills(query: pillQuery)
+        let pills = currentCachedDockPills(for: pillQuery)
         guard pills.contains(where: { !$0.isSeparator }) else { return false }
 
         let hasActiveContextSelection: Bool = {
@@ -1046,6 +1046,10 @@ struct LauncherView: View {
             isGlobalContextActive && !q.isEmpty
             && !globalApplicationMatches(for: q, limit: 1).isEmpty
         return !showPinnedRow && !showGlobalAppSearch
+    }
+
+    private func currentCachedDockPills(for query: String) -> [DockPill] {
+        lastPillQuery == query ? cachedDockPills : []
     }
 
     private var searchInputVisualWidth: CGFloat {
@@ -1133,7 +1137,7 @@ struct LauncherView: View {
                 return max(1, count)
             }
             let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-            let pills = lastPillQuery == pillQuery ? cachedDockPills : buildDockPills(query: pillQuery)
+            let pills = currentCachedDockPills(for: pillQuery)
             return max(1, pills.filter { !$0.isSeparator }.count)
         }()
         let contentHeight = min(CGFloat(rowCount) * 60 + 18, 500)
@@ -1192,6 +1196,13 @@ struct LauncherView: View {
             }
             .onChange(of: isFrontmostSectionExpanded) { _, _ in updateWindowSize() }
             .onChange(of: isSearchBarExpanded) { _, _ in updateWindowSize() }
+            .onChange(of: usesVerticalListDockLayout) { _, active in
+                if active {
+                    collapseTimer?.cancel()
+                    isSearchBarExpanded = true
+                }
+                updateWindowSize()
+            }
             .onChange(of: l2ChatMessages.count) { _, _ in updateWindowSize() }
             .onChange(of: l2IsLoading) { _, _ in updateWindowSize() }
             .onChange(of: showContextInDock) { _, newValue in
@@ -5431,6 +5442,7 @@ struct LauncherView: View {
     private func buildFinderHomeFolderPills(query q: String) -> [DockPill] {
         let query = q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.hasPrefix("+") else { return [] }
+        guard query.count >= 2 else { return [] }
         guard frontmostAppBundleID == "com.apple.finder"
             || l2TargetApp?.bundleId == "com.apple.finder"
             || axContext.bundleId == "com.apple.finder"
@@ -5446,44 +5458,164 @@ struct LauncherView: View {
             || currentFolder.hasPrefix(home + "/")
         else { return [] }
         let searchRoot = home
+        var seen = Set<String>()
+        var candidates: [(url: URL, isDirectory: Bool, score: Double)] = []
 
-        let items = (try? FileManager.default.contentsOfDirectory(
-            at: URL(fileURLWithPath: searchRoot),
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+        func addCandidate(_ url: URL, isDirectory: Bool, score: Double) {
+            let path = url.standardizedFileURL.path
+            guard path == searchRoot || path.hasPrefix(searchRoot + "/") else { return }
+            guard !url.lastPathComponent.hasPrefix(".") else { return }
+            guard seen.insert(path).inserted else { return }
+            candidates.append((URL(fileURLWithPath: path), isDirectory, score))
+        }
 
-        return items
-            .filter { url in
-                ((try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false)
-                    && url.lastPathComponent.lowercased().contains(query)
+        let indexed = fileIndexManager.advancedSearch(AdvancedFileSearchQuery(
+            rootPath: searchRoot,
+            residualQuery: query,
+            includeDirectories: true,
+            filesOnly: false,
+            limit: 48
+        ))
+        for file in indexed {
+            let url = URL(fileURLWithPath: file.path)
+            guard let nameScore = strictFinderHomeSearchScore(query: query, url: url) else {
+                continue
             }
+            let depthPenalty = max(0, file.path.replacingOccurrences(of: searchRoot, with: "").split(separator: "/").count - 1)
+            addCandidate(
+                url,
+                isDirectory: file.isDirectory,
+                score: nameScore + (file.isDirectory ? 90 : 30) - Double(depthPenalty * 8)
+            )
+        }
+
+        // Instant fallback before Spotlight finishes: direct Home children and common Home folders.
+        let fallbackRoots = [
+            searchRoot,
+            "\(home)/Desktop",
+            "\(home)/Documents",
+            "\(home)/Downloads",
+            "\(home)/Pictures",
+            "\(home)/Movies",
+            "\(home)/Music",
+            "\(home)/Library/Mobile Documents/com~apple~CloudDocs"
+        ]
+        for root in fallbackRoots {
+            guard candidates.count < 16,
+                  let items = try? FileManager.default.contentsOfDirectory(
+                    at: URL(fileURLWithPath: root),
+                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .fileSizeKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                  )
+            else { continue }
+            for url in items {
+                guard let score = strictFinderHomeSearchScore(query: query, url: url) else { continue }
+                let values = (try? url.resourceValues(forKeys: [.isDirectoryKey])) ?? URLResourceValues()
+                let isDirectory = values.isDirectory ?? url.hasDirectoryPath
+                addCandidate(url, isDirectory: isDirectory, score: score + (isDirectory ? 75 : 20))
+            }
+        }
+
+        return candidates
             .sorted {
-                $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent)
+                if $0.score != $1.score { return $0.score > $1.score }
+                if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
+                return $0.url.lastPathComponent.localizedCaseInsensitiveCompare($1.url.lastPathComponent)
                     == .orderedAscending
             }
-            .prefix(8)
-            .map { url in
+            .prefix(10)
+            .map { candidate in
+                let url = candidate.url
+                let itemPath = url.standardizedFileURL.path
+                let displayParent = finderDisplayPath(url.deletingLastPathComponent().path)
                 var pill = DockPill(
-                    id: "finder-home-folder-\(url.path)",
+                    id: "finder-home-search-\(itemPath)",
                     name: url.lastPathComponent,
-                    icon: "folder.fill",
-                    accentColorName: "blue",
-                    badge: searchRoot == home ? "Home" : URL(fileURLWithPath: searchRoot).lastPathComponent,
+                    icon: candidate.isDirectory ? "folder.fill" : finderSemanticSymbol(for: FinderSemanticMatch(
+                        path: itemPath,
+                        title: url.lastPathComponent,
+                        subtitle: "",
+                        isDirectory: candidate.isDirectory,
+                        score: candidate.score,
+                        source: "Home",
+                        searchTerms: []
+                    )),
+                    accentColorName: candidate.isDirectory ? "blue" : "teal",
+                    badge: displayParent == "~" ? "Home" : displayParent,
                     execute: {
-                        UsageTracker.shared.recordAccess(for: finderGoToTrackingIdentifier(for: url.path))
+                        UsageTracker.shared.recordAccess(for: finderGoToTrackingIdentifier(for: itemPath))
+                        rememberFinderFollowUpTargets(
+                            [url],
+                            folderPath: candidate.isDirectory ? itemPath : url.deletingLastPathComponent().path,
+                            sourceQuery: query
+                        )
                         NSWorkspace.shared.open(url)
                         searchText = ""
                         focusedPillIndex = nil
                     }
                 )
+                pill.menuItemImage = NSWorkspace.shared.icon(forFile: itemPath)
                 pill.sourceBundleId = "com.apple.finder"
                 pill.sourceAppName = "Finder"
-                pill.rankingKind = "finderGoTo"
-                pill.trackingIdentifier = finderGoToTrackingIdentifier(for: url.path)
-                pill.searchTerms = [url.lastPathComponent, url.path, "finder", "home", "folder"]
+                pill.rankingKind = candidate.isDirectory ? "finderGoTo" : "finderSearch"
+                pill.trackingIdentifier = candidate.isDirectory
+                    ? finderGoToTrackingIdentifier(for: itemPath)
+                    : "finder-home-search:\(itemPath.lowercased())"
+                pill.searchTerms = [
+                    url.lastPathComponent,
+                    itemPath,
+                    displayParent,
+                    "finder",
+                    "home",
+                    candidate.isDirectory ? "folder" : "file"
+                ]
+                pill.rankingScore = candidate.score
                 return pill
             }
+    }
+
+    private func strictFinderHomeSearchScore(query: String, url: URL) -> Double? {
+        let normalizedQuery = normalizedDockPillText(query)
+        guard normalizedQuery.count >= 2 else { return nil }
+
+        let name = normalizedDockPillText(url.lastPathComponent)
+        let parent = normalizedDockPillText(url.deletingLastPathComponent().lastPathComponent)
+        guard !name.isEmpty else { return nil }
+
+        if name == normalizedQuery { return 1200 }
+        if name.hasPrefix(normalizedQuery) { return 1080 + Double(min(normalizedQuery.count, 12) * 6) }
+        if name.contains(normalizedQuery) { return 960 + Double(min(normalizedQuery.count, 10) * 4) }
+
+        let queryTokens = dockPillTokens(normalizedQuery).filter { $0.count >= 2 }
+        let nameTokens = dockPillTokens(name)
+        if !queryTokens.isEmpty {
+            let matched = queryTokens.filter { qToken in
+                nameTokens.contains { token in
+                    token == qToken || token.hasPrefix(qToken) || token.contains(qToken)
+                }
+            }
+            if !matched.isEmpty {
+                return 850 + Double(matched.count * 36)
+            }
+        }
+
+        // Allow small typo tolerance for real name tokens only, not broad path fuzzy matching.
+        if normalizedQuery.count >= 4 {
+            let bestDistance = nameTokens
+                .filter { $0.count >= 4 }
+                .map { levenshteinDistance(normalizedQuery, $0) }
+                .min()
+            if let bestDistance, bestDistance <= 1 {
+                return 790 + Double(max(0, normalizedQuery.count - bestDistance) * 18)
+            }
+        }
+
+        // Parent match is lower priority and only for multi-word queries.
+        if normalizedQuery.contains(" "), parent.contains(normalizedQuery) {
+            return 420
+        }
+
+        return nil
     }
 
     private func executeFinderSelectionMenuAction(titleContains fragment: String) {
@@ -6106,12 +6238,60 @@ struct LauncherView: View {
                 )
                 return enriched
             }
+            .filter { pill in
+                normalizedRankingQuery.isEmpty
+                    || dockPillHasQuerySignal(
+                        pill,
+                        query: normalizedRankingQuery,
+                        rawQuery: normalizedRawQuery,
+                        scopedBundleId: scopedBundleId,
+                        scopedAppName: scopedAppName
+                    )
+            }
             .sorted { lhs, rhs in
                 if lhs.rankingScore == rhs.rankingScore {
                     return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
                 }
                 return lhs.rankingScore > rhs.rankingScore
             }
+    }
+
+    private func dockPillHasQuerySignal(
+        _ pill: DockPill,
+        query: String,
+        rawQuery: String,
+        scopedBundleId: String,
+        scopedAppName: String
+    ) -> Bool {
+        if query.isEmpty { return true }
+        if ["payload", "finderSearch", "finderCurrent", "finderGoTo", "submenuChild"].contains(pill.rankingKind) {
+            return true
+        }
+
+        let sourceBundleId = pill.sourceBundleId.isEmpty ? scopedBundleId : pill.sourceBundleId
+        let sourceAppName = pill.sourceAppName.isEmpty ? scopedAppName : pill.sourceAppName
+        let appAliases = dockPillAppAliases(appName: sourceAppName, bundleId: sourceBundleId)
+        if !rawQuery.isEmpty, appAliases.contains(rawQuery) { return true }
+
+        let normalizedName = normalizedDockPillText(pill.name)
+        let normalizedBadge = normalizedDockPillText(pill.badge ?? "")
+        let corpora = ([normalizedName, normalizedBadge] + pill.searchTerms.map(normalizedDockPillText) + appAliases)
+            .filter { !$0.isEmpty }
+
+        if corpora.contains(query) { return true }
+        if corpora.contains(where: { $0.hasPrefix(query) || $0.contains(query) }) { return true }
+
+        let queryTokens = Set(dockPillTokens(query))
+        guard !queryTokens.isEmpty else { return false }
+        let corpusTokens = Set(corpora.flatMap(dockPillTokens))
+        if !queryTokens.intersection(corpusTokens).isEmpty { return true }
+
+        for qt in queryTokens where qt.count >= 4 {
+            for ct in corpusTokens where ct.count >= 4 {
+                if pillEditDistance(qt, ct) <= 2 { return true }
+            }
+        }
+        return false
     }
 
     /// If `q` starts with a known recent/running app name, returns (that app, remainder query).
@@ -12524,13 +12704,19 @@ struct LauncherView: View {
         )
     }
 
-    private func scheduleDockPillRebuild(query: String, delayNanoseconds: UInt64 = 55_000_000) {
+    private func scheduleDockPillRebuild(
+        query: String,
+        delayNanoseconds: UInt64 = 55_000_000,
+        refreshContext: Bool = true
+    ) {
         dockPillBuildTask?.cancel()
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else { return }
-            refreshFinderSelectionContextFromFinder()
-            guard !Task.isCancelled else { return }
+            if refreshContext {
+                refreshFinderSelectionContextFromFinder()
+                guard !Task.isCancelled else { return }
+            }
             cachedDockPills = buildDockPills(query: query)
             lastPillQuery = query
             dockPillBuildTask = nil
@@ -12641,6 +12827,14 @@ struct LauncherView: View {
         let rawFinderHomeFolderPills =
             isFinderScopedDock
             ? buildFinderHomeFolderPills(query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery) : []
+        let finderHomeSearchQuery = (scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldShowFinderHomeSearchOnly =
+            isFinderScopedDock
+            && !finderFolderAttachedForDock
+            && !finderHomeSearchQuery.isEmpty
+            && !rawFinderHomeFolderPills.isEmpty
+            && effectiveFinderSelectionURLsForPills().isEmpty
         let rawAttachedFinderFolderPills =
             isFinderScopedDock
             ? buildAttachedFinderFolderPills(query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery) : []
@@ -12683,6 +12877,16 @@ struct LauncherView: View {
                 .lowercased()
             return makeFinderSemanticQuickActionPills(query: semanticQuery)
         }()
+        if shouldShowFinderHomeSearchOnly {
+            return rankDockPills(
+                rawFinderHomeFolderPills,
+                rawQuery: q,
+                rankingQuery: finderHomeSearchQuery,
+                scopedBundleId: scopedBundleId,
+                scopedAppName: scopedAppName,
+                isExplicitAppScope: isExplicitAppScope
+            )
+        }
         if finderFolderAttachedForDock {
             return rankDockPills(
                 rawFinderFilePills
@@ -13884,7 +14088,7 @@ struct LauncherView: View {
             ? searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() : ""
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
-        let pills = lastPillQuery == pillQuery ? cachedDockPills : buildDockPills(query: pillQuery)
+        let pills = currentCachedDockPills(for: pillQuery)
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
 
@@ -13950,7 +14154,11 @@ struct LauncherView: View {
                 loadApplicationsInBackground()
             }
             if newQuery != lastPillQuery {
-                scheduleDockPillRebuild(query: newQuery)
+                scheduleDockPillRebuild(
+                    query: newQuery,
+                    delayNanoseconds: settings.useListViewForPills ? 0 : 55_000_000,
+                    refreshContext: !settings.useListViewForPills
+                )
             }
         }
         .onAppear {
@@ -17024,8 +17232,12 @@ struct LauncherView: View {
                             .frame(width: 1, height: 28)
                     }
 
-                    // Text field - visible when expanded AND no pill is keyboard-focused AND media layer is off
-                    if isSearchBarExpanded && focusedPillIndex == nil && !showMediaLayer {
+                    // Text field - visible when expanded AND no pill is keyboard-focused AND media layer is off.
+                    // List view keeps the search header stable even while keyboard focus moves through results.
+                    if (isSearchBarExpanded || usesVerticalListDockLayout)
+                        && (focusedPillIndex == nil || usesVerticalListDockLayout)
+                        && !showMediaLayer
+                    {
                         let selectedResult: SearchResult? = {
                             guard let idx = selectedResultIndex, idx < searchResults.count,
                                 !isAIMode, !isL2ContextActive, activeSmartQueryKey == nil, searchContextApp == nil
@@ -17308,6 +17520,16 @@ struct LauncherView: View {
                                         }
                                         scheduleFinderSemanticSearchIfNeeded(for: newValue)
                                         updateFinderGoToPills(for: newValue)
+                                        let q = newValue
+                                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                                            .lowercased()
+                                        let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
+                                        let pillQuery = finderSearchPopoverActive ? "" : q
+                                        scheduleDockPillRebuild(
+                                            query: pillQuery,
+                                            delayNanoseconds: settings.useListViewForPills ? 0 : 55_000_000,
+                                            refreshContext: false
+                                        )
                                     }
                                     // Update partial app autocomplete for L2 (skip when submenu locked)
                                     if isL2ContextActive && isGlobalContextActive && lockedSubmenuParent == nil {
@@ -17387,7 +17609,7 @@ struct LauncherView: View {
                                     if newValue {
                                         collapseTimer?.cancel()
                                     } else {
-                                        if searchText.isEmpty {
+                                        if searchText.isEmpty && !usesVerticalListDockLayout {
                                             startCollapseTimer()
                                         }
                                     }
@@ -17532,9 +17754,9 @@ struct LauncherView: View {
                         }
                     }
                 }
-                .padding(.horizontal, (isSearchBarExpanded && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? 12 : 8)
+                .padding(.horizontal, ((isSearchBarExpanded || usesVerticalListDockLayout) && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? 12 : 8)
                 .padding(.vertical, inputVerticalPadding)
-                .frame(maxWidth: (isSearchBarExpanded && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? .infinity : 44)
+                .frame(maxWidth: ((isSearchBarExpanded || usesVerticalListDockLayout) && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? .infinity : 44)
                 .frame(height: inputPillHeight)
                 .background {
                     // Context dock: keep app scope readable without turning the
@@ -17614,7 +17836,7 @@ struct LauncherView: View {
                     isHoveringInputField = hovering
 
                     // Auto-shrink when mouse leaves input field (if no text and not focused)
-                    if !hovering && searchText.isEmpty && !isSearchFieldFocused {
+                    if !hovering && searchText.isEmpty && !isSearchFieldFocused && !usesVerticalListDockLayout {
                         startCollapseTimer()
                     }
                 }
