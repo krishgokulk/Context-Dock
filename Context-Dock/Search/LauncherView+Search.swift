@@ -51,7 +51,7 @@ extension LauncherView {
         if searchState.activeSmartQueryKey != nil {
             if query.isEmpty {
                 searchState.results = []
-                searchState.debounceTask?.cancel()
+                debounceTask?.cancel()
             } else {
                 searchState.results = []
             }
@@ -61,7 +61,7 @@ extension LauncherView {
         guard !query.isEmpty else {
             if showFolderPreview {
                 searchState.results = []
-                searchState.debounceTask?.cancel()
+                debounceTask?.cancel()
                 return
             }
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -75,7 +75,7 @@ extension LauncherView {
                 clearPinnedResults()
                 systemDataResults = []
             }
-            searchState.debounceTask?.cancel()
+            debounceTask?.cancel()
             return
         }
 
@@ -158,72 +158,117 @@ extension LauncherView {
             searchState.indexedFileResults = []
         }
 
-        // Debounce scoring onto background thread so keystrokes never block the UI
-        searchState.debounceTask?.cancel()
-        searchState.debounceTask = Task(priority: .userInitiated) {
+        // Debounce then score on a background task — main thread stays free
+        debounceTask?.cancel()
+        debounceTask = Task(priority: .userInitiated) {
             try? await Task.sleep(nanoseconds: 60_000_000)  // 60 ms
             guard !Task.isCancelled else { return }
-            await MainActor.run { performSearchWithoutSpotlight() }
+            await performSearchAsync()
         }
     }
 
     // MARK: - Core Scoring + Grouping
 
+    // Thin sync wrapper — keeps existing callers (loadSystemData, etc.) unchanged.
     func performSearchWithoutSpotlight() {
-        let query = searchState.query.trimmingCharacters(in: .whitespaces)
-        let isNewQuery = query != searchState.lastQuery
-        if isNewQuery {
-            DispatchQueue.main.async {
-                self.searchState.lastQuery = query
-                self.searchState.isKeyboardNavigation = false
+        Task(priority: .userInitiated) { await performSearchAsync() }
+    }
+
+    // Async implementation: snapshots MainActor state, scores off-thread, applies on MainActor.
+    func performSearchAsync() async {
+        // ── 1. Snapshot all @State inputs on MainActor ────────────────────────
+        struct Snap {
+            let query: String
+            let isNewQuery: Bool
+            let hasItems: Bool
+            let showContextInDock: Bool
+            let showMediaLayer: Bool
+            let l2ExtensionResults: [SearchResult]
+            let candidates: [SearchResult]      // apps + CLI tools + pre-filtered indexed
+            let pinnedResults: [SearchResult]
+            let pinnedTitle: String?
+            let dockAtBottom: Bool
+            let metaCache: [String: ShortcutMetadata]
+            let context: UserContext
+            let selectedIndex: Int?
+            let existingResults: [SearchResult]
+            let isKeyboardNav: Bool
+        }
+
+        let snap = await MainActor.run { () -> Snap in
+            let q = searchState.query.trimmingCharacters(in: .whitespaces)
+            let isNew = q != searchState.lastQuery
+            if isNew {
+                searchState.lastQuery = q
+                searchState.isKeyboardNavigation = false
             }
+
+            var candidates = allItems.filter { $0.type == .application || $0.type == .cliTool }
+            if settings.enableSpotlightSearch {
+                candidates += searchState.indexedFileResults.filter(includeIndexedSearchResult)
+            }
+
+            return Snap(
+                query: q,
+                isNewQuery: isNew,
+                hasItems: !allApplications.isEmpty || !allShortcuts.isEmpty
+                    || !searchState.indexedFileResults.isEmpty || !searchState.pinnedResults.isEmpty,
+                showContextInDock: showContextInDock,
+                showMediaLayer: showMediaLayer,
+                l2ExtensionResults: l2.extensionResults,
+                candidates: candidates,
+                pinnedResults: searchState.pinnedResults,
+                pinnedTitle: searchState.pinnedTitle,
+                dockAtBottom: settings.effectiveDockAtBottom,
+                metaCache: shortcutMetadataCache,
+                context: currentContext,
+                selectedIndex: searchState.selectedIndex,
+                existingResults: searchState.results,
+                isKeyboardNav: searchState.isKeyboardNavigation
+            )
         }
 
-        guard !allApplications.isEmpty || !allShortcuts.isEmpty
-                || !searchState.indexedFileResults.isEmpty || !searchState.pinnedResults.isEmpty
-        else {
-            searchState.results = []
-            searchState.selectedIndex = nil
+        // ── Early exits (no actor needed) ─────────────────────────────────────
+        guard snap.hasItems else {
+            await MainActor.run { searchState.results = []; searchState.selectedIndex = nil }
             return
         }
 
-        var scoredItems: [(item: SearchResult, score: Double)] = []
-
-        if showContextInDock && !showMediaLayer {
-            updateL2Results(l2.extensionResults)
+        if snap.showContextInDock && !snap.showMediaLayer {
+            await MainActor.run { updateL2Results(snap.l2ExtensionResults) }
             return
         }
 
-        let searchableItems: [SearchResult] =
-            showMediaLayer ? allItems.filter { $0.type != .shortcut } : allItems
-
-        var filteredItems = searchableItems.filter {
-            $0.type == .application || $0.type == .cliTool
-        }
-        if settings.enableSpotlightSearch {
-            filteredItems += searchState.indexedFileResults.filter(includeIndexedSearchResult)
-        }
-
-        // Strip .app suffix before matching (e.g. "Clock.app" → "Clock")
+        // ── 2. Pure scoring — off MainActor ───────────────────────────────────
         let strippedQuery: String = {
-            let lower = query.lowercased()
+            let lower = snap.query.lowercased()
             return lower.hasSuffix(".app")
-                ? String(query.dropLast(4)).trimmingCharacters(in: .whitespaces)
-                : query
+                ? String(snap.query.dropLast(4)).trimmingCharacters(in: .whitespaces)
+                : snap.query
         }()
         let queryLower = strippedQuery.lowercased()
+        let firstChar  = queryLower.prefix(1)
 
-        // Pre-filter: skip items that don't contain the first query character (~90% elimination)
-        let preFiltered = filteredItems.filter {
-            $0.title.lowercased().contains(queryLower.prefix(1))
-        }
+        // Pre-filter using cached titleLower — no lowercased() allocation per item
+        let preFiltered = snap.candidates.filter { $0.titleLower.contains(firstChar) }
+
+        // Batch usage scores: one serial-queue lock instead of one per item
+        let usageScores = UsageTracker.shared.snapshotScores(
+            for: preFiltered.map { $0.trackingIdentifier })
+
+        var scoredItems: [(item: SearchResult, score: Double)] = []
+        scoredItems.reserveCapacity(preFiltered.count)
 
         for item in preFiltered {
-            guard let score = FuzzyMatcher.score(strippedQuery, against: item.title) else { continue }
+            // Pass pre-lowercased strings — FuzzyMatcher skips internal lowercasing
+            guard let score = FuzzyMatcher.score(
+                queryLower, againstLower: item.titleLower, original: item.title
+            ) else { continue }
+
             var scoredItem = item
             scoredItem.score = score
 
-            let usageScore = UsageTracker.shared.getScore(for: item.trackingIdentifier)
+            let usageScore = usageScores[item.trackingIdentifier] ?? 0.0
 
             let typePriority: Double
             switch item.type {
@@ -244,13 +289,10 @@ extension LauncherView {
 
             var finalScore = score + typePriority + (usageScore * 8.0)
 
-            // Context boost: shortcuts matching current user context float to the top
             if item.type == .shortcut,
-               let metadata = shortcutMetadataCache[item.title],
-               metadata.matches(context: currentContext)
-            {
-                finalScore += 500.0
-            }
+               let metadata = snap.metaCache[item.title],
+               metadata.matches(context: snap.context)
+            { finalScore += 500.0 }
 
             scoredItems.append((item: scoredItem, score: finalScore))
         }
@@ -262,51 +304,43 @@ extension LauncherView {
 
         var grouped = GroupedResults()
         for result in sortedResults {
-            let isSuggested =
-                result.type == .shortcut
-                && shortcutMetadataCache[result.title]?.matches(context: currentContext) == true
+            let isSuggested = result.type == .shortcut
+                && snap.metaCache[result.title]?.matches(context: snap.context) == true
             grouped.add(result, isSuggested: isSuggested)
         }
+        grouped.pinnedResults    = snap.pinnedResults
+        grouped.pinnedSectionTitle = snap.pinnedTitle
 
-        grouped.pinnedResults = searchState.pinnedResults
-        grouped.pinnedSectionTitle = searchState.pinnedTitle
+        let newResults = snap.dockAtBottom
+            ? Array(grouped.allResults.reversed()) : grouped.allResults
 
-        let newResults = settings.effectiveDockAtBottom
-            ? Array(grouped.allResults.reversed())
-            : grouped.allResults
-
-        let oldSelectedResultID: UUID? = {
-            guard let oldIndex = searchState.selectedIndex,
-                  oldIndex >= 0, oldIndex < searchState.results.count
+        let oldSelectedID: UUID? = {
+            guard let idx = snap.selectedIndex, idx >= 0, idx < snap.existingResults.count
             else { return nil }
-            return searchState.results[oldIndex].id
+            return snap.existingResults[idx].id
         }()
 
-        DispatchQueue.main.async {
+        // ── 3. Apply on MainActor ─────────────────────────────────────────────
+        await MainActor.run {
             withAnimation(.easeInOut(duration: 0.15)) {
-                self.searchState.results = newResults
-                self.searchState.grouped = grouped
+                searchState.results = newResults
+                searchState.grouped = grouped
 
-                if self.searchState.isKeyboardNavigation && !isNewQuery,
-                   let oldID = oldSelectedResultID,
-                   let newIndex = self.searchState.results.firstIndex(where: { $0.id == oldID })
+                if snap.isKeyboardNav && !snap.isNewQuery,
+                   let oldID = oldSelectedID,
+                   let newIndex = searchState.results.firstIndex(where: { $0.id == oldID })
                 {
-                    self.searchState.selectedIndex = newIndex
-                } else if !self.searchState.results.isEmpty {
-                    let defaultIndex = self.settings.effectiveDockAtBottom
-                        ? max(self.searchState.results.count - 1, 0) : 0
-                    self.searchState.selectedIndex = defaultIndex
-                    if self.settings.effectiveDockAtBottom {
-                        self.searchState.shouldAutoScroll = true
-                    }
+                    searchState.selectedIndex = newIndex
+                } else if !searchState.results.isEmpty {
+                    let defaultIndex = settings.effectiveDockAtBottom
+                        ? max(searchState.results.count - 1, 0) : 0
+                    searchState.selectedIndex = defaultIndex
+                    if settings.effectiveDockAtBottom { searchState.shouldAutoScroll = true }
                 } else {
-                    self.searchState.selectedIndex = nil
+                    searchState.selectedIndex = nil
                 }
             }
-        }
-
-        if settings.effectiveDockAtBottom {
-            searchState.revision += 1
+            if settings.effectiveDockAtBottom { searchState.revision += 1 }
         }
     }
 

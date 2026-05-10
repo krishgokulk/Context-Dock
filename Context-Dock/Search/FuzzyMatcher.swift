@@ -3,115 +3,97 @@ import Foundation
 // MARK: - Fuzzy Matching
 
 struct FuzzyMatcher {
-    /// Performs fuzzy matching and returns a score (0.0 = no match, higher = better match)
+
+    // Public API — accepts raw strings (lowercases internally).
+    // Existing callers in ContentView / FileIndexManager use this.
     static func score(_ query: String, against target: String) -> Double? {
-        let query = query.lowercased()
-        let targetLower = target.lowercased()
+        score(query.lowercased(), againstLower: target.lowercased(), original: target)
+    }
 
-        guard !query.isEmpty else { return nil }
-        guard !targetLower.isEmpty else { return nil }
+    // Optimized variant — call when both sides are already lowercased.
+    // The search hot-path uses this to avoid repeated lowercased() allocations.
+    static func score(_ queryLower: String, againstLower targetLower: String, original target: String) -> Double? {
+        guard !queryLower.isEmpty, !targetLower.isEmpty else { return nil }
 
-        // Fast path: exact match (case-insensitive)
-        if targetLower == query {
-            return 1000.0
+        // Fast path: exact match
+        if targetLower == queryLower { return 1000.0 }
+
+        // Fast path: prefix match
+        if targetLower.hasPrefix(queryLower) {
+            return 900.0 + Double(queryLower.count) / Double(targetLower.count) * 100
         }
 
-        // Fast path: starts with query
-        if targetLower.hasPrefix(query) {
-            // Strong bonus for prefix matches, scaled by coverage
-            return 900.0 + Double(query.count) / Double(targetLower.count) * 100
-        }
+        // Acronym match (e.g. "gc" → "Google Chrome")
+        if let s = checkAcronymMatch(queryLower: queryLower, target: target) { return s }
 
-        // Check for acronym match (e.g., "gc" matches "Google Chrome")
-        if let acronymScore = checkAcronymMatch(query: query, target: target) {
-            return acronymScore
-        }
+        // Sequential character match using [Character] for O(1) index arithmetic
+        let targetChars = Array(targetLower)
+        let queryChars  = Array(queryLower)
+        var matchedIndices: [Int] = []
+        matchedIndices.reserveCapacity(queryChars.count)
 
-        // Check if all characters in query appear in order in target
-        var targetIndex = targetLower.startIndex
-        var queryIndex = query.startIndex
-        var matchedIndices: [String.Index] = []
-
-        while queryIndex < query.endIndex && targetIndex < targetLower.endIndex {
-            if query[queryIndex] == targetLower[targetIndex] {
-                matchedIndices.append(targetIndex)
-                queryIndex = query.index(after: queryIndex)
+        var ti = 0, qi = 0
+        while qi < queryChars.count && ti < targetChars.count {
+            if queryChars[qi] == targetChars[ti] {
+                matchedIndices.append(ti)
+                qi += 1
             }
-            targetIndex = targetLower.index(after: targetIndex)
+            ti += 1
         }
+        guard qi == queryChars.count else { return nil }
 
-        // If we didn't match all query characters, no match
-        guard queryIndex == query.endIndex else {
-            return nil
-        }
-
-        // Calculate base score from match ratio
-        let matchRatio = Double(query.count) / Double(targetLower.count)
+        let matchRatio = Double(queryChars.count) / Double(targetChars.count)
         var score = matchRatio * 100
 
-        // Bonus for consecutive matches (rewards continuous substrings)
+        // Consecutive-match bonus — O(1) per pair (integer subtraction)
         var consecutiveBonus = 0.0
         var consecutiveCount = 0
         for i in 1..<matchedIndices.count {
-            let prev = matchedIndices[i - 1]
-            let curr = matchedIndices[i]
-            if targetLower.distance(from: prev, to: curr) == 1 {
+            if matchedIndices[i] - matchedIndices[i - 1] == 1 {
                 consecutiveCount += 1
-                consecutiveBonus += 15.0 + Double(consecutiveCount) * 2.0  // Escalating bonus
+                consecutiveBonus += 15.0 + Double(consecutiveCount) * 2.0
             } else {
                 consecutiveCount = 0
             }
         }
         score += consecutiveBonus
 
-        // Bonus for matching at word boundaries
+        // Word-boundary bonus
         let words = targetLower.split(separator: " ")
         var wordBoundaryBonus = 0.0
         for word in words {
-            let wordStr = String(word)
-            if wordStr.hasPrefix(query) {
-                wordBoundaryBonus += 80.0
-                break
-            } else if wordStr.contains(query) {
+            let w = String(word)
+            if w.hasPrefix(queryLower) {
+                wordBoundaryBonus += 80.0; break
+            } else if w.contains(queryLower) {
                 wordBoundaryBonus += 40.0
             }
         }
         score += wordBoundaryBonus
 
-        // Bonus for matching at the very start
-        if let firstMatch = matchedIndices.first, firstMatch == targetLower.startIndex {
-            score += 40.0
-        }
+        // Start-of-string bonus
+        if matchedIndices.first == 0 { score += 40.0 }
 
-        // Bonus for CamelCase matching (e.g., "gc" matches "googleChrome")
-        if let camelScore = checkCamelCaseMatch(query: query, target: target) {
-            score += camelScore
-        }
+        // CamelCase bonus (e.g. "gc" → "googleChrome")
+        if let s = checkCamelCaseMatch(queryLower: queryLower, target: target) { score += s }
 
         return score
     }
 
-    /// Check if query matches the acronym of target words (e.g., "gc" -> "Google Chrome")
-    private static func checkAcronymMatch(query: String, target: String) -> Double? {
+    // MARK: - Private helpers
+
+    private static func checkAcronymMatch(queryLower: String, target: String) -> Double? {
         let words = target.split(separator: " ")
         guard words.count >= 2 else { return nil }
-
         let acronym = words.map { String($0.prefix(1)) }.joined().lowercased()
-        if acronym.hasPrefix(query.lowercased()) {
-            return 850.0 + Double(query.count) * 10.0
-        }
-        return nil
+        guard acronym.hasPrefix(queryLower) else { return nil }
+        return 850.0 + Double(queryLower.count) * 10.0
     }
 
-    /// Check if query matches CamelCase initials (e.g., "gc" -> "googleChrome")
-    private static func checkCamelCaseMatch(query: String, target: String) -> Double? {
-        let uppercaseIndices = target.indices.filter { target[$0].isUppercase }
-        guard !uppercaseIndices.isEmpty else { return nil }
-
-        let camelAcronym = uppercaseIndices.map { String(target[$0]) }.joined().lowercased()
-        if camelAcronym.hasPrefix(query.lowercased()) {
-            return 60.0
-        }
-        return nil
+    private static func checkCamelCaseMatch(queryLower: String, target: String) -> Double? {
+        let uppers = target.indices.filter { target[$0].isUppercase }
+        guard !uppers.isEmpty else { return nil }
+        let camelAcronym = uppers.map { String(target[$0]) }.joined().lowercased()
+        return camelAcronym.hasPrefix(queryLower) ? 60.0 : nil
     }
 }

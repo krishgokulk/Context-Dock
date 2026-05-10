@@ -25,7 +25,6 @@ struct SearchState {
     var appPanelAllItems: [SearchResult] = []
     var indexedFileResults: [SearchResult] = []
     var isLoadingApps: Bool = false
-    var debounceTask: Task<Void, Never>? = nil
     var isInSmartMode: Bool = false
     var lastSmartQuery: String = ""
     var isInitialLaunch: Bool = true

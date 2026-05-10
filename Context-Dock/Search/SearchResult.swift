@@ -6,6 +6,7 @@ import Foundation
 struct SearchResult: Identifiable {
     let id = UUID()
     let title: String
+    let titleLower: String      // cached — avoids repeated lowercased() in hot path
     let subtitle: String
     let icon: NSImage?
     let action: () -> Void
@@ -13,6 +14,22 @@ struct SearchResult: Identifiable {
     let type: ResultType
     let filePath: String?  // For files and folders
     let contactData: ContactData?  // For contacts
+
+    init(
+        title: String, subtitle: String, icon: NSImage?,
+        action: @escaping () -> Void, score: Double = 0.0,
+        type: ResultType, filePath: String?, contactData: ContactData?
+    ) {
+        self.title = title
+        self.titleLower = title.lowercased()
+        self.subtitle = subtitle
+        self.icon = icon
+        self.action = action
+        self.score = score
+        self.type = type
+        self.filePath = filePath
+        self.contactData = contactData
+    }
 
     // Unique identifier for usage tracking (e.g., app bundle ID, file path, contact ID)
     var trackingIdentifier: String {

@@ -101,6 +101,8 @@ class ShortcutsLinkQuery {
 
 struct LauncherView: View {
     @State var searchState = SearchState()
+    // Isolated from searchState so keystroke mutations don't trigger a struct-wide re-render
+    @State var debounceTask: Task<Void, Never>? = nil
     // rem-powered Reminders panel chat
     @State private var remPanelChatMessages: [AIChatMessage] = []
     @State private var remPanelIsProcessing: Bool = false
