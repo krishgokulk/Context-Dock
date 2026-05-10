@@ -182,10 +182,3 @@ import Foundation
 }
 
 // MARK: - Notification Names
-extension Notification.Name {
-    static let servicesFilesReceived = Notification.Name("servicesFilesReceived")
-    static let servicesTextReceived = Notification.Name("servicesTextReceived")
-    static let servicesURLReceived = Notification.Name("servicesURLReceived")
-    static let servicesOpenWithFiles = Notification.Name("servicesOpenWithFiles")
-    static let servicesOpenWithText = Notification.Name("servicesOpenWithText")
-}

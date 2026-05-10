@@ -890,6 +890,10 @@ class ContextDetector {
     }
 }
 
+// MARK: - ContextEngineProtocol conformance
+
+extension ContextDetector: ContextEngineProtocol {}
+
 // MARK: - Detected Context Types
 
 struct BrowserTab {

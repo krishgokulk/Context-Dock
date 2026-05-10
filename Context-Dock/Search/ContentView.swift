@@ -18,75 +18,7 @@ import SwiftTerm  // For terminal integration
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct SearchResult: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-    let icon: NSImage?
-    let action: () -> Void
-    var score: Double = 0.0
-    let type: ResultType
-    let filePath: String?  // For files and folders
-    let contactData: ContactData?  // For contacts
-
-    // Unique identifier for usage tracking (e.g., app bundle ID, file path, contact ID)
-    var trackingIdentifier: String {
-        switch type {
-        case .application:
-            return "app:\(subtitle)"  // subtitle contains the full path
-        case .shortcut:
-            return "shortcut:\(title)"
-        case .file, .folder, .document:
-            return "file:\(filePath ?? subtitle)"
-        case .contact:
-            return "contact:\(contactData?.identifier ?? title)"
-        case .calendarEvent:
-            return "calendar:\(title)"
-        case .reminder:
-            return "reminder:\(title)"
-        case .note:
-            return "note:\(title)"
-        case .mail:
-            return "mail:\(title)"
-        case .photo:
-            return "photo:\(title)"
-        case .message:
-            return "message:\(title)"
-        case .extensionCommand:
-            return "extension:\(title)"
-        case .webSearch:
-            return "web:\(title)"
-        case .cliTool:
-            return "cli:\(title)"
-        }
-    }
-
-    enum ResultType {
-        case application
-        case shortcut
-        case file
-        case folder
-        case document
-        case contact
-        case calendarEvent
-        case reminder
-        case note
-        case mail
-        case photo
-        case message
-        case extensionCommand
-        case webSearch
-        case cliTool  // installed CLI/TUI tool (from TerminalPackageManager)
-    }
-
-    struct ContactData {
-        let primaryEmail: String
-        let allEmails: [String]
-        let primaryPhone: String
-        let allPhones: [String]
-        let identifier: String
-    }
-}
+// SearchResult → moved to SearchResult.swift
 
 // MARK: - Shortcuts Query Helper
 class ShortcutsLinkQuery {
@@ -163,259 +95,18 @@ class ShortcutsLinkQuery {
     }
 }
 
-// MARK: - Fuzzy Matching
-struct FuzzyMatcher {
-    /// Performs fuzzy matching and returns a score (0.0 = no match, higher = better match)
-    static func score(_ query: String, against target: String) -> Double? {
-        let query = query.lowercased()
-        let targetLower = target.lowercased()
+// FuzzyMatcher → moved to FuzzyMatcher.swift
 
-        guard !query.isEmpty else { return nil }
-        guard !targetLower.isEmpty else { return nil }
-
-        // Fast path: exact match (case-insensitive)
-        if targetLower == query {
-            return 1000.0
-        }
-
-        // Fast path: starts with query
-        if targetLower.hasPrefix(query) {
-            // Strong bonus for prefix matches, scaled by coverage
-            return 900.0 + Double(query.count) / Double(targetLower.count) * 100
-        }
-
-        // Check for acronym match (e.g., "gc" matches "Google Chrome")
-        if let acronymScore = checkAcronymMatch(query: query, target: target) {
-            return acronymScore
-        }
-
-        // Check if all characters in query appear in order in target
-        var targetIndex = targetLower.startIndex
-        var queryIndex = query.startIndex
-        var matchedIndices: [String.Index] = []
-
-        while queryIndex < query.endIndex && targetIndex < targetLower.endIndex {
-            if query[queryIndex] == targetLower[targetIndex] {
-                matchedIndices.append(targetIndex)
-                queryIndex = query.index(after: queryIndex)
-            }
-            targetIndex = targetLower.index(after: targetIndex)
-        }
-
-        // If we didn't match all query characters, no match
-        guard queryIndex == query.endIndex else {
-            return nil
-        }
-
-        // Calculate base score from match ratio
-        let matchRatio = Double(query.count) / Double(targetLower.count)
-        var score = matchRatio * 100
-
-        // Bonus for consecutive matches (rewards continuous substrings)
-        var consecutiveBonus = 0.0
-        var consecutiveCount = 0
-        for i in 1..<matchedIndices.count {
-            let prev = matchedIndices[i - 1]
-            let curr = matchedIndices[i]
-            if targetLower.distance(from: prev, to: curr) == 1 {
-                consecutiveCount += 1
-                consecutiveBonus += 15.0 + Double(consecutiveCount) * 2.0  // Escalating bonus
-            } else {
-                consecutiveCount = 0
-            }
-        }
-        score += consecutiveBonus
-
-        // Bonus for matching at word boundaries
-        let words = targetLower.split(separator: " ")
-        var wordBoundaryBonus = 0.0
-        for word in words {
-            let wordStr = String(word)
-            if wordStr.hasPrefix(query) {
-                // Full word prefix match is very strong
-                wordBoundaryBonus += 80.0
-                break
-            } else if wordStr.contains(query) {
-                // Substring within word
-                wordBoundaryBonus += 40.0
-            }
-        }
-        score += wordBoundaryBonus
-
-        // Bonus for matching at the very start
-        if let firstMatch = matchedIndices.first, firstMatch == targetLower.startIndex {
-            score += 40.0
-        }
-
-        // Bonus for CamelCase matching (e.g., "gc" matches "googleChrome")
-        if let camelScore = checkCamelCaseMatch(query: query, target: target) {
-            score += camelScore
-        }
-
-        return score
-    }
-
-    /// Check if query matches the acronym of target words (e.g., "gc" -> "Google Chrome")
-    private static func checkAcronymMatch(query: String, target: String) -> Double? {
-        let words = target.split(separator: " ")
-        guard words.count >= 2 else { return nil }
-
-        let acronym = words.map { String($0.prefix(1)) }.joined().lowercased()
-        if acronym.hasPrefix(query.lowercased()) {
-            // Acronym match is very strong
-            return 850.0 + Double(query.count) * 10.0
-        }
-        return nil
-    }
-
-    /// Check if query matches CamelCase initials (e.g., "gc" -> "googleChrome")
-    private static func checkCamelCaseMatch(query: String, target: String) -> Double? {
-        let uppercaseIndices = target.indices.filter { target[$0].isUppercase }
-        guard !uppercaseIndices.isEmpty else { return nil }
-
-        let camelAcronym = uppercaseIndices.map { String(target[$0]) }.joined().lowercased()
-        if camelAcronym.hasPrefix(query.lowercased()) {
-            return 60.0  // Good bonus for camel case match
-        }
-        return nil
-    }
-}
-
-struct ShortcutMetadata {
-    let acceptsFiles: Bool
-    let acceptsText: Bool
-    let acceptsImages: Bool
-    let acceptsContacts: Bool
-    let acceptsPDFs: Bool
-    let fileExtensions: [String]  // e.g., ["pdf", "docx", "png"]
-
-    func matches(context: UserContext) -> Bool {
-        switch context {
-        case .filesSelected(let urls):
-            if acceptsFiles {
-                // Check if any file extension matches
-                if fileExtensions.isEmpty { return true }
-                return urls.contains { url in
-                    let ext = url.pathExtension.lowercased()
-                    return fileExtensions.contains(ext)
-                }
-            }
-            if acceptsImages {
-                return urls.contains { url in
-                    ["jpg", "jpeg", "png", "gif", "heic"].contains(url.pathExtension.lowercased())
-                }
-            }
-            if acceptsPDFs {
-                return urls.contains { $0.pathExtension.lowercased() == "pdf" }
-            }
-            return false
-        case .textSelected:
-            return acceptsText
-        case .url:
-            return acceptsText  // URLs can be treated as text input
-        case .contactSelected:
-            return acceptsContacts
-        case .appFocused, .none:
-            return false
-        }
-    }
-}
-
-// JSON decodable version
-struct ShortcutMetadataJSON: Codable {
-    let acceptsFiles: Bool
-    let acceptsText: Bool
-    let acceptsImages: Bool
-    let acceptsContacts: Bool
-    let acceptsPDFs: Bool
-    let fileExtensions: [String]
-}
-
-// MARK: - Result Grouping
-struct GroupedResults {
-    var pinnedResults: [SearchResult] = []
-    var pinnedSectionTitle: String?
-    var suggestedShortcuts: [SearchResult] = []  // Context-aware suggestions
-    var shortcuts: [SearchResult] = []
-    var apps: [SearchResult] = []
-    var files: [SearchResult] = []
-    var contacts: [SearchResult] = []
-    var system: [SearchResult] = []  // Calendar, Reminders, Notes, Mail, Messages
-    var commands: [SearchResult] = []  // Extension commands
-    var webResults: [SearchResult] = []  // Web search results
-
-    var allResults: [SearchResult] {
-        pinnedResults + apps + commands + shortcuts + suggestedShortcuts + system + contacts + files
-            + webResults
-    }
-
-    var isEmpty: Bool {
-        allResults.isEmpty
-    }
-
-    mutating func add(_ result: SearchResult, isSuggested: Bool = false) {
-        if isSuggested && result.type == .shortcut {
-            suggestedShortcuts.append(result)
-            return
-        }
-
-        switch result.type {
-        case .extensionCommand:
-            commands.append(result)
-        case .shortcut:
-            shortcuts.append(result)
-        case .application:
-            apps.append(result)
-        case .file, .folder, .document, .photo:
-            files.append(result)
-        case .contact:
-            contacts.append(result)
-        case .calendarEvent, .reminder, .note, .mail, .message:
-            system.append(result)
-        case .webSearch:
-            webResults.append(result)
-        case .cliTool:
-            apps.append(result)  // CLI tools appear in the Applications section
-        }
-    }
-
-    var sections: [(String, [SearchResult])] {
-        var result: [(String, [SearchResult])] = []
-        if !pinnedResults.isEmpty {
-            result.append((pinnedSectionTitle ?? "Top Results", pinnedResults))
-        }
-        if !apps.isEmpty { result.append(("Applications", apps)) }
-        if !commands.isEmpty { result.append(("Commands", commands)) }
-        if !shortcuts.isEmpty { result.append(("Shortcuts", shortcuts)) }
-        if !suggestedShortcuts.isEmpty { result.append(("Suggestions", suggestedShortcuts)) }
-        if !system.isEmpty { result.append(("Calendar & Notes", system)) }
-        if !contacts.isEmpty { result.append(("Contacts", contacts)) }
-        if !files.isEmpty { result.append(("Files & Folders", files)) }
-        if !webResults.isEmpty { result.append(("Web Results", webResults)) }
-        return result
-    }
-}
+// ShortcutMetadata, ShortcutMetadataJSON, GroupedResults → moved to SearchResult.swift
 
 struct LauncherView: View {
-    @State private var searchText = ""
-    @State private var lastSearchQuery = ""
-    @State private var searchResults: [SearchResult] = []
-    @State private var groupedResults = GroupedResults()
-    @State private var selectedResultIndex: Int? = nil
-    @State private var isKeyboardNavigation = false  // Track if selection is from keyboard (for auto-scroll)
-    @State private var shouldAutoScrollToSelection = false
-    @State private var searchResultsRevision = 0
-    @State private var pinnedResults: [SearchResult] = []
-    @State private var pinnedResultsTitle: String?
-    @State private var pinnedResultTypesToExclude: Set<SearchResult.ResultType> = []
-    // Full unfiltered list for the active app panel (calendar/notes/etc.) — used for in-panel filtering
-    @State private var appPanelAllItems: [SearchResult] = []
+    @State var searchState = SearchState()
     // rem-powered Reminders panel chat
     @State private var remPanelChatMessages: [AIChatMessage] = []
     @State private var remPanelIsProcessing: Bool = false
     // Tool-removal cleanup banner
     @State private var removedToolBannerName: String? = nil
-    // Per-panel terminal history — keyed by activeSmartQueryKey or searchContextApp bundleID
+    // Per-panel terminal history — keyed by searchState.activeSmartQueryKey or searchState.contextApp bundleID
     @State private var panelConsoleLinesMap: [String: [(line: String, isCommand: Bool)]] = [:]
     @State private var panelShowConsoleMap: [String: Bool] = [:]
     @State private var panelConsoleHeight: CGFloat = 160
@@ -423,9 +114,9 @@ struct LauncherView: View {
     @State private var panelTerminalControllers: [String: TerminalHostController] = [:]
     // Computed helpers — always work off the active panel key
     private var activeConsoleKey: String {
-        if let k = activeSmartQueryKey { return k }
+        if let k = searchState.activeSmartQueryKey { return k }
         if let dockKey = currentL2DockSessionKey { return dockKey }
-        if let ctx = searchContextApp {
+        if let ctx = searchState.contextApp {
             return ctx.appPath.isEmpty ? ctx.name : ctx.appPath
         }
         return "default"
@@ -480,24 +171,12 @@ struct LauncherView: View {
     @State private var nowPlayingTimer: Timer? = nil
     @State private var remPanelAITask: Task<Void, Never>? = nil
     @State private var remIsInstalled: Bool? = nil  // nil = not yet checked
-    @State private var l2ContextExtensions: [ExtensionDiscoveryResult] = []
-    @State private var l2ExtensionResults: [SearchResult] = []
-    @State private var lastL2AutoRunQuery = ""
-    @State private var lastL2AutoRunExtensionID: UUID? = nil
-    @State private var lastL2RunnableQuery: String? = nil
-    @State private var l2ChatMessages: [AIChatMessage] = []
-    @State private var l2HandledApprovalIds: Set<UUID> = []
-    @State private var l2TerminalDismissed = false  // true once user manually closes terminal; reset on scope change
-    @State private var activeL2DockSessionKey: String? = nil
-    @State private var l2IsLoading = false
-    @State private var l2CurrentTask: Task<Void, Never>? = nil
-    @State private var l2ActiveRequestID: UUID? = nil
+    @State var l2 = L2State()
     @State private var isVisible = false
-    @State private var allApplications: [SearchResult] = []
-    @State private var allShortcuts: [SearchResult] = []
-    @State private var indexedFileResults: [SearchResult] = []
+    @State var allApplications: [SearchResult] = []
+    @State var allShortcuts: [SearchResult] = []
     @State private var allContacts: [SearchResult] = []
-    @State private var systemDataResults: [SearchResult] = []
+    @State var systemDataResults: [SearchResult] = []
     @ObservedObject private var contactManager = ContactSearchManager.shared
     @ObservedObject private var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject private var terminalBridge = TerminalAIBridge.shared
@@ -512,18 +191,12 @@ struct LauncherView: View {
     @State private var runningRegularApps: [NSRunningApplication] = []
     @StateObject private var taskExecutor = L2AITaskExecutor.shared
     @StateObject private var selectionModel = SelectionObserverModel()
-    @State private var isLoadingApps = false
-    @State private var searchDebounceTask: Task<Void, Never>? = nil
     @State private var browserWarmupTask: Task<Void, Never>? = nil
     @State private var windowResizeTask: Task<Void, Never>? = nil
-    @State private var showFolderPreview = false
+    @State var showFolderPreview = false
     @State private var folderPreviewPath: String?
     @State private var folderPreviewSelectedFile: String?  // Track selected file in folder preview = nil
 
-    // App Data Panel — set to app key ("calendar","notes"…) when a smart query is active
-    @State private var activeSmartQueryKey: String? = nil
-    // Spotlight-style context: set when user presses Tab/→ on an app result
-    @State private var searchContextApp: SearchContextApp? = nil
     @State private var showContactPreview = false
     @State private var contactPreviewData: SearchResult? = nil
     @State private var quickLookDataSource: QuickLookDataSource? = nil
@@ -532,31 +205,18 @@ struct LauncherView: View {
     @State private var shortcutSheetFocusedIdx: Int? = nil  // Up/Down nav inside shortcut sheet
     @State private var cmdHoldTask: Task<Void, Never>? = nil
     @State private var cmdHoldMonitor: Any? = nil
-    @State private var pillNavViaKeyboard = false  // true only during arrow-key navigation
-    /// Partial app name autocomplete: (appName, bundleId, ghostSuffix, actionQuery)
-    @State private var l2AppCompletion:
-        (appName: String, bundleId: String, ghost: String, actionQuery: String)? = nil
-    /// Pinned cross-app target after Tab autocomplete — overrides frontmost app icon + pills
-    @State private var l2TargetApp: (name: String, icon: NSImage?, bundleId: String)? = nil
-    // AI-powered favourite matching
-    @State private var isAIMode = false  // New: AI mode toggle
-    @State private var aiChatMessages: [AIChatMessage] = []  // Chat history
-    @State private var isAILoading = false  // AI response loading state
-    @State private var currentAITask: Task<Void, Never>? = nil  // Current AI request task
-    @State private var aiChatStreamingMessageId: UUID? = nil  // ID of the message currently streaming in
-    @State private var aiChatAttachments: [URL] = []  // Pending file/image attachments
-    @State private var frontmostAppName: String = ""
+    // AI chat mode
+    @State var aiMode = AIModeState()
+    @EnvironmentObject private var contextEnv: ContextDockEnvironment
+    @State var frontmost = FrontmostAppState()
     @State private var pendingTerminalCommand: PendingTerminalCommand?
     @State private var pendingFinderOperation: PendingFinderOperation?
     @State private var isMailContextAttached: Bool = false
     @State private var attachedFinderFolderSearchPath: String = ""
     @State private var approvedFinderFolderSearchPaths: Set<String> = []
     @State private var cachedFinderCurrentDirectoryPath: String = ""
-    @State private var frontmostAppIcon: NSImage? = nil
-    @State private var frontmostAppBundleID: String = ""
-    @State private var isFrontmostSectionExpanded: Bool = false
     @FocusState private var isSearchFieldFocused: Bool
-    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject var settings = AppSettings.shared
     @ObservedObject private var fileIndexManager = FileIndexManager.shared
     @Environment(\.openSettings) private var openSettings
     @Environment(\.colorScheme) private var systemColorScheme
@@ -581,7 +241,7 @@ struct LauncherView: View {
     }
 
     // Context-aware features
-    @State private var currentContext: UserContext = .none
+    @State var currentContext: UserContext = .none
     /// Live AX-read snapshot: URL, window title, selection, focused element role.
     /// Refreshed on every context-dock open and frontmost-app change.
     @State private var axContext: AXContext = .empty
@@ -591,11 +251,8 @@ struct LauncherView: View {
     /// Deep per-app context from adapter contextReaders (current file, git branch, etc.)
     @State private var adapterContextData: [String: String] = [:]
     @State private var selectedFiles: Set<UUID> = []  // Multi-selection support
-    @State private var shortcutMetadataCache: [String: ShortcutMetadata] = [:]  // Cache for shortcut capabilities
+    @State var shortcutMetadataCache: [String: ShortcutMetadata] = [:]  // Cache for shortcut capabilities
     @State private var isContextExpanded: Bool = false  // Smooth expansion state for context awareness
-    /// Stable key identifying what context the current l2ChatMessages are "about".
-    /// When this changes, we clear stale chat history so the AI focuses on the new context.
-    @State private var chatContextKey: String = ""
 
     // AI Extension Suggestions (different from AI Chat mode)
     @State private var showAIExtensionSuggestions = false
@@ -618,7 +275,7 @@ struct LauncherView: View {
     @State private var suppressOpenResize = false
 
     // Context in dock state
-    @State private var showContextInDock = true
+    @State var showContextInDock = true
     @State private var isGlobalContextActive = false
 
     // Track if user has sent a message in current session
@@ -630,7 +287,6 @@ struct LauncherView: View {
     // Web research
     @StateObject private var webResearch = WebResearchSession.shared
     @State private var lastKnownBrowserURL: String = ""
-    @State private var showL2ResultsPopover = false
 
     // Swipe gesture monitor
     @State private var swipeGestureMonitor: Any?
@@ -648,7 +304,6 @@ struct LauncherView: View {
     @State private var liveMenuItems: [AXMenuItem] = []
     @State private var menuLoadTask: Task<Void, Never>? = nil
     @State private var liveMenuRefreshTask: Task<Void, Never>? = nil
-    @State private var lastAppSwitchDate: Date = .distantPast
     // Clipboard monitoring for Global Context
     @State private var globalClipboardText: String = ""
     @State private var showGlobalClipboardPill: Bool = false
@@ -677,7 +332,7 @@ struct LauncherView: View {
     @State private var lastLiveMenuSignature: String = ""
     // Cross-app menu items loaded lazily when query targets a specific app
     @State private var crossAppMenuItems: [AXMenuItem] = []
-    // Locked submenu parent — when set, searchText is treated as child prefix
+    // Locked submenu parent — when set, searchState.query is treated as child prefix
     @State private var lockedSubmenuParent: AXMenuItem? = nil
     @State private var crossAppMenuTask: Task<Void, Never>? = nil
     @State private var crossAppMenuTargetPID: pid_t = 0
@@ -699,7 +354,6 @@ struct LauncherView: View {
     @State private var contextMenuPills: [AXMenuItem] = []
     @State private var previousEnabledIDs: Set<UUID> = []
     // Arrow-key pill navigation: index into the unified pill list
-    @State private var focusedPillIndex: Int? = nil
     @State private var focusedAppPillIndex: Int? = nil
     // Dock magnification: tracks which pill the mouse is near
     @State private var hoveredDockPillIndex: Int? = nil
@@ -709,17 +363,12 @@ struct LauncherView: View {
     @State private var pillScrollAccumulator: CGFloat = 0
 
     // Media layer state (L3 - swipe up from L2 when media is playing)
-    @State private var showMediaLayer = false
+    @State var showMediaLayer = false
 
-    // Smart search mode tracking
-    @State private var isInSmartMode = false
-    @State private var lastSmartQuery: String = ""
 
-    // Removed: Smart positioning logic - results always show below dock now
-    @State private var isInitialLaunch = true  // Track first appearance to skip animation
 
     // Combined search pool
-    private var allItems: [SearchResult] {
+    var allItems: [SearchResult] {
         allApplications + cliToolSearchResults
     }
 
@@ -785,7 +434,7 @@ struct LauncherView: View {
         let pinnedAppsHeight: CGFloat = 0
         let statusBarHeight: CGFloat = settings.enableStatusBar ? 45 : 0
         let contextHeight: CGFloat =
-            (settings.enableFrontmostDetection && isFrontmostSectionExpanded) ? 45 : 0
+            (settings.enableFrontmostDetection && frontmost.isSectionExpanded) ? 45 : 0
         let dockRowHeight = CGFloat(settings.dockIconSize) + 4
         let dockVerticalPadding: CGFloat = 12
         let searchBarHeight: CGFloat = max(
@@ -795,12 +444,12 @@ struct LauncherView: View {
         let indexingBarHeight: CGFloat = fileIndexManager.progress.isIndexing ? 30 : 0
         let l2ChatHeight: CGFloat = {
             guard showContextInDock && !showMediaLayer else { return 0 }
-            if l2ChatMessages.isEmpty {
-                if l2IsLoading { return 50 }
+            if l2.chatMessages.isEmpty {
+                if l2.isLoading { return 50 }
                 return 0
             }
             var total: CGFloat = 0
-            for message in l2ChatMessages {
+            for message in l2.chatMessages {
                 var messageHeight: CGFloat = 80
                 if message.content.contains("```") {
                     let codeBlockCount = message.content.components(separatedBy: "```").count - 1
@@ -812,7 +461,7 @@ struct LauncherView: View {
                 total += messageHeight
             }
             total = min(total, 500)
-            if l2IsLoading {
+            if l2.isLoading {
                 total += 50
             }
             if livePanelVisible, case .terminal = livePanelMode {
@@ -830,27 +479,27 @@ struct LauncherView: View {
         }()
         let finderSearchPanelHeight: CGFloat = {
             guard showContextInDock && !showMediaLayer
-                && shouldShowFinderSearchResultsPanel(for: searchText)
+                && shouldShowFinderSearchResultsPanel(for: searchState.query)
             else { return 0 }
 
-            if isFinderSemanticLoading && searchResults.isEmpty {
+            if isFinderSemanticLoading && searchState.results.isEmpty {
                 return 170
             }
-            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && searchResults.isEmpty
+            if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && searchState.results.isEmpty
             {
                 return 150
             }
 
             let resultRowHeight: CGFloat = 50
-            let resultsHeight = min(CGFloat(searchResults.count) * resultRowHeight, 400)
+            let resultsHeight = min(CGFloat(searchState.results.count) * resultRowHeight, 400)
             return resultsHeight + 48
         }()
 
         // Context chip height (only in L1 search mode with context and suggestions)
         let contextChipHeight: CGFloat = {
             // Not applicable in AI mode, L2 context mode, or the L3 media dock
-            if isAIMode || showContextInDock || showMediaLayer { return 0 }
+            if aiMode.isActive || showContextInDock || showMediaLayer { return 0 }
 
             // If context awareness is disabled, return 0
             guard settings.enableContextAIExtensions else { return 0 }
@@ -871,7 +520,7 @@ struct LauncherView: View {
 
             // Check if we have any matching shortcuts — passive only (not while typing)
             let hasSuggestions: Bool = {
-                guard searchText.isEmpty else { return false }
+                guard searchState.query.isEmpty else { return false }
                 return allShortcuts.contains { shortcut in
                     guard let metadata = shortcutMetadataCache[shortcut.title] else { return false }
                     return metadata.matches(context: currentContext)
@@ -883,12 +532,12 @@ struct LauncherView: View {
 
         // AI mode has different height calculation, but keep the empty AI bar compact so
         // the glass background stays visually consistent with the L2 dock.
-        if isAIMode {
+        if aiMode.isActive {
             // Each message bubble ~76px; cap window growth at 400px for chat.
-            let aiChatHeight: CGFloat = aiChatMessages.isEmpty
+            let aiChatHeight: CGFloat = aiMode.messages.isEmpty
                 ? 0
-                : min(CGFloat(aiChatMessages.count) * 76, 400)
-            let aiLoadingHeight: CGFloat = isAILoading ? 48 : 0
+                : min(CGFloat(aiMode.messages.count) * 76, 400)
+            let aiLoadingHeight: CGFloat = aiMode.isLoading ? 48 : 0
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + aiChatHeight
                 + aiLoadingHeight + 12
         }
@@ -900,9 +549,9 @@ struct LauncherView: View {
         }
 
         // App panel (calendar/reminders/notes/etc.) — split view with fixed height
-        if activeSmartQueryKey != nil {
-            let panelHeight: CGFloat = activeSmartQueryKey == "clipboard" ? 430 : 480
-            let panelGap: CGFloat = activeSmartQueryKey == "clipboard" ? 2 : 10
+        if searchState.activeSmartQueryKey != nil {
+            let panelHeight: CGFloat = searchState.activeSmartQueryKey == "clipboard" ? 430 : 480
+            let panelGap: CGFloat = searchState.activeSmartQueryKey == "clipboard" ? 2 : 10
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + panelHeight + panelGap
         }
 
@@ -926,12 +575,12 @@ struct LauncherView: View {
             return statusBarHeight + pinnedAppsHeight + listViewDockHeight + 12
         }
 
-        if !searchResults.isEmpty {
+        if !searchState.results.isEmpty {
             let resultRowHeight: CGFloat = 50
-            let resultsHeight = min(CGFloat(searchResults.count) * resultRowHeight, 450)
+            let resultsHeight = min(CGFloat(searchState.results.count) * resultRowHeight, 450)
             return statusBarHeight + contextHeight + pinnedAppsHeight + searchBarHeight
                 + contextChipHeight + indexingBarHeight + resultsHeight + 10
-        } else if isLoadingApps {
+        } else if searchState.isLoadingApps {
             return statusBarHeight + contextHeight + pinnedAppsHeight + searchBarHeight
                 + contextChipHeight + indexingBarHeight + 60
         } else {
@@ -945,11 +594,11 @@ struct LauncherView: View {
 
     private var visibleDockWidth: CGFloat {
         let hasResultsOrChat =
-            !searchResults.isEmpty || isLoadingApps || showFolderPreview
-            || activeSmartQueryKey != nil
+            !searchState.results.isEmpty || searchState.isLoadingApps || showFolderPreview
+            || searchState.activeSmartQueryKey != nil
             || usesVerticalListDockLayout
-            || (isAIMode && (!aiChatMessages.isEmpty || isAILoading || aiChatStreamingMessageId != nil))
-            || (showContextInDock && (!l2ChatMessages.isEmpty || l2IsLoading))
+            || (aiMode.isActive && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
+            || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
         if isSearchBarExpanded || hasResultsOrChat {
             return expandedDockWidth
         }
@@ -985,7 +634,7 @@ struct LauncherView: View {
     private var shouldShowFloatingAppLogo: Bool {
         !showMediaLayer
             && settings.showFloatingAppLogo
-            && (settings.enableLayer2 || (isAIMode && hasAIExtensionsToShow)
+            && (settings.enableLayer2 || (aiMode.isActive && hasAIExtensionsToShow)
                 || notificationManager.unreadCount > 0)
     }
 
@@ -994,19 +643,19 @@ struct LauncherView: View {
     }
 
     private var hasSecondaryDockContentBesideInput: Bool {
-        if isAIMode { return false }
-        if activeSmartQueryKey == "clipboard" { return false }
+        if aiMode.isActive { return false }
+        if searchState.activeSmartQueryKey == "clipboard" { return false }
         if usesVerticalListDockLayout { return false }
-        if showMediaLayer || activeSmartQueryKey != nil { return true }
+        if showMediaLayer || searchState.activeSmartQueryKey != nil { return true }
         if showContextInDock {
-            if isAIMode { return false }
+            if aiMode.isActive { return false }
             if isGlobalContextActive {
                 return settings.showRunningAppsInBar || !settings.pinnedApps.isEmpty
-                    || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-            return hasAIExtensionsToShow || !searchText.isEmpty
+            return hasAIExtensionsToShow || !searchState.query.isEmpty
         }
-        return !searchText.isEmpty
+        return !searchState.query.isEmpty
     }
 
     private var usesVerticalListDockLayout: Bool {
@@ -1017,12 +666,12 @@ struct LauncherView: View {
         guard settings.useListViewForPills,
               showContextInDock,
               !showMediaLayer,
-              !isAIMode,
-              activeSmartQueryKey != "clipboard",
+              !aiMode.isActive,
+              searchState.activeSmartQueryKey != "clipboard",
               shouldShowL2UnifiedDockRow
         else { return false }
 
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
         let pills = currentCachedDockPills(for: pillQuery)
@@ -1069,7 +718,7 @@ struct LauncherView: View {
     }
 
     private var isExplicitAppScopeLocked: Bool {
-        guard let target = l2TargetApp else { return false }
+        guard let target = l2.targetApp else { return false }
         return target.bundleId != "scope://clipboard"
     }
 
@@ -1123,11 +772,11 @@ struct LauncherView: View {
         guard settings.useListViewForPills,
               showContextInDock,
               !showMediaLayer,
-              !isAIMode,
+              !aiMode.isActive,
               shouldShowL2UnifiedDockRow
         else { return 0 }
 
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let rowCount: Int = {
             if isGlobalContextActive, q.isEmpty {
                 var count = settings.pinnedApps.count
@@ -1160,17 +809,17 @@ struct LauncherView: View {
             }
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
-            .onChange(of: searchResults.count) { _, _ in updateWindowSize() }
-            .onChange(of: aiChatMessages.count) { _, _ in
+            .onChange(of: searchState.results.count) { _, _ in updateWindowSize() }
+            .onChange(of: aiMode.messages.count) { _, _ in
                 updateWindowSize()
             }
-            .onChange(of: isAILoading) { _, _ in
+            .onChange(of: aiMode.isLoading) { _, _ in
                 updateWindowSize()
             }
-            .onChange(of: aiChatStreamingMessageId) { _, _ in
+            .onChange(of: aiMode.streamingId) { _, _ in
                 updateWindowSize()
             }
-            .onChange(of: isAIMode) { _, newValue in
+            .onChange(of: aiMode.isActive) { _, newValue in
                 suppressHoverExpand = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     self.suppressHoverExpand = false
@@ -1183,9 +832,9 @@ struct LauncherView: View {
                     crossAppMenuItems = []
                     contextMenuPills = []
                     cachedDockPills = []
-                    focusedPillIndex = nil
+                    l2.focusedPillIndex = nil
                     focusedAppPillIndex = nil
-                    l2AppCompletion = nil
+                    l2.appCompletion = nil
                 } else {
                     scheduleBrowserContextWarmup(reason: "AI mode toggled")
                 }
@@ -1194,7 +843,7 @@ struct LauncherView: View {
                     updateWindowSize()
                 }
             }
-            .onChange(of: isFrontmostSectionExpanded) { _, _ in updateWindowSize() }
+            .onChange(of: frontmost.isSectionExpanded) { _, _ in updateWindowSize() }
             .onChange(of: isSearchBarExpanded) { _, _ in updateWindowSize() }
             .onChange(of: usesVerticalListDockLayout) { _, active in
                 if active {
@@ -1203,8 +852,8 @@ struct LauncherView: View {
                 }
                 updateWindowSize()
             }
-            .onChange(of: l2ChatMessages.count) { _, _ in updateWindowSize() }
-            .onChange(of: l2IsLoading) { _, _ in updateWindowSize() }
+            .onChange(of: l2.chatMessages.count) { _, _ in updateWindowSize() }
+            .onChange(of: l2.isLoading) { _, _ in updateWindowSize() }
             .onChange(of: showContextInDock) { _, newValue in
                 // Block expand during layer transition (icon swap fires phantom hover)
                 suppressHoverExpand = true
@@ -1212,7 +861,7 @@ struct LauncherView: View {
                     self.suppressHoverExpand = false
                 }
                 if newValue {
-                    guard !isAIMode else {
+                    guard !aiMode.isActive else {
                         liveMenuItems = []
                         crossAppMenuItems = []
                         contextMenuPills = []
@@ -1229,7 +878,7 @@ struct LauncherView: View {
                     // Reload dock tool extensions so newly installed ones show immediately
                     Task { await L2ExtensionManager.shared.loadExtensions() }
                     updateL2ContextExtensions()
-                    focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
+                    l2.focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
 
                     // Load live menu items from frontmost app only (primary context)
                     // Uses structural cache: second open of same app is instant.
@@ -1351,32 +1000,32 @@ struct LauncherView: View {
                         self.refreshLiveContextDockState()
                     }
                 } else {
-                    if !isAIMode { cancelBrowserContextWarmup() }
+                    if !aiMode.isActive { cancelBrowserContextWarmup() }
                     axContextRefreshTimer?.invalidate()
                     axContextRefreshTimer = nil
                     selectionModel.stop()
-                    l2ExtensionResults = []
-                    l2ChatMessages = []
-                    l2IsLoading = false
-                    l2ActiveRequestID = nil
-                        l2CurrentTask?.cancel()
-                        l2CurrentTask = nil
+                    l2.extensionResults = []
+                    l2.chatMessages = []
+                    l2.isLoading = false
+                    l2.activeRequestID = nil
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
                         liveMenuRefreshTask?.cancel()
                         liveMenuRefreshTask = nil
                         lastLiveMenuStructureRefresh = .distantPast
                         lastLiveMenuSignature = ""
-                        searchResults = []
-                    selectedResultIndex = nil
+                        searchState.results = []
+                    searchState.selectedIndex = nil
                     liveMenuItems = []
                     crossAppMenuItems = []
                     crossAppMenuTargetPID = 0
                     contextMenuPills = []
                     previousEnabledIDs = []
-                    focusedPillIndex = nil
+                    l2.focusedPillIndex = nil
                     focusedAppPillIndex = nil
                     adapterContextData = [:]
-                    l2AppCompletion = nil
-                    l2TargetApp = nil
+                    l2.appCompletion = nil
+                    l2.targetApp = nil
                     menuLoadTask?.cancel()
                     crossAppMenuTask?.cancel()
                 }
@@ -1384,14 +1033,14 @@ struct LauncherView: View {
             }
             .onChange(of: showMediaLayer) { _, newValue in
                 if newValue {
-                    l2ExtensionResults = []
-                    l2ChatMessages = []
-                    l2IsLoading = false
-                    l2ActiveRequestID = nil
-                    l2CurrentTask?.cancel()
-                    l2CurrentTask = nil
-                    searchResults = []
-                    selectedResultIndex = nil
+                    l2.extensionResults = []
+                    l2.chatMessages = []
+                    l2.isLoading = false
+                    l2.activeRequestID = nil
+                    l2.currentTask?.cancel()
+                    l2.currentTask = nil
+                    searchState.results = []
+                    searchState.selectedIndex = nil
                     // Block expand during layer transition (globe ↔ magnifying glass icon swap)
                     suppressHoverExpand = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -1443,7 +1092,7 @@ struct LauncherView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     updateResultsPosition()
                     // Mark initial launch complete after position is set
-                    isInitialLaunch = false
+                    searchState.isInitialLaunch = false
                 }
             }
             .onDisappear {
@@ -1465,9 +1114,9 @@ struct LauncherView: View {
                     startObservingAppSwitches()
                 } else {
                     // Clear frontmost app data when disabled
-                    frontmostAppName = ""
-                    frontmostAppIcon = nil
-                    frontmostAppBundleID = ""
+                    frontmost.name = ""
+                    frontmost.icon = nil
+                    frontmost.bundleID = ""
                     stopObservingAppSwitches()
                 }
             }
@@ -1482,7 +1131,7 @@ struct LauncherView: View {
                     } else {
                         // When disabled, clear context
                         currentContext = .none
-                        l2ContextExtensions = []
+                        l2.contextExtensions = []
                     }
                 }
             }
@@ -1499,14 +1148,14 @@ struct LauncherView: View {
                 trimClipboardHistoryToLimits()
             }
             .onChange(of: settings.enableL1DocumentSearch) { _, _ in
-                indexedFileResults = indexedFileResults.filter(includeIndexedSearchResult)
-                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                searchState.indexedFileResults = searchState.indexedFileResults.filter(includeIndexedSearchResult)
+                if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     performSearch()
                 }
             }
             .onChange(of: settings.enableL1FileSearch) { _, _ in
-                indexedFileResults = indexedFileResults.filter(includeIndexedSearchResult)
-                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                searchState.indexedFileResults = searchState.indexedFileResults.filter(includeIndexedSearchResult)
+                if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     performSearch()
                 }
             }
@@ -1552,10 +1201,10 @@ struct LauncherView: View {
             .onReceive(NotificationCenter.default.publisher(for: .switchToL1)) { _ in
                 handleSwitchToL1()
             }
-            .onChange(of: searchResults.count) { oldValue, newValue in
+            .onChange(of: searchState.results.count) { oldValue, newValue in
                 handleSearchResultsCountChanged(newValue)
             }
-            .onChange(of: l2ChatMessages.count) { _, _ in
+            .onChange(of: l2.chatMessages.count) { _, _ in
                 persistActiveL2DockSession()
             }
             .onChange(of: isGlobalContextActive) { _, _ in
@@ -1585,7 +1234,7 @@ struct LauncherView: View {
 
     private var contentLifecycleHandlersView: some View {
         contentCoreLifecycleHandlersView
-            .onChange(of: l2TargetApp?.bundleId) { _, newBundleId in
+            .onChange(of: l2.targetApp?.bundleId) { _, newBundleId in
                 syncL2DockSession(force: true)
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 // Keep search field focused while in scope so .onKeyPress(.escape) always fires
@@ -1619,21 +1268,21 @@ struct LauncherView: View {
                 if showFolderPreview {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showFolderPreview = false; folderPreviewPath = nil
-                        folderPreviewSelectedFile = nil; isInSmartMode = false
-                        lastSmartQuery = ""; searchResults = []; selectedResultIndex = nil
+                        folderPreviewSelectedFile = nil; searchState.isInSmartMode = false
+                        searchState.lastSmartQuery = ""; searchState.results = []; searchState.selectedIndex = nil
                     }
                     return
                 }
-                if l2TargetApp != nil || activeSmartQueryKey != nil || searchContextApp != nil {
+                if l2.targetApp != nil || searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
                     clearSearchContext()
                     remPanelIsProcessing = false; remIsInstalled = nil
-                    systemDataResults = []; lastSmartQuery = ""
+                    systemDataResults = []; searchState.lastSmartQuery = ""
                     isSearchFieldFocused = true
                     return
                 }
-                if focusedPillIndex != nil || focusedAppPillIndex != nil || selectedResultIndex != nil {
-                    focusedPillIndex = nil; focusedAppPillIndex = nil
-                    pillNavViaKeyboard = false; selectedResultIndex = nil
+                if l2.focusedPillIndex != nil || focusedAppPillIndex != nil || searchState.selectedIndex != nil {
+                    l2.focusedPillIndex = nil; focusedAppPillIndex = nil
+                    l2.pillNavViaKeyboard = false; searchState.selectedIndex = nil
                     isSearchFieldFocused = true
                     return
                 }
@@ -1643,7 +1292,7 @@ struct LauncherView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .launcherBackspacePressed)) { _ in
-                guard searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     return
                 }
                 if lockedSubmenuParent != nil {
@@ -1653,12 +1302,12 @@ struct LauncherView: View {
                     isSearchFieldFocused = true
                     return
                 }
-                if l2TargetApp != nil || searchContextApp != nil || activeSmartQueryKey != nil {
+                if l2.targetApp != nil || searchState.contextApp != nil || searchState.activeSmartQueryKey != nil {
                     clearSearchContext()
                     remPanelIsProcessing = false
                     remIsInstalled = nil
                     systemDataResults = []
-                    lastSmartQuery = ""
+                    searchState.lastSmartQuery = ""
                     isSearchFieldFocused = true
                     return
                 }
@@ -1672,9 +1321,9 @@ struct LauncherView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
-                focusedPillIndex = nil
+                l2.focusedPillIndex = nil
                 focusedAppPillIndex = nil
-                pillNavViaKeyboard = false
+                l2.pillNavViaKeyboard = false
                 showMediaLayer = false
                 showContextInDock = true
                 expandSearchBar()
@@ -1687,120 +1336,112 @@ struct LauncherView: View {
                     isSearchFieldFocused = true
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .userContextDetected)) {
-                notification in
+            .onReceive(contextEnv.userContextUpdates) { context in
                 // Receive pre-detected context from AppDelegate (before ILauncher becomes frontmost)
-                if let context = notification.userInfo?["context"] as? UserContext {
-                    if isL2ContextActive || AppDelegate.shared?.isDockContextMode == true {
-                        setFrontmostAppContextOnly(reason: "dock context pre-detection")
-                        return
-                    }
-                    currentContext = context
-                    print("✅ [ContentView] Received pre-detected context: \(context.description)")
+                if isL2ContextActive || AppDelegate.shared?.isDockContextMode == true {
+                    setFrontmostAppContextOnly(reason: "dock context pre-detection")
+                    return
                 }
+                currentContext = context
+                print("✅ [ContentView] Received pre-detected context: \(context.description)")
             }
             .onReceive(NotificationCenter.default.publisher(for: .overlayAskAboutSelection)) {
                 notification in
                 guard !isExplicitAppScopeLocked else { return }
                 guard let text = notification.userInfo?["text"] as? String else { return }
-                searchText = text
-                isAIMode = true
+                searchState.query = text
+                aiMode.isActive = true
                 showContextInDock = false
                 showMediaLayer = false
                 AppDelegate.shared?.showLauncher()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .frontmostAppDetected)) {
-                notification in
-                // Receive frontmost app info from ILauncherApp
-                if let userInfo = notification.userInfo,
-                    let appName = userInfo["name"] as? String,
-                    let bundleID = userInfo["bundleID"] as? String
-                {
+            .onReceive(contextEnv.frontmostAppUpdates) { appInfo in
+                let appName = appInfo.name
+                let bundleID = appInfo.bundleID
 
-                    // Check if app changed (not just re-detection of same app)
-                    let appChanged =
-                        !frontmostAppBundleID.isEmpty && frontmostAppBundleID != bundleID
+                // Check if app changed (not just re-detection of same app)
+                let appChanged =
+                    !frontmost.bundleID.isEmpty && frontmost.bundleID != bundleID
 
-                    frontmostAppName = appName
-                    frontmostAppBundleID = bundleID
+                frontmost.name = appName
+                frontmost.bundleID = bundleID
 
-                    // Get icon from bundle ID
-                    if let app = NSWorkspace.shared.runningApplications.first(where: {
-                        $0.bundleIdentifier == bundleID
-                    }) {
-                        frontmostAppIcon =
-                            resolvedApplicationIcon(bundleIdentifier: bundleID, appName: appName)
-                            ?? preparedDockIcon(app.icon)
-                    } else {
-                        frontmostAppIcon = resolvedApplicationIcon(
-                            bundleIdentifier: bundleID, appName: appName)
-                    }
+                // Get icon from bundle ID
+                if let app = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.bundleIdentifier == bundleID
+                }) {
+                    frontmost.icon =
+                        resolvedApplicationIcon(bundleIdentifier: bundleID, appName: appName)
+                        ?? preparedDockIcon(app.icon)
+                } else {
+                    frontmost.icon = resolvedApplicationIcon(
+                        bundleIdentifier: bundleID, appName: appName)
+                }
 
-                    print("📱 Received frontmost app: \(appName) (\(bundleID))")
+                print("📱 Received frontmost app: \(appName) (\(bundleID))")
 
-                    if appChanged {
-                        l2AppCompletion = nil
-                        focusedPillIndex = nil
-                        pillNavViaKeyboard = false
-                        // Immediately clear stale pills so the result panel disappears
-                        // and rebuilds for the new frontmost app
-                        cachedDockPills = []
-                        let ownId = Bundle.main.bundleIdentifier ?? ""
-                        // Only exit global context when switching to a real other app
-                        // (not when our own dock gains focus — that would clear the chip)
-                        if bundleID != ownId {
-                            isGlobalContextActive = false
-                            // Also clear frozen selection if the user moved to an unrelated app
-                            if let srcId = frozenSelectionSourceBundleId, bundleID != srcId {
-                                frozenSelectionText = nil
-                                frozenSelectionIcon = nil
-                                frozenSelectionSourceBundleId = nil
-                            }
+                if appChanged {
+                    l2.appCompletion = nil
+                    l2.focusedPillIndex = nil
+                    l2.pillNavViaKeyboard = false
+                    // Immediately clear stale pills so the result panel disappears
+                    // and rebuilds for the new frontmost app
+                    cachedDockPills = []
+                    let ownId = Bundle.main.bundleIdentifier ?? ""
+                    // Only exit global context when switching to a real other app
+                    // (not when our own dock gains focus — that would clear the chip)
+                    if bundleID != ownId {
+                        isGlobalContextActive = false
+                        // Also clear frozen selection if the user moved to an unrelated app
+                        if let srcId = frozenSelectionSourceBundleId, bundleID != srcId {
+                            frozenSelectionText = nil
+                            frozenSelectionIcon = nil
+                            frozenSelectionSourceBundleId = nil
                         }
-                        // Clear stale AX selection and clipboard pill from the previous app
-                        axContext = .empty
-                        currentContext = .none
-                        showGlobalClipboardPill = false
-                        globalClipboardText = ""
-                        // Stamp time so autoSwitch won't re-fire from the AX observer debounce
-                        lastAppSwitchDate = Date()
                     }
+                    // Clear stale AX selection and clipboard pill from the previous app
+                    axContext = .empty
+                    currentContext = .none
+                    showGlobalClipboardPill = false
+                    globalClipboardText = ""
+                    // Stamp time so autoSwitch won't re-fire from the AX observer debounce
+                    frontmost.lastSwitchDate = Date()
+                }
 
-                    // Scope lock: when user explicitly entered an app scope (l2TargetApp set),
-                    // ignore frontmost app changes — the dock stays on the pinned app until
-                    // the user presses Escape or clicks "Exit Scope".
-                    let scopeLocked = l2TargetApp != nil
+                // Scope lock: when user explicitly entered an app scope (l2.targetApp set),
+                // ignore frontmost app changes — the dock stays on the pinned app until
+                // the user presses Escape or clicks "Exit Scope".
+                let scopeLocked = l2.targetApp != nil
 
-                    // Reload menu whenever dock is visible (or when app actually changed)
-                    if showContextInDock && !scopeLocked {
-                        // Sync session on app switch. syncL2DockSession saves the previous app's
-                        // session and loads the new app's saved session (or empty if none).
-                        // We do NOT call activateInlineDockAppScope here because that would pin
-                        // l2TargetApp, causing scopeLocked=true on the next app switch.
-                        syncL2DockSession(force: appChanged)
-                        // Always reload — covers first open (appChanged=false) AND app switches
-                        let allApps: [NSRunningApplication] = Array(NSWorkspace.shared.runningApplications)
-                        let matchedApp: NSRunningApplication? = allApps.first { $0.bundleIdentifier == bundleID }
-                        if let newApp = matchedApp { reloadMenuForApp(newApp) }
-                    }
+                // Reload menu whenever dock is visible (or when app actually changed)
+                if showContextInDock && !scopeLocked {
+                    // Sync session on app switch. syncL2DockSession saves the previous app's
+                    // session and loads the new app's saved session (or empty if none).
+                    // We do NOT call activateInlineDockAppScope here because that would pin
+                    // l2.targetApp, causing scopeLocked=true on the next app switch.
+                    syncL2DockSession(force: appChanged)
+                    // Always reload — covers first open (appChanged=false) AND app switches
+                    let allApps: [NSRunningApplication] = Array(NSWorkspace.shared.runningApplications)
+                    let matchedApp: NSRunningApplication? = allApps.first { $0.bundleIdentifier == bundleID }
+                    if let newApp = matchedApp { reloadMenuForApp(newApp) }
+                }
 
-                    // Re-detect full context (text selection, etc.) from the new frontmost app
-                    if !scopeLocked {
-                        detectAndUpdateContext()
-                    }
+                // Re-detect full context (text selection, etc.) from the new frontmost app
+                if !scopeLocked {
+                    detectAndUpdateContext()
+                }
 
-                    // Refresh deep per-app context when app switches while L2 is open
-                    if showContextInDock && appChanged && !scopeLocked {
-                        let capturedCtx = axContext
-                        Task {
-                            let data = await adapterManager.runContextReaders(
-                                for: bundleID, axContext: capturedCtx)
-                            await MainActor.run {
-                                adapterContextData = data
-                                let runningApps: [NSRunningApplication] = Array(NSWorkspace.shared.runningApplications)
-                                if let app = runningApps.first(where: { $0.bundleIdentifier == bundleID }) {
-                                    Task { await adapterManager.autoGenerateAdapterIfNeeded(for: app) }
-                                }
+                // Refresh deep per-app context when app switches while L2 is open
+                if showContextInDock && appChanged && !scopeLocked {
+                    let capturedCtx = axContext
+                    Task {
+                        let data = await adapterManager.runContextReaders(
+                            for: bundleID, axContext: capturedCtx)
+                        await MainActor.run {
+                            adapterContextData = data
+                            let runningApps: [NSRunningApplication] = Array(NSWorkspace.shared.runningApplications)
+                            if let app = runningApps.first(where: { $0.bundleIdentifier == bundleID }) {
+                                Task { await adapterManager.autoGenerateAdapterIfNeeded(for: app) }
                             }
                         }
                     }
@@ -1840,19 +1481,19 @@ struct LauncherView: View {
             .onReceive(NotificationCenter.default.publisher(for: .activateContextDock)) { _ in
                 // Instant switch — no animation so the layer change feels immediate
                 showMediaLayer = false
-                isAIMode = false
+                aiMode.isActive = false
                 showContextInDock = true
                 isGlobalContextActive = false
                 setFrontmostAppContextOnly(reason: "activate context dock")
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { _ in
                 showMediaLayer = false
-                isAIMode = false
+                aiMode.isActive = false
                 showContextInDock = true
                 isGlobalContextActive = true
                 isGlobalContextAutoActivated = false
-                l2TargetApp = nil
-                focusedPillIndex = nil
+                l2.targetApp = nil
+                l2.focusedPillIndex = nil
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
                 showShortcutSheet = false
@@ -1885,21 +1526,21 @@ struct LauncherView: View {
                 // Clear stale chat when the selected content changes so AI focuses on the new context.
                 // App-level changes are already handled by .frontmostAppDetected; this covers file/text/URL switches.
                 let newKey = contextIdentityKey(currentContext)
-                if l2ActiveRequestID == nil && newKey != "none" && !chatContextKey.isEmpty
-                    && newKey != chatContextKey
-                    && !l2ChatMessages.isEmpty
+                if l2.activeRequestID == nil && newKey != "none" && !l2.chatContextKey.isEmpty
+                    && newKey != l2.chatContextKey
+                    && !l2.chatMessages.isEmpty
                 {
                     print(
-                        "🔄 [Context] Content changed (\(chatContextKey) → \(newKey)) — clearing L2 chat"
+                        "🔄 [Context] Content changed (\(l2.chatContextKey) → \(newKey)) — clearing L2 chat"
                     )
-                    l2ChatMessages = []
-                    l2IsLoading = false
-                    l2CurrentTask?.cancel()
-                    l2CurrentTask = nil
+                    l2.chatMessages = []
+                    l2.isLoading = false
+                    l2.currentTask?.cancel()
+                    l2.currentTask = nil
                     updateL2Results([])
                 }
                 if newKey != "none" {
-                    chatContextKey = newKey
+                    l2.chatContextKey = newKey
                 }
                 // Auto-return to Context Dock if context cleared and global context was auto-activated
                 autoReturnFromGlobalContextIfNeeded()
@@ -1916,18 +1557,18 @@ struct LauncherView: View {
         let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
         isGlobalContextActive = false
         if !openingForDockContext {
-            searchText = ""
-            searchResults = []
-            selectedResultIndex = nil
-            isAIMode = false
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
+            aiMode.isActive = false
             showMediaLayer = false
             showFolderPreview = false
             showContextInDock = true
             isGlobalContextActive = false
-            activeSmartQueryKey = nil
-            searchContextApp = nil
-            isInSmartMode = false
-            appPanelAllItems = []
+            searchState.activeSmartQueryKey = nil
+            searchState.contextApp = nil
+            searchState.isInSmartMode = false
+            searchState.appPanelAllItems = []
         }
 
         activateSearchField()
@@ -1953,10 +1594,10 @@ struct LauncherView: View {
     private func handleSwitchToL1() {
         showContextInDock = true
         isGlobalContextActive = false
-        isAIMode = false
-        searchText = ""
-        searchResults = []
-        selectedResultIndex = nil
+        aiMode.isActive = false
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
         showMediaLayer = false
         showFolderPreview = false
         lockedSubmenuParent = nil
@@ -1970,8 +1611,8 @@ struct LauncherView: View {
     }
 
     private func persistActiveL2DockSession() {
-        if let key = activeL2DockSessionKey {
-            AppPanelChatStore.shared.save(l2ChatMessages, for: key)
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
         }
     }
 
@@ -1996,15 +1637,15 @@ struct LauncherView: View {
                         showFolderPreview = false
                         folderPreviewPath = nil
                         folderPreviewSelectedFile = nil
-                        isInSmartMode = false
-                        lastSmartQuery = ""
-                        searchResults = []
-                        selectedResultIndex = nil
+                        searchState.isInSmartMode = false
+                        searchState.lastSmartQuery = ""
+                        searchState.results = []
+                        searchState.selectedIndex = nil
                     }
                     return
                 }
                 // App scope: exit scope, close dock, switch to scoped app
-                if let targetInfo = l2TargetApp {
+                if let targetInfo = l2.targetApp {
                     let bundleId = targetInfo.bundleId
                     clearSearchContext()
                     AppDelegate.shared?.hideLauncher()
@@ -2017,20 +1658,20 @@ struct LauncherView: View {
                     return
                 }
                 // Smart panel / search context: exit back to normal search, keep dock open
-                if activeSmartQueryKey != nil || searchContextApp != nil {
+                if searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
                     clearSearchContext()
                     remPanelIsProcessing = false
                     remIsInstalled = nil
                     systemDataResults = []
-                    lastSmartQuery = ""
+                    searchState.lastSmartQuery = ""
                     return
                 }
                 // Pills / results highlighted: clear selection, return focus to search field
-                if focusedPillIndex != nil || focusedAppPillIndex != nil || selectedResultIndex != nil {
-                    focusedPillIndex = nil
+                if l2.focusedPillIndex != nil || focusedAppPillIndex != nil || searchState.selectedIndex != nil {
+                    l2.focusedPillIndex = nil
                     focusedAppPillIndex = nil
-                    pillNavViaKeyboard = false
-                    selectedResultIndex = nil
+                    l2.pillNavViaKeyboard = false
+                    searchState.selectedIndex = nil
                     isSearchFieldFocused = true
                     return
                 }
@@ -2038,7 +1679,7 @@ struct LauncherView: View {
                 onClose()
             }
             .onKeyPress(.upArrow) {
-                if activeSmartQueryKey == "clipboard" {
+                if searchState.activeSmartQueryKey == "clipboard" {
                     navigateClipboardScope(direction: -1)
                     return .handled
                 }
@@ -2049,18 +1690,18 @@ struct LauncherView: View {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
-                if showContextInDock, isGlobalContextActive, !isAIMode {
+                if showContextInDock, isGlobalContextActive, !aiMode.isActive {
                     // File/text selection chip is showing: Down arrow moves focus into the action pills
                     // instead of dismissing the context (let the user act on the selected file via keyboard)
                     let hasSelection = frozenSelectionText != nil || !effectiveFinderSelectionURLsForPills().isEmpty
-                    if hasSelection && focusedPillIndex == nil {
-                        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    if hasSelection && l2.focusedPillIndex == nil {
+                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                         let pills = buildDockPills(query: q)
                         if !pills.isEmpty {
-                            pillNavViaKeyboard = true
+                            l2.pillNavViaKeyboard = true
                             var idx = 0
                             while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                            focusedPillIndex = idx
+                            l2.focusedPillIndex = idx
                             return .handled
                         }
                     }
@@ -2068,7 +1709,7 @@ struct LauncherView: View {
                     switchDockLayer(.down)
                     return .handled
                 }
-                if activeSmartQueryKey == "clipboard" {
+                if searchState.activeSmartQueryKey == "clipboard" {
                     navigateClipboardScope(direction: 1)
                     return .handled
                 }
@@ -2079,7 +1720,7 @@ struct LauncherView: View {
                 return .ignored
             }
             .onKeyPress(.space) {
-                if activeSmartQueryKey == "clipboard", focusedClipboardEntryIndex != nil {
+                if searchState.activeSmartQueryKey == "clipboard", focusedClipboardEntryIndex != nil {
                     quickLookFocusedClipboardEntry()
                     return .handled
                 }
@@ -2095,8 +1736,8 @@ struct LauncherView: View {
 
                 // Only handle space for Quick Look when the search field is NOT focused
                 // This allows typing spaces in the search field
-                if !showFolderPreview && !isSearchFieldFocused && selectedResultIndex != nil
-                    && !searchResults.isEmpty
+                if !showFolderPreview && !isSearchFieldFocused && searchState.selectedIndex != nil
+                    && !searchState.results.isEmpty
                 {
                     quickLookSelectedItem()
                     return .handled
@@ -2106,7 +1747,7 @@ struct LauncherView: View {
             .onKeyPress(keys: [.init("y")], phases: .down) { keyPress in
                 // Cmd+Y for Quick Look (like Finder)
                 if keyPress.modifiers.contains(.command) && !showFolderPreview
-                    && selectedResultIndex != nil && !searchResults.isEmpty
+                    && searchState.selectedIndex != nil && !searchState.results.isEmpty
                 {
                     quickLookSelectedItem()
                     return .handled
@@ -2119,7 +1760,7 @@ struct LauncherView: View {
                     if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
                         let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
                         let pid  = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                        searchText = ""
+                        searchState.query = ""
                         lockedSubmenuParent = nil
                         executeDockMenuAction(
                             sourcePID: pid, path: firstChild.path,
@@ -2130,12 +1771,12 @@ struct LauncherView: View {
                     // Execute inline pill ghost completion if available
                     if let ghost = ghostPillCompletion {
                         ghost.execute()
-                        searchText = ""
-                        focusedPillIndex = nil
+                        searchState.query = ""
+                        l2.focusedPillIndex = nil
                         return .handled
                     }
                     if isL2ContextActive,
-                        focusedPillIndex != nil,
+                        l2.focusedPillIndex != nil,
                         executeFocusedOrDirectAppPillIfNeeded()
                     {
                         return .handled
@@ -2146,7 +1787,7 @@ struct LauncherView: View {
                     if launchTypedAppMatchIfNeeded() {
                         return .handled
                     }
-                    if activeSmartQueryKey == "clipboard" {
+                    if searchState.activeSmartQueryKey == "clipboard" {
                         if focusedClipboardEntryIndex != nil {
                             quickLookFocusedClipboardEntry()
                         } else {
@@ -2155,16 +1796,16 @@ struct LauncherView: View {
                         return .handled
                     }
                     // Any context panel (app, file, folder, contact, Reminders, etc.) routes Enter → AI chat
-                    let isAIAppPanel = searchContextApp != nil || activeSmartQueryKey != nil
+                    let isAIAppPanel = searchState.contextApp != nil || searchState.activeSmartQueryKey != nil
                     if isAIAppPanel
-                        && !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     {
                         handleRemPanelQuery()
                         return .handled
                     } else if isL2ContextActive {
                         // NSEvent monitor handles Enter when pills exist (returns nil, consuming the event).
                         // We only reach here when no pills are visible — escalate to AI.
-                        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return .handled }
                         if executeFocusedOrDirectAppPillIfNeeded() {
                             return .handled
@@ -2174,7 +1815,7 @@ struct LauncherView: View {
                         }
                         enforceL2ContextMode()
                         handleL2Query()
-                    } else if isAIMode {
+                    } else if aiMode.isActive {
                         submitAIQuery()
                     } else {
                         // L1/L2: Execute selected result
@@ -2195,10 +1836,10 @@ struct LauncherView: View {
                         // First Tab: lock the parent as a chip, clear all app-detection state
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
                             lockedSubmenuParent = subCtx.parent
-                            searchText = ""
+                            searchState.query = ""
                         }
-                        l2AppCompletion = nil
-                        showL2ResultsPopover = false
+                        l2.appCompletion = nil
+                        l2.showResultsPopover = false
                         crossAppMenuItems = []
                         cachedDockPills = []
                         return .handled
@@ -2209,7 +1850,7 @@ struct LauncherView: View {
                         let path = firstChild.path
                         let sc   = firstChild.shortcutChar
                         let mod  = firstChild.shortcutModifiers
-                        searchText = ""
+                        searchState.query = ""
                         lockedSubmenuParent = nil
                         executeDockMenuAction(sourcePID: pid, path: path, shortcutChar: sc, shortcutModifiers: mod)
                         return .handled
@@ -2217,7 +1858,7 @@ struct LauncherView: View {
                 }
                 // Tab accepts pill ghost completion (prefix match on pill name)
                 if let ghost = ghostPillCompletion {
-                    searchText = ghost.name
+                    searchState.query = ghost.name
                     return .handled
                 }
 
@@ -2226,7 +1867,7 @@ struct LauncherView: View {
                 }
 
                 if isL2ContextActive {
-                    let rawTrimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let rawTrimmed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     // Strip .app suffix so "Clock.app<Tab>" completes to "Clock "
                     let trimmed = rawTrimmed.lowercased().hasSuffix(".app")
                         ? String(rawTrimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2238,10 +1879,10 @@ struct LauncherView: View {
                             let activated = activateInlineDockAppScope(
                                 bundleIdentifier: target.bundleId,
                                 appName: target.appName,
-                                searchTextOverride: target.actionQuery
+                                queryOverride: target.actionQuery
                             )
                             isGlobalContextActive = false
-                            if !activated { searchText = target.appName + " " }
+                            if !activated { searchState.query = target.appName + " " }
                             return .handled
                         }
 
@@ -2253,15 +1894,15 @@ struct LauncherView: View {
                             let activated = activateInlineDockAppScope(
                                 bundleIdentifier: target.bundleId,
                                 appName: target.appName,
-                                searchTextOverride: target.actionQuery
+                                queryOverride: target.actionQuery
                             )
                             isGlobalContextActive = false
-                            if !activated { searchText = target.appName + " " }
+                            if !activated { searchState.query = target.appName + " " }
                             return .handled
                         }
                     }
 
-                    if focusFirstDockPillIfAvailable(for: searchText) {
+                    if focusFirstDockPillIfAvailable(for: searchState.query) {
                         return .handled
                     }
 
@@ -2269,8 +1910,8 @@ struct LauncherView: View {
                 }
 
                 // Tab → always open context panel for selected result (files, folders, apps, etc.)
-                if let idx = selectedResultIndex, idx < searchResults.count {
-                    let result = searchResults[idx]
+                if let idx = searchState.selectedIndex, idx < searchState.results.count {
+                    let result = searchState.results[idx]
                     activateSearchContext(for: result)
                     return .handled
                 }
@@ -2285,29 +1926,29 @@ struct LauncherView: View {
                         showFolderPreview = false
                         folderPreviewPath = nil
                         folderPreviewSelectedFile = nil
-                        isInSmartMode = false
-                        lastSmartQuery = ""
-                        searchResults = []
-                        selectedResultIndex = nil
+                        searchState.isInSmartMode = false
+                        searchState.lastSmartQuery = ""
+                        searchState.results = []
+                        searchState.selectedIndex = nil
                     }
                     return .handled
                 }
                 // App scope or app panel: ESC exits scope and returns to normal dock (stays open)
-                if l2TargetApp != nil || activeSmartQueryKey != nil || searchContextApp != nil {
+                if l2.targetApp != nil || searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
                     clearSearchContext()
                     remPanelIsProcessing = false
                     remIsInstalled = nil
                     systemDataResults = []
-                    lastSmartQuery = ""
+                    searchState.lastSmartQuery = ""
                     isSearchFieldFocused = true
                     return .handled
                 }
                 // Pills focused (no scope): ESC returns focus to search field, keeps dock open
-                if focusedPillIndex != nil || focusedAppPillIndex != nil || selectedResultIndex != nil {
-                    focusedPillIndex = nil
+                if l2.focusedPillIndex != nil || focusedAppPillIndex != nil || searchState.selectedIndex != nil {
+                    l2.focusedPillIndex = nil
                     focusedAppPillIndex = nil
-                    pillNavViaKeyboard = false
-                    selectedResultIndex = nil
+                    l2.pillNavViaKeyboard = false
+                    searchState.selectedIndex = nil
                     isSearchFieldFocused = true
                     return .handled
                 }
@@ -2319,7 +1960,7 @@ struct LauncherView: View {
                 return .handled
             }
             .onKeyPress(.delete) {
-                let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
                     // Unlock locked submenu parent first
                     if lockedSubmenuParent != nil {
@@ -2336,12 +1977,12 @@ struct LauncherView: View {
                         return .handled
                     }
                     // Exit app/smart-query scope
-                    if l2TargetApp != nil || searchContextApp != nil || activeSmartQueryKey != nil {
+                    if l2.targetApp != nil || searchState.contextApp != nil || searchState.activeSmartQueryKey != nil {
                         clearSearchContext()
                         remPanelIsProcessing = false
                         remIsInstalled = nil
                         systemDataResults = []
-                        lastSmartQuery = ""
+                        searchState.lastSmartQuery = ""
                         isSearchFieldFocused = true
                         return .handled
                     }
@@ -2356,15 +1997,15 @@ struct LauncherView: View {
                         if lockedSubmenuParent == nil {
                             withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
                                 lockedSubmenuParent = subCtx.parent
-                                searchText = ""
+                                searchState.query = ""
                             }
-                            l2AppCompletion = nil; showL2ResultsPopover = false
+                            l2.appCompletion = nil; l2.showResultsPopover = false
                             crossAppMenuItems = []; cachedDockPills = []
                             return .handled
                         } else if let firstChild = subCtx.children.first {
                             let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
                             let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                            searchText = ""; lockedSubmenuParent = nil
+                            searchState.query = ""; lockedSubmenuParent = nil
                             executeDockMenuAction(sourcePID: pid, path: firstChild.path,
                                 shortcutChar: firstChild.shortcutChar, shortcutModifiers: firstChild.shortcutModifiers)
                             return .handled
@@ -2372,46 +2013,46 @@ struct LauncherView: View {
                     }
                     // Leaf ghost (e.g. "unr[ead]  Sort By  — ↵") → complete text into field
                     if let ghost = ghostPillCompletion {
-                        searchText = ghost.name
+                        searchState.query = ghost.name
                         return .handled
                     }
                 }
                 if isL2ContextActive {
-                    if focusedPillIndex == nil {
+                    if l2.focusedPillIndex == nil {
                         guard searchInputCursorIsAtEnd(), !searchInputHasHighlightedText() else {
                             if !isSearchFieldFocused { isSearchFieldFocused = true }
                             return .ignored
                         }
-                        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                         let pills = q.isEmpty ? cachedDockPills : buildDockPills(query: q)
                         guard !pills.isEmpty else {
                             if !isSearchFieldFocused { isSearchFieldFocused = true }
                             return .ignored
                         }
-                        pillNavViaKeyboard = true
+                        l2.pillNavViaKeyboard = true
                         var idx = 0
                         while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                        focusedPillIndex = idx
+                        l2.focusedPillIndex = idx
                         return .handled
                     }
                     // A pill is already focused — advance to the next one.
-                    let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     if !q.isEmpty {
                         let pills = buildDockPills(query: q)
                         if !pills.isEmpty {
-                            pillNavViaKeyboard = true
-                            var idx = min(pills.count - 1, focusedPillIndex! + 1)
+                            l2.pillNavViaKeyboard = true
+                            var idx = min(pills.count - 1, l2.focusedPillIndex! + 1)
                             while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                            focusedPillIndex = idx
+                            l2.focusedPillIndex = idx
                             return .handled
                         }
                     }
                 }
-                guard let idx = selectedResultIndex,
-                    idx < searchResults.count,
-                    searchText.isEmpty || !isSearchFieldFocused
+                guard let idx = searchState.selectedIndex,
+                    idx < searchState.results.count,
+                    searchState.query.isEmpty || !isSearchFieldFocused
                 else { return .ignored }
-                activateSearchContext(for: searchResults[idx])
+                activateSearchContext(for: searchState.results[idx])
                 return .handled
             }
     }
@@ -2465,10 +2106,10 @@ struct LauncherView: View {
                     content: pending.command,
                     structuredData: "\(pending.purpose)|||/\(risk)"
                 )
-                if l2TargetApp != nil || showContextInDock {
+                if l2.targetApp != nil || showContextInDock {
                     // L2 app scope active — show inline in L2 chat
-                    l2ChatMessages.append(approvalMsg)
-                } else if activeSmartQueryKey != nil {
+                    l2.chatMessages.append(approvalMsg)
+                } else if searchState.activeSmartQueryKey != nil {
                     // Legacy panel fallback
                     remPanelChatMessages.append(approvalMsg)
                 } else {
@@ -3050,7 +2691,7 @@ struct LauncherView: View {
         // The input field already represents the frontmost app in global context mode —
         // remove it from the pill row so it never appears twice.
         let inGlobalAutoFocus = isGlobalContextActive && settings.showRunningAppsInBar
-        let searchQuery = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
 
         let dockApps: [NSRunningApplication] = {
             guard settings.showRunningAppsInBar else { return [] }
@@ -3060,7 +2701,7 @@ struct LauncherView: View {
             let filtered = source.filter { app in
                 guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return false }
                 // Input field already represents the frontmost — skip from pill row
-                if inGlobalAutoFocus, app.bundleIdentifier == frontmostAppBundleID { return false }
+                if inGlobalAutoFocus, app.bundleIdentifier == frontmost.bundleID { return false }
                 if let path = app.bundleURL?.path, pinnedPaths.contains(path) { return false }
                 if let bundleId = app.bundleIdentifier, pinnedBundleIds.contains(bundleId) {
                     return false
@@ -3075,7 +2716,7 @@ struct LauncherView: View {
 
         // Pinned apps visible in the pill row (frontmost hidden when input field represents it)
         let basePinnedApps = inGlobalAutoFocus
-            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmostAppBundleID }
+            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmost.bundleID }
             : settings.pinnedApps
         let visiblePinnedApps = searchQuery.isEmpty
             ? basePinnedApps
@@ -3091,10 +2732,10 @@ struct LauncherView: View {
                   focusedAppPillIndex == nil else { return nil }
             // Check pinned apps first
             if let i = visiblePinnedApps.firstIndex(where: {
-                $0.bundleIdentifier == frontmostAppBundleID }) { return i }
+                $0.bundleIdentifier == frontmost.bundleID }) { return i }
             // Check running apps list (using same order as dockApps above)
             if let i = dockApps.firstIndex(where: {
-                $0.bundleIdentifier == frontmostAppBundleID }) { return pinnedCount + i }
+                $0.bundleIdentifier == frontmost.bundleID }) { return pinnedCount + i }
             return nil
         }()
 
@@ -3232,7 +2873,7 @@ struct LauncherView: View {
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
                 result.action()
-                searchText = ""
+                searchState.query = ""
                 focusedAppPillIndex = nil
                 let bundleId = result.filePath.flatMap { Bundle(path: $0)?.bundleIdentifier }
                 scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
@@ -3541,7 +3182,7 @@ struct LauncherView: View {
             return (icon, target.bundleId)
         }
 
-        if let completion = l2AppCompletion,
+        if let completion = l2.appCompletion,
             let icon = resolvedApplicationIcon(
                 bundleIdentifier: completion.bundleId, appName: completion.appName)
         {
@@ -3705,7 +3346,7 @@ struct LauncherView: View {
     }
 
     private func launchTypedAppMatchIfNeeded() -> Bool {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
         guard normalized.count >= 2 else { return false }
         guard !(isL2ContextActive && !isGlobalContextActive) else { return false }
@@ -3743,7 +3384,7 @@ struct LauncherView: View {
         let shouldUsePrefixMatch = (runningOnly ? 3...3 : 2...3).contains(normalized.count)
 
         if isL2ContextActive,
-            let completion = l2AppCompletion ?? bestL2PartialAppCompletion(for: normalized, runningOnly: runningOnly),
+            let completion = l2.appCompletion ?? bestL2PartialAppCompletion(for: normalized, runningOnly: runningOnly),
             completion.actionQuery.isEmpty,
             !completion.ghost.isEmpty
         {
@@ -3859,10 +3500,10 @@ struct LauncherView: View {
     }
 
     private func resetDockStateAfterAppAction() {
-        searchText = ""
-        searchResults = []
-        selectedResultIndex = nil
-        focusedPillIndex = nil
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
+        l2.focusedPillIndex = nil
         hoveredDockAppKey = nil
         lockedSubmenuParent = nil
     }
@@ -3963,10 +3604,10 @@ struct LauncherView: View {
                 self.isGlobalContextActive = false
                 self.showContextInDock = true
             }
-            self.frontmostAppBundleID = bundleId
-            self.frontmostAppName = appName
+            self.frontmost.bundleID = bundleId
+            self.frontmost.name = appName
             if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
-                self.frontmostAppIcon =
+                self.frontmost.icon =
                     self.resolvedApplicationIcon(bundleIdentifier: bundleId, appName: appName)
                     ?? self.preparedDockIcon(app.icon)
                 self.reloadMenuForApp(app)
@@ -4144,12 +3785,12 @@ struct LauncherView: View {
             )
         }
 
-        if frontmostAppBundleID == app.bundleIdentifier
-            || frontmostAppName == (app.localizedName ?? "")
+        if frontmost.bundleID == app.bundleIdentifier
+            || frontmost.name == (app.localizedName ?? "")
         {
-            frontmostAppBundleID = ""
-            frontmostAppName = ""
-            frontmostAppIcon = nil
+            frontmost.bundleID = ""
+            frontmost.name = ""
+            frontmost.icon = nil
         }
 
         detectAndUpdateContext()
@@ -4408,7 +4049,7 @@ struct LauncherView: View {
     }
 
     private func isCurrentFinderFolderAttachedToConversation() -> Bool {
-        guard frontmostAppBundleID == "com.apple.finder"
+        guard frontmost.bundleID == "com.apple.finder"
             || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
         else { return false }
         guard canAttachCurrentFinderFolderToConversation else { return false }
@@ -4417,7 +4058,7 @@ struct LauncherView: View {
     }
 
     private func isCurrentMailContextAttached() -> Bool {
-        guard frontmostAppBundleID == "com.apple.mail"
+        guard frontmost.bundleID == "com.apple.mail"
             || contextTargetApp()?.bundleIdentifier == "com.apple.mail"
         else { return false }
         return isMailContextAttached
@@ -4439,9 +4080,9 @@ struct LauncherView: View {
         } else {
             attachFinderFolderSearch(path: normalizedPath)
             finderFolderQueryModeActive = true
-            focusedPillIndex = nil
+            l2.focusedPillIndex = nil
             focusedAppPillIndex = nil
-            pillNavViaKeyboard = false
+            l2.pillNavViaKeyboard = false
             expandSearchBar()
             isSearchFieldFocused = true
         }
@@ -4478,7 +4119,7 @@ struct LauncherView: View {
         refreshCachedFinderCurrentDirectory(for: "com.apple.finder")
 
         if showContextInDock {
-            scheduleFinderSemanticSearchIfNeeded(for: searchText)
+            scheduleFinderSemanticSearchIfNeeded(for: searchState.query)
         }
     }
 
@@ -4499,13 +4140,13 @@ struct LauncherView: View {
     @discardableResult
     private func detachFinderFolderQueryModeFromEmptyBackspace() -> Bool {
         guard finderFolderQueryModeActive else { return false }
-        guard searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard isFinderFolderSearchAttached() else { return false }
 
         detachFinderFolderSearch()
-        focusedPillIndex = nil
+        l2.focusedPillIndex = nil
         focusedAppPillIndex = nil
-        pillNavViaKeyboard = false
+        l2.pillNavViaKeyboard = false
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
         isSearchFieldFocused = true
         return true
@@ -4794,7 +4435,7 @@ struct LauncherView: View {
         let accent = accentColor(for: pill.accentColorName)
         Button {
             pill.execute()
-            focusedPillIndex = nil
+            l2.focusedPillIndex = nil
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: pill.icon)
@@ -4822,8 +4463,8 @@ struct LauncherView: View {
         .buttonStyle(.plain)
         .help(pill.name)
         .onHover { hovering in
-            if !pillNavViaKeyboard {
-                focusedPillIndex = hovering ? index : nil
+            if !l2.pillNavViaKeyboard {
+                l2.focusedPillIndex = hovering ? index : nil
             }
         }
     }
@@ -4835,9 +4476,9 @@ struct LauncherView: View {
             var shortcuts: [SearchResult] = []
 
             // Add context-aware shortcuts
-            if !searchText.isEmpty && !groupedResults.suggestedShortcuts.isEmpty {
-                shortcuts.append(contentsOf: groupedResults.suggestedShortcuts)
-            } else if searchText.isEmpty && hasContextToShow {
+            if !searchState.query.isEmpty && !searchState.grouped.suggestedShortcuts.isEmpty {
+                shortcuts.append(contentsOf: searchState.grouped.suggestedShortcuts)
+            } else if searchState.query.isEmpty && hasContextToShow {
                 let contextMatched = allShortcuts.filter { shortcut in
                     guard let metadata = shortcutMetadataCache[shortcut.title] else { return false }
                     return metadata.matches(context: currentContext)
@@ -4891,20 +4532,20 @@ struct LauncherView: View {
 
     // Check if AI extensions are available to show
     private var hasAIExtensionsToShow: Bool {
-        return isAIMode && settings.enableContextAIExtensions && !aiExtensionSuggestions.isEmpty
+        return aiMode.isActive && settings.enableContextAIExtensions && !aiExtensionSuggestions.isEmpty
     }
 
     private var hasL2ExtensionsToShow: Bool {
-        return settings.enableContextAIExtensions && !l2ContextExtensions.isEmpty
+        return settings.enableContextAIExtensions && !l2.contextExtensions.isEmpty
     }
 
-    private var isL2ContextActive: Bool {
+    var isL2ContextActive: Bool {
         // L2 is active whenever the context dock is showing, we're not in pure AI mode,
         // and we're not in L3 browser layer. L3 must stay independent from L2.
-        showContextInDock && !isAIMode && !showMediaLayer
+        showContextInDock && !aiMode.isActive && !showMediaLayer
     }
 
-    private func enforceL2ContextMode() {
+    func enforceL2ContextMode() {
         if showMediaLayer {
             showMediaLayer = false
         }
@@ -4918,7 +4559,7 @@ struct LauncherView: View {
                     AIExtensionChipButton(
                         suggestion: suggestion,
                         context: currentContext,
-                        aiChatMessages: $aiChatMessages
+                        chatMessages: $aiMode.messages
                     )
                 }
             }
@@ -4930,7 +4571,7 @@ struct LauncherView: View {
     /// Groups by panel key and shows up to 6 most recently used.
     private var l2PanelQuickActions: [AppShortcut] {
         let allKeys = AppPanelChatStore.shared.allPanelKeys()
-        let frontApp = frontmostAppName.lowercased()
+        let frontApp = frontmost.name.lowercased()
         // Prioritise panels matching the current frontmost app, then rest
         var keys = allKeys.filter {
             $0.localizedCaseInsensitiveContains(frontApp) && !frontApp.isEmpty
@@ -4982,9 +4623,9 @@ struct LauncherView: View {
     private var frontmostAppL2Extensions: [L2Extension] {
         let appName: String
         let bundleID: String
-        if !frontmostAppName.isEmpty {
-            appName = frontmostAppName
-            bundleID = frontmostAppBundleID
+        if !frontmost.name.isEmpty {
+            appName = frontmost.name
+            bundleID = frontmost.bundleID
         } else if let ws = NSWorkspace.shared.frontmostApplication,
             let name = ws.localizedName,
             !(ws.bundleIdentifier ?? "").contains("ILauncher")
@@ -5076,9 +4717,9 @@ struct LauncherView: View {
     }
 
     private var l2FilteredContextActions: [L2FilteredItem] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
-        let appKey = activeSmartQueryKey ?? settings.autoDetectedAppKey ?? ""
+        let appKey = searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey ?? ""
         var results: [L2FilteredItem] = []
         for sc in settings.shortcuts(for: appKey) where sc.name.lowercased().contains(q) {
             results.append(
@@ -5112,8 +4753,8 @@ struct LauncherView: View {
             let toolName = String(item.id.dropFirst(4))  // strip "ext_"
             guard let tool = frontmostAppL2Extensions.first(where: { $0.toolName == toolName })
             else { return }
-            l2ChatMessages.append(AIChatMessage(role: .user, content: tool.displayName))
-            l2IsLoading = true
+            l2.chatMessages.append(AIChatMessage(role: .user, content: tool.displayName))
+            l2.isLoading = true
             Task {
                 let (success, output) = await L2ExtensionManager.shared.execute(
                     toolName: tool.toolName, arguments: [:])
@@ -5122,23 +4763,23 @@ struct LauncherView: View {
                         success
                         ? (output.isEmpty ? "✅ \(tool.displayName) done." : output)
                         : "❌ \(tool.displayName) failed: \(output)"
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: content))
-                    l2IsLoading = false
+                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: content))
+                    l2.isLoading = false
                 }
             }
         } else {
             let scIdStr = String(item.id.dropFirst(3))  // strip "sc_"
-            let appKey = activeSmartQueryKey ?? settings.autoDetectedAppKey ?? ""
+            let appKey = searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey ?? ""
             if item.id.hasPrefix("usr_ext_"),
-               let ext = appPillScriptExtensions(for: appKey, query: searchText)
+               let ext = appPillScriptExtensions(for: appKey, query: searchState.query)
                     .first(where: { $0.id.uuidString == String(item.id.dropFirst("usr_ext_".count)) }) {
-                executeAppToolExtension(ext, launchQuery: searchText)
+                executeAppToolExtension(ext, launchQuery: searchState.query)
             } else if let sc = settings.shortcuts(for: appKey).first(where: { $0.id.uuidString == scIdStr }
             ) {
                 executeAppShortcut(sc)
             }
         }
-        searchText = ""
+        searchState.query = ""
     }
 
     // MARK: - Unified dock pill list (drives both rendering and keyboard navigation)
@@ -5443,8 +5084,8 @@ struct LauncherView: View {
         let query = q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.hasPrefix("+") else { return [] }
         guard query.count >= 2 else { return [] }
-        guard frontmostAppBundleID == "com.apple.finder"
-            || l2TargetApp?.bundleId == "com.apple.finder"
+        guard frontmost.bundleID == "com.apple.finder"
+            || l2.targetApp?.bundleId == "com.apple.finder"
             || axContext.bundleId == "com.apple.finder"
         else { return [] }
         guard effectiveFinderSelectionURLsForPills().isEmpty else { return [] }
@@ -5550,8 +5191,8 @@ struct LauncherView: View {
                             sourceQuery: query
                         )
                         NSWorkspace.shared.open(url)
-                        searchText = ""
-                        focusedPillIndex = nil
+                        searchState.query = ""
+                        l2.focusedPillIndex = nil
                     }
                 )
                 pill.menuItemImage = NSWorkspace.shared.icon(forFile: itemPath)
@@ -5975,7 +5616,7 @@ struct LauncherView: View {
     /// macOS-style dock magnification scale for a pill at `index`.
     /// Peaked at the hovered/focused index, falls off smoothly with distance.
     private func dockMagnificationScale(for index: Int) -> CGFloat {
-        let refIdx = focusedPillIndex ?? hoveredDockPillIndex
+        let refIdx = l2.focusedPillIndex ?? hoveredDockPillIndex
         guard let ref = refIdx else { return 1.0 }
         let dist = CGFloat(abs(index - ref))
         let peak: CGFloat = 0.30   // +30% at the focal pill
@@ -6080,7 +5721,7 @@ struct LauncherView: View {
         }
 
         let frontBundleId =
-            frontmostAppBundleID.isEmpty ? axContext.bundleId : frontmostAppBundleID
+            frontmost.bundleID.isEmpty ? axContext.bundleId : frontmost.bundleID
         let sourceBundleId = pill.sourceBundleId.isEmpty ? scopedBundleId : pill.sourceBundleId
         let sourceAppName = pill.sourceAppName.isEmpty ? scopedAppName : pill.sourceAppName
 
@@ -6397,7 +6038,7 @@ struct LauncherView: View {
         let selectedFiles = selectedFileURLs.map(\.path)
 
         if let pending = pendingFinderOperation {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
             if isAffirmativeResponse(normalized) {
                 pendingFinderOperation = nil
                 runFinderIntent(pending.intent, folderPath: pending.folderPath, confirmed: true)
@@ -6405,7 +6046,7 @@ struct LauncherView: View {
             }
             if isNegativeResponse(normalized) {
                 pendingFinderOperation = nil
-                l2ChatMessages.append(
+                l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant, content: "Okay, I won't reorganize that folder."))
                 return
@@ -6413,9 +6054,9 @@ struct LauncherView: View {
         }
 
         if let intent = parseFinderIntent(query: normalized) {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            searchText = ""
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.isLoading = true
+            searchState.query = ""
             enforceL2ContextMode()
             runFinderIntent(
                 intent, folderPath: folderPath, confirmed: false, originalQuery: normalized)
@@ -6425,8 +6066,8 @@ struct LauncherView: View {
         if isFinderSearchStyleQuery(normalized) {
             let profile = finderSemanticProfile(for: normalized)
             guard folderSearchAttached else {
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2ChatMessages.append(
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
                         content:
@@ -6435,7 +6076,7 @@ struct LauncherView: View {
                                 : "Bring Finder to the front, add the current folder, then I’ll search only the files and folders in that frontmost Finder window."
                     )
                 )
-                searchText = ""
+                searchState.query = ""
                 enforceL2ContextMode()
                 clearFinderSemanticState()
                 return
@@ -6443,23 +6084,23 @@ struct LauncherView: View {
 
             let cachedResults = finderSemanticQuery == normalized ? finderSemanticResults : []
             if !cachedResults.isEmpty {
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2ChatMessages.append(
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
                         content: finderSubmissionSummary(for: effectiveQuery, results: cachedResults)
                     ))
-                searchText = ""
+                searchState.query = ""
                 enforceL2ContextMode()
                 updateL2Results(cachedResults)
                 return
             }
 
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            searchText = ""
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.isLoading = true
+            searchState.query = ""
             enforceL2ContextMode()
-            l2CurrentTask = Task {
+            l2.currentTask = Task {
                 let spotlightEnabled = settings.enableSpotlightSearch
                 let advancedMatches = await MainActor.run {
                     buildAdvancedFinderDataMatches(
@@ -6498,22 +6139,22 @@ struct LauncherView: View {
                     finderSemanticQuery = normalized
                     finderSemanticResults = results
                     finderSemanticPills = makeFinderSemanticDockPills(from: mergedMatches)
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: finderSubmissionSummary(for: effectiveQuery, results: results)
                         ))
                     updateL2Results(results)
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
             }
             return
         }
 
-        l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-        l2IsLoading = true
-        searchText = ""
+        l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+        l2.isLoading = true
+        searchState.query = ""
         enforceL2ContextMode()
 
         // Snapshot everything we know about Finder right now
@@ -6529,7 +6170,7 @@ struct LauncherView: View {
         }
 
         // Read all visible filenames in the current folder via AppleScript
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             let spotlightEnabled = settings.enableSpotlightSearch && folderSearchAttached
             let finderProfile = finderSemanticProfile(for: normalized)
             let advancedSemanticMatches =
@@ -6757,22 +6398,22 @@ struct LauncherView: View {
                 }
 
                 await MainActor.run {
-                    self.l2IsLoading = false
-                    self.l2CurrentTask = nil
+                    self.l2.isLoading = false
+                    self.l2.currentTask = nil
                     DispatchQueue.main.async {
                         self.executeFinderAIResponse(response, folderPath: fallbackFolderPath)
                     }
                 }
             } catch {
                 await MainActor.run {
-                    self.l2ChatMessages.append(
+                    self.l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "❌ \(error.localizedDescription)",
                             isError: true
                         ))
-                    self.l2IsLoading = false
-                    self.l2CurrentTask = nil
+                    self.l2.isLoading = false
+                    self.l2.currentTask = nil
                 }
             }
         }
@@ -6804,8 +6445,8 @@ struct LauncherView: View {
     private func runFinderIntent(
         _ intent: FinderIntent, folderPath: String, confirmed: Bool, originalQuery: String = ""
     ) {
-        l2CurrentTask?.cancel()
-        l2CurrentTask = Task {
+        l2.currentTask?.cancel()
+        l2.currentTask = Task {
             switch intent {
             case .showRecentFiles(let limit):
                 let urls = recentFinderItems(in: folderPath, limit: limit)
@@ -6819,10 +6460,10 @@ struct LauncherView: View {
                 }
                 let results = buildFinderSearchResults(from: urls, subtitle: "Recent Files")
                 await MainActor.run {
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: summary))
+                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: summary))
                     updateL2Results(results)
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
 
             case .filterFiles(let category):
@@ -6855,10 +6496,10 @@ struct LauncherView: View {
                 }
                 let results = buildFinderSearchResults(from: urls, subtitle: category.resultTitle)
                 await MainActor.run {
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: summary))
+                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: summary))
                     updateL2Results(results)
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
 
             case .organizeByType:
@@ -6866,7 +6507,7 @@ struct LauncherView: View {
                     let preview = previewOrganizeFinderItems(in: folderPath)
                     await MainActor.run {
                         if preview.moveCount == 0 {
-                            l2ChatMessages.append(
+                            l2.chatMessages.append(
                                 AIChatMessage(
                                     role: .assistant,
                                     content:
@@ -6875,18 +6516,18 @@ struct LauncherView: View {
                         } else {
                             pendingFinderOperation = PendingFinderOperation(
                                 intent: intent, folderPath: folderPath)
-                            l2ChatMessages.append(
+                            l2.chatMessages.append(
                                 AIChatMessage(role: .assistant, content: preview.message))
                         }
-                        l2IsLoading = false
-                        l2CurrentTask = nil
+                        l2.isLoading = false
+                        l2.currentTask = nil
                     }
                     return
                 }
 
                 let result = organizeFinderItemsByType(in: folderPath)
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant, content: result.message, isError: !result.success))
                     if !result.createdFolders.isEmpty {
@@ -6894,8 +6535,8 @@ struct LauncherView: View {
                             buildFinderSearchResults(
                                 from: result.createdFolders, subtitle: "Organized Folders"))
                     }
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
             }
         }
@@ -6936,7 +6577,7 @@ struct LauncherView: View {
     }
 
     private func isFinderFrontmostWindowContext() -> Bool {
-        if frontmostAppBundleID == "com.apple.finder" { return true }
+        if frontmost.bundleID == "com.apple.finder" { return true }
         if contextTargetApp()?.bundleIdentifier == "com.apple.finder" { return true }
         return axContext.bundleId == "com.apple.finder"
     }
@@ -6945,7 +6586,7 @@ struct LauncherView: View {
     /// (folder/file browser), distinguishing it from the "desktop-only" state where
     /// Finder is active but the user clicked the wallpaper (no window open).
     private func finderHasActiveWindow() -> Bool {
-        guard frontmostAppBundleID == "com.apple.finder" || axContext.bundleId == "com.apple.finder" else { return false }
+        guard frontmost.bundleID == "com.apple.finder" || axContext.bundleId == "com.apple.finder" else { return false }
         guard let finderApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.finder" }) else { return false }
         let axApp = AXUIElementCreateApplication(finderApp.processIdentifier)
         var windowsRef: CFTypeRef?
@@ -6965,7 +6606,7 @@ struct LauncherView: View {
     /// True when Finder is frontmost but only the desktop is visible (no folder window).
     /// In this state the dock behaves like a "no-app" global context.
     private var isFinderDesktopOnlyMode: Bool {
-        (frontmostAppBundleID == "com.apple.finder") && !finderHasActiveWindow()
+        (frontmost.bundleID == "com.apple.finder") && !finderHasActiveWindow()
     }
 
     private func isFinderCurrentWindowSearchAttached(currentFolderPath: String? = nil) -> Bool {
@@ -7002,13 +6643,13 @@ struct LauncherView: View {
             }
         }
         // Clear any stale results from previous queries rather than showing a list
-        searchResults = []
-        groupedResults = {
+        searchState.results = []
+        searchState.grouped = {
             var grouped = GroupedResults()
             results.forEach { grouped.add($0) }
             return grouped
         }()
-        selectedResultIndex = nil
+        searchState.selectedIndex = nil
     }
 
     private func finderItems(in folderPath: String) -> [URL] {
@@ -7205,14 +6846,14 @@ struct LauncherView: View {
         if trimmed.hasPrefix("ACTION:APPLESCRIPT:") {
             let script = String(trimmed.dropFirst("ACTION:APPLESCRIPT:".count))
                 .replacingOccurrences(of: "\\n", with: "\n")
-            l2ChatMessages.append(
+            l2.chatMessages.append(
                 AIChatMessage(role: .assistant, content: "```applescript\n\(script)\n```"))
             Task.detached(priority: .userInitiated) {
                 var err: NSDictionary?
                 NSAppleScript(source: script)?.executeAndReturnError(&err)
                 if let e = err {
                     await MainActor.run {
-                        self.l2ChatMessages.append(
+                        self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content:
@@ -7233,7 +6874,7 @@ struct LauncherView: View {
 
         } else if trimmed.hasPrefix("ACTION:SHELL:") {
             let cmd = String(trimmed.dropFirst("ACTION:SHELL:".count))
-            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "```bash\n\(cmd)\n```"))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: "```bash\n\(cmd)\n```"))
             Task.detached(priority: .userInitiated) {
                 let process = Process()
                 process.launchPath = "/bin/bash"
@@ -7258,7 +6899,7 @@ struct LauncherView: View {
                         output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ? status
                         : "\(status)\n```\n\(output.prefix(500))\n```"
-                    self.l2ChatMessages.append(AIChatMessage(role: .assistant, content: msg))
+                    self.l2.chatMessages.append(AIChatMessage(role: .assistant, content: msg))
                     if let createdURL {
                         self.rememberFinderFollowUpTargets(
                             [createdURL],
@@ -7276,7 +6917,7 @@ struct LauncherView: View {
 
         } else if trimmed.hasPrefix("ACTION:MENU:") {
             let menuTitle = String(trimmed.dropFirst("ACTION:MENU:".count))
-            l2ChatMessages.append(AIChatMessage(role: .assistant, content: "▶ \(menuTitle)"))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: "▶ \(menuTitle)"))
             if let item = liveMenuItems.first(where: {
                 $0.title.lowercased() == menuTitle.lowercased()
             }),
@@ -7293,11 +6934,11 @@ struct LauncherView: View {
 
         } else if trimmed.hasPrefix("ANSWER:") {
             let answer = String(trimmed.dropFirst("ANSWER:".count))
-            l2ChatMessages.append(AIChatMessage(role: .assistant, content: answer))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
 
         } else {
             // Model didn't follow the format — show the raw response
-            l2ChatMessages.append(AIChatMessage(role: .assistant, content: trimmed))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: trimmed))
         }
     }
 
@@ -7421,8 +7062,8 @@ struct LauncherView: View {
                 self.previousEnabledIDs = Set(items.filter(\.isEnabled).map(\.id))
                 self.contextMenuPills = []
                 self.syncRecentAppsFromAppleMenu(items)
-                if self.frontmostAppBundleID.isEmpty, let bundleId {
-                    self.frontmostAppBundleID = bundleId
+                if self.frontmost.bundleID.isEmpty, let bundleId {
+                    self.frontmost.bundleID = bundleId
                 }
             }
         }
@@ -7519,11 +7160,11 @@ struct LauncherView: View {
     }
 
     private func refreshFinderSelectionContextFromFinder() {
-        guard showContextInDock, !showMediaLayer, !isAIMode else { return }
+        guard showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
         let now = Date()
         guard now.timeIntervalSince(lastFinderSelectionRefresh) > 0.25 else { return }
         lastFinderSelectionRefresh = now
-        guard frontmostAppBundleID == "com.apple.finder"
+        guard frontmost.bundleID == "com.apple.finder"
             || AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier == "com.apple.finder"
             || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
         else { return }
@@ -7609,8 +7250,8 @@ struct LauncherView: View {
         }
         clipboardHistory.insert(entry, at: 0)
         trimClipboardHistoryToLimits()
-        if activeSmartQueryKey == "clipboard" {
-            appPanelAllItems = clipboardSearchResults()
+        if searchState.activeSmartQueryKey == "clipboard" {
+            searchState.appPanelAllItems = clipboardSearchResults()
         }
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -7619,7 +7260,7 @@ struct LauncherView: View {
         }
         scheduleClipboardIndicatorAutoHide()
         // Auto-switch to global context if we're in dock mode and not already there
-        if showContextInDock && !isGlobalContextActive && !isExplicitAppScopeLocked && l2TargetApp == nil {
+        if showContextInDock && !isGlobalContextActive && !isExplicitAppScopeLocked && l2.targetApp == nil {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                 isGlobalContextActive = true
             }
@@ -7691,10 +7332,10 @@ struct LauncherView: View {
     /// Switches to Global Context automatically when files, text, or a URL are selected
     /// in the frontmost app. Checks both axContext (live AX state) and currentContext.
     private func autoSwitchGlobalContextIfNeeded() {
-        guard showContextInDock, !isExplicitAppScopeLocked, l2TargetApp == nil, !isGlobalContextActive else { return }
+        guard showContextInDock, !isExplicitAppScopeLocked, l2.targetApp == nil, !isGlobalContextActive else { return }
         // Don't re-trigger within 600ms of an app switch — the AX observer fires for the
         // new app with stale/cursor-position state which would immediately flip back to global.
-        guard Date().timeIntervalSince(lastAppSwitchDate) > 0.6 else { return }
+        guard Date().timeIntervalSince(frontmost.lastSwitchDate) > 0.6 else { return }
         refreshFinderSelectionContextFromFinder()
 
         // Files selected: always meaningful
@@ -7753,7 +7394,7 @@ struct LauncherView: View {
     /// Auto-returns to Context Dock when the selection that triggered global context is gone.
     /// Only fires if global context was auto-activated (not manually swiped by user).
     private func autoReturnFromGlobalContextIfNeeded() {
-        guard isGlobalContextActive, isGlobalContextAutoActivated, !isAIMode else { return }
+        guard isGlobalContextActive, isGlobalContextAutoActivated, !aiMode.isActive else { return }
 
         // If we have a frozen selection, only allow auto-return when the AX update comes from the
         // same source app that originally provided the selection — not from our own dock gaining focus.
@@ -7846,9 +7487,9 @@ struct LauncherView: View {
     ) {
         let capturedContext = effectiveAXContextForConversation()
         if let userMessage, !userMessage.isEmpty {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: userMessage))
+            l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
         }
-        l2IsLoading = true
+        l2.isLoading = true
         Task {
             let resolution = await ShareIntentRouter.shared.resolve(intent)
             let output = await ShareIntentRouter.shared.execute(
@@ -7859,8 +7500,8 @@ struct LauncherView: View {
                 }
             )
             await MainActor.run {
-                self.l2ChatMessages.append(AIChatMessage(role: .assistant, content: output))
-                self.l2IsLoading = false
+                self.l2.chatMessages.append(AIChatMessage(role: .assistant, content: output))
+                self.l2.isLoading = false
             }
         }
     }
@@ -7871,8 +7512,8 @@ struct LauncherView: View {
     ) {
         let selectedFiles = effectiveSelectedFileURLsForConversation()
         guard !selectedFiles.isEmpty else {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: userMessage))
-            l2ChatMessages.append(
+            l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
+            l2.chatMessages.append(
                 AIChatMessage(
                     role: .assistant,
                     content: "Select a small text or PDF document first, then ask me to summarize and send it.",
@@ -7881,30 +7522,30 @@ struct LauncherView: View {
             return
         }
 
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
 
-        l2ChatMessages.append(AIChatMessage(role: .user, content: userMessage))
-        l2IsLoading = true
-        searchText = ""
-        focusedPillIndex = nil
+        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
+        l2.isLoading = true
+        searchState.query = ""
+        l2.focusedPillIndex = nil
 
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             let readable = transformShareReadableContent(from: selectedFiles)
             guard !readable.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "I couldn't read text from the selected file. This works best with small text, Markdown, source, CSV, RTF, or text-based PDF files.",
                             isError: true
                         ))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
                 return
             }
@@ -7917,7 +7558,7 @@ struct LauncherView: View {
                 )
                 let summary = try await sendToAIProviderWithContext(
                     query: summaryPrompt,
-                    messageHistory: l2ChatMessages
+                    messageHistory: l2.chatMessages
                 ).trimmingCharacters(in: .whitespacesAndNewlines)
 
                 guard !Task.isCancelled else { return }
@@ -7933,22 +7574,22 @@ struct LauncherView: View {
                 )
 
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(role: .assistant, content: "\(output)\n\n\(summary)")
                     )
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
             } catch {
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "Sorry, I couldn't summarize and send that: \(error.localizedDescription)",
                             isError: true
                         ))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
             }
         }
@@ -8031,19 +7672,19 @@ struct LauncherView: View {
         userMessage: String,
         unresolvedMessage: String = "❌ Couldn't resolve that. Try: \"send this to [name]\" or \"email this to [name]\""
     ) {
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
         let capturedContext = effectiveAXContextForConversation()
         let actionId = DockActionFeedback.start("Working", subject: intent.targetAppName ?? "", icon: "bolt.fill", tint: .accentColor)
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             guard let resolved = await CrossAppNLHandler.shared.resolve(intent) else {
                 await MainActor.run {
                     DockActionFeedback.fail(actionId, label: "Couldn't resolve action")
-                    l2CurrentTask = nil
+                    l2.currentTask = nil
                 }
                 return
             }
@@ -8059,9 +7700,9 @@ struct LauncherView: View {
                 let success = !output.hasPrefix("❌")
                 if success { DockActionFeedback.complete(actionId, label: clean) }
                 else { DockActionFeedback.fail(actionId, label: clean) }
-                l2CurrentTask = nil
-                searchText = ""
-                focusedPillIndex = nil
+                l2.currentTask = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
             }
         }
     }
@@ -8070,17 +7711,17 @@ struct LauncherView: View {
         _ resolution: L2AppActionResolution,
         userMessage: String
     ) {
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
 
         let match = resolution.primary
         let capturedContext = effectiveAXContextForConversation()
         let actionId = DockActionFeedback.start(match.action.name, subject: match.adapter.appName, icon: "bolt.fill", tint: .accentColor)
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             AppInteractionStore.shared.record(
                 bundleId: match.adapter.bundleId,
                 appName: match.adapter.appName,
@@ -8104,9 +7745,9 @@ struct LauncherView: View {
                     : "Couldn't run \(match.action.name)"
                 if success { DockActionFeedback.complete(actionId, label: label) }
                 else { DockActionFeedback.fail(actionId, label: label) }
-                l2CurrentTask = nil
-                searchText = ""
-                focusedPillIndex = nil
+                l2.currentTask = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
             }
         }
     }
@@ -8123,8 +7764,8 @@ struct LauncherView: View {
             let fid = DockActionFeedback.start("Opening", subject: appName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
             DockActionFeedback.fail(fid, label: "Couldn't open \(appName)")
         }
-        searchText = ""
-        focusedPillIndex = nil
+        searchState.query = ""
+        l2.focusedPillIndex = nil
     }
 
     private var isGlobalQueryModeActive: Bool {
@@ -8154,7 +7795,7 @@ struct LauncherView: View {
         }
 
         if showContextInDock {
-            let scope = resolveDockScope(for: searchText)
+            let scope = resolveDockScope(for: searchState.query)
             if scope.isExplicitAppScope,
                 !scope.scopedBundleId.isEmpty,
                 !scope.scopedAppName.isEmpty
@@ -8267,7 +7908,7 @@ struct LauncherView: View {
     }
 
     private func rawDockQuery(matching normalizedQuery: String) -> String {
-        let rawQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawQuery.isEmpty,
             normalizedDockPillText(rawQuery) == normalizedDockPillText(normalizedQuery)
         else {
@@ -9404,30 +9045,30 @@ struct LauncherView: View {
         let searchQuery = intent.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !searchQuery.isEmpty else { return }
 
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
 
-        l2ChatMessages.append(AIChatMessage(role: .user, content: userMessage))
-        l2IsLoading = true
+        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
+        l2.isLoading = true
 
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             guard let mailApp = await activateOrLaunchSemanticApp(
                 bundleIdentifier: "com.apple.mail",
                 appName: "Mail"
             ) else {
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "❌ Couldn't open Mail.",
                             isError: true
                         ))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
                 return
             }
@@ -9454,14 +9095,14 @@ struct LauncherView: View {
 
             guard triggeredSearch else {
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "❌ Couldn't open Mail search.",
                             isError: true
                         ))
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
                 return
             }
@@ -9471,17 +9112,17 @@ struct LauncherView: View {
 
             await MainActor.run {
                 if injected {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: appliedToken && intent.tokenKind != .generic
                                 ? "Opened Mailbox Search for \(intent.displayLabel)."
                                 : "Opened Mailbox Search for “\(searchQuery)”."
                         ))
-                    searchText = ""
-                    focusedPillIndex = nil
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
                 } else {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content:
@@ -9489,8 +9130,8 @@ struct LauncherView: View {
                             isError: true
                         ))
                 }
-                l2IsLoading = false
-                l2CurrentTask = nil
+                l2.isLoading = false
+                l2.currentTask = nil
             }
         }
     }
@@ -9582,7 +9223,7 @@ struct LauncherView: View {
                 return (dockScope.scopedBundleId, dockScope.scopedAppName)
             }
 
-            if let target = l2TargetApp, !target.bundleId.hasPrefix("scope://") {
+            if let target = l2.targetApp, !target.bundleId.hasPrefix("scope://") {
                 return (target.bundleId, target.name)
             }
 
@@ -9591,7 +9232,7 @@ struct LauncherView: View {
                 !bundleId.isEmpty,
                 bundleId != Bundle.main.bundleIdentifier
             {
-                return (bundleId, app.localizedName ?? frontmostAppName)
+                return (bundleId, app.localizedName ?? frontmost.name)
             }
 
             return nil
@@ -9653,32 +9294,32 @@ struct LauncherView: View {
             return
         }
 
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
 
-        l2ChatMessages.append(AIChatMessage(role: .user, content: intent.userMessage))
-        l2IsLoading = true
+        l2.chatMessages.append(AIChatMessage(role: .user, content: intent.userMessage))
+        l2.isLoading = true
         let searchActionId = DockActionFeedback.start("Searching", subject: "\(intent.targetAppName) for \"\(searchQuery)\"", icon: "magnifyingglass", tint: .accentColor)
 
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             guard let app = await activateOrLaunchSemanticApp(
                 bundleIdentifier: intent.targetBundleId,
                 appName: intent.targetAppName
             ) else {
                 await MainActor.run {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "❌ Couldn't open \(intent.targetAppName).",
                             isError: true
                         ))
                     DockActionFeedback.fail(searchActionId, label: "Couldn't open \(intent.targetAppName)")
-                    l2IsLoading = false
-                    l2CurrentTask = nil
+                    l2.isLoading = false
+                    l2.currentTask = nil
                 }
                 return
             }
@@ -9692,17 +9333,17 @@ struct LauncherView: View {
 
             await MainActor.run {
                 if injected {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "Searching \(intent.targetAppName) for \"\(searchQuery)\"."
                         ))
                     DockActionFeedback.complete(searchActionId)
-                    searchText = ""
-                    focusedPillIndex = nil
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
                     scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
                 } else {
-                    l2ChatMessages.append(
+                    l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content:
@@ -9711,8 +9352,8 @@ struct LauncherView: View {
                         ))
                     DockActionFeedback.fail(searchActionId, label: "Search field not found")
                 }
-                l2IsLoading = false
-                l2CurrentTask = nil
+                l2.isLoading = false
+                l2.currentTask = nil
             }
         }
     }
@@ -9978,7 +9619,7 @@ struct LauncherView: View {
             in: .whitespacesAndNewlines)
         let currentURL = (axContext.currentURL ?? "").trimmingCharacters(
             in: .whitespacesAndNewlines)
-        let windowTitle = (axContext.windowTitle ?? frontmostAppName).trimmingCharacters(
+        let windowTitle = (axContext.windowTitle ?? frontmost.name).trimmingCharacters(
             in: .whitespacesAndNewlines)
         let clipboardText = (NSPasteboard.general.string(forType: .string) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -10039,7 +9680,7 @@ struct LauncherView: View {
                     badge: hasText ? "Selection" : "URL",
                     execute: {
                         guard self.settings.allowAutomation else {
-                            self.l2ChatMessages.append(
+                            self.l2.chatMessages.append(
                                 AIChatMessage(
                                     role: .assistant,
                                     content: "Automation permission is disabled for Notes actions.",
@@ -10054,7 +9695,7 @@ struct LauncherView: View {
                         } else {
                             ok = false
                         }
-                        self.l2ChatMessages.append(
+                        self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content: ok ? "Saved to Notes." : "Failed to save to Notes.",
@@ -10096,7 +9737,7 @@ struct LauncherView: View {
                     badge: "Selection",
                     execute: {
                         guard self.settings.allowAutomation else {
-                            self.l2ChatMessages.append(
+                            self.l2.chatMessages.append(
                                 AIChatMessage(
                                     role: .assistant,
                                     content:
@@ -10105,7 +9746,7 @@ struct LauncherView: View {
                             return
                         }
                         let ok = AppleAppsAPI.shared.createReminder(title: reminderText)
-                        self.l2ChatMessages.append(
+                        self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content: ok ? "Reminder created." : "Failed to create reminder.",
@@ -10162,7 +9803,7 @@ struct LauncherView: View {
                             }
                         }
                         let ok = moved > 0
-                        self.l2ChatMessages.append(
+                        self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content: ok
@@ -10396,7 +10037,7 @@ struct LauncherView: View {
             return (!runningOnly || runningBundleIds.contains(target.bundleId)) ? target : nil
         }
         let installedMenuTarget =
-            (isGlobalContextActive && explicitAppTarget == nil && l2TargetApp == nil)
+            (isGlobalContextActive && explicitAppTarget == nil && l2.targetApp == nil)
             ? installedAppMenuTarget(
                 for: q,
                 runningOnly: runningOnly,
@@ -10405,7 +10046,7 @@ struct LauncherView: View {
             )
             : nil
         let isExplicitAppScope =
-            l2TargetApp != nil || explicitAppTarget != nil || installedMenuTarget != nil
+            l2.targetApp != nil || explicitAppTarget != nil || installedMenuTarget != nil
         let isGlobalScope = isGlobalContextActive && !isExplicitAppScope
 
         if isGlobalScope {
@@ -10419,12 +10060,12 @@ struct LauncherView: View {
         }
 
         let scopedBundleId =
-            l2TargetApp?.bundleId
+            l2.targetApp?.bundleId
             ?? explicitAppTarget?.bundleId
             ?? installedMenuTarget?.bundleId
-            ?? (frontmostAppBundleID.isEmpty ? axContext.bundleId : frontmostAppBundleID)
+            ?? (frontmost.bundleID.isEmpty ? axContext.bundleId : frontmost.bundleID)
         let scopedAppName =
-            l2TargetApp?.name
+            l2.targetApp?.name
             ?? explicitAppTarget?.appName
             ?? installedMenuTarget?.appName
             ?? contextTargetApp()?.localizedName
@@ -10450,7 +10091,7 @@ struct LauncherView: View {
     }
 
     private var dockScopeDisplayName: String {
-        let scope = resolveDockScope(for: searchText)
+        let scope = resolveDockScope(for: searchState.query)
         if scope.isGlobalScope {
             return "Global Context"
         }
@@ -10460,7 +10101,7 @@ struct LauncherView: View {
                 return scoped
             }
         }
-        return frontmostAppName
+        return frontmost.name
     }
 
     private var dockHeaderDisplayName: String {
@@ -10471,7 +10112,7 @@ struct LauncherView: View {
     private var dockScopeGhostPrompt: String {
         let label = dockScopeDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopeName = label.isEmpty ? "Context" : label
-        let bundleId = resolveDockScope(for: searchText).scopedBundleId
+        let bundleId = resolveDockScope(for: searchState.query).scopedBundleId
         let lowerName = scopeName.lowercased()
 
         let hints: String
@@ -10529,7 +10170,7 @@ struct LauncherView: View {
 
     private var currentL2DockSessionKey: String? {
         guard showContextInDock else { return nil }
-        let scope = resolveDockScope(for: searchText)
+        let scope = resolveDockScope(for: searchState.query)
         if scope.isGlobalScope {
             return "dock_global"
         }
@@ -10544,29 +10185,29 @@ struct LauncherView: View {
 
     private func syncL2DockSession(force: Bool = false) {
         let newKey = currentL2DockSessionKey
-        guard force || newKey != activeL2DockSessionKey else { return }
+        guard force || newKey != l2.activeDockSessionKey else { return }
 
-        if let previousKey = activeL2DockSessionKey {
-            AppPanelChatStore.shared.save(l2ChatMessages, for: previousKey)
+        if let previousKey = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.save(l2.chatMessages, for: previousKey)
         }
 
-        activeL2DockSessionKey = newKey
-        l2CurrentTask?.cancel()
-        l2CurrentTask = nil
-        l2IsLoading = false
-        l2ActiveRequestID = nil
-        l2HandledApprovalIds = []
-        l2ContextExtensions = []
-        lastL2AutoRunExtensionID = nil
-        l2ChatMessages = newKey.map { AppPanelChatStore.shared.load(for: $0) } ?? []
+        l2.activeDockSessionKey = newKey
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        l2.handledApprovalIds = []
+        l2.contextExtensions = []
+        l2.lastAutoRunExtensionID = nil
+        l2.chatMessages = newKey.map { AppPanelChatStore.shared.load(for: $0) } ?? []
         updateL2Results([])
     }
 
     @discardableResult
-    private func activateInlineDockAppScope(
+    func activateInlineDockAppScope(
         bundleIdentifier: String,
         appName: String,
-        searchTextOverride: String? = nil,
+        queryOverride: String? = nil,
         expand: Bool = true
     ) -> Bool {
         guard !bundleIdentifier.isEmpty, !appName.isEmpty else { return false }
@@ -10584,26 +10225,26 @@ struct LauncherView: View {
                     ?? preparedDockIcon(targetApp?.icon)
             )
         let hasLegacyPanelState =
-            activeSmartQueryKey != nil
-            || searchContextApp != nil
-            || isInSmartMode
-            || !appPanelAllItems.isEmpty
+            searchState.activeSmartQueryKey != nil
+            || searchState.contextApp != nil
+            || searchState.isInSmartMode
+            || !searchState.appPanelAllItems.isEmpty
             || !remPanelChatMessages.isEmpty
-        let isNewScope = l2TargetApp?.bundleId != bundleIdentifier
+        let isNewScope = l2.targetApp?.bundleId != bundleIdentifier
         let shouldSyncSession =
             isNewScope
-            || activeSmartQueryKey != nil
-            || searchContextApp != nil
+            || searchState.activeSmartQueryKey != nil
+            || searchState.contextApp != nil
         // Reset terminal dismissal when switching to a different app scope
-        if isNewScope { l2TerminalDismissed = false }
-        let normalizedOverride = searchTextOverride?
+        if isNewScope { l2.terminalDismissed = false }
+        let normalizedOverride = queryOverride?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
         let isPureScopeSelection =
             normalizedOverride.isEmpty
             || isPureScopedAppSelection(for: normalizedOverride)
 
-        if let previousKey = activeSmartQueryKey, hasLegacyPanelState {
+        if let previousKey = searchState.activeSmartQueryKey, hasLegacyPanelState {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
 
@@ -10614,25 +10255,25 @@ struct LauncherView: View {
 
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
             if hasLegacyPanelState {
-                searchContextApp = nil
-                activeSmartQueryKey = nil
-                isInSmartMode = false
-                appPanelAllItems = []
+                searchState.contextApp = nil
+                searchState.activeSmartQueryKey = nil
+                searchState.isInSmartMode = false
+                searchState.appPanelAllItems = []
                 remPanelChatMessages = []
                 clearPinnedResults()
             }
-            l2TargetApp = (appName, icon, bundleIdentifier)
+            l2.targetApp = (appName, icon, bundleIdentifier)
             showContextInDock = true
             showMediaLayer = false
-            isAIMode = false
-            searchResults = []
-            selectedResultIndex = nil
+            aiMode.isActive = false
+            searchState.results = []
+            searchState.selectedIndex = nil
             if expand { isSearchBarExpanded = true }
             if expand {
                 if livePanelMode != .terminal { livePanelVisible = false }
             }
-            if let searchTextOverride {
-                searchText = searchTextOverride
+            if let queryOverride {
+                searchState.query = queryOverride
             }
         }
 
@@ -10659,13 +10300,13 @@ struct LauncherView: View {
             _ = prepareScopedWorkspaceTerminal()
         }
 
-        focusedPillIndex = nil
+        l2.focusedPillIndex = nil
         isSearchFieldFocused = true
         return true
     }
 
-    private func activateClipboardScope(searchTextOverride: String = "") {
-        if let previousKey = activeSmartQueryKey {
+    private func activateClipboardScope(queryOverride: String = "") {
+        if let previousKey = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
         remPanelAITask?.cancel()
@@ -10673,31 +10314,31 @@ struct LauncherView: View {
 
         let icon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Clipboard")
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-            searchContextApp = nil
-            activeSmartQueryKey = "clipboard"
-            l2TargetApp = ("Clipboard", icon, "scope://clipboard")
+            searchState.contextApp = nil
+            searchState.activeSmartQueryKey = "clipboard"
+            l2.targetApp = ("Clipboard", icon, "scope://clipboard")
             showContextInDock = true
             showMediaLayer = false
-            isAIMode = false
+            aiMode.isActive = false
             isGlobalContextActive = false
-            isInSmartMode = false
-            searchResults = []
-            selectedResultIndex = nil
+            searchState.isInSmartMode = false
+            searchState.results = []
+            searchState.selectedIndex = nil
             clearPinnedResults()
-            appPanelAllItems = clipboardSearchResults()
+            searchState.appPanelAllItems = clipboardSearchResults()
             remPanelChatMessages = []
-            searchText = searchTextOverride
+            searchState.query = queryOverride
             isSearchBarExpanded = true
             focusedClipboardEntryIndex = nil
             livePanelVisible = false
         }
-        focusedPillIndex = nil
+        l2.focusedPillIndex = nil
         isSearchFieldFocused = true
         updateWindowSize()
     }
 
     private func scopedWorkspaceIdentity() -> (appName: String, bundleId: String, axContext: AXContext)? {
-        if let target = l2TargetApp, !target.bundleId.isEmpty {
+        if let target = l2.targetApp, !target.bundleId.isEmpty {
             return (
                 target.name,
                 target.bundleId,
@@ -10705,7 +10346,7 @@ struct LauncherView: View {
             )
         }
 
-        if let ctx = searchContextApp {
+        if let ctx = searchState.contextApp {
             let bundleIdFromPath = ctx.appPath.isEmpty ? nil : Bundle(path: ctx.appPath)?.bundleIdentifier
             let bundleIdFromRunningApp = NSWorkspace.shared.runningApplications.first(where: {
                 !$0.isTerminated && $0.localizedName == ctx.name
@@ -10723,20 +10364,20 @@ struct LauncherView: View {
         let meta = smartQueryMeta
         if !meta.appPath.isEmpty, let bundleId = Bundle(path: meta.appPath)?.bundleIdentifier {
             return (
-                searchContextApp?.name ?? meta.label,
+                searchState.contextApp?.name ?? meta.label,
                 bundleId,
                 scopedWorkspaceAXContext(
-                    appName: searchContextApp?.name ?? meta.label,
+                    appName: searchState.contextApp?.name ?? meta.label,
                     bundleId: bundleId
                 )
             )
         }
 
         let fallbackBundleId =
-            frontmostAppBundleID.isEmpty ? axContext.bundleId : frontmostAppBundleID
+            frontmost.bundleID.isEmpty ? axContext.bundleId : frontmost.bundleID
         let fallbackAppName =
-            searchContextApp?.name
-            ?? (frontmostAppName.isEmpty ? axContext.appName : frontmostAppName)
+            searchState.contextApp?.name
+            ?? (frontmost.name.isEmpty ? axContext.appName : frontmost.name)
         guard !fallbackBundleId.isEmpty, !fallbackAppName.isEmpty else { return nil }
         return (
             fallbackAppName,
@@ -10912,7 +10553,7 @@ struct LauncherView: View {
             }
         }
 
-        guard frontmostAppBundleID == "com.apple.finder"
+        guard frontmost.bundleID == "com.apple.finder"
             || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
         else { return [] }
 
@@ -11790,8 +11431,8 @@ struct LauncherView: View {
                 sourceQuery: url.lastPathComponent
             )
             NSWorkspace.shared.open(url)
-            searchText = ""
-            focusedPillIndex = nil
+            searchState.query = ""
+            l2.focusedPillIndex = nil
         }
     }
 
@@ -11859,8 +11500,8 @@ struct LauncherView: View {
             badge: "Quick Look",
             execute: {
                 quickLookDataSource = QuickLookDataSource(urls: [firstURL])
-                searchText = ""
-                focusedPillIndex = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
             }
         )
         preview.sourceBundleId = "com.apple.finder"
@@ -11878,8 +11519,8 @@ struct LauncherView: View {
             badge: "Finder",
             execute: {
                 NSWorkspace.shared.activateFileViewerSelecting([firstURL])
-                searchText = ""
-                focusedPillIndex = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
             }
         )
         reveal.sourceBundleId = "com.apple.finder"
@@ -11898,8 +11539,8 @@ struct LauncherView: View {
                 badge: "ZIP",
                 execute: {
                     compressFinderSearchResults(urls)
-                    searchText = ""
-                    focusedPillIndex = nil
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
                 }
             )
             compress.sourceBundleId = "com.apple.finder"
@@ -11919,8 +11560,8 @@ struct LauncherView: View {
                 badge: "Choose",
                 execute: {
                     moveFinderSearchResultsWithPanel(urls)
-                    searchText = ""
-                    focusedPillIndex = nil
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
                 }
             )
             move.sourceBundleId = "com.apple.finder"
@@ -12066,8 +11707,8 @@ struct LauncherView: View {
                         } else {
                             NSWorkspace.shared.open(item.url)
                         }
-                        searchText = ""
-                        focusedPillIndex = nil
+                        searchState.query = ""
+                        l2.focusedPillIndex = nil
                     }
                 )
                 pill.sourceBundleId = "com.apple.finder"
@@ -12084,7 +11725,7 @@ struct LauncherView: View {
     }
 
     private func applyFinderSemanticMatches(_ matches: [FinderSemanticMatch], query: String) {
-        let latestScope = resolveDockScope(for: searchText)
+        let latestScope = resolveDockScope(for: searchState.query)
         let latestQuery = latestScope.scopedBundleId == "com.apple.finder"
             ? latestScope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             : ""
@@ -12106,7 +11747,7 @@ struct LauncherView: View {
         finderSemanticQuery = ""
         finderSemanticResults = []
         finderSemanticPills = []
-        showL2ResultsPopover = false
+        l2.showResultsPopover = false
         if shouldClearPanelResults {
             applyFinderSemanticPanelResults([])
         }
@@ -12116,8 +11757,8 @@ struct LauncherView: View {
 
     private func isFinderGoToMode(query: String) -> Bool {
         guard query.hasPrefix("+") else { return false }
-        return frontmostAppBundleID == "com.apple.finder"
-            || l2TargetApp?.bundleId == "com.apple.finder"
+        return frontmost.bundleID == "com.apple.finder"
+            || l2.targetApp?.bundleId == "com.apple.finder"
             || axContext.bundleId == "com.apple.finder"
     }
 
@@ -12295,7 +11936,7 @@ struct LauncherView: View {
     private func navigateFinderToPath(_ path: String) {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
         DispatchQueue.main.async {
-            self.searchText = ""
+            self.searchState.query = ""
             self.finderGoToPills = []
             self.cachedDockPills = self.buildDockPills(query: "")
         }
@@ -12331,7 +11972,7 @@ struct LauncherView: View {
             finderSemanticQuery = ""
             finderSemanticResults = []
             finderSemanticPills = []
-            showL2ResultsPopover = shouldKeepFinderSearchPopoverVisible(for: query)
+            l2.showResultsPopover = shouldKeepFinderSearchPopoverVisible(for: query)
             applyFinderSemanticPanelResults([])
             return
         }
@@ -12341,7 +11982,7 @@ struct LauncherView: View {
             finderSemanticQuery = ""
             finderSemanticResults = []
             finderSemanticPills = []
-            showL2ResultsPopover = shouldKeepFinderSearchPopoverVisible(for: query)
+            l2.showResultsPopover = shouldKeepFinderSearchPopoverVisible(for: query)
             applyFinderSemanticPanelResults([])
             return
         }
@@ -12481,7 +12122,7 @@ struct LauncherView: View {
                     return
                 }
                 await MainActor.run {
-                    self.l2ChatMessages.append(
+                    self.l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content:
@@ -12797,7 +12438,7 @@ struct LauncherView: View {
             return (!runningOnly || runningBundleIds.contains(target.bundleId)) ? target : nil
         }
         let installedMenuTarget =
-            (isGlobalContextActive && explicitAppTarget == nil && l2TargetApp == nil)
+            (isGlobalContextActive && explicitAppTarget == nil && l2.targetApp == nil)
             ? installedAppMenuTarget(
                 for: q,
                 runningOnly: runningOnly,
@@ -12814,7 +12455,7 @@ struct LauncherView: View {
             !isGlobalScope
             && (!isExplicitAppScope || scopedBundleId == "com.apple.finder")
             && (scopedBundleId == "com.apple.finder"
-                || frontmostAppBundleID == "com.apple.finder"
+                || frontmost.bundleID == "com.apple.finder"
                 || axContext.bundleId == "com.apple.finder")
         let finderFolderAttachedForDock =
             isFinderScopedDock
@@ -12858,7 +12499,7 @@ struct LauncherView: View {
             guard !shouldUseFinderSearchPopover(for: q) else { return [] }
             guard finderFolderAttachedForDock else { return [] }
             guard scopedBundleId == "com.apple.finder"
-                || frontmostAppBundleID == "com.apple.finder"
+                || frontmost.bundleID == "com.apple.finder"
                 || axContext.bundleId == "com.apple.finder" else { return [] }
             // "+prefix" go-to-folder mode: show path completion pills
             if isFinderGoToMode(query: q) { return finderGoToPills }
@@ -12938,7 +12579,7 @@ struct LauncherView: View {
             isGlobalScope
             ? ""
             : (
-                activeSmartQueryKey
+                searchState.activeSmartQueryKey
                 ?? settings.appKey(forBundleID: scopedBundleId, appName: scopedAppName)
                 ?? settings.autoDetectedAppKey
                 ?? ""
@@ -13009,7 +12650,7 @@ struct LauncherView: View {
             isExplicitAppScope
             ? scopedContextExtensions(
                 query: scopedSearchQuery, appName: scopedAppName, bundleId: scopedBundleId)
-            : l2ContextExtensions
+            : l2.contextExtensions
         let quickActions =
             q.isEmpty
             ? allQuickActions
@@ -13056,7 +12697,7 @@ struct LauncherView: View {
 
         let favs = settings.favouriteMenuPills(for: activeBundleId)
         let isScopedToOtherApp =
-            isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmostAppBundleID
+            isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmost.bundleID
         let useSeededMenuPills =
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
             && !isScopedToOtherApp
@@ -13297,7 +12938,7 @@ struct LauncherView: View {
                     preferCached
                 )
             }
-            if let pinnedTarget = l2TargetApp,
+            if let pinnedTarget = l2.targetApp,
                 let targetApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.bundleIdentifier == pinnedTarget.bundleId
                 })
@@ -13309,7 +12950,7 @@ struct LauncherView: View {
                     isExplicitAppScope && filterQ.isEmpty
                 )
             }
-            if let pinnedTarget = l2TargetApp {
+            if let pinnedTarget = l2.targetApp {
                 let matches = scopedClosedMenuMatches(
                     pinnedTarget.bundleId,
                     pinnedTarget.name,
@@ -13518,8 +13159,8 @@ struct LauncherView: View {
                 id: "tool-\(tool.toolName)", name: tool.displayName,
                 icon: tool.icon, accentColorName: "indigo", badge: nil,
                 execute: {
-                    l2ChatMessages.append(AIChatMessage(role: .user, content: tool.displayName))
-                    l2IsLoading = true
+                    l2.chatMessages.append(AIChatMessage(role: .user, content: tool.displayName))
+                    l2.isLoading = true
                     Task {
                         let (ok, out) = await L2ExtensionManager.shared.execute(
                             toolName: tool.toolName, arguments: [:])
@@ -13528,8 +13169,8 @@ struct LauncherView: View {
                                 ok
                                 ? (out.isEmpty ? "✅ \(tool.displayName) done." : out)
                                 : "❌ \(tool.displayName) failed: \(out)"
-                            l2ChatMessages.append(AIChatMessage(role: .assistant, content: msg))
-                            l2IsLoading = false
+                            l2.chatMessages.append(AIChatMessage(role: .assistant, content: msg))
+                            l2.isLoading = false
                         }
                     }
                 })
@@ -13580,7 +13221,7 @@ struct LauncherView: View {
                         )
                         await MainActor.run {
                             if action.type == .aiPrompt, result.0, !result.1.isEmpty {
-                                searchText = result.1
+                                searchState.query = result.1
                                 isSearchFieldFocused = true
                             }
                         }
@@ -13765,8 +13406,8 @@ struct LauncherView: View {
     /// When System Settings is frontmost, emit pills for every pane so the user can navigate
     /// directly via query (e.g. "wallpaper", "wifi", "bluetooth") without relying on menu items.
     private func buildSystemSettingsPills(query q: String) -> [DockPill] {
-        guard frontmostAppBundleID == "com.apple.systempreferences"
-               || l2TargetApp?.bundleId == "com.apple.systempreferences"
+        guard frontmost.bundleID == "com.apple.systempreferences"
+               || l2.targetApp?.bundleId == "com.apple.systempreferences"
         else { return [] }
 
         typealias Pane = (name: String, terms: [String], url: String, icon: String)
@@ -13839,7 +13480,7 @@ struct LauncherView: View {
     /// Menu items (Show Next Tab, Pin Tab, etc.) are skipped here — the AX system already shows them.
     private func buildSafariCommandPills(query q: String) -> [DockPill] {
         guard !q.isEmpty else { return [] }
-        let isSafariActive = frontmostAppBundleID == "com.apple.Safari"
+        let isSafariActive = frontmost.bundleID == "com.apple.Safari"
             || SafariBrowserBridge.shared.safariContextIfFresh() != nil
         guard isSafariActive else { return [] }
         guard let cmd = SafariCommandBridge.shared.parseIntent(q) else { return [] }
@@ -13858,11 +13499,11 @@ struct LauncherView: View {
                 Task {
                     let result = await SafariCommandBridge.shared.execute(cmd)
                     await MainActor.run {
-                        if self.l2ChatMessages.last?.content != capturedQ {
-                            self.l2ChatMessages.append(AIChatMessage(role: .user, content: capturedQ))
+                        if self.l2.chatMessages.last?.content != capturedQ {
+                            self.l2.chatMessages.append(AIChatMessage(role: .user, content: capturedQ))
                         }
-                        self.l2ChatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
-                        self.searchText = ""
+                        self.l2.chatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
+                        self.searchState.query = ""
                         if !self.isSearchBarExpanded {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 self.isSearchBarExpanded = true
@@ -13919,20 +13560,20 @@ struct LauncherView: View {
         }
     }
 
-    /// Execute the currently focused pill. Only call when focusedPillIndex is non-nil.
+    /// Execute the currently focused pill. Only call when l2.focusedPillIndex is non-nil.
     /// Clears the input field afterwards so the dock is ready for the next command.
     func executeFirstOrFocusedPill() {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pills = buildDockPills(query: q)
-        guard let idx = focusedPillIndex, idx < pills.count else { return }
+        guard let idx = l2.focusedPillIndex, idx < pills.count else { return }
         let pill =
             pills[idx].isSeparator
             ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
             : pills[idx]
         executeDockPill(pill)
         // Clear input and focus so dock returns to default state
-        searchText = ""
-        focusedPillIndex = nil
+        searchState.query = ""
+        l2.focusedPillIndex = nil
     }
 
     private func executeDockPill(_ pill: DockPill) {
@@ -13943,7 +13584,7 @@ struct LauncherView: View {
     private func directAppActionQuery(for query: String) -> String? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
-        guard isGlobalContextActive || l2TargetApp != nil else { return nil }
+        guard isGlobalContextActive || l2.targetApp != nil else { return nil }
         if let target = L2AppActionRouter.shared.explicitAppTarget(for: q) {
             return target.actionQuery
         }
@@ -13954,12 +13595,12 @@ struct LauncherView: View {
         ) {
             return target.actionQuery
         }
-        if let partial = l2AppCompletion ?? bestL2PartialAppCompletion(for: q),
+        if let partial = l2.appCompletion ?? bestL2PartialAppCompletion(for: q),
             !partial.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return partial.actionQuery
         }
-        if l2TargetApp != nil {
+        if l2.targetApp != nil {
             return q
         }
         return nil
@@ -13974,8 +13615,8 @@ struct LauncherView: View {
             return false
         }
 
-        pillNavViaKeyboard = true
-        focusedPillIndex = firstVisibleIndex
+        l2.pillNavViaKeyboard = true
+        l2.focusedPillIndex = firstVisibleIndex
         return true
     }
 
@@ -13992,11 +13633,11 @@ struct LauncherView: View {
 
     @discardableResult
     private func executeFocusedOrDirectAppPillIfNeeded() -> Bool {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pills = buildDockPills(query: q)
         guard !pills.isEmpty else { return false }
 
-        if let idx = focusedPillIndex, idx < pills.count {
+        if let idx = l2.focusedPillIndex, idx < pills.count {
             executeFirstOrFocusedPill()
             return true
         }
@@ -14009,7 +13650,7 @@ struct LauncherView: View {
 
         let defaultPill = pills.first(where: { !$0.isSeparator })
         let isPureScopedSelection: Bool = {
-            guard let target = l2TargetApp else { return false }
+            guard let target = l2.targetApp else { return false }
             let aliases = dockPillAppAliases(appName: target.name, bundleId: target.bundleId)
             return aliases.contains(q)
         }()
@@ -14029,14 +13670,14 @@ struct LauncherView: View {
         }
 
         executeDockPill(pill)
-        searchText = ""
-        focusedPillIndex = nil
+        searchState.query = ""
+        l2.focusedPillIndex = nil
         return true
     }
 
     @discardableResult
     private func executeFirstAttachedFinderFolderResultIfNeeded() -> Bool {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !finderFolderQueryModeActive else { return false }
         guard !q.isEmpty, isFinderCurrentWindowSearchAttached() else { return false }
         let pills = buildDockPills(query: q)
@@ -14047,12 +13688,12 @@ struct LauncherView: View {
         }) else { return false }
 
         pill.execute()
-        focusedPillIndex = nil
+        l2.focusedPillIndex = nil
         return true
     }
 
     private func firstMatchingFinderFolderPill(for rawQuery: String? = nil) -> DockPill? {
-        let q = (rawQuery ?? searchText)
+        let q = (rawQuery ?? searchState.query)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard !q.isEmpty else { return nil }
@@ -14076,8 +13717,8 @@ struct LauncherView: View {
     private func executeFirstMatchingFinderFolderPillIfNeeded() -> Bool {
         guard let pill = firstMatchingFinderFolderPill() else { return false }
         executeDockPill(pill)
-        searchText = ""
-        focusedPillIndex = nil
+        searchState.query = ""
+        l2.focusedPillIndex = nil
         return true
     }
 
@@ -14085,7 +13726,7 @@ struct LauncherView: View {
     private var l2UnifiedDockRow: some View {
         let q =
             isL2ContextActive
-            ? searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() : ""
+            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() : ""
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
         let pills = currentCachedDockPills(for: pillQuery)
@@ -14148,9 +13789,9 @@ struct LauncherView: View {
             .spring(response: 0.22, dampingFraction: 0.85), value: explicitAppTarget?.bundleId
         )
         .onChange(of: pillQuery) { newQuery in
-            focusedPillIndex = nil
+            l2.focusedPillIndex = nil
             focusedAppPillIndex = nil
-            if isGlobalContextActive, !newQuery.isEmpty, allApplications.isEmpty, !isLoadingApps {
+            if isGlobalContextActive, !newQuery.isEmpty, allApplications.isEmpty, !searchState.isLoadingApps {
                 loadApplicationsInBackground()
             }
             if newQuery != lastPillQuery {
@@ -14162,7 +13803,7 @@ struct LauncherView: View {
             }
         }
         .onAppear {
-            if isGlobalContextActive, !pillQuery.isEmpty, allApplications.isEmpty, !isLoadingApps {
+            if isGlobalContextActive, !pillQuery.isEmpty, allApplications.isEmpty, !searchState.isLoadingApps {
                 loadApplicationsInBackground()
             }
             scheduleDockPillRebuild(query: pillQuery, delayNanoseconds: 0)
@@ -14198,7 +13839,7 @@ struct LauncherView: View {
                                     showContextInDock = true
                                     showMediaLayer = true
                                 }
-                                if searchText.isEmpty && !isSearchFieldFocused {
+                                if searchState.query.isEmpty && !isSearchFieldFocused {
                                     startCollapseTimer()
                                 }
                             }
@@ -14215,8 +13856,8 @@ struct LauncherView: View {
         Button(action: {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.80)) {
                 focusedAppPillIndex = nil
-                focusedPillIndex = nil
-                pillNavViaKeyboard = false
+                l2.focusedPillIndex = nil
+                l2.pillNavViaKeyboard = false
             }
             DispatchQueue.main.async { isSearchFieldFocused = true }
         }) {
@@ -14231,7 +13872,7 @@ struct LauncherView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(.secondary.opacity(0.75))
                     }
-                } else if let appIcon = l2TargetApp?.icon ?? frontmostAppIcon {
+                } else if let appIcon = l2.targetApp?.icon ?? frontmost.icon {
                     // Show frontmost app icon as the anchor
                     Image(nsImage: appIcon)
                         .resizable()
@@ -14321,9 +13962,9 @@ struct LauncherView: View {
     }
 
     private func finderInputSymbolForSearchText() -> String? {
-        guard showContextInDock, !isGlobalContextActive, !isAIMode else { return nil }
+        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive else { return nil }
 
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return nil }
         guard !query.hasPrefix("+") else { return nil }
 
@@ -14336,9 +13977,9 @@ struct LauncherView: View {
 
     private func menuInputIconForSearchText(hasAppMatch: Bool) -> (image: NSImage?, symbol: String)? {
         guard !hasAppMatch else { return nil }
-        guard showContextInDock, !isGlobalContextActive, !isAIMode else { return nil }
+        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive else { return nil }
 
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard query.count >= 2 else { return nil }
 
         guard let pill = cachedDockPills.first(where: {
@@ -14361,28 +14002,28 @@ struct LauncherView: View {
         AXActionResolver.shared.execute(menuPath: path, in: app)
     }
 
-    // Top-ranked pill whose name starts with the current searchText — used for inline ghost completion
+    // Top-ranked pill whose name starts with the current searchState.query — used for inline ghost completion
     private var ghostPillCompletion: DockPill? {
-        guard !isAIMode else { return nil }
+        guard !aiMode.isActive else { return nil }
         guard lockedSubmenuParent == nil else { return nil }
-        guard !searchText.isEmpty else { return nil }
+        guard !searchState.query.isEmpty else { return nil }
         // Don't overlap with the L2 app name ghost text
-        guard !(isL2ContextActive && l2TargetApp == nil && l2AppCompletion != nil) else { return nil }
-        let lower = searchText.lowercased()
+        guard !(isL2ContextActive && l2.targetApp == nil && l2.appCompletion != nil) else { return nil }
+        let lower = searchState.query.lowercased()
         // Primary: match from the current context's pill list
         if let match = cachedDockPills.first(where: {
-            !$0.isSeparator && $0.name.lowercased().hasPrefix(lower) && $0.name.count > searchText.count
+            !$0.isSeparator && $0.name.lowercased().hasPrefix(lower) && $0.name.count > searchState.query.count
         }) { return match }
 
         // Frontmost-app learned suggestion — ranked by usage frequency for the current app
-        if !frontmostAppBundleID.isEmpty {
+        if !frontmost.bundleID.isEmpty {
             let frontItems = AppMenuCapabilityCache.shared.menuItems(
-                bundleIdentifier: frontmostAppBundleID, appName: "", query: lower, maxResults: 1
+                bundleIdentifier: frontmost.bundleID, appName: "", query: lower, maxResults: 1
             )
             if let item = frontItems.first,
                item.title.lowercased().hasPrefix(lower),
-               item.title.count > searchText.count {
-                let capturedBID  = frontmostAppBundleID
+               item.title.count > searchState.query.count {
+                let capturedBID  = frontmost.bundleID
                 let capturedPath = item.path
                 let capturedSC   = item.shortcutChar
                 let capturedMod  = item.shortcutModifiers
@@ -14407,14 +14048,14 @@ struct LauncherView: View {
         guard settings.enableLearnedGhostSuggestions else { return nil }
         let runningBundleIDs = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
         for bundleID in AppUsageLearner.shared.rankedAppBundleIDs(limit: 20) {
-            guard bundleID != frontmostAppBundleID else { continue }
+            guard bundleID != frontmost.bundleID else { continue }
             guard runningBundleIDs.contains(bundleID) else { continue }
             let items = AppMenuCapabilityCache.shared.menuItems(
                 bundleIdentifier: bundleID, appName: "", query: lower, maxResults: 1
             )
             guard let item = items.first,
                   item.title.lowercased().hasPrefix(lower),
-                  item.title.count > searchText.count else { continue }
+                  item.title.count > searchState.query.count else { continue }
             let capturedBundleID  = bundleID
             let capturedPath      = item.path
             let capturedSC        = item.shortcutChar
@@ -14438,7 +14079,7 @@ struct LauncherView: View {
         return nil
     }
 
-    /// When searchText is an exact match for a non-leaf menu item (submenu parent), optionally
+    /// When searchState.query is an exact match for a non-leaf menu item (submenu parent), optionally
     /// followed by a space + child prefix letter(s), returns the parent item, the typed child
     /// prefix, and the filtered leaf children. Drives submenu ghost text + instant child pills.
     ///
@@ -14447,7 +14088,7 @@ struct LauncherView: View {
     ///   "sort by d" → parent=Sort By, prefix="d",  children=[Date]
     ///   "file"      → parent=File,    prefix="",  children=[New Message,…]
     private var submenuGhostContext: (parent: AXMenuItem, childPrefix: String, children: [AXMenuItem])? {
-        // Locked mode: parent is fixed, searchText is the child filter prefix
+        // Locked mode: parent is fixed, searchState.query is the child filter prefix
         if let locked = lockedSubmenuParent {
             var leaves: [AXMenuItem] = []
             for child in locked.children {
@@ -14456,13 +14097,13 @@ struct LauncherView: View {
             }
             leaves = leaves.filter { $0.isEnabled }
             guard !leaves.isEmpty else { return nil }
-            let prefix = normalizedDockPillText(searchText.trimmingCharacters(in: .whitespaces))
+            let prefix = normalizedDockPillText(searchState.query.trimmingCharacters(in: .whitespaces))
             let filtered = prefix.isEmpty ? leaves : leaves.filter { normalizedDockPillText($0.title).hasPrefix(prefix) }
             return (locked, prefix, prefix.isEmpty ? leaves : filtered)
         }
 
         guard !liveMenuItems.isEmpty else { return nil }
-        let raw = searchText.trimmingCharacters(in: .whitespaces)
+        let raw = searchState.query.trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty else { return nil }
         let tokens = raw.components(separatedBy: " ").filter { !$0.isEmpty }
         guard !tokens.isEmpty else { return nil }
@@ -14702,8 +14343,8 @@ struct LauncherView: View {
     // MARK: - Clipboard history sorted by frontmost app relevance
     private func relevantClipboardHistory() -> [ClipboardEntry] {
         let isBrowser = ["com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
-                         "com.microsoft.edgemac", "com.brave.Browser"].contains(frontmostAppBundleID)
-        let isFinder = frontmostAppBundleID == "com.apple.finder"
+                         "com.microsoft.edgemac", "com.brave.Browser"].contains(frontmost.bundleID)
+        let isFinder = frontmost.bundleID == "com.apple.finder"
 
         if isBrowser {
             return clipboardHistory.sorted { a, b in
@@ -15214,7 +14855,7 @@ struct LauncherView: View {
     }
 
     private func filteredClipboardEntriesForScope() -> [ClipboardEntry] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let entries = relevantClipboardHistory()
         guard !q.isEmpty, q != "clip", q != "clipboard" else { return entries }
         return entries.filter {
@@ -15234,7 +14875,7 @@ struct LauncherView: View {
         let current = focusedClipboardEntryIndex ?? (direction < 0 ? entries.count : -1)
         let next = min(max(current + direction, 0), entries.count - 1)
         focusedClipboardEntryIndex = next
-        selectedResultIndex = nil
+        searchState.selectedIndex = nil
     }
 
     private func quickLookFocusedClipboardEntry() {
@@ -15433,7 +15074,7 @@ struct LauncherView: View {
         }()
 
         Group {
-        if let focIdx = focusedPillIndex, !pills.isEmpty, focIdx < pills.count {
+        if let focIdx = l2.focusedPillIndex, !pills.isEmpty, focIdx < pills.count {
             // ── Cascade: at 820pt show prev2+prev+focused+next; at 640pt show prev+focused+next ──
             let leftSlots = visibleDockWidth >= 750 ? 2 : 1
             let prev2: Int? = leftSlots >= 2 ? {
@@ -15493,8 +15134,8 @@ struct LauncherView: View {
                         }
                     }
                 }
-                .onChange(of: focusedPillIndex) { newIndex in
-                    guard pillNavViaKeyboard, let idx = newIndex else { return }
+                .onChange(of: l2.focusedPillIndex) { newIndex in
+                    guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
                         proxy.scrollTo("pill-\(idx)", anchor: .center)
                     }
@@ -15541,8 +15182,8 @@ struct LauncherView: View {
             }
             .frame(maxHeight: 500)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .onChange(of: focusedPillIndex) { newIndex in
-                guard pillNavViaKeyboard, let idx = newIndex else { return }
+            .onChange(of: l2.focusedPillIndex) { newIndex in
+                guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
                     proxy.scrollTo("pill-list-\(idx)", anchor: .center)
                 }
@@ -15576,7 +15217,7 @@ struct LauncherView: View {
 
                     ForEach(Array(children.enumerated()), id: \.element.id) { idx, child in
                         let isHov = listViewHoveredIndex == (10000 + idx)
-                        let isKeyFocused = focusedPillIndex == idx
+                        let isKeyFocused = l2.focusedPillIndex == idx
                         let isActive = isHov || isKeyFocused
 
                         Button {
@@ -15585,7 +15226,7 @@ struct LauncherView: View {
                             let path = child.path
                             let sc   = child.shortcutChar
                             let mod  = child.shortcutModifiers
-                            searchText = ""
+                            searchState.query = ""
                             lockedSubmenuParent = nil
                             executeDockMenuAction(sourcePID: pid, path: path, shortcutChar: sc, shortcutModifiers: mod)
                         } label: {
@@ -15647,7 +15288,7 @@ struct LauncherView: View {
                     .strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
             )
             .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 8)
-            .onChange(of: focusedPillIndex) { newIndex in
+            .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard let idx = newIndex else { return }
                 withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
                     proxy.scrollTo("submenu-drop-\(idx)", anchor: .center)
@@ -15669,15 +15310,15 @@ struct LauncherView: View {
     @ViewBuilder
     private func pillListRow(pill: DockPill, index: Int) -> some View {
         let accent = accentColor(for: pill.accentColorName)
-        let isKeyboardFocused = focusedPillIndex == index
+        let isKeyboardFocused = l2.focusedPillIndex == index
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let subtitle = (pill.menuContext?.isEmpty == false) ? pill.menuContext! : (pill.badge ?? "Run")
 
         Button {
             executeDockPill(pill)
-            searchText = ""
-            focusedPillIndex = nil
+            searchState.query = ""
+            l2.focusedPillIndex = nil
             listViewHoveredIndex = nil
         } label: {
             HStack(spacing: 11) {
@@ -15760,16 +15401,16 @@ struct LauncherView: View {
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 listViewHoveredIndex = hovering ? index : nil
             }
-            if hovering { pillNavViaKeyboard = false }
+            if hovering { l2.pillNavViaKeyboard = false }
         }
     }
 
     @ViewBuilder
     private var pinnedAppsListView: some View {
-        let searchQuery = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
         let inGlobalAutoFocus = isGlobalContextActive && settings.showRunningAppsInBar
         let basePinned = inGlobalAutoFocus
-            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmostAppBundleID }
+            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmost.bundleID }
             : settings.pinnedApps
         let visiblePinned = searchQuery.isEmpty
             ? basePinned
@@ -15781,7 +15422,7 @@ struct LauncherView: View {
             var seen = Set<String>()
             return source.filter { app in
                 guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return false }
-                if inGlobalAutoFocus, app.bundleIdentifier == frontmostAppBundleID { return false }
+                if inGlobalAutoFocus, app.bundleIdentifier == frontmost.bundleID { return false }
                 if let bid = app.bundleIdentifier, pinnedBundleIds.contains(bid) { return false }
                 if let path = app.bundleURL?.path,
                    Set(settings.pinnedApps.map { $0.path }).contains(path) { return false }
@@ -15941,12 +15582,12 @@ struct LauncherView: View {
     }
 
     private var isExplicitAppScope: Bool {
-        resolveDockScope(for: searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()).isExplicitAppScope
+        resolveDockScope(for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()).isExplicitAppScope
     }
 
     private var shouldShowL2UnifiedDockRow: Bool {
-        guard showContextInDock, !isAIMode else { return false }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard showContextInDock, !aiMode.isActive else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let visiblePills =
             lastPillQuery == q
             ? cachedDockPills
@@ -15981,15 +15622,15 @@ struct LauncherView: View {
             .padding(.horizontal, 2)
         } else {
             let accent = accentColor(for: pill.accentColorName)
-            let focused = focusedPillIndex == index
+            let focused = l2.focusedPillIndex == index
             let iconSize: CGFloat = isExpanded ? 24 : (isCompact ? 10 : 14)
             let textSize: CGFloat = isExpanded ? 14 : (isCompact ? 10 : 12)
             let hPad: CGFloat = isExpanded ? 12 : (isCompact ? 8 : 12)
             let vPad: CGFloat = isExpanded ? 0 : (isCompact ? 4 : 7)
             Button {
                 executeDockPill(pill)
-                searchText = ""
-                focusedPillIndex = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
             } label: {
                 HStack(spacing: isExpanded ? 0 : (isCompact ? 4 : 6)) {
                     if let img = pill.menuItemImage {
@@ -16032,7 +15673,7 @@ struct LauncherView: View {
                             .foregroundStyle(Color.primary.opacity(focused ? 1.0 : 0.88))
                             .lineLimit(1)
                         // Badge (shortcut): only in normal scroll row
-                        if let badge = pill.badge, focusedPillIndex == nil {
+                        if let badge = pill.badge, l2.focusedPillIndex == nil {
                             Text(badge)
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundStyle(.secondary)
@@ -16089,8 +15730,8 @@ struct LauncherView: View {
             .buttonStyle(.plain)
             .help(pill.name)
             .onHover { hovering in
-                if !pillNavViaKeyboard {
-                    focusedPillIndex = hovering ? index : nil
+                if !l2.pillNavViaKeyboard {
+                    l2.focusedPillIndex = hovering ? index : nil
                 }
                 hoveredDockPillIndex = hovering ? index : nil
             }
@@ -16273,8 +15914,8 @@ struct LauncherView: View {
                 Button {
                     guard !isExplicitAppScopeLocked else { return }
                     let prompt = "What is this page about? URL: \(url)"
-                    searchText = prompt
-                    isAIMode = true
+                    searchState.query = prompt
+                    aiMode.isActive = true
                     showContextInDock = false
                     submitAIQuery()
                 } label: {
@@ -16313,8 +15954,8 @@ struct LauncherView: View {
                 Button {
                     guard !isExplicitAppScopeLocked else { return }
                     let text = sel.count > 500 ? String(sel.prefix(500)) : sel
-                    searchText = "Explain: \(text)"
-                    isAIMode = true
+                    searchState.query = "Explain: \(text)"
+                    aiMode.isActive = true
                     showContextInDock = false
                     submitAIQuery()
                 } label: {
@@ -16337,11 +15978,11 @@ struct LauncherView: View {
     // MARK: - App Shortcuts Dock Row — shown when a smart query (calendar/notes…) or folder is active
     @ViewBuilder
     private var appShortcutsInDock: some View {
-        let key = activeSmartQueryKey ?? folderSmartKey
-        // contextPanelActions() already includes user shortcuts when searchContextApp != nil,
-        // so only pull shortcuts directly for built-in key panels (no searchContextApp)
+        let key = searchState.activeSmartQueryKey ?? folderSmartKey
+        // contextPanelActions() already includes user shortcuts when searchState.contextApp != nil,
+        // so only pull shortcuts directly for built-in key panels (no searchState.contextApp)
         let contextActions = contextPanelActions()
-        let hasSearchCtx = searchContextApp != nil
+        let hasSearchCtx = searchState.contextApp != nil
         let extraShortcuts: [AppShortcut] =
             hasSearchCtx
             ? []
@@ -16357,8 +15998,8 @@ struct LauncherView: View {
         // Context: is there a selected file or text right now?
         let hasFileSelection: Bool =
             folderPreviewSelectedFile != nil
-            || (selectedResultIndex.map {
-                $0 < searchResults.count && searchResults[$0].filePath != nil
+            || (searchState.selectedIndex.map {
+                $0 < searchState.results.count && searchState.results[$0].filePath != nil
             } ?? false)
             || !axContext.selectedFilePaths.isEmpty
             || {
@@ -16453,8 +16094,8 @@ struct LauncherView: View {
         var selectedFilePaths: [String] = []
         if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty {
             selectedFilePaths = [previewFile]
-        } else if let idx = selectedResultIndex, idx < searchResults.count,
-            let path = searchResults[idx].filePath, !path.isEmpty
+        } else if let idx = searchState.selectedIndex, idx < searchState.results.count,
+            let path = searchState.results[idx].filePath, !path.isEmpty
         {
             selectedFilePaths = [path]
         }
@@ -16567,8 +16208,8 @@ struct LauncherView: View {
         case .scriptFile:
             // Delegate to AXTriggerRuleEngine which handles all script file execution + notifications
             let envVars: [String: String] = [
-                "CD_APP_NAME": frontmostAppName,
-                "CD_BUNDLE_ID": frontmostAppBundleID,
+                "CD_APP_NAME": frontmost.name,
+                "CD_BUNDLE_ID": frontmost.bundleID,
                 "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
                 "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
                 "CD_URL": axContext.currentURL ?? "",
@@ -16579,8 +16220,8 @@ struct LauncherView: View {
                 type: .scriptFile, value: sc.actionValue, envVars: envVars)
         case .menuItem:
             let envVars: [String: String] = [
-                "CD_APP_NAME": frontmostAppName,
-                "CD_BUNDLE_ID": frontmostAppBundleID,
+                "CD_APP_NAME": frontmost.name,
+                "CD_BUNDLE_ID": frontmost.bundleID,
                 "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
                 "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
                 "CD_URL": axContext.currentURL ?? "",
@@ -16609,8 +16250,8 @@ struct LauncherView: View {
         let queryText = launchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedFile: String = {
             if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty { return previewFile }
-            if let idx = selectedResultIndex, idx < searchResults.count,
-               let path = searchResults[idx].filePath, !path.isEmpty {
+            if let idx = searchState.selectedIndex, idx < searchState.results.count,
+               let path = searchState.results[idx].filePath, !path.isEmpty {
                 return path
             }
             if let finderSelected = ContextDetector.shared.getFinderSelectedFiles().first?.path, !finderSelected.isEmpty {
@@ -16643,17 +16284,17 @@ struct LauncherView: View {
     private var selectedResultHasFileTypeExtensions: Bool {
         // True if we have context-based extensions for the selected file/result
         // (context extensions already handle file-type matching via their trigger system)
-        guard let idx = selectedResultIndex, idx < searchResults.count else {
-            return !l2ContextExtensions.isEmpty
-                && !l2ContextExtensions.filter {
+        guard let idx = searchState.selectedIndex, idx < searchState.results.count else {
+            return !l2.contextExtensions.isEmpty
+                && !l2.contextExtensions.filter {
                     switch $0.matchReason {
                     case .fileTypeMatch: return true
                     default: return false
                     }
                 }.isEmpty
         }
-        let result = searchResults[idx]
-        return (result.type == .file || result.type == .document) && !l2ContextExtensions.isEmpty
+        let result = searchState.results[idx]
+        return (result.type == .file || result.type == .document) && !l2.contextExtensions.isEmpty
     }
 
     /// Shortcuts relevant to the currently highlighted search result's file type
@@ -16663,10 +16304,10 @@ struct LauncherView: View {
             let ext = URL(fileURLWithPath: selectedFile).pathExtension.lowercased()
             return fileTypeShortcuts(for: ext)
         }
-        guard let idx = selectedResultIndex,
-            idx < searchResults.count
+        guard let idx = searchState.selectedIndex,
+            idx < searchState.results.count
         else { return [] }
-        let result = searchResults[idx]
+        let result = searchState.results[idx]
         guard result.type == .file || result.type == .document else { return [] }
         let ext =
             (result.filePath.map { URL(fileURLWithPath: $0).pathExtension.lowercased() }) ?? ""
@@ -16702,7 +16343,7 @@ struct LauncherView: View {
     /// Uses the scoring system from LayeredExtensionManager — no hardcoded AppShortcut file-type mapping.
     @ViewBuilder
     private var fileTypeExtensionsInDock: some View {
-        if l2ContextExtensions.isEmpty {
+        if l2.contextExtensions.isEmpty {
             pinnedAppsRow
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -16727,7 +16368,7 @@ struct LauncherView: View {
                     }
 
                     // Context-based action pills — auto-scored by file type, app, selection
-                    ForEach(l2ContextExtensions, id: \.ilExtension.id) { result in
+                    ForEach(l2.contextExtensions, id: \.ilExtension.id) { result in
                         L2ExtensionChipButton(
                             extensionResult: result,
                             currentContext: currentContext,
@@ -16742,21 +16383,21 @@ struct LauncherView: View {
 
     // Shared condition: whether any results panel should be visible.
     private var hasResultsToShow: Bool {
-        !searchResults.isEmpty
-        || (!searchText.isEmpty && !isL2ContextActive)
-        || (isAIMode && (!aiChatMessages.isEmpty || isAILoading || aiChatStreamingMessageId != nil))
+        !searchState.results.isEmpty
+        || (!searchState.query.isEmpty && !isL2ContextActive)
+        || (aiMode.isActive && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
         || showFolderPreview
-        || (showContextInDock && (!l2ChatMessages.isEmpty || l2IsLoading))
-        || searchContextApp != nil
-        || activeSmartQueryKey != nil
-        || shouldShowFinderSearchResultsPanel(for: searchText)
+        || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
+        || searchState.contextApp != nil
+        || searchState.activeSmartQueryKey != nil
+        || shouldShowFinderSearchResultsPanel(for: searchState.query)
     }
 
     // Results card: its own glass container, visually detached from the dock bar.
     @ViewBuilder
     private var resultsCard: some View {
         resultsContentView
-            .frame(minHeight: 0, maxHeight: isAIMode ? 500 : (showFolderPreview ? 600 : 400))
+            .frame(minHeight: 0, maxHeight: aiMode.isActive ? 500 : (showFolderPreview ? 600 : 400))
             .frame(width: resultsPanelWidth, alignment: .leading)
             .background(alignment: .leading) {
                 GlassBackground(cornerRadius: 20, isDark: isEffectiveDark)
@@ -16883,7 +16524,7 @@ struct LauncherView: View {
     }
 
     private var panelGapBelowSearchBar: CGFloat {
-        activeSmartQueryKey == "clipboard" ? 2 : 6
+        searchState.activeSmartQueryKey == "clipboard" ? 2 : 6
     }
 
     private var searchBarSection: some View {
@@ -16950,8 +16591,8 @@ struct LauncherView: View {
                 // Left slot: full search input OR icon-only anchor during app/action pill keyboard nav
                 // In list view mode the pill list is a separate panel below the search bar,
                 // so nav focus should never collapse the search bar to an icon.
-                let actionPillNavActive = focusedPillIndex != nil && showContextInDock && !isGlobalContextActive && !isAIMode && !usesVerticalListDockLayout
-                let globalAppNavActive  = focusedAppPillIndex != nil && isGlobalContextActive && !isAIMode && !usesVerticalListDockLayout
+                let actionPillNavActive = l2.focusedPillIndex != nil && showContextInDock && !isGlobalContextActive && !aiMode.isActive && !usesVerticalListDockLayout
+                let globalAppNavActive  = focusedAppPillIndex != nil && isGlobalContextActive && !aiMode.isActive && !usesVerticalListDockLayout
                 let pillNavActive = actionPillNavActive || globalAppNavActive
                 if pillNavActive {
                     searchAsPillView
@@ -16959,7 +16600,7 @@ struct LauncherView: View {
                 if !pillNavActive && !showMediaLayer {
                 HStack(spacing: 10) {
                     // Search icon
-                    if isAIMode {
+                    if aiMode.isActive {
                         Menu {
                             ForEach(AIProvider.allCases) { provider in
                                 Button(action: {
@@ -16994,7 +16635,7 @@ struct LauncherView: View {
                                 expandSearchBar()
                             } else {
                                 // Start collapse timer when stopping hover (if no input and not focused)
-                                if searchText.isEmpty && !isSearchFieldFocused {
+                                if searchState.query.isEmpty && !isSearchFieldFocused {
                                     startCollapseTimer()
                                 }
                             }
@@ -17030,14 +16671,14 @@ struct LauncherView: View {
                                         .frame(width: 24, height: 24)
                                 }
                             } else if showContextInDock && settings.enableFrontmostDetection {
-                                // l2TargetApp overrides frontmost icon after Tab completion
-                                let typedAppIcon = typedL2AppIcon(for: searchText)
+                                // l2.targetApp overrides frontmost icon after Tab completion
+                                let typedAppIcon = typedL2AppIcon(for: searchState.query)
                                 // In Finder desktop-only mode (no window open) treat icon as nil → globe
-                                let displayIcon = l2TargetApp?.icon ?? typedAppIcon?.icon ?? frontmostAppIcon
+                                let displayIcon = l2.targetApp?.icon ?? typedAppIcon?.icon ?? frontmost.icon
                                 let menuIcon = menuInputIconForSearchText(
-                                    hasAppMatch: l2TargetApp != nil || typedAppIcon != nil
+                                    hasAppMatch: l2.targetApp != nil || typedAppIcon != nil
                                 )
-                                if isGlobalContextActive && l2TargetApp == nil && typedAppIcon == nil {
+                                if isGlobalContextActive && l2.targetApp == nil && typedAppIcon == nil {
                                     if let selIcon = activeSelectionIcon {
                                         // Active selection: icon mirrors the content type (file, text, link, clipboard)
                                         Image(systemName: selIcon)
@@ -17091,8 +16732,8 @@ struct LauncherView: View {
                                         .opacity(isHoveringSearchIcon ? 1.0 : 0.9)
                                         .transition(.scale(scale: 0.7).combined(with: .opacity))
                                         .id(
-                                            l2TargetApp?.bundleId ?? typedAppIcon?.bundleId
-                                                ?? frontmostAppBundleID
+                                            l2.targetApp?.bundleId ?? typedAppIcon?.bundleId
+                                                ?? frontmost.bundleID
                                         )
                                 } else {
                                     Image(systemName: "magnifyingglass")
@@ -17124,12 +16765,12 @@ struct LauncherView: View {
                                 : "Switch to Global Context"
                         )
                         // Hide standalone icon when scope badge is pinned — icon lives inside the badge
-                        .opacity(l2TargetApp != nil && showContextInDock ? 0 : 1)
-                        .frame(width: l2TargetApp != nil && showContextInDock ? 0 : nil)
+                        .opacity(l2.targetApp != nil && showContextInDock ? 0 : 1)
+                        .frame(width: l2.targetApp != nil && showContextInDock ? 0 : nil)
                     }
 
                     // Spotlight-style app context chip — shown after Tab/→ on app result
-                    if let ctx = searchContextApp, !showContextInDock {
+                    if let ctx = searchState.contextApp, !showContextInDock {
                         HStack(spacing: 5) {
                             if let icon = ctx.icon {
                                 Image(nsImage: icon)
@@ -17162,7 +16803,7 @@ struct LauncherView: View {
                     }
 
                     // Pinned L2 scope badge — icon + divider only (compact).
-                    if let target = l2TargetApp, showContextInDock {
+                    if let target = l2.targetApp, showContextInDock {
                         HStack(spacing: 6) {
                             if target.bundleId == "scope://clipboard" {
                                 Image(systemName: "doc.on.clipboard")
@@ -17225,8 +16866,8 @@ struct LauncherView: View {
                     // Vertical separator between icon and text — mirrors expanded appPillButton
                     // Separator and text field are hidden when a context pill is keyboard-focused
                     // (the input shrinks to icon-only to give pills more room)
-                    if showContextInDock && !isGlobalContextActive && l2TargetApp == nil && !isAIMode
-                        && focusedPillIndex == nil {
+                    if showContextInDock && !isGlobalContextActive && l2.targetApp == nil && !aiMode.isActive
+                        && l2.focusedPillIndex == nil {
                         Rectangle()
                             .fill(Color.white.opacity(0.16))
                             .frame(width: 1, height: 28)
@@ -17235,14 +16876,14 @@ struct LauncherView: View {
                     // Text field - visible when expanded AND no pill is keyboard-focused AND media layer is off.
                     // List view keeps the search header stable even while keyboard focus moves through results.
                     if (isSearchBarExpanded || usesVerticalListDockLayout)
-                        && (focusedPillIndex == nil || usesVerticalListDockLayout)
+                        && (l2.focusedPillIndex == nil || usesVerticalListDockLayout)
                         && !showMediaLayer
                     {
                         let selectedResult: SearchResult? = {
-                            guard let idx = selectedResultIndex, idx < searchResults.count,
-                                !isAIMode, !isL2ContextActive, activeSmartQueryKey == nil, searchContextApp == nil
+                            guard let idx = searchState.selectedIndex, idx < searchState.results.count,
+                                !aiMode.isActive, !isL2ContextActive, searchState.activeSmartQueryKey == nil, searchState.contextApp == nil
                             else { return nil }
-                            return searchResults[idx]
+                            return searchState.results[idx]
                         }()
                         // Spotlight-style: show result name in bar whenever a result is selected (even while typing)
                         let showingResultPreview = selectedResult != nil
@@ -17254,7 +16895,7 @@ struct LauncherView: View {
                                 // • Prefix match  → show typed text (invisible spacer) + greyed remainder + action
                                 // • Fuzzy match   → show full result name + action
                                 let title = result.title
-                                let typed = searchText
+                                let typed = searchState.query
                                 let isPrefixMatch = title.lowercased().hasPrefix(typed.lowercased())
 
                                 HStack(spacing: 0) {
@@ -17280,18 +16921,18 @@ struct LauncherView: View {
                                         .font(.system(size: 15))
                                         .foregroundStyle(.secondary.opacity(0.35))
                                 }
-                            } else if isL2ContextActive, l2TargetApp == nil,
-                                let completion = l2AppCompletion,
+                            } else if isL2ContextActive, l2.targetApp == nil,
+                                let completion = l2.appCompletion,
                                 !completion.ghost.isEmpty,
                                 completion.actionQuery.trimmingCharacters(
                                     in: .whitespacesAndNewlines
                                 ).isEmpty,
-                                !searchText.isEmpty,
-                                !searchText.contains(" ")
+                                !searchState.query.isEmpty,
+                                !searchState.query.contains(" ")
                             {
                                 // L2 partial app autocomplete ghost text: "sa" → "sa[fari]  — Tab to select"
                                 HStack(spacing: 0) {
-                                    Text(searchText)
+                                    Text(searchState.query)
                                         .font(.system(size: 15))
                                         .foregroundStyle(.clear)  // invisible spacer — aligns with real TextField cursor
                                     Text(completion.ghost)
@@ -17304,7 +16945,7 @@ struct LauncherView: View {
                                 }
                             } else if let subCtx = submenuGhostContext,
                                       let firstChild = subCtx.children.first,
-                                      (lockedSubmenuParent != nil || !searchText.isEmpty)
+                                      (lockedSubmenuParent != nil || !searchState.query.isEmpty)
                             {
                                 // Locked mode: show child prefix completion → "d[ate]  — →"
                                 // Unlocked mode: "sort by"   → "sort by  ›  Date  — →"
@@ -17312,8 +16953,8 @@ struct LauncherView: View {
                                 HStack(spacing: 0) {
                                     if lockedSubmenuParent != nil {
                                         // Parent is shown as chip — just complete the child prefix
-                                        if !searchText.isEmpty {
-                                            Text(searchText)
+                                        if !searchState.query.isEmpty {
+                                            Text(searchState.query)
                                                 .font(.system(size: 15))
                                                 .foregroundStyle(.clear)
                                         }
@@ -17329,7 +16970,7 @@ struct LauncherView: View {
                                                 .lineLimit(1)
                                         }
                                     } else {
-                                        Text(searchText)
+                                        Text(searchState.query)
                                             .font(.system(size: 15))
                                             .foregroundStyle(.clear)
                                         if subCtx.childPrefix.isEmpty {
@@ -17355,13 +16996,13 @@ struct LauncherView: View {
                                         .font(.system(size: 15))
                                         .foregroundStyle(.secondary.opacity(0.2))
                                 }
-                            } else if let ghost = ghostPillCompletion, !searchText.isEmpty {
+                            } else if let ghost = ghostPillCompletion, !searchState.query.isEmpty {
                                 // Pill ghost completion: "slee" → "slee[p]  — ↵"
                                 HStack(spacing: 0) {
-                                    Text(searchText)
+                                    Text(searchState.query)
                                         .font(.system(size: 15))
                                         .foregroundStyle(.clear)
-                                    Text(String(ghost.name.dropFirst(searchText.count)))
+                                    Text(String(ghost.name.dropFirst(searchState.query.count)))
                                         .font(.system(size: 15))
                                         .foregroundStyle(.secondary.opacity(0.35))
                                         .lineLimit(1)
@@ -17374,19 +17015,19 @@ struct LauncherView: View {
                                         .font(.system(size: 15))
                                         .foregroundStyle(.secondary.opacity(0.2))
                                 }
-                            } else if searchText.isEmpty {
+                            } else if searchState.query.isEmpty {
                                 // Normal placeholders (always visible when field is empty)
                                 if lockedSubmenuParent != nil {
                                     Text("filter…")
                                         .foregroundStyle(.secondary.opacity(0.4))
                                         .font(.system(size: 15, weight: .regular))
-                                } else if isAIMode {
+                                } else if aiMode.isActive {
                                     Text("Ask \(settings.selectedAIProvider.shortName)...")
                                         .foregroundStyle(.secondary.opacity(0.5))
                                         .font(.system(size: 15, weight: .regular))
                                 } else if isGlobalContextActive,
                                    let prompt = activeSelectionPromptText {
-                                    if searchContextApp == nil, l2TargetApp == nil {
+                                    if searchState.contextApp == nil, l2.targetApp == nil {
                                         Text(prompt)
                                             .foregroundStyle(.secondary.opacity(0.34))
                                             .font(.system(size: 12, weight: .medium))
@@ -17402,7 +17043,7 @@ struct LauncherView: View {
                                                 .truncationMode(.middle)
                                         }
                                     }
-                                } else if let ctx = searchContextApp {
+                                } else if let ctx = searchState.contextApp {
                                     // Context panel (file, folder, app, contact, etc.)
                                     Text(
                                         remPanelIsProcessing
@@ -17412,7 +17053,7 @@ struct LauncherView: View {
                                     .font(.system(size: 15, weight: .regular))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
-                                } else if let key = activeSmartQueryKey {
+                                } else if let key = searchState.activeSmartQueryKey {
                                     // Built-in panel (reminders, calendar, notes, etc.)
                                     let label =
                                         settings.customAppEntries.first(where: { $0.key == key })?
@@ -17437,7 +17078,7 @@ struct LauncherView: View {
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                 } else if !attachedFinderFolderSearchPath.isEmpty,
-                                    frontmostAppBundleID == "com.apple.finder"
+                                    frontmost.bundleID == "com.apple.finder"
                                 {
                                     // Finder folder attached as AI context scope
                                     let folderName = URL(fileURLWithPath: attachedFinderFolderSearchPath).lastPathComponent
@@ -17473,7 +17114,7 @@ struct LauncherView: View {
                                 }
                             }
 
-                            TextField("", text: $searchText)
+                            TextField("", text: $searchState.query)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 15))
                                 .focused($isSearchFieldFocused)
@@ -17485,14 +17126,14 @@ struct LauncherView: View {
                                     {
                                         if let result = selectedResult {
                                             let isPrefixMatch = result.title.lowercased().hasPrefix(
-                                                searchText.lowercased())
-                                            return (isPrefixMatch && !searchText.isEmpty) ? 1 : 0
+                                                searchState.query.lowercased())
+                                            return (isPrefixMatch && !searchState.query.isEmpty) ? 1 : 0
                                         }
                                         return 1
                                     }()
                                 )
-                                .onChange(of: searchText) { oldValue, newValue in
-                                    if activeSmartQueryKey == "clipboard" {
+                                .onChange(of: searchState.query) { oldValue, newValue in
+                                    if searchState.activeSmartQueryKey == "clipboard" {
                                         focusedClipboardEntryIndex = nil
                                     }
                                     // Typing dismisses any pending AI-found menu proposal
@@ -17501,7 +17142,7 @@ struct LauncherView: View {
                                     }
                                     // In L2 context dock mode, pills filter in the pill row —
                                     // do NOT run L1 search (which would expand the window with results).
-                                    if !isAIMode && !showContextInDock {
+                                    if !aiMode.isActive && !showContextInDock {
                                         performSearch()
                                     }
                                     // When a submenu parent is locked, skip all app-scope detection —
@@ -17512,10 +17153,10 @@ struct LauncherView: View {
                                             || (finderFolderQueryModeActive
                                                 && isFinderFolderSearchAttached())
                                         if finderFolderSearchActive {
-                                            l2AppCompletion = nil
-                                            showL2ResultsPopover = false
+                                            l2.appCompletion = nil
+                                            l2.showResultsPopover = false
                                         } else {
-                                            showL2ResultsPopover = false
+                                            l2.showResultsPopover = false
                                             triggerCrossAppMenuLoadIfNeeded(for: newValue)
                                         }
                                         scheduleFinderSemanticSearchIfNeeded(for: newValue)
@@ -17537,7 +17178,7 @@ struct LauncherView: View {
                                         let installedScopeMode = contextDockInstalledAppScopeMatching
                                         let dockOnlyMode = contextDockRunningOnlyAppMatching && !installedScopeMode
                                         if shouldUseFinderSearchPopover(for: trimmed) {
-                                            l2AppCompletion = nil
+                                            l2.appCompletion = nil
                                         } else if trimmed.isEmpty
                                             || {
                                                 guard let target = L2AppActionRouter.shared.appScopeTarget(for: trimmed) else {
@@ -17552,30 +17193,30 @@ struct LauncherView: View {
                                                 allowPrefixAlias: installedScopeMode
                                             ) != nil
                                         {
-                                            l2AppCompletion = nil
+                                            l2.appCompletion = nil
                                         } else {
-                                            l2AppCompletion = bestL2PartialAppCompletion(
+                                            l2.appCompletion = bestL2PartialAppCompletion(
                                                 for: trimmed, runningOnly: dockOnlyMode
                                             )
                                         }
-                                        if let target = l2TargetApp, !trimmed.isEmpty {
+                                        if let target = l2.targetApp, !trimmed.isEmpty {
                                             if let otherTarget = L2AppActionRouter.shared.appScopeTarget(
                                                 for: trimmed.lowercased()),
                                                 otherTarget.bundleId != target.bundleId
                                             {
                                                 withAnimation(.easeInOut(duration: 0.15)) {
-                                                    l2TargetApp = nil
+                                                    l2.targetApp = nil
                                                 }
-                                                if searchContextApp?.resultType == .application {
+                                                if searchState.contextApp?.resultType == .application {
                                                     clearSearchContext(preserveQuery: true)
                                                 }
                                             }
                                         }
                                     } else if lockedSubmenuParent != nil || (isL2ContextActive && !isGlobalContextActive) {
                                         // Locked: clear any stale app completion
-                                        l2AppCompletion = nil
+                                        l2.appCompletion = nil
                                     }
-                                    if isL2ContextActive || isAIMode {
+                                    if isL2ContextActive || aiMode.isActive {
                                         scheduleBrowserContextWarmup(reason: "query changed")
                                     }
                                     // Auto-lock submenu parent when user types exact name + space
@@ -17593,11 +17234,11 @@ struct LauncherView: View {
                                             if !leaves.filter({ $0.isEnabled }).isEmpty {
                                                 withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
                                                     lockedSubmenuParent = parent
-                                                    searchText = ""
+                                                    searchState.query = ""
                                                 }
                                                 // Clear all stale app-detection state
-                                                l2AppCompletion = nil
-                                                showL2ResultsPopover = false
+                                                l2.appCompletion = nil
+                                                l2.showResultsPopover = false
                                                 crossAppMenuItems = []
                                                 cachedDockPills = []
                                             }
@@ -17609,7 +17250,7 @@ struct LauncherView: View {
                                     if newValue {
                                         collapseTimer?.cancel()
                                     } else {
-                                        if searchText.isEmpty && !usesVerticalListDockLayout {
+                                        if searchState.query.isEmpty && !usesVerticalListDockLayout {
                                             startCollapseTimer()
                                         }
                                     }
@@ -17617,7 +17258,7 @@ struct LauncherView: View {
                                 .onSubmit {
                                     if isL2ContextActive {
                                         enforceL2ContextMode()
-                                        let trimmed = searchText.trimmingCharacters(
+                                        let trimmed = searchState.query.trimmingCharacters(
                                             in: .whitespacesAndNewlines
                                         )
                                         if shouldUseFinderSearchPopover(for: trimmed) {
@@ -17626,7 +17267,7 @@ struct LauncherView: View {
                                             }
                                             return
                                         }
-                                        if focusedPillIndex != nil,
+                                        if l2.focusedPillIndex != nil,
                                             executeFocusedOrDirectAppPillIfNeeded()
                                         {
                                             return
@@ -17645,24 +17286,24 @@ struct LauncherView: View {
                                             return
                                         }
                                         handleL2Query(trimmed)
-                                    } else if isAIMode {
+                                    } else if aiMode.isActive {
                                         if launchTypedAppMatchIfNeeded() {
                                             return
                                         }
-                                        let q = searchText.trimmingCharacters(
+                                        let q = searchState.query.trimmingCharacters(
                                             in: .whitespacesAndNewlines
                                         )
                                         if q.count > 3 {
                                             submitAIQuery()
                                         }
-                                    } else if activeSmartQueryKey == "clipboard" {
+                                    } else if searchState.activeSmartQueryKey == "clipboard" {
                                         if focusedClipboardEntryIndex != nil {
                                             quickLookFocusedClipboardEntry()
                                         } else {
                                             navigateClipboardScope(direction: 1)
                                         }
-                                    } else if activeSmartQueryKey != nil || searchContextApp != nil {
-                                        let q = searchText.trimmingCharacters(
+                                    } else if searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
+                                        let q = searchState.query.trimmingCharacters(
                                             in: .whitespacesAndNewlines
                                         )
                                         guard !q.isEmpty else { return }
@@ -17687,13 +17328,13 @@ struct LauncherView: View {
                                     )
                                     .shadow(radius: 2)
                             }
-                        } else if isAIMode {
+                        } else if aiMode.isActive {
                             aiModeControls
-                        } else if !searchText.isEmpty {
+                        } else if !searchState.query.isEmpty {
                             Button(action: {
-                                searchText = ""
-                                searchResults = []
-                                selectedResultIndex = nil
+                                searchState.query = ""
+                                searchState.results = []
+                                searchState.selectedIndex = nil
                             }) {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.secondary.opacity(0.5))
@@ -17738,13 +17379,13 @@ struct LauncherView: View {
                         } else if showContextInDock {
                             // Context dock: optional action button (+ for Finder, tabs for Safari)
                             // followed by the ↵ return hint — both always visible at the same time
-                            if l2TargetApp == nil,
-                                frontmostAppBundleID == "com.apple.finder",
+                            if l2.targetApp == nil,
+                                frontmost.bundleID == "com.apple.finder",
                                 canAttachCurrentFinderFolderToConversation
                             {
                                 addFinderFolderButton
-                            } else if l2TargetApp == nil,
-                                AXWebReader.shared.isBrowser(bundleId: frontmostAppBundleID)
+                            } else if l2.targetApp == nil,
+                                AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
                             {
                                 safariTabsButton
                             }
@@ -17754,20 +17395,20 @@ struct LauncherView: View {
                         }
                     }
                 }
-                .padding(.horizontal, ((isSearchBarExpanded || usesVerticalListDockLayout) && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? 12 : 8)
+                .padding(.horizontal, ((isSearchBarExpanded || usesVerticalListDockLayout) && (l2.focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? 12 : 8)
                 .padding(.vertical, inputVerticalPadding)
-                .frame(maxWidth: ((isSearchBarExpanded || usesVerticalListDockLayout) && (focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? .infinity : 44)
+                .frame(maxWidth: ((isSearchBarExpanded || usesVerticalListDockLayout) && (l2.focusedPillIndex == nil || usesVerticalListDockLayout) && !showMediaLayer) ? .infinity : 44)
                 .frame(height: inputPillHeight)
                 .background {
                     // Context dock: keep app scope readable without turning the
                     // search capsule into a saturated app-colored panel.
-                    let inContextDock = (showContextInDock || isGlobalContextActive || isAIMode) && !usesVerticalListDockLayout
-                    let typedMatch = typedL2AppIcon(for: searchText)
-                    let inAppScope = (l2TargetApp != nil || typedMatch != nil) && showContextInDock
+                    let inContextDock = (showContextInDock || isGlobalContextActive || aiMode.isActive) && !usesVerticalListDockLayout
+                    let typedMatch = typedL2AppIcon(for: searchState.query)
+                    let inAppScope = (l2.targetApp != nil || typedMatch != nil) && showContextInDock
                     let scopeColor: SwiftUI.Color =
-                        l2TargetApp?.icon?.dominantSwiftUIColor
+                        l2.targetApp?.icon?.dominantSwiftUIColor
                         ?? typedMatch?.icon.dominantSwiftUIColor
-                        ?? frontmostAppIcon?.dominantSwiftUIColor
+                        ?? frontmost.icon?.dominantSwiftUIColor
                         ?? .white
                     ZStack {
                         if usesVerticalListDockLayout {
@@ -17830,13 +17471,13 @@ struct LauncherView: View {
                     }
                     .animation(.spring(response: 0.28, dampingFraction: 0.75), value: inContextDock)
                     .animation(.easeInOut(duration: 0.25), value: inAppScope)
-                    .animation(.easeInOut(duration: 0.3), value: frontmostAppBundleID)
+                    .animation(.easeInOut(duration: 0.3), value: frontmost.bundleID)
                 }
                 .onHover { hovering in
                     isHoveringInputField = hovering
 
                     // Auto-shrink when mouse leaves input field (if no text and not focused)
-                    if !hovering && searchText.isEmpty && !isSearchFieldFocused && !usesVerticalListDockLayout {
+                    if !hovering && searchState.query.isEmpty && !isSearchFieldFocused && !usesVerticalListDockLayout {
                         startCollapseTimer()
                     }
                 }
@@ -17844,7 +17485,7 @@ struct LauncherView: View {
                 } // end if focusedAppPillIndex == nil
 
                 // Pinned apps or context chips/AI extensions or browser (3-layer swipeable)
-                if activeSmartQueryKey != "clipboard" && !isAIMode && !usesVerticalListDockLayout {
+                if searchState.activeSmartQueryKey != "clipboard" && !aiMode.isActive && !usesVerticalListDockLayout {
                 HStack(spacing: 8) {
                     // Floating selection pill — not shown in context dock (already in search bar)
                     if !showContextInDock { selectionFloatingPill }
@@ -17854,11 +17495,11 @@ struct LauncherView: View {
                         if showMediaLayer {
                             mediaControlsInDock
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
-                        } else if activeSmartQueryKey != nil && activeSmartQueryKey != "clipboard" {
+                        } else if searchState.activeSmartQueryKey != nil && searchState.activeSmartQueryKey != "clipboard" {
                             appShortcutsInDock
                                 .transition(.opacity)
                         } else if showContextInDock {
-                            if isAIMode {
+                            if aiMode.isActive {
                                 EmptyView()
                             } else if isGlobalContextActive {
                                 // Global context: empty query shows pinned/running; typed query searches
@@ -17874,7 +17515,7 @@ struct LauncherView: View {
                                 l2UnifiedDockRow
                                     .transition(.opacity)
                             }
-                        } else if !searchText.isEmpty {
+                        } else if !searchState.query.isEmpty {
                             if settings.useListViewForPills {
                                 pinnedAppsListView
                             } else {
@@ -17887,14 +17528,14 @@ struct LauncherView: View {
                     .frame(
                         height: showMediaLayer
                             ? (mediaObserver.duration > 0 ? 70 : inputPillHeight)
-                            : (settings.useListViewForPills ? nil : (focusedPillIndex != nil ? inputPillHeight : pinnedRowHeight))
+                            : (settings.useListViewForPills ? nil : (l2.focusedPillIndex != nil ? inputPillHeight : pinnedRowHeight))
                     )
 
                 }
                 .onHover { hovering in
                     isHoveringDockArea = hovering
                     // When mouse enters the dock area, switch from keyboard nav to hover nav
-                    if hovering { pillNavViaKeyboard = false }
+                    if hovering { l2.pillNavViaKeyboard = false }
                 }
                 .animation(.spring(response: 0.3, dampingFraction: 0.75), value: showContextInDock)
                 .animation(.spring(response: 0.28, dampingFraction: 0.82), value: showMediaLayer)
@@ -18097,17 +17738,17 @@ struct LauncherView: View {
         // Show different content based on current mode (AI vs Normal)
         // The L3 media dock can still surface search results while typing.
         let content = Group {
-            if isAIMode {
+            if aiMode.isActive {
                 // AI mode: AI Chat section (works on L1/L2/L3)
                 aiChatSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else if showContextInDock && !showMediaLayer
-                && (searchContextApp != nil || activeSmartQueryKey != nil)
+                && (searchState.contextApp != nil || searchState.activeSmartQueryKey != nil)
             {
                 appPanelView
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else if showContextInDock && !showMediaLayer
-                && shouldShowFinderSearchResultsPanel(for: searchText)
+                && shouldShowFinderSearchResultsPanel(for: searchState.query)
             {
                 finderFolderSearchResultsPanel
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -18158,13 +17799,13 @@ struct LauncherView: View {
         } else {
             // In normal mode, add subtle padding at top for smooth connection to dock
             content
-                .padding(.top, activeSmartQueryKey == "clipboard" ? 0 : 4)
+                .padding(.top, searchState.activeSmartQueryKey == "clipboard" ? 0 : 4)
         }
     }
 
     @ViewBuilder
     private var finderFolderSearchResultsPanel: some View {
-        let scope = resolveDockScope(for: searchText)
+        let scope = resolveDockScope(for: searchState.query)
         let folderPath = currentFinderFolderPath()
         let folderName = URL(fileURLWithPath: folderPath).lastPathComponent
         let query = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -18189,7 +17830,7 @@ struct LauncherView: View {
             Divider()
                 .padding(.horizontal, 12)
 
-            if isFinderSemanticLoading && searchResults.isEmpty {
+            if isFinderSemanticLoading && searchState.results.isEmpty {
                 VStack(spacing: 10) {
                     ProgressView()
                     Text("Searching filenames and indexed content in this folder…")
@@ -18200,7 +17841,7 @@ struct LauncherView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
                 .padding(.horizontal, 16)
-            } else if !query.isEmpty && searchResults.isEmpty {
+            } else if !query.isEmpty && searchState.results.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 18, weight: .medium))
@@ -18228,12 +17869,12 @@ struct LauncherView: View {
             if showMediaLayer {
                 // Show separator on L3 if media is playing
                 mediaObserver.isPlaying
-            } else if isAIMode {
+            } else if aiMode.isActive {
                 // Show separator for AI mode
-                hasUserSentMessageInCurrentSession && (!aiChatMessages.isEmpty || isAILoading)
+                hasUserSentMessageInCurrentSession && (!aiMode.messages.isEmpty || aiMode.isLoading)
             } else {
                 // Show separator for search results
-                !searchResults.isEmpty || fileIndexManager.progress.isIndexing
+                !searchState.results.isEmpty || fileIndexManager.progress.isIndexing
             }
 
         if shouldShowSeparator {
@@ -18255,7 +17896,7 @@ struct LauncherView: View {
     private var aiModeControls: some View {
         HStack(spacing: 6) {
             // Attachment chips (files/images pending to send)
-            ForEach(aiChatAttachments, id: \.absoluteString) { url in
+            ForEach(aiMode.attachments, id: \.absoluteString) { url in
                 HStack(spacing: 3) {
                     Image(systemName: url.pathExtension.lowercased().matches(of: /jpg|jpeg|png|heic|gif|webp/).isEmpty ? "doc.fill" : "photo.fill")
                         .font(.system(size: 9, weight: .semibold))
@@ -18266,7 +17907,7 @@ struct LauncherView: View {
                         .lineLimit(1)
                         .frame(maxWidth: 80)
                     Button {
-                        aiChatAttachments.removeAll { $0 == url }
+                        aiMode.attachments.removeAll { $0 == url }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 7, weight: .bold))
@@ -18292,28 +17933,28 @@ struct LauncherView: View {
                 if panel.runModal() == .OK {
                     withAnimation {
                         let newURLs = panel.urls.filter { url in
-                            !aiChatAttachments.contains(url)
+                            !aiMode.attachments.contains(url)
                         }
-                        aiChatAttachments.append(contentsOf: newURLs)
+                        aiMode.attachments.append(contentsOf: newURLs)
                     }
                 }
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 15))
-                    .foregroundStyle(.secondary.opacity(aiChatAttachments.isEmpty ? 0.6 : 0.9))
+                    .foregroundStyle(.secondary.opacity(aiMode.attachments.isEmpty ? 0.6 : 0.9))
             }
             .buttonStyle(.plain)
             .help("Attach file or image")
 
             // Clear chat button
-            if !aiChatMessages.isEmpty {
+            if !aiMode.messages.isEmpty {
                 Button(action: {
                     withAnimation {
-                        aiChatMessages.removeAll()
+                        aiMode.messages.removeAll()
                     }
-                    aiChatStreamingMessageId = nil
-                    isAILoading = false
-                    aiChatAttachments = []
+                    aiMode.streamingId = nil
+                    aiMode.isLoading = false
+                    aiMode.attachments = []
                     hasUserSentMessageInCurrentSession = false
                     AIProviderService.shared.resetOnDeviceSession()
                 }) {
@@ -18325,7 +17966,7 @@ struct LauncherView: View {
                 .help("Clear chat")
             }
         }
-        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiChatAttachments.count)
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
     }
 
     private var providerColor: SwiftUI.Color {
@@ -18340,7 +17981,7 @@ struct LauncherView: View {
     }
 
     private func copyAIResponse() {
-        guard let lastAssistantMessage = aiChatMessages.last(where: { $0.role == .assistant })
+        guard let lastAssistantMessage = aiMode.messages.last(where: { $0.role == .assistant })
         else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -18372,7 +18013,7 @@ struct LauncherView: View {
             // Showing them while typing would expand the window on every keystroke,
             // interrupting the user's search flow. They appear when idle with detected context.
             let suggestedShortcuts: [SearchResult] = {
-                guard searchText.isEmpty && shouldShowContext else { return [] }
+                guard searchState.query.isEmpty && shouldShowContext else { return [] }
                 return allShortcuts.filter { shortcut in
                     guard let metadata = shortcutMetadataCache[shortcut.title] else { return false }
                     return metadata.matches(context: currentContext)
@@ -18536,14 +18177,14 @@ struct LauncherView: View {
                 Text(dockHeaderDisplayName)
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                if !l2ChatMessages.isEmpty {
+                if !l2.chatMessages.isEmpty {
                     Button("Clear") {
-                        l2ChatMessages = []
-                        l2IsLoading = false
-                        l2ActiveRequestID = nil
-                        l2CurrentTask?.cancel()
-                        l2CurrentTask = nil
-                        showL2ResultsPopover = false
+                        l2.chatMessages = []
+                        l2.isLoading = false
+                        l2.activeRequestID = nil
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
+                        l2.showResultsPopover = false
                     }
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -18558,7 +18199,7 @@ struct LauncherView: View {
 
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(l2ChatMessages) { message in
+                    ForEach(l2.chatMessages) { message in
                         if message.hasInstallButton {
                             AIChatMessageView(
                                 message: message,
@@ -18570,7 +18211,7 @@ struct LauncherView: View {
                             AIChatMessageView(message: message)
                         }
                     }
-                    if l2IsLoading { AILoadingView() }
+                    if l2.isLoading { AILoadingView() }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -18584,7 +18225,7 @@ struct LauncherView: View {
     private var finderFolderSearchPopoverContent: some View {
         let folderPath = currentFinderFolderPath()
         let folderName = URL(fileURLWithPath: folderPath).lastPathComponent
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -18655,9 +18296,9 @@ struct LauncherView: View {
     private func executeFinderFolderSearchResult(_ result: SearchResult) {
         result.action()
         UsageTracker.shared.recordAccess(for: result.trackingIdentifier)
-        showL2ResultsPopover = false
-        searchText = ""
-        selectedResultIndex = nil
+        l2.showResultsPopover = false
+        searchState.query = ""
+        searchState.selectedIndex = nil
         clearFinderSemanticState()
     }
 
@@ -18986,7 +18627,7 @@ struct LauncherView: View {
     private func l2InlineApprovalCard(_ msg: AIChatMessage) -> some View {
         let (purpose, risk, isDockCommand) = l2ApprovalCardMeta(msg)
         let isHighRisk = risk.lowercased().contains("high") || risk.lowercased().contains("critical")
-        let isHandled = l2HandledApprovalIds.contains(msg.id)
+        let isHandled = l2.handledApprovalIds.contains(msg.id)
         let isPending = isDockCommand ? !isHandled : (terminalBridge.pendingApproval != nil)
         let termIconColor: SwiftUI.Color = isHandled ? .green : (isHighRisk ? .orange : .accentColor)
 
@@ -19023,7 +18664,7 @@ struct LauncherView: View {
             if !isHandled {
                 HStack(spacing: 8) {
                     Button("Deny") {
-                        l2HandledApprovalIds.insert(msg.id)
+                        l2.handledApprovalIds.insert(msg.id)
                         if !isDockCommand { TerminalAIBridge.shared.denyCommand() }
                     }
                     .buttonStyle(.plain)
@@ -19034,7 +18675,7 @@ struct LauncherView: View {
                     .disabled(!isPending)
                     Button {
                         if isDockCommand {
-                            l2HandledApprovalIds.insert(msg.id)
+                            l2.handledApprovalIds.insert(msg.id)
                             // Ensure terminal is open and visible
                             if !livePanelVisible || livePanelMode != .terminal {
                                 withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
@@ -19101,7 +18742,7 @@ struct LauncherView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    l2TerminalDismissed = true
+                    l2.terminalDismissed = true
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                         livePanelVisible = false
                     }
@@ -19135,8 +18776,8 @@ struct LauncherView: View {
     // MARK: - L2 Chat Section
     @ViewBuilder
     private var l2ChatSection: some View {
-        let hasConversation = !l2ChatMessages.isEmpty || l2IsLoading
-        let scopedTarget = l2TargetApp
+        let hasConversation = !l2.chatMessages.isEmpty || l2.isLoading
+        let scopedTarget = l2.targetApp
         if hasConversation {
             VStack(spacing: 0) {
                 // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
@@ -19150,14 +18791,14 @@ struct LauncherView: View {
                     Spacer()
                     Button {
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            l2ChatMessages = []
-                            if let key = activeL2DockSessionKey {
+                            l2.chatMessages = []
+                            if let key = l2.activeDockSessionKey {
                                 AppPanelChatStore.shared.clear(for: key)
                             }
-                            l2IsLoading = false
-                            l2ActiveRequestID = nil
-                            l2CurrentTask?.cancel()
-                            l2CurrentTask = nil
+                            l2.isLoading = false
+                            l2.activeRequestID = nil
+                            l2.currentTask?.cancel()
+                            l2.currentTask = nil
                             updateL2Results([])
                         }
                     } label: {
@@ -19187,7 +18828,7 @@ struct LauncherView: View {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
                             LazyVStack(spacing: 12) {
-                                ForEach(l2ChatMessages) { message in
+                                ForEach(l2.chatMessages) { message in
                                     if message.role == .approval {
                                         l2InlineApprovalCard(message)
                                             .id(message.id)
@@ -19214,7 +18855,7 @@ struct LauncherView: View {
                                     .id("toolChoice")
                                 }
 
-                                if l2IsLoading {
+                                if l2.isLoading {
                                     AILoadingView().id("l2loading")
                                 }
                             }
@@ -19222,14 +18863,14 @@ struct LauncherView: View {
                             .padding(.vertical, 8)
                         }
                         .frame(maxHeight: 460)
-                        .onChange(of: l2ChatMessages.count) { _, _ in
+                        .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
-                                if let last = l2ChatMessages.last {
+                                if let last = l2.chatMessages.last {
                                     proxy.scrollTo(last.id, anchor: .bottom)
                                 }
                             }
                         }
-                        .onChange(of: l2IsLoading) { _, newValue in
+                        .onChange(of: l2.isLoading) { _, newValue in
                             if newValue {
                                 withAnimation { proxy.scrollTo("l2loading", anchor: .bottom) }
                             }
@@ -19262,20 +18903,20 @@ struct LauncherView: View {
     @ViewBuilder
     private var aiChatSection: some View {
         let showingContent = hasUserSentMessageInCurrentSession
-            && (!aiChatMessages.isEmpty || isAILoading || aiChatStreamingMessageId != nil)
+            && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil)
         if showingContent {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     // VStack (not Lazy) so SwiftUI knows the full content height for scrolling
                     VStack(spacing: 10) {
-                        ForEach(aiChatMessages) { message in
+                        ForEach(aiMode.messages) { message in
                             AIChatMessageView(
                                 message: message,
-                                isStreaming: message.id == aiChatStreamingMessageId
+                                isStreaming: message.id == aiMode.streamingId
                             )
                             .id(message.id)
                         }
-                        if isAILoading {
+                        if aiMode.isLoading {
                             HStack {
                                 AILoadingView()
                                 Spacer()
@@ -19288,14 +18929,14 @@ struct LauncherView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 8)
                 }
-                .onChange(of: aiChatMessages.count) { _, _ in
+                .onChange(of: aiMode.messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) {
-                        if let lastMessage = aiChatMessages.last {
+                        if let lastMessage = aiMode.messages.last {
                             proxy.scrollTo(lastMessage.id, anchor: .bottom)
                         }
                     }
                 }
-                .onChange(of: isAILoading) { _, newValue in
+                .onChange(of: aiMode.isLoading) { _, newValue in
                     if newValue {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo("loading", anchor: .bottom)
@@ -19399,24 +19040,24 @@ struct LauncherView: View {
 
     // MARK: - AI Query Submission
     private func submitAIQuery() {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let query = searchState.query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-        guard !isAILoading && aiChatStreamingMessageId == nil else { return }
+        guard !aiMode.isLoading && aiMode.streamingId == nil else { return }
 
         print("🤖 [AI] Submitting query: \"\(query.prefix(60))\" | provider: \(settings.selectedAIProvider.shortName)")
 
         hasUserSentMessageInCurrentSession = true
 
         withAnimation {
-            aiChatMessages.append(AIChatMessage(role: .user, content: query))
+            aiMode.messages.append(AIChatMessage(role: .user, content: query))
         }
-        searchText = ""
+        searchState.query = ""
 
-        let pendingAttachments = aiChatAttachments
-        aiChatAttachments = []
+        let pendingAttachments = aiMode.attachments
+        aiMode.attachments = []
 
-        isAILoading = true
-        currentAITask?.cancel()
+        aiMode.isLoading = true
+        aiMode.currentTask?.cancel()
 
         if settings.selectedAIProvider == .onDevice {
             // Direct Foundation Models — fresh session per message, zero hidden context
@@ -19425,8 +19066,8 @@ struct LauncherView: View {
                 onComplete: { text in
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: 0.2)) {
-                            self.aiChatMessages.append(AIChatMessage(role: .assistant, content: text))
-                            self.isAILoading = false
+                            self.aiMode.messages.append(AIChatMessage(role: .assistant, content: text))
+                            self.aiMode.isLoading = false
                         }
                         self.updateWindowSize()
                     }
@@ -19434,8 +19075,8 @@ struct LauncherView: View {
                 onError: { errorText in
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: 0.2)) {
-                            self.aiChatMessages.append(AIChatMessage(role: .assistant, content: errorText, isError: true))
-                            self.isAILoading = false
+                            self.aiMode.messages.append(AIChatMessage(role: .assistant, content: errorText, isError: true))
+                            self.aiMode.isLoading = false
                         }
                         self.updateWindowSize()
                     }
@@ -19443,12 +19084,12 @@ struct LauncherView: View {
             )
         } else {
             // Cloud provider — include any attached images/files in the request
-            currentAITask = Task {
+            aiMode.currentTask = Task {
                 do {
                     let response: String
                     if !pendingAttachments.isEmpty {
                         // Build plain context without AX overhead, include image attachments
-                        let history = self.aiChatMessages.map { msg in
+                        let history = self.aiMode.messages.map { msg in
                             ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
                         }
                         let systemMsg: [String: String] = ["role": "system", "content": "You are a helpful AI assistant."]
@@ -19462,19 +19103,19 @@ struct LauncherView: View {
                     }
                     await MainActor.run {
                         withAnimation {
-                            self.aiChatMessages.append(AIChatMessage(role: .assistant, content: response))
-                            self.isAILoading = false
+                            self.aiMode.messages.append(AIChatMessage(role: .assistant, content: response))
+                            self.aiMode.isLoading = false
                         }
                         self.updateWindowSize()
                     }
                 } catch {
                     await MainActor.run {
                         withAnimation {
-                            self.aiChatMessages.append(AIChatMessage(
+                            self.aiMode.messages.append(AIChatMessage(
                                 role: .assistant,
                                 content: "Error: \(error.localizedDescription)",
                                 isError: true))
-                            self.isAILoading = false
+                            self.aiMode.isLoading = false
                         }
                         self.updateWindowSize()
                     }
@@ -19485,7 +19126,7 @@ struct LauncherView: View {
 
     private func onDeviceFrontmostContextQuery(_ query: String) -> String {
         let timeBlock = currentDateTimeContextBlock()
-        let scope = resolveDockScope(for: searchText)
+        let scope = resolveDockScope(for: searchState.query)
         if showContextInDock,
             scope.isExplicitAppScope,
             !scope.scopedBundleId.isEmpty,
@@ -19519,8 +19160,8 @@ struct LauncherView: View {
 
     private func frontmostAIContextBlock() -> String {
         var lines: [String] = []
-        let appName = frontmostAppName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bundleID = frontmostAppBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleID = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if !appName.isEmpty || !bundleID.isEmpty {
             lines.append("## Frontmost App Context")
@@ -19566,7 +19207,7 @@ struct LauncherView: View {
     }
 
     private func handleL2Query() {
-        handleL2Query(searchText.trimmingCharacters(in: .whitespaces))
+        handleL2Query(searchState.query.trimmingCharacters(in: .whitespaces))
     }
 
     private func contextualCLIPackages(for context: SearchContextApp?, query: String) -> [TerminalPackage] {
@@ -19777,8 +19418,8 @@ struct LauncherView: View {
                 ? "Here's the command to run:"
                 : "Here are the commands to run:"
         }
-        if let idx = l2ChatMessages.firstIndex(where: { $0.id == msgId }) {
-            l2ChatMessages[idx] = AIChatMessage(id: msgId, role: .assistant, content: cleanedResponse)
+        if let idx = l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
+            l2.chatMessages[idx] = AIChatMessage(id: msgId, role: .assistant, content: cleanedResponse)
         }
 
         // Append one approval card per command
@@ -19788,7 +19429,7 @@ struct LauncherView: View {
                 content: cmd,
                 structuredData: "dock_cmd|||\(purpose)"
             )
-            l2ChatMessages.append(card)
+            l2.chatMessages.append(card)
         }
     }
 
@@ -19814,10 +19455,10 @@ struct LauncherView: View {
         } else {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
                 showContextInDock = true
-                isAIMode = false
+                aiMode.isActive = false
                 isSearchBarExpanded = true
             }
-            if activeL2DockSessionKey == nil {
+            if l2.activeDockSessionKey == nil {
                 syncL2DockSession(force: true)
             }
         }
@@ -19845,8 +19486,8 @@ struct LauncherView: View {
         if runImmediately {
             term.sendCommand(trimmedCommand)
             let runMsg = "Running `\(trimmedCommand)` in terminal"
-            if l2ChatMessages.last?.content != runMsg {
-                l2ChatMessages.append(AIChatMessage(role: .assistant, content: runMsg))
+            if l2.chatMessages.last?.content != runMsg {
+                l2.chatMessages.append(AIChatMessage(role: .assistant, content: runMsg))
             }
             return
         }
@@ -19866,8 +19507,8 @@ struct LauncherView: View {
         }
 
         let message = messageLines.joined(separator: "\n")
-        if l2ChatMessages.last?.content != message {
-            l2ChatMessages.append(
+        if l2.chatMessages.last?.content != message {
+            l2.chatMessages.append(
                 AIChatMessage(role: .assistant, content: message)
             )
         }
@@ -19878,13 +19519,13 @@ struct LauncherView: View {
     /// Appends a message to the panel chat and immediately persists it to disk.
     private func appendPanelMessage(_ msg: AIChatMessage) {
         remPanelChatMessages.append(msg)
-        if let key = activeSmartQueryKey ?? searchContextApp?.key {
+        if let key = searchState.activeSmartQueryKey ?? searchState.contextApp?.key {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: key)
         }
     }
 
     private func handleRemPanelQuery() {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
 
         remPanelAITask?.cancel()
@@ -19896,7 +19537,7 @@ struct LauncherView: View {
             panelConsoleLinesMap[ck, default: []].append(
                 (line: "────────────────────", isCommand: false))
         }
-        searchText = ""
+        searchState.query = ""
 
         // Wire live streaming into this panel's terminal drawer
         TerminalAIBridge.shared.streamLineHandler = { line in
@@ -19937,11 +19578,11 @@ struct LauncherView: View {
 
         // Build system prompt dynamically — Reminders uses hard-coded rem knowledge,
         // Build system prompt — covers reminders, apps, files, contacts, etc.
-        // activeSmartQueryKey is set when user explicitly opens an app panel;
+        // searchState.activeSmartQueryKey is set when user explicitly opens an app panel;
         // fall back to autoDetectedAppKey (set from NSWorkspace app-switch observer).
-        let activeKey = activeSmartQueryKey ?? settings.autoDetectedAppKey ?? "reminders"
+        let activeKey = searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey ?? "reminders"
 
-        let ctx = searchContextApp
+        let ctx = searchState.contextApp
         let appLabel =
             ctx?.name ?? settings.customAppEntries.first(where: { $0.key == activeKey })?.label
             ?? activeKey.capitalized
@@ -20806,7 +20447,7 @@ struct LauncherView: View {
                         }
                     }
                     remPanelIsProcessing = false
-                    appPanelAllItems = []
+                    searchState.appPanelAllItems = []
                     reloadAppPanelData(for: "reminders")
                     // Auto-switch live panel to terminal if spawn_worker was used
                     let spawnedTUI = executedCommands.contains {
@@ -20913,7 +20554,7 @@ struct LauncherView: View {
                     AIChatMessage(role: .assistant, content: "✅ \(picked.pathString)")
                 )
                 remPanelIsProcessing = false
-                searchText = ""
+                searchState.query = ""
             }
         }
         return true
@@ -20990,7 +20631,7 @@ struct LauncherView: View {
                 remPanelChatMessages.append(
                     AIChatMessage(role: .assistant, content: reply, isError: !success))
                 remPanelIsProcessing = false
-                appPanelAllItems = []
+                searchState.appPanelAllItems = []
                 reloadAppPanelData(for: "reminders")
             }
         } catch {
@@ -21063,15 +20704,15 @@ struct LauncherView: View {
 
     private func beginL2AIRequest() -> UUID {
         let requestID = UUID()
-        l2ActiveRequestID = requestID
+        l2.activeRequestID = requestID
         return requestID
     }
 
     private func finishL2AIRequest(_ requestID: UUID) {
-        guard l2ActiveRequestID == requestID else { return }
-        l2ActiveRequestID = nil
-        l2IsLoading = false
-        l2CurrentTask = nil
+        guard l2.activeRequestID == requestID else { return }
+        l2.activeRequestID = nil
+        l2.isLoading = false
+        l2.currentTask = nil
     }
 
     private func isCancellationError(_ error: Error) -> Bool {
@@ -21103,22 +20744,22 @@ struct LauncherView: View {
 
         guard wantsStop || wantsRerun else { return false }
 
-        l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+        l2.chatMessages.append(AIChatMessage(role: .user, content: query))
         stopActiveDockWork(showToast: true)
-        searchText = ""
+        searchState.query = ""
 
         guard wantsRerun else {
-            l2ChatMessages.append(
+            l2.chatMessages.append(
                 AIChatMessage(role: .assistant, content: "Stopped the current task.")
             )
             return true
         }
 
-        if let rerunQuery = lastL2RunnableQuery?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let rerunQuery = l2.lastRunnableQuery?.trimmingCharacters(in: .whitespacesAndNewlines),
            !rerunQuery.isEmpty,
            rerunQuery.lowercased() != normalized
         {
-            l2ChatMessages.append(
+            l2.chatMessages.append(
                 AIChatMessage(role: .assistant, content: "Stopped it. Running again: `\(rerunQuery)`")
             )
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -21131,31 +20772,31 @@ struct LauncherView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !lastCommand.isEmpty
         {
-            l2ChatMessages.append(
+            l2.chatMessages.append(
                 AIChatMessage(role: .assistant, content: "Stopped it. Running command again:\n```bash\n\(lastCommand)\n```")
             )
-            l2IsLoading = true
-            l2CurrentTask = Task {
+            l2.isLoading = true
+            l2.currentTask = Task {
                 let result = await TerminalAIBridge.shared.processAICommand(
                     lastCommand,
                     purpose: "Run previous command again"
                 )
                 await MainActor.run {
-                    self.l2ChatMessages.append(
+                    self.l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
                             content: "\(result.success ? "Done" : "Failed"):\n```\n\(result.output)\n```",
                             isError: !result.success
                         )
                     )
-                    self.l2IsLoading = false
-                    self.l2CurrentTask = nil
+                    self.l2.isLoading = false
+                    self.l2.currentTask = nil
                 }
             }
             return true
         }
 
-        l2ChatMessages.append(
+        l2.chatMessages.append(
             AIChatMessage(
                 role: .assistant,
                 content: "Stopped the current task. I don't have a previous request to run again yet."
@@ -21165,18 +20806,18 @@ struct LauncherView: View {
     }
 
     private func stopActiveDockWork(showToast: Bool) {
-        l2CurrentTask?.cancel()
-        l2CurrentTask = nil
-        l2ActiveRequestID = nil
-        l2IsLoading = false
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.activeRequestID = nil
+        l2.isLoading = false
 
         remPanelAITask?.cancel()
         remPanelAITask = nil
         remPanelIsProcessing = false
 
-        currentAITask?.cancel()
-        currentAITask = nil
-        isAILoading = false
+        aiMode.currentTask?.cancel()
+        aiMode.currentTask = nil
+        aiMode.isLoading = false
 
         pendingTerminalCommand = nil
         TerminalAIBridge.shared.denyCommand()
@@ -21259,7 +20900,7 @@ struct LauncherView: View {
 
         if let first = resolved.first {
             AppToast.show("Running \(bestRule.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0, centered: true)
-            searchText = ""
+            searchState.query = ""
             first.execute()
             return true
         }
@@ -21281,12 +20922,12 @@ struct LauncherView: View {
             }
             hint = parts.isEmpty ? "the right context" : parts.joined(separator: " or ")
         }
-        l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-        l2ChatMessages.append(AIChatMessage(
+        l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+        l2.chatMessages.append(AIChatMessage(
             role: .assistant,
             content: "**\(bestRule.name)** needs \(hint) to run. Open the right page first, then try again."
         ))
-        searchText = ""
+        searchState.query = ""
         return true
     }
 
@@ -21295,7 +20936,7 @@ struct LauncherView: View {
     private func trySystemCommand(_ query: String) -> Bool {
         guard let cmd = SystemCommandsRegistry.shared.bestMatch(for: query) else { return false }
         AppToast.show("Running \(cmd.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0, centered: true)
-        searchText = ""
+        searchState.query = ""
         let ctx = AXContextReader.shared.current
         let envVars: [String: String] = [
             "CD_QUERY": query,
@@ -21323,17 +20964,17 @@ struct LauncherView: View {
         }
         if tryExecuteTriggerRuleByName(query) { return }
         if trySystemCommand(query) { return }
-        if let existingTask = l2CurrentTask {
+        if let existingTask = l2.currentTask {
             existingTask.cancel()
-            l2CurrentTask = nil
-            l2IsLoading = false
-            l2ActiveRequestID = nil
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
         }
 
         // Stamp the context key when the chat starts so we can detect future context switches.
         let currentKey = contextIdentityKey(currentContext)
-        if chatContextKey.isEmpty || l2ChatMessages.isEmpty {
-            chatContextKey = currentKey == "none" ? chatContextKey : currentKey
+        if l2.chatContextKey.isEmpty || l2.chatMessages.isEmpty {
+            l2.chatContextKey = currentKey == "none" ? l2.chatContextKey : currentKey
         }
 
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -21430,13 +21071,13 @@ struct LauncherView: View {
             if isExplicitScopedApp {
                 return (scopedBundleId, scopedAppName)
             }
-            if let target = l2TargetApp, !target.bundleId.hasPrefix("scope://") {
+            if let target = l2.targetApp, !target.bundleId.hasPrefix("scope://") {
                 return (target.bundleId, target.name)
             }
             if let frontmostApp = NSWorkspace.shared.frontmostApplication,
                let bundleId = frontmostApp.bundleIdentifier,
                bundleId != Bundle.main.bundleIdentifier {
-                return (bundleId, frontmostApp.localizedName ?? frontmostAppName)
+                return (bundleId, frontmostApp.localizedName ?? frontmost.name)
             }
             return nil
         }()
@@ -21446,9 +21087,9 @@ struct LauncherView: View {
            AppMenuCapabilityCache.shared.hasSnapshot(bundleIdentifier: target.bundleId)
         {
             let capturedTarget = target
-            l2IsLoading = true
+            l2.isLoading = true
             let reqID = beginL2AIRequest()
-            l2CurrentTask = Task {
+            l2.currentTask = Task {
                 // Find the best menu match WITHOUT activating the app (will activate on pill click)
                 let runningApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.bundleIdentifier == capturedTarget.bundleId && !$0.isTerminated
@@ -21457,7 +21098,7 @@ struct LauncherView: View {
                    let matchedItem = await MenuIntentRouter.shared.findMatch(query: query, app: app)
                 {
                     await MainActor.run {
-                        l2IsLoading = false
+                        l2.isLoading = false
                         let pid = app.processIdentifier
                         let path = matchedItem.path
                         let sc = matchedItem.shortcutChar
@@ -21473,17 +21114,17 @@ struct LauncherView: View {
                             sourceBundleId: capturedTarget.bundleId,
                             sourceAppName: capturedTarget.appName
                         )
-                        searchText = ""
+                        searchState.query = ""
                         scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
-                        pillNavViaKeyboard = true
-                        focusedPillIndex = 0
+                        l2.pillNavViaKeyboard = true
+                        l2.focusedPillIndex = 0
                         finishL2AIRequest(reqID)
                     }
                     return
                 }
                 // No match or app not running — fall through to normal AI flow
                 await MainActor.run {
-                    l2IsLoading = false
+                    l2.isLoading = false
                     finishL2AIRequest(reqID)
                     self.handleL2QuerySkippingMenuRouter(query)
                 }
@@ -21503,7 +21144,7 @@ struct LauncherView: View {
             && finderFolderQueryModeActive
             && isFinderFolderSearchAttached(currentFolderPath: currentFinderFolderPath())
         if allowFrontmostFinderRouting
-            && ((frontmostAppBundleID == "com.apple.finder" || frontmostAppName == "Finder")
+            && ((frontmost.bundleID == "com.apple.finder" || frontmost.name == "Finder")
                 || (scopedBundleId == "com.apple.finder"
                     && !dockScope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
                         .isEmpty))
@@ -21527,26 +21168,26 @@ struct LauncherView: View {
         if dockScope.scopedBundleId == "com.apple.mail" {
             let isMailQuestion = isQuestionStyleMailQuery(rawScopedSearchQuery)
 
-            if frontmostAppBundleID == "com.apple.mail",
+            if frontmost.bundleID == "com.apple.mail",
                 isMailQuestion,
                 !isCurrentMailContextAttached()
             {
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2ChatMessages.append(
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
                         content: "Attach Mail context with the + button first, then ask again. That keeps Mail questions local and targeted to the current mailbox."
                     ))
-                searchText = ""
-                focusedPillIndex = nil
+                searchState.query = ""
+                l2.focusedPillIndex = nil
                 return
             }
 
             if isMailQuestion, let answer = answerAttachedMailQuestion(for: rawScopedSearchQuery) {
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2ChatMessages.append(AIChatMessage(role: .assistant, content: answer))
-                searchText = ""
-                focusedPillIndex = nil
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
+                searchState.query = ""
+                l2.focusedPillIndex = nil
                 return
             }
 
@@ -21596,7 +21237,7 @@ struct LauncherView: View {
         }
 
         if isExplicitScopedApp {
-            let wasGlobalOrNewScope = isGlobalContextActive || (l2TargetApp?.bundleId != scopedBundleId)
+            let wasGlobalOrNewScope = isGlobalContextActive || (l2.targetApp?.bundleId != scopedBundleId)
             _ = activateInlineDockAppScope(bundleIdentifier: scopedBundleId, appName: scopedAppName)
             if wasGlobalOrNewScope {
                 isGlobalContextActive = false
@@ -21608,10 +21249,10 @@ struct LauncherView: View {
                 // "show photos of gowri" → fullQuery.hasPrefix("show ") → true).
                 let rerunQuery = rawScopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !rerunQuery.isEmpty else { return }
-                searchText = rerunQuery
+                searchState.query = rerunQuery
                 let fullQueryForRerun = query
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    guard !self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                    guard !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                     self.handleL2Query(fullQueryForRerun)
                 }
                 return
@@ -21622,9 +21263,9 @@ struct LauncherView: View {
         if let pending = pendingTerminalCommand {
             if isAffirmativeResponse(normalizedQuery) {
                 pendingTerminalCommand = nil
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2IsLoading = true
-                l2CurrentTask = Task {
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.isLoading = true
+                l2.currentTask = Task {
                     let (success, output) = await TerminalAIBridge.shared.processAICommand(
                         pending.command, purpose: pending.purpose)
                     await MainActor.run {
@@ -21633,19 +21274,19 @@ struct LauncherView: View {
                             role: .assistant,
                             content: "\(resultIcon) Command Result:\n```\n\(output)\n```"
                         )
-                        l2ChatMessages.append(resultMessage)
+                        l2.chatMessages.append(resultMessage)
                         updateL2Results(
                             buildL2OutputResults(title: "Terminal Output", output: output))
-                        l2IsLoading = false
-                        l2CurrentTask = nil
+                        l2.isLoading = false
+                        l2.currentTask = nil
                     }
                 }
                 return
             }
             if isNegativeResponse(normalizedQuery) {
                 pendingTerminalCommand = nil
-                l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-                l2ChatMessages.append(
+                l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+                l2.chatMessages.append(
                     AIChatMessage(role: .assistant, content: "Okay, I won't run that command."))
                 return
             }
@@ -21696,7 +21337,7 @@ struct LauncherView: View {
         // When no CLI tools are configured for the scoped app, offer to auto-create an extension.
         let proposalAppendix: String = {
             guard !dockScope.isGlobalScope, dockCLIContextPrompt.isEmpty else { return "" }
-            let appName = dockScope.scopedAppName.isEmpty ? frontmostAppName : dockScope.scopedAppName
+            let appName = dockScope.scopedAppName.isEmpty ? frontmost.name : dockScope.scopedAppName
             guard !appName.isEmpty else { return "" }
             return extensionProposalPromptAppendix(appName: appName, query: query)
         }()
@@ -21706,10 +21347,10 @@ struct LauncherView: View {
 
         // Store original query for potential re-execution after extension install
         originalUserQuery = query
-        lastL2RunnableQuery = query
+        l2.lastRunnableQuery = query
 
         // Clear search text after capturing the query
-        searchText = ""
+        searchState.query = ""
 
         enforceL2ContextMode()
         if !isSearchBarExpanded {
@@ -21728,7 +21369,7 @@ struct LauncherView: View {
             case .appFocused(let name, _):
                 return name
             default:
-                return frontmostAppName.isEmpty ? nil : frontmostAppName
+                return frontmost.name.isEmpty ? nil : frontmost.name
             }
         }()
 
@@ -21768,21 +21409,21 @@ struct LauncherView: View {
             let pdfContent = pdf.content,
             !pdfContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
-            l2IsLoading = true
-            l2CurrentTask = Task {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.isLoading = true
+            l2.currentTask = Task {
                 do {
                     let prompt =
                         "Answer the user's question about this PDF document.\n\nPDF CONTENT:\n\(pdfContent)\n\nUser question: \(query)\n\nAnswer directly from the document content. Do not run any commands."
                     let response = try await sendToAIProviderWithContext(
-                        query: prompt, messageHistory: l2ChatMessages)
+                        query: prompt, messageHistory: l2.chatMessages)
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
                     await MainActor.run {
                         let assistantMessage = AIChatMessage(role: .assistant, content: response)
-                        l2ChatMessages.append(assistantMessage)
+                        l2.chatMessages.append(assistantMessage)
                         finishL2AIRequest(l2RequestID)
                     }
                 } catch {
@@ -21795,7 +21436,7 @@ struct LauncherView: View {
                             role: .assistant,
                             content: "Sorry, I encountered an error: \(error.localizedDescription)",
                             isError: true)
-                        l2ChatMessages.append(errorMessage)
+                        l2.chatMessages.append(errorMessage)
                         finishL2AIRequest(l2RequestID)
                     }
                 }
@@ -21804,7 +21445,7 @@ struct LauncherView: View {
         }
 
         if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
-            l2CurrentTask = Task {
+            l2.currentTask = Task {
                 await executeL2Extension(top.ilExtension, context: effectiveConversationUserContext)
                 await MainActor.run { finishL2AIRequest(l2RequestID) }
             }
@@ -21823,9 +21464,9 @@ struct LauncherView: View {
             !isExplicitScopedApp || browserBundles.contains(scopedBundleId)
         if shouldUseFrontmostBrowserContext,
             !dockScope.isGlobalScope,
-            browserBundles.contains(frontmostAppBundleID)
+            browserBundles.contains(frontmost.bundleID)
         {
-            let liveURL = axContext.currentURL ?? frontmostAppBundleID
+            let liveURL = axContext.currentURL ?? frontmost.bundleID
             if case .url = currentContext { /* already set */
             } else {
                 currentContext = .url(liveURL)
@@ -21842,15 +21483,15 @@ struct LauncherView: View {
         }
 
         // Fast-path: Safari NL commands ("search youtube for X", "close tab", etc.) skip AI entirely
-        if frontmostAppBundleID == "com.apple.Safari" || SafariBrowserBridge.shared.safariContextIfFresh() != nil,
+        if frontmost.bundleID == "com.apple.Safari" || SafariBrowserBridge.shared.safariContextIfFresh() != nil,
            let directCmd = SafariCommandBridge.shared.parseIntent(query)
         {
-            l2ChatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
             finishL2AIRequest(l2RequestID)
             Task {
                 let result = await SafariCommandBridge.shared.execute(directCmd)
                 await MainActor.run {
-                    l2ChatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
+                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
                 }
             }
             return
@@ -21858,8 +21499,8 @@ struct LauncherView: View {
 
         // Display only the user's actual query in the chat UI (not the full context prompt)
         let userMessage = AIChatMessage(role: .user, content: query)
-        l2ChatMessages.append(userMessage)
-        l2IsLoading = true
+        l2.chatMessages.append(userMessage)
+        l2.isLoading = true
 
         // Use the user's selected AI provider in L2 context dock (respects Settings → AI Provider).
         let provider: AIProvider = settings.selectedAIProvider
@@ -21868,21 +21509,21 @@ struct LauncherView: View {
 
         // Guard: if a cloud provider is selected but has no key, show guidance now — don't wait for a network error
         if provider != .onDevice && provider != .shortcuts && apiKey == nil {
-            l2IsLoading = false
+            l2.isLoading = false
             let guide = QueryFailureGuide.shared.instant(
                 for: .noAPIKey(provider: provider.shortName), originalQuery: query
             )
-            l2ChatMessages.append(AIChatMessage(role: .assistant, content: guide, isError: true))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: guide, isError: true))
             finishL2AIRequest(l2RequestID)
             return
         }
 
         // Build conversation history (clean messages only — no tool chips)
-        let chatHistory: [ChatMessage] = l2ChatMessages.dropLast()
+        let chatHistory: [ChatMessage] = l2.chatMessages.dropLast()
             .filter { $0.role != .tool }
             .map { ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.content) }
 
-        l2CurrentTask = Task {
+        l2.currentTask = Task {
             do {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), direct message path")
 
@@ -21902,7 +21543,7 @@ struct LauncherView: View {
                     await MainActor.run {
                         var msg = AIChatMessage(role: .assistant, content: finalResponse)
                         msg = self.tagMessageWithProposal(msg)
-                        l2ChatMessages.append(msg)
+                        l2.chatMessages.append(msg)
                         if !finalContextPrompt.isEmpty {
                             extractAndInsertDockApprovalCards(from: msg.content, intoMessageAt: msg.id)
                         }
@@ -21913,7 +21554,7 @@ struct LauncherView: View {
                         let result = await SafariCommandBridge.shared.execute(cmd)
                         if !result.isEmpty {
                             await MainActor.run {
-                                l2ChatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
+                                l2.chatMessages.append(AIChatMessage(role: .assistant, content: "🌐 \(result)"))
                             }
                         }
                     }
@@ -21922,7 +21563,7 @@ struct LauncherView: View {
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))
                     let placeholder = AIChatMessage(role: .assistant, content: "")
-                    await MainActor.run { l2ChatMessages.append(placeholder) }
+                    await MainActor.run { l2.chatMessages.append(placeholder) }
                     let msgId = placeholder.id
                     // Pass the raw query — buildContextPrompt inside streamOnDeviceResponse handles
                     // all file/app/text context via the `context` parameter. Passing a pre-built
@@ -21945,38 +21586,38 @@ struct LauncherView: View {
                             additionalContextPrompt: finalContextPrompt,
                             onPartial: { token in
                                 DispatchQueue.main.async {
-                                    if let idx = self.l2ChatMessages.firstIndex(where: {
+                                    if let idx = self.l2.chatMessages.firstIndex(where: {
                                         $0.id == msgId
                                     }) {
-                                        self.l2ChatMessages[idx] = AIChatMessage(
+                                        self.l2.chatMessages[idx] = AIChatMessage(
                                             id: msgId, role: .assistant,
-                                            content: self.l2ChatMessages[idx].content + token
+                                            content: self.l2.chatMessages[idx].content + token
                                         )
                                     }
                                 }
                             },
                             onComplete: { response in
                                 DispatchQueue.main.async {
-                                    if let idx = self.l2ChatMessages.firstIndex(where: {
+                                    if let idx = self.l2.chatMessages.firstIndex(where: {
                                         $0.id == msgId
                                     }) {
-                                        let currentContent = self.l2ChatMessages[idx].content
+                                        let currentContent = self.l2.chatMessages[idx].content
                                         if currentContent.isEmpty {
                                             let fallback = QueryFailureGuide.shared.instant(
                                                 for: .emptyResponse(query: query),
                                                 originalQuery: query
                                             )
-                                            self.l2ChatMessages[idx] = AIChatMessage(
+                                            self.l2.chatMessages[idx] = AIChatMessage(
                                                 id: msgId, role: .assistant,
                                                 content: response.isEmpty ? fallback : response
                                             )
                                         }
                                         // Post-process: extract proposal block, tag message
-                                        let rawContent = self.l2ChatMessages[idx].content
+                                        let rawContent = self.l2.chatMessages[idx].content
                                         let tagged = self.tagMessageWithProposal(
                                             AIChatMessage(id: msgId, role: .assistant, content: rawContent)
                                         )
-                                        self.l2ChatMessages[idx] = tagged
+                                        self.l2.chatMessages[idx] = tagged
                                         let finalContent = tagged.content
                                         if !finalContextPrompt.isEmpty {
                                             self.extractAndInsertDockApprovalCards(from: finalContent, intoMessageAt: msgId)
@@ -21987,7 +21628,7 @@ struct LauncherView: View {
                             },
                             onError: { errText in
                                 DispatchQueue.main.async {
-                                    if let idx = self.l2ChatMessages.firstIndex(where: {
+                                    if let idx = self.l2.chatMessages.firstIndex(where: {
                                         $0.id == msgId
                                     }) {
                                         let kind: QueryFailureKind = {
@@ -22003,7 +21644,7 @@ struct LauncherView: View {
                                         let guide = QueryFailureGuide.shared.instant(
                                             for: kind, originalQuery: query
                                         )
-                                        self.l2ChatMessages[idx] = AIChatMessage(
+                                        self.l2.chatMessages[idx] = AIChatMessage(
                                             id: msgId, role: .assistant, content: guide,
                                             isError: true)
                                     }
@@ -22021,7 +21662,7 @@ struct LauncherView: View {
                     }
                 } else {
                     await MainActor.run {
-                        l2ChatMessages.append(
+                        l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content:
@@ -22050,7 +21691,7 @@ struct LauncherView: View {
                     }()
                     let guide = QueryFailureGuide.shared.instant(for: kind, originalQuery: query)
                     let errorMessage = AIChatMessage(role: .assistant, content: guide, isError: true)
-                    l2ChatMessages.append(errorMessage)
+                    l2.chatMessages.append(errorMessage)
                     finishL2AIRequest(l2RequestID)
                 }
             }
@@ -22058,8 +21699,8 @@ struct LauncherView: View {
     }
 
     private func sendToAIProvider(query: String) async throws -> String {
-        // Build context from previous messages (uses aiChatMessages for global AI mode)
-        var context = aiChatMessages.map { msg in
+        // Build context from previous messages (uses aiMode.messages for global AI mode)
+        var context = aiMode.messages.map { msg in
             ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
         }
 
@@ -22080,7 +21721,7 @@ struct LauncherView: View {
     private func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
         async throws -> String
     {
-        // Build context from provided message history (for L2, uses l2ChatMessages)
+        // Build context from provided message history (for L2, uses l2.chatMessages)
         var context = messageHistory.map { msg in
             ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
         }
@@ -22129,8 +21770,8 @@ struct LauncherView: View {
         }
         // Inject compact Safari tag list ONLY for cloud AI providers.
         // On-device AI: Tier 1 parseIntent() handles it — no tokens wasted.
-        let safariCommandsAvailable = frontmostAppBundleID == "com.apple.Safari"
-            || l2TargetApp?.bundleId == "com.apple.Safari"
+        let safariCommandsAvailable = frontmost.bundleID == "com.apple.Safari"
+            || l2.targetApp?.bundleId == "com.apple.Safari"
             || SafariBrowserBridge.shared.safariContextIfFresh() != nil
         let isCloudProvider = settings.selectedAIProvider != .onDevice
         if safariCommandsAvailable && isCloudProvider {
@@ -22650,7 +22291,7 @@ struct LauncherView: View {
 
     // Meta info for the active smart query app panel
     private var smartQueryMeta: (icon: String, label: String, appPath: String) {
-        switch activeSmartQueryKey ?? "" {
+        switch searchState.activeSmartQueryKey ?? "" {
         case "calendar": return ("calendar", "Calendar", "/System/Applications/Calendar.app")
         case "reminders":
             return ("checkmark.circle", "Reminders", "/System/Applications/Reminders.app")
@@ -22664,7 +22305,7 @@ struct LauncherView: View {
         case "safari": return ("safari", "Safari Tabs", "/Applications/Safari.app")
         default:
             // Check custom app entries
-            if let key = activeSmartQueryKey,
+            if let key = searchState.activeSmartQueryKey,
                 let entry = settings.customAppEntries.first(where: { $0.key == key })
             {
                 return (entry.iconName, entry.label, entry.appPath)
@@ -22675,12 +22316,12 @@ struct LauncherView: View {
 
     // Items to show in the app panel — filtered by search text if any
     private var appPanelDisplayedItems: [SearchResult] {
-        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return appPanelAllItems }
-        let filtered = appPanelAllItems.filter {
+        let q = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return searchState.appPanelAllItems }
+        let filtered = searchState.appPanelAllItems.filter {
             $0.title.lowercased().contains(q) || $0.subtitle.lowercased().contains(q)
         }
-        return filtered.isEmpty ? appPanelAllItems : filtered
+        return filtered.isEmpty ? searchState.appPanelAllItems : filtered
     }
 
     // MARK: - Contextual Quick Actions (type-based)
@@ -22791,7 +22432,7 @@ struct LauncherView: View {
         if normalizedQuery.contains("overdue") {
             ranked.append((
                 PanelAction(icon: "exclamationmark.circle", label: "Overdue") {
-                    searchText = "show overdue reminders"
+                    searchState.query = "show overdue reminders"
                     handleRemPanelQuery()
                 },
                 120
@@ -22801,7 +22442,7 @@ struct LauncherView: View {
         if normalizedQuery.contains("today") {
             ranked.append((
                 PanelAction(icon: "calendar", label: "Today") {
-                    searchText = "show reminders due today"
+                    searchState.query = "show reminders due today"
                     handleRemPanelQuery()
                 },
                 112
@@ -22817,7 +22458,7 @@ struct LauncherView: View {
     private func createReminderFromScopeQuery(_ title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            searchText = "create new reminder "
+            searchState.query = "create new reminder "
             return
         }
         let ok = AppleAppsAPI.shared.createReminder(title: trimmed)
@@ -22829,7 +22470,7 @@ struct LauncherView: View {
             )
         )
         if ok {
-            searchText = ""
+            searchState.query = ""
             reloadAppPanelData(for: "reminders")
         }
     }
@@ -22837,7 +22478,7 @@ struct LauncherView: View {
     private func createReminderListFromScopeQuery(_ title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            searchText = "create new reminder list "
+            searchState.query = "create new reminder list "
             return
         }
         let escaped = trimmed.replacingOccurrences(of: "\"", with: "\\\"")
@@ -22858,7 +22499,7 @@ struct LauncherView: View {
             )
         )
         if ok {
-            searchText = ""
+            searchState.query = ""
             reloadAppPanelData(for: "reminders")
         }
     }
@@ -22920,9 +22561,9 @@ struct LauncherView: View {
 
     /// Returns quick actions appropriate for the current context item.
     private func contextPanelActions() -> [PanelAction] {
-        let activeKey = activeSmartQueryKey ?? ""
-        let scopedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if searchContextApp == nil {
+        let activeKey = searchState.activeSmartQueryKey ?? ""
+        let scopedQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if searchState.contextApp == nil {
             if !activeKey.isEmpty {
                 var seen = Set<String>()
                 let smartActions = smartAppScopePanelActions(for: activeKey, query: scopedQuery)
@@ -22954,12 +22595,12 @@ struct LauncherView: View {
 
             return []
         }
-        guard let ctx = searchContextApp else { return [] }
+        guard let ctx = searchState.contextApp else { return [] }
 
         switch ctx.resultType {
         case .application:
             // Custom shortcuts first (combine quick-actions + context-dock placements), then standard
-            let key = ctx.key ?? activeSmartQueryKey ?? ""
+            let key = ctx.key ?? searchState.activeSmartQueryKey ?? ""
             let mergedShortcuts: [AppShortcut] = {
                 var seen = Set<String>()
                 let quick = appScopeShortcuts(for: key, placements: [.quickActions, .both])
@@ -23121,9 +22762,9 @@ struct LauncherView: View {
             var actions: [PanelAction] = []
 
             func sendCLIQuery(_ msg: String) {
-                searchText = msg
+                searchState.query = msg
                 handleRemPanelQuery()
-                searchText = ""
+                searchState.query = ""
             }
 
             if isTUI {
@@ -24716,9 +24357,9 @@ struct LauncherView: View {
     // MARK: - App Panel Split View (2-column: 80% AI chat / 20% quick actions)
     @ViewBuilder
     private var appPanelView: some View {
-        let ctx = searchContextApp
+        let ctx = searchState.contextApp
         let meta = smartQueryMeta
-        let key = activeSmartQueryKey ?? ""
+        let key = searchState.activeSmartQueryKey ?? ""
         let isReminders = key == "reminders"
         let isClipboard = key == "clipboard"
         let hasChatHistory = !isClipboard && !remPanelChatMessages.isEmpty
@@ -24753,7 +24394,7 @@ struct LauncherView: View {
                 Spacer()
                 if hasChatHistory {
                     Button {
-                        let k = activeSmartQueryKey ?? ""
+                        let k = searchState.activeSmartQueryKey ?? ""
                         remPanelChatMessages = []
                         AppPanelChatStore.shared.clear(for: k)
                     } label: {
@@ -24804,7 +24445,7 @@ struct LauncherView: View {
                     }
                     Spacer()
                     Button("Clear Chat") {
-                        let k = activeSmartQueryKey ?? ""
+                        let k = searchState.activeSmartQueryKey ?? ""
                         remPanelChatMessages = []
                         AppPanelChatStore.shared.clear(for: k)
                         removedToolBannerName = nil
@@ -24957,7 +24598,7 @@ struct LauncherView: View {
         )
         .transition(.opacity)
         .task(id: key) {
-            guard appPanelAllItems.isEmpty else { return }
+            guard searchState.appPanelAllItems.isEmpty else { return }
             reloadAppPanelData(for: key)
             if isReminders { checkRemInstalled() }
         }
@@ -25408,7 +25049,7 @@ struct LauncherView: View {
                                 if let lastQuery = remPanelChatMessages.last(where: {
                                     $0.role == .user
                                 })?.content {
-                                    searchText = lastQuery
+                                    searchState.query = lastQuery
                                     handleRemPanelQuery()
                                 }
                             }
@@ -25507,7 +25148,7 @@ struct LauncherView: View {
                 activateInlineDockAppScope(
                     bundleIdentifier: resolvedBundleId,
                     appName: result.title,
-                    searchTextOverride: result.title + " "
+                    queryOverride: result.title + " "
                 )
             {
                 isSearchFieldFocused = true
@@ -25552,7 +25193,7 @@ struct LauncherView: View {
         let contextKey = customEntry?.key ?? builtInKey
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-            searchContextApp = SearchContextApp(
+            searchState.contextApp = SearchContextApp(
                 name: result.title,
                 icon: result.icon,
                 key: contextKey,
@@ -25563,9 +25204,9 @@ struct LauncherView: View {
                 contactEmail: result.contactData?.primaryEmail,
                 contactPhone: result.contactData?.primaryPhone
             )
-            searchText = ""
-            searchResults = []
-            selectedResultIndex = nil
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
             isSearchBarExpanded = true
             // Load persisted chat for this panel (panelKey computed just below)
             let panelKeyForLoad =
@@ -25579,7 +25220,7 @@ struct LauncherView: View {
                 .joined()
             remPanelChatMessages = AppPanelChatStore.shared.load(for: panelKeyForLoad)
 
-            // Set activeSmartQueryKey — used by handleRemPanelQuery and panel header
+            // Set searchState.activeSmartQueryKey — used by handleRemPanelQuery and panel header
             let panelKey =
                 contextKey
                 ?? result.title.lowercased()
@@ -25589,9 +25230,9 @@ struct LauncherView: View {
                         .inverted
                 )
                 .joined()
-            activeSmartQueryKey = panelKey
-            isInSmartMode = true
-            appPanelAllItems = []
+            searchState.activeSmartQueryKey = panelKey
+            searchState.isInSmartMode = true
+            searchState.appPanelAllItems = []
             // Only load data for built-in system types
             if let key = contextKey {
                 reloadAppPanelData(for: key)
@@ -25610,39 +25251,39 @@ struct LauncherView: View {
         isSearchFieldFocused = true
     }
 
-    /// Exits the pinned L2 dock scope (l2TargetApp) without clearing other state.
+    /// Exits the pinned L2 dock scope (l2.targetApp) without clearing other state.
     private func exitL2DockScope() {
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            l2TargetApp = nil
+            l2.targetApp = nil
         }
         syncL2DockSession(force: true)
     }
 
     /// Clears the app context and returns to normal search.
     private func clearSearchContext(preserveQuery: Bool = false) {
-        if let key = activeSmartQueryKey {
+        if let key = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: key)
         }
-        let retainedQuery = searchText
-        l2TerminalDismissed = false
+        let retainedQuery = searchState.query
+        l2.terminalDismissed = false
         pendingAIMenuProposal = nil
         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-            searchContextApp = nil
-            activeSmartQueryKey = nil
-            l2TargetApp = nil
-            isInSmartMode = false
-            appPanelAllItems = []
+            searchState.contextApp = nil
+            searchState.activeSmartQueryKey = nil
+            l2.targetApp = nil
+            searchState.isInSmartMode = false
+            searchState.appPanelAllItems = []
             remPanelChatMessages = []
             clearPinnedResults()
-            searchResults = []
-            selectedResultIndex = nil
+            searchState.results = []
+            searchState.selectedIndex = nil
             livePanelVisible = false
             if !preserveQuery {
-                searchText = ""
+                searchState.query = ""
             }
         }
         if preserveQuery {
-            searchText = retainedQuery
+            searchState.query = retainedQuery
         }
         syncL2DockSession(force: true)
     }
@@ -25650,7 +25291,7 @@ struct LauncherView: View {
     private func reloadAppPanelData(for key: String) {
         switch key {
         case "clipboard":
-            appPanelAllItems = clipboardSearchResults()
+            searchState.appPanelAllItems = clipboardSearchResults()
         case "reminders":
             loadSystemDataAsPinnedResults(
                 query: "", types: [.reminder], title: "Reminders",
@@ -25673,7 +25314,7 @@ struct LauncherView: View {
                 perTypeLimit: 200, allowEmptyQuery: true, excludeTypes: [.photo])
         case "messages":
             clearPinnedResults()
-            appPanelAllItems = []
+            searchState.appPanelAllItems = []
         case "contacts":
             loadAllContactsAsResults()
         case "safari":
@@ -25696,9 +25337,9 @@ struct LauncherView: View {
                     with: .move(edge: settings.effectiveDockAtBottom ? .bottom : .top)))
         }
         // App panel: full-screen split view — hides normal search results entirely
-        else if activeSmartQueryKey != nil {
+        else if searchState.activeSmartQueryKey != nil {
             appPanelView
-        } else if !searchResults.isEmpty {
+        } else if !searchState.results.isEmpty {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 0) {
@@ -25706,7 +25347,7 @@ struct LauncherView: View {
                         // In dock mode, reverse order so first result is at bottom (closest to dock)
                         let sectionsToRender =
                             settings.effectiveDockAtBottom
-                            ? Array(groupedResults.sections.reversed()) : groupedResults.sections
+                            ? Array(searchState.grouped.sections.reversed()) : searchState.grouped.sections
 
                         // Render grouped sections with headers
                         ForEach(Array(sectionsToRender.enumerated()), id: \.offset) {
@@ -25719,7 +25360,7 @@ struct LauncherView: View {
                                 ? Array(sectionResults.reversed()) : sectionResults
 
                             // Section header
-                            if groupedResults.sections.count > 1 {
+                            if searchState.grouped.sections.count > 1 {
                                 HStack {
                                     Text(sectionName)
                                         .font(.system(size: 11, weight: .semibold))
@@ -25761,49 +25402,49 @@ struct LauncherView: View {
                 .scrollContentBackground(.hidden)
                 .background(.clear)
                 .frame(maxHeight: 400)
-                .onChange(of: searchResultsRevision) { _, _ in
+                .onChange(of: searchState.revision) { _, _ in
                     // When docked at bottom, keep the best match in view even if selection didn't change.
                     guard settings.effectiveDockAtBottom else { return }
-                    guard let index = selectedResultIndex,
+                    guard let index = searchState.selectedIndex,
                         index >= 0,
-                        index < searchResults.count
+                        index < searchState.results.count
                     else { return }
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(searchResults[index].id, anchor: .bottom)
+                        proxy.scrollTo(searchState.results[index].id, anchor: .bottom)
                     }
                 }
-                .onChange(of: selectedResultIndex) { _, newIndex in
+                .onChange(of: searchState.selectedIndex) { _, newIndex in
                     // Auto-scroll to selected result ONLY when navigating with arrow keys
-                    if isKeyboardNavigation || shouldAutoScrollToSelection,
+                    if searchState.isKeyboardNavigation || searchState.shouldAutoScroll,
                         let index = newIndex,
-                        index >= 0 && index < searchResults.count
+                        index >= 0 && index < searchState.results.count
                     {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             let anchor: UnitPoint =
                                 settings.effectiveDockAtBottom ? .bottom : .center
-                            proxy.scrollTo(searchResults[index].id, anchor: anchor)
+                            proxy.scrollTo(searchState.results[index].id, anchor: anchor)
                         }
                     }
-                    if shouldAutoScrollToSelection { shouldAutoScrollToSelection = false }
+                    if searchState.shouldAutoScroll { searchState.shouldAutoScroll = false }
                     // Update context extensions for the newly selected result
                     // so context-based dock pills reflect file type / app context immediately
                     updateL2ContextExtensions()
                 }
             }
-        } else if isLoadingApps {
+        } else if searchState.isLoadingApps {
             loadingView
         }
     }
 
     // Helper to find global index for a result (for selection tracking)
     private func getGlobalIndex(for result: SearchResult) -> Int {
-        searchResults.firstIndex(where: { $0.id == result.id }) ?? 0
+        searchState.results.firstIndex(where: { $0.id == result.id }) ?? 0
     }
 
     private func resultRowView(for result: SearchResult, at index: Int) -> some View {
         ResultRow(
             result: result,
-            isSelected: selectedResultIndex == index
+            isSelected: searchState.selectedIndex == index
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -25814,12 +25455,12 @@ struct LauncherView: View {
                 if isSearchFieldFocused {
                     return
                 }
-                if isKeyboardNavigation {
+                if searchState.isKeyboardNavigation {
                     // Switch back to mouse mode but don't steal selection immediately
-                    isKeyboardNavigation = false
+                    searchState.isKeyboardNavigation = false
                     return
                 }
-                selectedResultIndex = index
+                searchState.selectedIndex = index
             }
         }
         .contextMenu {
@@ -25959,9 +25600,9 @@ struct LauncherView: View {
 
     private func activateSearchField() {
         // Clear any existing text and results first
-        searchText = ""
-        searchResults = []
-        selectedResultIndex = nil
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
         
 
         // Immediately show and focus (no delay for better performance)
@@ -26025,7 +25666,7 @@ struct LauncherView: View {
             // Consumes the event so the ScrollView underneath never moves.
             if self.isHoveringPillRow
                 && self.showContextInDock
-                && !self.isAIMode
+                && !self.aiMode.isActive
                 && !self.showShortcutSheet
                 && abs(dx) > abs(dy)   // horizontal-dominant gesture
             {
@@ -26060,28 +25701,28 @@ struct LauncherView: View {
                     let pills = self.cachedDockPills
                     while self.pillScrollAccumulator >= threshold {
                         self.pillScrollAccumulator -= threshold
-                        let cur = self.focusedPillIndex ?? 0
+                        let cur = self.l2.focusedPillIndex ?? 0
                         if cur <= 0 {
-                            self.focusedPillIndex = nil
-                            self.pillNavViaKeyboard = false
+                            self.l2.focusedPillIndex = nil
+                            self.l2.pillNavViaKeyboard = false
                         } else {
                             var idx = cur - 1
                             while idx > 0 && pills[idx].isSeparator { idx -= 1 }
-                            self.pillNavViaKeyboard = true
-                            self.focusedPillIndex = idx
+                            self.l2.pillNavViaKeyboard = true
+                            self.l2.focusedPillIndex = idx
                         }
                     }
                     while self.pillScrollAccumulator <= -threshold {
                         self.pillScrollAccumulator += threshold
-                        let cur = self.focusedPillIndex ?? -1
+                        let cur = self.l2.focusedPillIndex ?? -1
                         if cur >= pills.count - 1 {
-                            self.focusedPillIndex = nil
-                            self.pillNavViaKeyboard = false
+                            self.l2.focusedPillIndex = nil
+                            self.l2.pillNavViaKeyboard = false
                         } else {
                             var idx = cur + 1
                             while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                            self.pillNavViaKeyboard = true
-                            self.focusedPillIndex = idx
+                            self.l2.pillNavViaKeyboard = true
+                            self.l2.focusedPillIndex = idx
                         }
                     }
                 }
@@ -26117,7 +25758,7 @@ struct LauncherView: View {
                     && self.isHoveringInputField
                 {
                     guard !self.isExplicitAppScopeLocked else { return event }
-                    if self.isAIMode || self.accumulatedSwipeDeltaX > 0 {
+                    if self.aiMode.isActive || self.accumulatedSwipeDeltaX > 0 {
                         self.toggleAIModeViaSwipe()
                     }
                 }
@@ -26142,7 +25783,7 @@ struct LauncherView: View {
                                     self.isGlobalContextActive = false
                                     self.showMediaLayer = true
                                 }
-                                if self.searchText.isEmpty && !self.isSearchFieldFocused {
+                                if self.searchState.query.isEmpty && !self.isSearchFieldFocused {
                                     self.startCollapseTimer()
                                 }
                             }
@@ -26150,7 +25791,7 @@ struct LauncherView: View {
                     }
                     // Swipe DOWN (positive deltaY): Media → Context → Global
                     else {
-                        if self.isAIMode {
+                        if self.aiMode.isActive {
                             // AI chat → previous layer
                             self.toggleAIModeViaSwipe()
                         } else if self.showMediaLayer {
@@ -26159,7 +25800,7 @@ struct LauncherView: View {
                                 self.showMediaLayer = false
                                 self.showContextInDock = true
                             }
-                            if self.searchText.isEmpty && !self.isSearchFieldFocused {
+                            if self.searchState.query.isEmpty && !self.isSearchFieldFocused {
                                 self.startCollapseTimer()
                             }
                         } else if !self.isGlobalContextActive {
@@ -26200,14 +25841,14 @@ struct LauncherView: View {
 
         switch direction {
         case .up:
-            if isAIMode {
+            if aiMode.isActive {
                 toggleAIModeViaSwipe()
             } else if showMediaLayer {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                     showMediaLayer = false
                     showContextInDock = true
                 }
-                if searchText.isEmpty && !isSearchFieldFocused {
+                if searchState.query.isEmpty && !isSearchFieldFocused {
                     startCollapseTimer()
                 }
             } else if !isGlobalContextActive {
@@ -26219,7 +25860,7 @@ struct LauncherView: View {
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
             }
         case .down:
-            if isAIMode {
+            if aiMode.isActive {
                 toggleAIModeViaSwipe()
             } else if isGlobalContextActive {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -26233,7 +25874,7 @@ struct LauncherView: View {
                         isGlobalContextActive = false
                         showMediaLayer = true
                     }
-                    if searchText.isEmpty && !isSearchFieldFocused {
+                    if searchState.query.isEmpty && !isSearchFieldFocused {
                         startCollapseTimer()
                     }
                 }
@@ -26243,15 +25884,15 @@ struct LauncherView: View {
 
     private func toggleAIModePreservingLayer() {
         guard settings.enableAIMode else { return }
-        guard !isExplicitAppScopeLocked || isAIMode else { return }
+        guard !isExplicitAppScopeLocked || aiMode.isActive else { return }
 
-        searchResults = []
-        selectedResultIndex = nil
-        searchText = ""
-        currentAITask?.cancel()
-        isAILoading = false
+        searchState.results = []
+        searchState.selectedIndex = nil
+        searchState.query = ""
+        aiMode.currentTask?.cancel()
+        aiMode.isLoading = false
 
-        if !isAIMode {
+        if !aiMode.isActive {
             chatReturnContextInDock = showContextInDock
             chatReturnBrowserLayer = showMediaLayer
             chatReturnGlobalContext = isGlobalContextActive
@@ -26259,8 +25900,8 @@ struct LauncherView: View {
         }
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
-            isAIMode.toggle()
-            if isAIMode {
+            aiMode.isActive.toggle()
+            if aiMode.isActive {
                 // Media hides the input field, so temporarily leave L3 while chat is active.
                 showMediaLayer = false
             } else {
@@ -26270,10 +25911,10 @@ struct LauncherView: View {
             }
         }
 
-        if isAIMode {
+        if aiMode.isActive {
             collapseTimer?.cancel()
         } else {
-            if searchText.isEmpty { startCollapseTimer() }
+            if searchState.query.isEmpty { startCollapseTimer() }
         }
     }
 
@@ -26307,11 +25948,11 @@ struct LauncherView: View {
         collapseTimer?.cancel()
 
         // Collapse timer is an L1 concept — skip entirely in L2 and AI mode
-        if isAIMode || isL2ContextActive {
+        if aiMode.isActive || isL2ContextActive {
             return
         }
 
-        if !searchText.isEmpty {
+        if !searchState.query.isEmpty {
             // Keep expanded while there's text
             return
         }
@@ -26322,17 +25963,17 @@ struct LauncherView: View {
 
     private func updateL2ContextExtensions() {
         guard settings.enableContextAIExtensions else {
-            l2ContextExtensions = []
+            l2.contextExtensions = []
             return
         }
 
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Frontmost app — from context or stored name
         let frontmostName: String? = {
             switch currentContext {
             case .appFocused(let name, _): return name
-            default: return frontmostAppName.isEmpty ? nil : frontmostAppName
+            default: return frontmost.name.isEmpty ? nil : frontmost.name
             }
         }()
 
@@ -26372,7 +26013,7 @@ struct LauncherView: View {
             || selectedText != nil
 
         if !hasAnyContext {
-            l2ContextExtensions = []
+            l2.contextExtensions = []
             return
         }
 
@@ -26385,7 +26026,7 @@ struct LauncherView: View {
             layer: .l2_context
         )
 
-        l2ContextExtensions = Array(results.prefix(6))
+        l2.contextExtensions = Array(results.prefix(6))
     }
 
     private func updateContextSuggestions() {
@@ -26394,8 +26035,8 @@ struct LauncherView: View {
     }
 
     private var shouldWarmFrontmostBrowserContext: Bool {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return isAIMode || isAILoading || l2IsLoading || (showContextInDock && !query.isEmpty)
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return aiMode.isActive || aiMode.isLoading || l2.isLoading || (showContextInDock && !query.isEmpty)
     }
 
     private func cancelBrowserContextWarmup() {
@@ -26436,7 +26077,7 @@ struct LauncherView: View {
         guard settings.enableContextAIExtensions else {
             clearFinderFollowUpTargets()
             currentContext = .none
-            l2ContextExtensions = []
+            l2.contextExtensions = []
             return
         }
 
@@ -26453,9 +26094,9 @@ struct LauncherView: View {
             clearFinderFollowUpTargets()
         }
         refreshCachedFinderCurrentDirectory(for: bundleID)
-        frontmostAppName = appName
-        frontmostAppBundleID = bundleID
-        frontmostAppIcon =
+        frontmost.name = appName
+        frontmost.bundleID = bundleID
+        frontmost.icon =
             resolvedApplicationIcon(bundleIdentifier: bundleID, appName: appName)
             ?? preparedDockIcon(frontmostApp.icon)
         currentContext = .appFocused(name: appName, bundleID: bundleID)
@@ -26519,9 +26160,9 @@ struct LauncherView: View {
                 }
 
                 // Update frontmost app info
-                frontmostAppName = appName
-                frontmostAppBundleID = bundleID
-                frontmostAppIcon =
+                frontmost.name = appName
+                frontmost.bundleID = bundleID
+                frontmost.icon =
                     resolvedApplicationIcon(bundleIdentifier: bundleID, appName: appName)
                     ?? preparedDockIcon(app.icon)
 
@@ -26652,7 +26293,7 @@ struct LauncherView: View {
         // Priority 1: Files selected in search results (internal selection)
         if !selectedFiles.isEmpty {
             let selectedURLs =
-                searchResults
+                searchState.results
                 .filter { selectedFiles.contains($0.id) }
                 .compactMap { $0.filePath }
                 .map { URL(fileURLWithPath: $0) }
@@ -26684,9 +26325,9 @@ struct LauncherView: View {
             if bundleID == Bundle.main.bundleIdentifier {
                 print("⚠️ [Context Detection] Skipping Context-Dock itself")
             } else {
-                frontmostAppName = appName
-                frontmostAppBundleID = bundleID
-                frontmostAppIcon =
+                frontmost.name = appName
+                frontmost.bundleID = bundleID
+                frontmost.icon =
                     resolvedApplicationIcon(bundleIdentifier: bundleID, appName: appName)
                     ?? preparedDockIcon(frontmostApp.icon)
                 refreshCachedFinderCurrentDirectory(for: bundleID)
@@ -26811,10 +26452,10 @@ struct LauncherView: View {
     }
 
     private func contextTargetApp() -> NSRunningApplication? {
-        if !frontmostAppBundleID.isEmpty,
-            frontmostAppBundleID != Bundle.main.bundleIdentifier,
+        if !frontmost.bundleID.isEmpty,
+            frontmost.bundleID != Bundle.main.bundleIdentifier,
             let resolvedApp = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == frontmostAppBundleID && !$0.isTerminated
+                $0.bundleIdentifier == frontmost.bundleID && !$0.isTerminated
             })
         {
             return resolvedApp
@@ -26854,9 +26495,9 @@ struct LauncherView: View {
         append(AppDelegate.shared?.previousFrontmostApp)
         append(NSWorkspace.shared.frontmostApplication)
 
-        if !frontmostAppBundleID.isEmpty,
+        if !frontmost.bundleID.isEmpty,
             let fallback = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == frontmostAppBundleID
+                $0.bundleIdentifier == frontmost.bundleID
             })
         {
             append(fallback)
@@ -26946,9 +26587,9 @@ struct LauncherView: View {
     private func acceptL2AppCompletion(
         _ completion: (appName: String, bundleId: String, ghost: String, actionQuery: String)
     ) {
-        self.l2AppCompletion = nil
+        self.l2.appCompletion = nil
         if completion.bundleId == "scope://clipboard" {
-            activateClipboardScope(searchTextOverride: completion.actionQuery)
+            activateClipboardScope(queryOverride: completion.actionQuery)
             return
         }
         // Activate the scope immediately (explicit Tab action) and clear the app name
@@ -26956,15 +26597,15 @@ struct LauncherView: View {
         let activated = activateInlineDockAppScope(
             bundleIdentifier: completion.bundleId,
             appName: completion.appName,
-            searchTextOverride: completion.actionQuery
+            queryOverride: completion.actionQuery
         )
         isGlobalContextActive = false
         if !activated {
-            let currentTokens = self.searchText.trimmingCharacters(in: .whitespaces)
+            let currentTokens = self.searchState.query.trimmingCharacters(in: .whitespaces)
                 .split(separator: " ").map(String.init)
             let afterApp = currentTokens.dropFirst().joined(separator: " ")
             let fullName = (currentTokens.first ?? "") + completion.ghost
-            self.searchText = afterApp.isEmpty ? fullName + " " : fullName + " " + afterApp
+            self.searchState.query = afterApp.isEmpty ? fullName + " " : fullName + " " + afterApp
         }
     }
 
@@ -26972,7 +26613,7 @@ struct LauncherView: View {
     private func activateTypedAppScopeIfPossible(for query: String? = nil) -> Bool {
         guard isGlobalContextActive else { return false }
 
-        let rawQuery = query ?? searchText
+        let rawQuery = query ?? searchState.query
         let rawTrimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard rawTrimmed.count >= 2 else { return false }
 
@@ -26980,7 +26621,7 @@ struct LauncherView: View {
             ? String(rawTrimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             : rawTrimmed.lowercased()
 
-        if let completion = l2AppCompletion, !completion.ghost.isEmpty {
+        if let completion = l2.appCompletion, !completion.ghost.isEmpty {
             acceptL2AppCompletion(completion)
             return true
         }
@@ -26994,9 +26635,9 @@ struct LauncherView: View {
             let activated = activateInlineDockAppScope(
                 bundleIdentifier: target.bundleId,
                 appName: target.appName,
-                searchTextOverride: target.actionQuery
+                queryOverride: target.actionQuery
             )
-            if !activated { searchText = target.appName + " " }
+            if !activated { searchState.query = target.appName + " " }
             return true
         }
 
@@ -27009,9 +26650,9 @@ struct LauncherView: View {
             let activated = activateInlineDockAppScope(
                 bundleIdentifier: target.bundleId,
                 appName: target.appName,
-                searchTextOverride: target.actionQuery
+                queryOverride: target.actionQuery
             )
-            if !activated { searchText = target.appName + " " }
+            if !activated { searchState.query = target.appName + " " }
             return true
         }
 
@@ -27051,12 +26692,12 @@ struct LauncherView: View {
             guard !showFolderPreview else { return event }
 
             // Don't intercept if in AI mode (allow typing spaces in AI queries)
-            guard !isAIMode else { return event }
+            guard !aiMode.isActive else { return event }
 
             // Only intercept if we have a selected result
-            guard let index = selectedResultIndex, index < searchResults.count else { return event }
+            guard let index = searchState.selectedIndex, index < searchState.results.count else { return event }
 
-            let result = searchResults[index]
+            let result = searchState.results[index]
 
             // Check if the result supports preview (file, folder, or contact)
             let supportsPreview = result.filePath != nil || result.type == .contact
@@ -27065,8 +26706,8 @@ struct LauncherView: View {
             // If search text is empty OR ends with space (user likely not mid-typing), trigger Quick Look
             // Also trigger if Shift is held (Shift+Space is unlikely to be intentional typing)
             let isShiftHeld = event.modifierFlags.contains(.shift)
-            let searchIsEmpty = searchText.trimmingCharacters(in: .whitespaces).isEmpty
-            let endsWithSpace = searchText.hasSuffix(" ")
+            let searchIsEmpty = searchState.query.trimmingCharacters(in: .whitespaces).isEmpty
+            let endsWithSpace = searchState.query.hasSuffix(" ")
 
             if isShiftHeld || searchIsEmpty || endsWithSpace {
                 DispatchQueue.main.async {
@@ -27091,7 +26732,7 @@ struct LauncherView: View {
     /// Flat list of app pills currently visible in the pinned/running or global-search row.
     /// Returns (action, destructiveAction, removeAction) per index for keyboard execution.
     private func currentAppPillActions() -> [(execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?)] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Global context app search
         if isGlobalContextActive && !q.isEmpty {
             return globalApplicationMatches(for: q)
@@ -27112,7 +26753,7 @@ struct LauncherView: View {
         // Pinned row
         var items: [(execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?)] = []
         for app in settings.pinnedApps {
-            if inGlobalAutoFocus && app.bundleIdentifier == frontmostAppBundleID { continue }
+            if inGlobalAutoFocus && app.bundleIdentifier == frontmost.bundleID { continue }
             let ri = runningApp(for: app)
             let captured = app
             items.append((
@@ -27128,7 +26769,7 @@ struct LauncherView: View {
         let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
         for app in source {
             guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
-            if inGlobalAutoFocus && app.bundleIdentifier == frontmostAppBundleID { continue }
+            if inGlobalAutoFocus && app.bundleIdentifier == frontmost.bundleID { continue }
             let key = app.bundleIdentifier ?? app.bundleURL?.path ?? "\(app.processIdentifier)"
             guard seen.insert(key).inserted else { continue }
             let captured = app
@@ -27166,7 +26807,7 @@ struct LauncherView: View {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
             // Only intercept when the context dock is showing and we're not in AI chat
             // Don't intercept while a system sheet (share, etc.) is in front
-            guard self.showContextInDock, !self.isAIMode, !self.isSharingSheetActive else {
+            guard self.showContextInDock, !self.aiMode.isActive, !self.isSharingSheetActive else {
                 return event
             }
 
@@ -27182,25 +26823,25 @@ struct LauncherView: View {
             {
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
                     self.lockedSubmenuParent = subCtx.parent
-                    self.searchText = ""
+                    self.searchState.query = ""
                 }
-                self.l2AppCompletion = nil
-                self.showL2ResultsPopover = false
+                self.l2.appCompletion = nil
+                self.l2.showResultsPopover = false
                 self.crossAppMenuItems = []
                 self.cachedDockPills = []
                 return nil
             }
             // Tab: pill ghost completion
             if event.keyCode == 48, let ghost = self.ghostPillCompletion {
-                self.searchText = ghost.name
+                self.searchState.query = ghost.name
                 return nil
             }
             // Right-arrow: complete ghost pill text (leaf item)
             if event.keyCode == 124, let ghost = self.ghostPillCompletion, self.searchInputCursorIsAtEnd() {
-                self.searchText = ghost.name
+                self.searchState.query = ghost.name
                 return nil
             }
-            if let completion = self.l2AppCompletion, !completion.ghost.isEmpty, event.keyCode == 48 {
+            if let completion = self.l2.appCompletion, !completion.ghost.isEmpty, event.keyCode == 48 {
                 self.acceptL2AppCompletion(completion)
                 return nil
             }
@@ -27208,7 +26849,7 @@ struct LauncherView: View {
                 return nil
             }
 
-            let q = self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
             // ── App-pill row navigation (pinned/running or global app search) ──────────
             // Match view's hasActiveContextSelection (no stale clipboard)
@@ -27242,7 +26883,7 @@ struct LauncherView: View {
                 case 48:  // Tab — enter/exit app pill navigation; never let macOS Full Keyboard Navigation take over
                     if self.focusedAppPillIndex == nil {
                         self.focusedAppPillIndex = 0
-                        self.pillNavViaKeyboard = true
+                        self.l2.pillNavViaKeyboard = true
                     } else {
                         self.focusedAppPillIndex = nil
                         self.expandSearchBar()
@@ -27266,7 +26907,7 @@ struct LauncherView: View {
                     guard self.focusedAppPillIndex != nil else {
                         guard self.searchInputCursorIsAtEnd() else { return event }
                         self.focusedAppPillIndex = 0
-                        self.pillNavViaKeyboard = true
+                        self.l2.pillNavViaKeyboard = true
                         return nil
                     }
                     let curIdx = self.focusedAppPillIndex ?? -1
@@ -27286,7 +26927,7 @@ struct LauncherView: View {
                 case 36:  // Enter — launch/activate
                     if let idx = self.focusedAppPillIndex, idx < appPills.count {
                         appPills[idx].execute()
-                        self.searchText = ""
+                        self.searchState.query = ""
                         self.focusedAppPillIndex = nil
                         return nil
                     }
@@ -27321,8 +26962,8 @@ struct LauncherView: View {
 
             switch event.keyCode {
             case 48:  // Tab — return focus to search field (prevents macOS Full Keyboard Navigation takeover)
-                self.focusedPillIndex = nil
-                self.pillNavViaKeyboard = false
+                self.l2.focusedPillIndex = nil
+                self.l2.pillNavViaKeyboard = false
                 DispatchQueue.main.async { self.isSearchFieldFocused = true }
                 return nil
 
@@ -27333,25 +26974,25 @@ struct LauncherView: View {
                     _ = count
                     return nil
                 }
-                guard self.focusedPillIndex != nil else { return event }
-                let curLeft = self.focusedPillIndex ?? 0
+                guard self.l2.focusedPillIndex != nil else { return event }
+                let curLeft = self.l2.focusedPillIndex ?? 0
                 if curLeft <= 0 {
                     // Already at first pill — return focus to input field
-                    self.focusedPillIndex = nil
-                    self.pillNavViaKeyboard = false
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
                     DispatchQueue.main.async { self.isSearchFieldFocused = true }
                     return nil
                 }
-                self.pillNavViaKeyboard = true
+                self.l2.pillNavViaKeyboard = true
                 var idx = max(0, curLeft - 1)
                 while idx > 0 && pills[idx].isSeparator { idx -= 1 }
-                self.focusedPillIndex = idx
+                self.l2.focusedPillIndex = idx
                 return nil
 
             case 124:  // Right arrow — move focus right (skip separators); wrap to input at end
                 if self.searchInputHasHighlightedText() {
-                    self.focusedPillIndex = nil
-                    self.pillNavViaKeyboard = false
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
                     return event
                 }
                 if self.showShortcutSheet {
@@ -27360,26 +27001,26 @@ struct LauncherView: View {
                         count - 1, (self.shortcutSheetFocusedIdx ?? -1) + 1)
                     return nil
                 }
-                guard self.focusedPillIndex != nil else {
+                guard self.l2.focusedPillIndex != nil else {
                     guard self.searchInputCursorIsAtEnd() else { return event }
-                    self.pillNavViaKeyboard = true
+                    self.l2.pillNavViaKeyboard = true
                     var idx = 0
                     while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                    self.focusedPillIndex = idx
+                    self.l2.focusedPillIndex = idx
                     return nil
                 }
-                let curIdx = self.focusedPillIndex ?? -1
+                let curIdx = self.l2.focusedPillIndex ?? -1
                 if curIdx >= pills.count - 1 {
                     // Already at last pill — return focus to input field
-                    self.focusedPillIndex = nil
-                    self.pillNavViaKeyboard = false
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
                     DispatchQueue.main.async { self.isSearchFieldFocused = true }
                     return nil
                 }
-                self.pillNavViaKeyboard = true
+                self.l2.pillNavViaKeyboard = true
                 var idx = min(pills.count - 1, curIdx + 1)
                 while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                self.focusedPillIndex = idx
+                self.l2.focusedPillIndex = idx
                 return nil
 
             case 125:  // Down — navigate list (list mode) or Global → Context → Media
@@ -27390,12 +27031,12 @@ struct LauncherView: View {
                     return nil
                 }
                 if self.settings.useListViewForPills {
-                    let curIdx = self.focusedPillIndex ?? -1
+                    let curIdx = self.l2.focusedPillIndex ?? -1
                     var idx = curIdx + 1
                     while idx < pills.count && pills[idx].isSeparator { idx += 1 }
                     if idx < pills.count {
-                        self.pillNavViaKeyboard = true
-                        self.focusedPillIndex = idx
+                        self.l2.pillNavViaKeyboard = true
+                        self.l2.focusedPillIndex = idx
                     }
                     return nil
                 }
@@ -27414,14 +27055,14 @@ struct LauncherView: View {
                     return nil
                 }
                 if self.settings.useListViewForPills {
-                    if let cur = self.focusedPillIndex, cur > 0 {
+                    if let cur = self.l2.focusedPillIndex, cur > 0 {
                         var idx = cur - 1
                         while idx > 0 && pills[idx].isSeparator { idx -= 1 }
-                        self.pillNavViaKeyboard = true
-                        self.focusedPillIndex = idx
+                        self.l2.pillNavViaKeyboard = true
+                        self.l2.focusedPillIndex = idx
                     } else {
-                        self.focusedPillIndex = nil
-                        self.pillNavViaKeyboard = false
+                        self.l2.focusedPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
                         DispatchQueue.main.async { self.isSearchFieldFocused = true }
                     }
                     return nil
@@ -27434,7 +27075,7 @@ struct LauncherView: View {
                 if let subCtx = self.submenuGhostContext, let firstChild = subCtx.children.first {
                     let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
                     let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                    self.searchText = ""
+                    self.searchState.query = ""
                     self.lockedSubmenuParent = nil
                     self.executeDockMenuAction(
                         sourcePID: pid, path: firstChild.path,
@@ -27442,7 +27083,7 @@ struct LauncherView: View {
                     )
                     return nil
                 }
-                if self.focusedPillIndex != nil,
+                if self.l2.focusedPillIndex != nil,
                     !self.showShortcutSheet,
                     self.executeFocusedOrDirectAppPillIfNeeded()
                 {
@@ -27496,18 +27137,18 @@ struct LauncherView: View {
                 return event
 
             case 53:  // Escape — clear pill focus and return to input field
-                if self.focusedPillIndex != nil {
-                    self.focusedPillIndex = nil
-                    self.pillNavViaKeyboard = false
+                if self.l2.focusedPillIndex != nil {
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
                     DispatchQueue.main.async { self.isSearchFieldFocused = true }
                     return nil
                 }
                 return event
 
             case 51:  // Delete/Backspace — deselect focused action pill and return to input field
-                if self.focusedPillIndex != nil {
-                    self.focusedPillIndex = nil
-                    self.pillNavViaKeyboard = false
+                if self.l2.focusedPillIndex != nil {
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
                     DispatchQueue.main.async { self.isSearchFieldFocused = true }
                     return nil
                 }
@@ -27537,7 +27178,7 @@ struct LauncherView: View {
 
                 // Shortcut passthrough: when L2 context dock is open, forward Cmd+key combos
                 // to the frontmost app using liveMenuItems shortcut index — no focus switch needed.
-                if showContextInDock && !isAIMode,
+                if showContextInDock && !aiMode.isActive,
                     event.modifierFlags.contains(.command),
                     let ch = event.charactersIgnoringModifiers?.lowercased(), !ch.isEmpty,
                     let targetApp = AppDelegate.shared?.previousFrontmostApp
@@ -27578,7 +27219,7 @@ struct LauncherView: View {
                     try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 s
                     guard !Task.isCancelled else { return }
                     // Only show when dock is visible and not in AI mode
-                    guard self.showContextInDock && !self.isAIMode && !self.liveMenuItems.isEmpty
+                    guard self.showContextInDock && !self.aiMode.isActive && !self.liveMenuItems.isEmpty
                     else { return }
                     self.showShortcutSheet = true
                     self.cmdHoldTask = nil
@@ -27646,15 +27287,15 @@ struct LauncherView: View {
     }
 
     private func loadApplicationsInBackground() {
-        isLoadingApps = true
+        searchState.isLoadingApps = true
         Task.detached(priority: .userInitiated) {
             let apps = findAllApplications()
             await MainActor.run {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     allApplications = apps
-                    isLoadingApps = false
+                    searchState.isLoadingApps = false
                 }
-                if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                if !searchState.query.trimmingCharacters(in: .whitespaces).isEmpty {
                     DispatchQueue.main.async { performSearch() }
                 }
             }
@@ -28018,22 +27659,22 @@ struct LauncherView: View {
         }
     }
 
-    private func searchIndexedFiles(for query: String) {
+    func searchIndexedFiles(for query: String) {
         guard settings.enableSpotlightSearch,
             settings.enableL1DocumentSearch || settings.enableL1FileSearch
         else {
-            indexedFileResults = []
+            searchState.indexedFileResults = []
             return
         }
 
         guard !query.isEmpty else {
-            indexedFileResults = []
+            searchState.indexedFileResults = []
             return
         }
 
         guard fileIndexManager.isReady else {
             print("⚠️ File index not ready yet")
-            indexedFileResults = []
+            searchState.indexedFileResults = []
             return
         }
 
@@ -28041,10 +27682,10 @@ struct LauncherView: View {
         let results = fileIndexManager.search(query: query, limit: 20)
             .filter(includeIndexedSearchResult)
 
-        indexedFileResults = results
+        searchState.indexedFileResults = results
     }
 
-    private func includeIndexedSearchResult(_ result: SearchResult) -> Bool {
+    func includeIndexedSearchResult(_ result: SearchResult) -> Bool {
         switch result.type {
         case .document:
             return settings.enableL1DocumentSearch
@@ -28057,7 +27698,7 @@ struct LauncherView: View {
 
     private func searchSystemData(for query: String) async {
         // System data (calendar, reminders, notes, mail) only appears in the
-        // dedicated app panel (activeSmartQueryKey), never in normal search results.
+        // dedicated app panel (searchState.activeSmartQueryKey), never in normal search results.
         // This prevents clutter like "call mom" showing under CALENDAR & NOTES when
         // the user types "cal" looking for Calendar.app.
         guard !query.isEmpty else {
@@ -28067,7 +27708,7 @@ struct LauncherView: View {
             return
         }
         // Skip entirely when not in app panel mode
-        guard await MainActor.run(resultType: Bool.self, body: { activeSmartQueryKey != nil })
+        guard await MainActor.run(resultType: Bool.self, body: { searchState.activeSmartQueryKey != nil })
         else {
             return
         }
@@ -28093,7 +27734,7 @@ struct LauncherView: View {
         }
 
         // Convert SystemSearchResult to SearchResult
-        let searchResults = systemResults.map { systemResult -> SearchResult in
+        let convertedSearchResults = systemResults.map { systemResult -> SearchResult in
             // Map SystemDataType to ResultType
             let resultType: SearchResult.ResultType
             switch systemResult.type {
@@ -28126,11 +27767,11 @@ struct LauncherView: View {
             )
         }
 
-        print("✅ [SystemSearch] Converted to \(searchResults.count) SearchResults")
+        print("✅ [SystemSearch] Converted to \(convertedSearchResults.count) SearchResults")
 
         await MainActor.run {
             print("📝 [SystemSearch] Updating systemDataResults on main thread")
-            systemDataResults = searchResults
+            systemDataResults = convertedSearchResults
             print("📝 [SystemSearch] Current systemDataResults count: \(systemDataResults.count)")
             print("📝 [SystemSearch] Current allItems count: \(allItems.count)")
             // Trigger re-search on next run loop to avoid state changes during view updates
@@ -28141,46 +27782,46 @@ struct LauncherView: View {
     }
 
     func navigateResults(direction: Int) {
-        let results = searchResults  // Capture current snapshot
+        let results = searchState.results  // Capture current snapshot
         guard !results.isEmpty else {
-            selectedResultIndex = nil
+            searchState.selectedIndex = nil
             return
         }
 
         // Mark as keyboard navigation for auto-scroll
-        isKeyboardNavigation = true
+        searchState.isKeyboardNavigation = true
 
         let movementDirection = direction
 
-        if let currentIndex = selectedResultIndex {
+        if let currentIndex = searchState.selectedIndex {
             // Validate current index is still valid
             guard currentIndex >= 0 && currentIndex < results.count else {
-                selectedResultIndex = 0
+                searchState.selectedIndex = 0
                 return
             }
 
             let newIndex = currentIndex + movementDirection
             if newIndex >= 0 && newIndex < results.count {
-                selectedResultIndex = newIndex
+                searchState.selectedIndex = newIndex
             } else if movementDirection < 0 {
                 // At the top, stay at top
-                selectedResultIndex = 0
+                searchState.selectedIndex = 0
             } else {
                 // At the bottom, stay at bottom
-                selectedResultIndex = results.count - 1
+                searchState.selectedIndex = results.count - 1
             }
         } else {
-            selectedResultIndex = direction > 0 ? 0 : max(results.count - 1, 0)
+            searchState.selectedIndex = direction > 0 ? 0 : max(results.count - 1, 0)
         }
     }
 
     func executeSelectedResult() {
         // In AI mode, submit to AI provider instead
-        if isAIMode {
+        if aiMode.isActive {
             if launchTypedAppMatchIfNeeded() {
                 return
             }
-            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
             if q.count > 3 {
                 submitAIQuery()
             }
@@ -28188,10 +27829,10 @@ struct LauncherView: View {
         }
 
         // Validate index bounds before accessing
-        if let index = selectedResultIndex, index >= 0 && index < searchResults.count {
-            executeResult(searchResults[index])
-        } else if !searchResults.isEmpty {
-            executeResult(searchResults[0])
+        if let index = searchState.selectedIndex, index >= 0 && index < searchState.results.count {
+            executeResult(searchState.results[index])
+        } else if !searchState.results.isEmpty {
+            executeResult(searchState.results[0])
         } else {
             // Try to open as URL or perform web search
             handleDirectInput()
@@ -28212,9 +27853,9 @@ struct LauncherView: View {
         // (Use Tab or → to open the context panel instead)
         if result.type == .file || result.type == .document || result.type == .folder {
             result.action()
-            searchText = ""
-            searchResults = []
-            selectedResultIndex = nil
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
             onClose()
             return
         }
@@ -28237,21 +27878,21 @@ struct LauncherView: View {
             result.action()
         }
 
-        searchText = ""
-        searchResults = []
-        selectedResultIndex = nil
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
         onClose()
     }
 
     private func executeL2Extension(_ ext: ILExtension, context: UserContext) async {
         await MainActor.run {
-            l2IsLoading = true
+            l2.isLoading = true
             updateWindowSize()
         }
 
         defer {
             Task { @MainActor in
-                l2IsLoading = false
+                l2.isLoading = false
                 updateWindowSize()
             }
         }
@@ -28265,7 +27906,7 @@ struct LauncherView: View {
 
         do {
             if ext.name == "Summarize Webpage",
-                frontmostAppName.lowercased().contains("safari"),
+                frontmost.name.lowercased().contains("safari"),
                 let pageText = fetchSafariPageText(),
                 !pageText.isEmpty
             {
@@ -28464,23 +28105,23 @@ struct LauncherView: View {
         }
     }
 
-    private func updateL2Results(_ results: [SearchResult]) {
-        l2ExtensionResults = results
+    func updateL2Results(_ results: [SearchResult]) {
+        l2.extensionResults = results
         if showContextInDock && !showMediaLayer {
             if !isSearchBarExpanded && !results.isEmpty {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isSearchBarExpanded = true
                 }
             }
-            searchResults = results
-            groupedResults = {
+            searchState.results = results
+            searchState.grouped = {
                 var grouped = GroupedResults()
                 results.forEach { grouped.add($0) }
                 return grouped
             }()
             // Never auto-select in L2 — keeps the search bar as a plain text field
             // so the user can immediately type a follow-up query.
-            selectedResultIndex = nil
+            searchState.selectedIndex = nil
         }
     }
 
@@ -28651,9 +28292,9 @@ struct LauncherView: View {
     private func buildCrossAppToolsSnippet(query: String, frontmostApp: String?) -> String {
         let q = query.lowercased()
         let frontmostKey =
-            activeSmartQueryKey ?? settings.autoDetectedAppKey
+            searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey
             ?? frontmostApp.flatMap {
-                settings.appKey(forBundleID: frontmostAppBundleID, appName: $0)
+                settings.appKey(forBundleID: frontmost.bundleID, appName: $0)
             }
 
         // Build app mention map from two sources:
@@ -29710,9 +29351,9 @@ struct LauncherView: View {
 
         // Inject user-configured app-specific tool extensions into L2 prompt
         let l2AppKey =
-            activeSmartQueryKey ?? settings.autoDetectedAppKey
+            searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey
             ?? frontmostApp.flatMap {
-                settings.appKey(forBundleID: frontmostAppBundleID, appName: $0)
+                settings.appKey(forBundleID: frontmost.bundleID, appName: $0)
             }
         if let key = l2AppKey {
             let relevantTools = settings.topExtensions(for: key, query: query, maxCount: 4)
@@ -30054,7 +29695,7 @@ struct LauncherView: View {
             content:
                 "✅ Extension code copied to clipboard! Save it to ExtensionLibrary/ and make it executable."
         )
-        l2ChatMessages.append(confirmMessage)
+        l2.chatMessages.append(confirmMessage)
     }
 
     private func installSuggestedExtension() {
@@ -30068,8 +29709,8 @@ struct LauncherView: View {
                 let layer = extractExtensionLayer(from: code)
                 await MainActor.run {
                     let scriptType = determineExtensionScriptType(from: code)
-                    let category = inferExtensionCategory(layer: layer, appName: frontmostAppName)
-                    let triggers = buildExtensionTriggers(layer: layer, appName: frontmostAppName)
+                    let category = inferExtensionCategory(layer: layer, appName: frontmost.name)
+                    let triggers = buildExtensionTriggers(layer: layer, appName: frontmost.name)
                     let ext = ILExtension(
                         name: extensionName,
                         description: description,
@@ -30099,7 +29740,7 @@ struct LauncherView: View {
                         """
 
                     let confirmMessage = AIChatMessage(role: .assistant, content: successMessage)
-                    l2ChatMessages.append(confirmMessage)
+                    l2.chatMessages.append(confirmMessage)
                 }
 
             } catch {
@@ -30109,7 +29750,7 @@ struct LauncherView: View {
                         content: "❌ Failed to install extension: \(error.localizedDescription)",
                         isError: true
                     )
-                    l2ChatMessages.append(errorMessage)
+                    l2.chatMessages.append(errorMessage)
                 }
             }
         }
@@ -30232,7 +29873,7 @@ struct LauncherView: View {
             conditions: finalConditions, conditionLogic: .any, pills: [pill], priority: 10
         )
         AppSettings.shared.addAXRule(rule)
-        l2ChatMessages.append(AIChatMessage(
+        l2.chatMessages.append(AIChatMessage(
             role: .assistant,
             content: "**\(proposal.name)** saved as a Context Trigger. Type \"\(proposal.name.lowercased())\" anytime to run it instantly."
         ))
@@ -30506,7 +30147,7 @@ struct LauncherView: View {
         let allExtensions = LayeredExtensionManager.shared.discoverExtensions(
             for: "",
             selectedFiles: [],
-            frontmostApp: frontmostAppName,
+            frontmostApp: frontmost.name,
             layer: .l2_context
         )
 
@@ -30714,18 +30355,18 @@ struct LauncherView: View {
     }
 
     func handleDirectInput() {
-        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        let trimmed = searchState.query.trimmingCharacters(in: .whitespaces)
 
         // Check if it's a URL
         if let url = URL(string: trimmed), url.scheme != nil {
             NSWorkspace.shared.open(url)
-            searchText = ""
+            searchState.query = ""
             onClose()
         } else if trimmed.contains(".") && !trimmed.contains(" ") {
             // Try as a URL with https://
             if let url = URL(string: "https://\(trimmed)") {
                 NSWorkspace.shared.open(url)
-                searchText = ""
+                searchState.query = ""
                 onClose()
             } else {
                 // Not a valid URL, perform web search
@@ -30745,7 +30386,7 @@ struct LauncherView: View {
             settings.addRecentWebSearch(query)
             NSWorkspace.shared.open(url)
         }
-        searchText = ""
+        searchState.query = ""
         onClose()
     }
 
@@ -30868,325 +30509,15 @@ struct LauncherView: View {
         return results
     }
 
-    func performSearch() {
-        // NOTE: detectAndUpdateContext() deliberately NOT called here.
-        // It uses synchronous Accessibility API calls that block the main thread
-        // 100-500ms per call — calling it on every keystroke kills input responsiveness.
-        // Context is detected once when the launcher shows (showLauncher / onAppear).
-
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-
-        if isL2ContextActive {
-            enforceL2ContextMode()
-        }
-
-        // L3 media layer is active — suppress search results entirely
-        if showMediaLayer {
-            searchResults = []
-            selectedResultIndex = nil
-            return
-        }
-
-        if showContextInDock && !showMediaLayer {
-            // In L2 context dock: pills filter in the dock row — don't touch the result sheet.
-            // Results only appear when the user submits via Enter (handleL2Query).
-            return
-        }
-
-        // If an app panel is active (calendar/notes/etc.), the panel view handles display
-        // via appPanelDisplayedItems (reactive to searchText). Just clear regular results
-        // so the normal APPLICATIONS/SHORTCUTS sections don't appear behind the panel.
-        if activeSmartQueryKey != nil {
-            if query.isEmpty {
-                // Stay in panel mode — show all items (appPanelDisplayedItems returns all when query empty)
-                searchResults = []
-                searchDebounceTask?.cancel()
-            } else {
-                // Filter is handled by appPanelDisplayedItems computed property
-                searchResults = []
-            }
-            return
-        }
-
-        guard !query.isEmpty else {
-            // Folder preview stays open until ESC — don't reset it on empty query
-            if showFolderPreview {
-                searchResults = []
-                searchDebounceTask?.cancel()
-                return
-            }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                searchResults = []
-                selectedResultIndex = nil
-                indexedFileResults = []
-                isInSmartMode = false
-                lastSmartQuery = ""
-                activeSmartQueryKey = nil
-                searchContextApp = nil
-                clearPinnedResults()
-                systemDataResults = []
-            }
-            searchDebounceTask?.cancel()
-            return
-        }
-
-        // Check if we need to exit smart mode (user deleted characters)
-        if isInSmartMode && query != lastSmartQuery {
-            // User is editing the query - check if we should stay in smart mode
-            let currentSmartResult = detectSmartQuery(query: query)
-            if currentSmartResult == nil {
-                // No longer a smart query - exit smart mode and do normal search
-                print("🔄 Exiting smart mode, switching to normal search")
-                isInSmartMode = false
-                lastSmartQuery = ""
-                // Close folder preview if open
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showFolderPreview = false
-                }
-                // Continue with normal search below
-            }
-        }
-
-        // Smart exact match detection for folders, contacts, and photos
-        if let smartResult = detectSmartQuery(query: query) {
-            print("🎯 Smart query detected: \(smartResult)")
-            isInSmartMode = true
-            lastSmartQuery = query
-            let shouldReturn = handleSmartQueryResult(smartResult)
-            if shouldReturn {
-                return
-            }
-        } else {
-            // Not a smart query anymore
-            if isInSmartMode {
-                isInSmartMode = false
-                lastSmartQuery = ""
-                clearPinnedResults()
-            }
-        }
-
-        // L3 media dock: keep the legacy web suggestions path when the user types.
-        if showMediaLayer {
-            var browserResults: [SearchResult] = []
-
-            // Filter recent searches that match current input
-            let matchingSearches = settings.recentWebSearches.filter { search in
-                search.lowercased().contains(query.lowercased())
-            }
-
-            // Filter bookmarks that match current input
-            let matchingBookmarks = settings.importedBookmarks.filter { bookmark in
-                bookmark.title.lowercased().contains(query.lowercased())
-                    || bookmark.url.lowercased().contains(query.lowercased())
-            }
-
-            // Convert recent searches to SearchResult
-            for search in matchingSearches.prefix(10) {
-                browserResults.append(
-                    SearchResult(
-                        title: search,
-                        subtitle: "Recent Search",
-                        icon: NSImage(
-                            systemSymbolName: "clock.arrow.circlepath",
-                            accessibilityDescription: nil),
-                        action: {
-                            searchText = search
-                            openInDefaultBrowser()
-                        },
-                        type: .webSearch,
-                        filePath: nil,
-                        contactData: nil
-                    ))
-            }
-
-            // Convert bookmarks to SearchResult
-            for bookmark in matchingBookmarks.prefix(10) {
-                browserResults.append(
-                    SearchResult(
-                        title: bookmark.title,
-                        subtitle: bookmark.url,
-                        icon: NSImage(systemSymbolName: "star.fill", accessibilityDescription: nil),
-                        action: {
-                            searchText = bookmark.url
-                            openInDefaultBrowser()
-                        },
-                        type: .webSearch,
-                        filePath: nil,
-                        contactData: nil
-                    ))
-            }
-
-            // Update search results for keyboard navigation
-            withAnimation(.easeInOut(duration: 0.2)) {
-                searchResults = browserResults
-                selectedResultIndex = browserResults.isEmpty ? nil : 0
-                indexedFileResults = []
-            }
-
-            print(
-                "🎵 L3 Media: Showing \(browserResults.count) web results while media dock is active"
-            )
-            return
-        }
-
-        // Indexed file search is in-memory — run immediately for instant results
-        if settings.enableSpotlightSearch
-            && (settings.enableL1DocumentSearch || settings.enableL1FileSearch)
-        {
-            searchIndexedFiles(for: query)
-        } else {
-            indexedFileResults = []
-        }
-
-        // Debounce scoring onto background thread so keystrokes never block the UI
-        searchDebounceTask?.cancel()
-        searchDebounceTask = Task(priority: .userInitiated) {
-            try? await Task.sleep(nanoseconds: 60_000_000)  // 60ms debounce
-            guard !Task.isCancelled else { return }
-            await MainActor.run { performSearchWithoutSpotlight() }
-        }
-    }
-
-    // MARK: - Smart Query Detection
-    enum SmartQueryType {
-        case contacts  // Show all contacts
-        case photos  // Show all photos
-        case notes  // Show all notes
-        case reminders  // Show all reminders
-        case calendarEvents  // Show all calendar events
-        case mail  // Show all mail
-        case messages  // Show all messages
-        case application(String)  // Specific app (show app-related content)
-        case customApp(String)  // User-added app by key (show generic AI panel)
-    }
-
-    private func detectSmartQuery(query: String) -> SmartQueryType? {
-        let lowercased = query.lowercased().trimmingCharacters(in: .whitespaces)
-
-        // Skip detection if query is too short (let normal search work)
-        guard !lowercased.isEmpty else { return nil }
-
-        // L1 is a pure app launcher — only match user-added custom app entries.
-        // Contacts, notes, reminders, calendar, mail, messages, photos, and folders
-        // are intentionally not surfaced in L1.
-
-        // Check if query matches a user-added custom app entry
-        if let entry = AppSettings.shared.customAppEntries.first(where: {
-            $0.key == lowercased || $0.label.lowercased() == lowercased
-        }) {
-            return .customApp(entry.key)
-        }
-
-        return nil
-    }
-
-    private func findExactApplicationMatch(query: String) -> String? {
-        let lowercased = query.lowercased().trimmingCharacters(in: .whitespaces)
-
-        // Search through all applications
-        for app in allApplications {
-            guard let appPath = app.filePath else { continue }
-            let appName = URL(fileURLWithPath: appPath).deletingPathExtension().lastPathComponent
-                .lowercased()
-            if appName == lowercased {
-                return appPath  // Return full path
-            }
-        }
-
-        return nil
-    }
+    // performSearch(), SmartQueryType, detectSmartQuery(), findExactApplicationMatch()
+    // → moved to LauncherView+Search.swift
 
     @discardableResult
-    private func handleSmartQueryResult(_ smartQuery: SmartQueryType) -> Bool {
-        switch smartQuery {
-        case .contacts:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.AddressBook", appName: "Contacts")
-            loadAllContactsAsResults()
-            return false
-
-        case .photos:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.Photos", appName: "Photos")
-            loadPhotosAsResults()
-            return false
-
-        case .notes:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.Notes", appName: "Notes")
-            loadSystemDataAsPinnedResults(
-                query: "", types: [.note], title: "Notes", perTypeLimit: 200, allowEmptyQuery: true,
-                excludeTypes: [.note])
-            return false
-
-        case .reminders:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.reminders", appName: "Reminders")
-            loadSystemDataAsPinnedResults(
-                query: "", types: [.reminder], title: "Reminders", perTypeLimit: 200,
-                allowEmptyQuery: true, excludeTypes: [.reminder])
-            return false
-
-        case .calendarEvents:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.iCal", appName: "Calendar")
-            loadSystemDataAsPinnedResults(
-                query: "", types: [.calendarEvent], title: "Calendar", perTypeLimit: 200,
-                allowEmptyQuery: true, excludeTypes: [.calendarEvent])
-            return false
-
-        case .mail:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.mail", appName: "Mail")
-            loadSystemDataAsPinnedResults(
-                query: "", types: [.mail], title: "Mail", perTypeLimit: 100, allowEmptyQuery: true,
-                excludeTypes: [.mail])
-            return false
-
-        case .messages:
-            _ = activateInlineDockAppScope(bundleIdentifier: "com.apple.MobileSMS", appName: "Messages")
-            clearPinnedResults()
-            appPanelAllItems = []
-            return false
-
-        case .customApp(let key):
-            let entry = settings.customAppEntries.first(where: { $0.key == key })
-            if let path = entry?.appPath, !path.isEmpty,
-               let bundleId = Bundle(path: path)?.bundleIdentifier
-            {
-                _ = activateInlineDockAppScope(
-                    bundleIdentifier: bundleId,
-                    appName: entry?.label ?? key.capitalized
-                )
-            } else {
-                activeSmartQueryKey = key
-            }
-            var items: [SearchResult] = []
-            if let path = entry?.appPath, !path.isEmpty,
-                FileManager.default.fileExists(atPath: path)
-            {
-                items.append(
-                    SearchResult(
-                        title: "Open \(entry?.label ?? key.capitalized)",
-                        subtitle: path,
-                        icon: NSWorkspace.shared.icon(forFile: path),
-                        action: {
-                            NSWorkspace.shared.openApplication(
-                                at: URL(fileURLWithPath: path), configuration: .init())
-                        },
-                        type: .application,
-                        filePath: path,
-                        contactData: nil
-                    ))
-            }
-            appPanelAllItems = items
-            injectAppShortcuts(for: key)
-            return false
-
-        case .application(let appPath):
-            loadApplicationSpecificContent(appPath: appPath)
-            return false
-
-        }
-    }
+    // handleSmartQueryResult() → moved to LauncherView+Search.swift
 
     /// Converts user-defined AppShortcuts into SearchResult rows and prepends them
     /// to the pinned results so they appear at the top of the smart-query view.
-    private func injectAppShortcuts(for appKey: String) {
+    func injectAppShortcuts(for appKey: String) {
         let shortcuts = settings.shortcuts(for: appKey)
         guard !shortcuts.isEmpty else { return }
 
@@ -31235,11 +30566,11 @@ struct LauncherView: View {
         setPinnedResults(shortcutResults, title: "Quick Actions", excludeTypes: [])
     }
 
-    private func loadApplicationSpecificContent(appPath: String) {
-        let expectedQuery = searchText.trimmingCharacters(in: .whitespaces)
+    func loadApplicationSpecificContent(appPath: String) {
+        let expectedQuery = searchState.query.trimmingCharacters(in: .whitespaces)
         Task {
             await MainActor.run {
-                let currentQuery = searchText.trimmingCharacters(in: .whitespaces)
+                let currentQuery = searchState.query.trimmingCharacters(in: .whitespaces)
                 guard currentQuery == expectedQuery else { return }
                 var appResults: [SearchResult] = []
 
@@ -31395,13 +30726,13 @@ struct LauncherView: View {
         return "safari"
     }
 
-    private func loadAllContactsAsResults() {
-        let expectedQuery = searchText.trimmingCharacters(in: .whitespaces)
+    func loadAllContactsAsResults() {
+        let expectedQuery = searchState.query.trimmingCharacters(in: .whitespaces)
         Task {
             let allContacts = await contactManager.getAllContacts()
 
             await MainActor.run {
-                let currentQuery = searchText.trimmingCharacters(in: .whitespaces)
+                let currentQuery = searchState.query.trimmingCharacters(in: .whitespaces)
                 guard currentQuery == expectedQuery else { return }
                 var contactResults: [SearchResult] = []
 
@@ -31440,7 +30771,7 @@ struct LauncherView: View {
         }
     }
 
-    private func loadPhotosAsResults() {
+    func loadPhotosAsResults() {
         loadSystemDataAsPinnedResults(
             query: "", types: [.photo], title: "Photos", perTypeLimit: 100, allowEmptyQuery: true,
             excludeTypes: [.photo])
@@ -31451,24 +30782,24 @@ struct LauncherView: View {
     ) {
         // Defer ALL state mutations so they never fire during a SwiftUI body pass
         DispatchQueue.main.async {
-            self.pinnedResults = results
-            self.pinnedResultsTitle = title
-            self.pinnedResultTypesToExclude = excludeTypes
-            if self.activeSmartQueryKey != nil {
-                self.appPanelAllItems = results
+            self.searchState.pinnedResults = results
+            self.searchState.pinnedTitle = title
+            self.searchState.pinnedTypesToExclude = excludeTypes
+            if self.searchState.activeSmartQueryKey != nil {
+                self.searchState.appPanelAllItems = results
             }
             self.performSearchWithoutSpotlight()
         }
     }
 
-    private func clearPinnedResults() {
-        pinnedResults = []
-        pinnedResultsTitle = nil
-        pinnedResultTypesToExclude = []
-        appPanelAllItems = []
+    func clearPinnedResults() {
+        searchState.pinnedResults = []
+        searchState.pinnedTitle = nil
+        searchState.pinnedTypesToExclude = []
+        searchState.appPanelAllItems = []
     }
 
-    private func loadSystemDataAsPinnedResults(
+    func loadSystemDataAsPinnedResults(
         query: String,
         types: Set<SystemDataType>,
         title: String,
@@ -31476,7 +30807,7 @@ struct LauncherView: View {
         allowEmptyQuery: Bool = false,
         excludeTypes: Set<SearchResult.ResultType> = []
     ) {
-        let expectedQuery = searchText.trimmingCharacters(in: .whitespaces)
+        let expectedQuery = searchState.query.trimmingCharacters(in: .whitespaces)
         Task {
             let systemResults = await systemDataManager.searchAll(
                 query: query,
@@ -31486,9 +30817,9 @@ struct LauncherView: View {
             )
 
             await MainActor.run {
-                let currentQuery = searchText.trimmingCharacters(in: .whitespaces)
+                let currentQuery = searchState.query.trimmingCharacters(in: .whitespaces)
                 // In app panel mode load always (text is used as in-panel filter, not a query guard)
-                guard currentQuery == expectedQuery || activeSmartQueryKey != nil else { return }
+                guard currentQuery == expectedQuery || searchState.activeSmartQueryKey != nil else { return }
 
                 let results: [SearchResult] = systemResults.map { systemResult in
                     let resultType: SearchResult.ResultType
@@ -31577,198 +30908,9 @@ struct LauncherView: View {
         return nil
     }
 
-    private func performSearchWithoutSpotlight() {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        let isNewQuery = query != lastSearchQuery
-        if isNewQuery {
-            // Defer so these don't fire during an in-progress body pass
-            DispatchQueue.main.async {
-                self.lastSearchQuery = query
-                self.isKeyboardNavigation = false
-            }
-        }
+    // performSearchWithoutSpotlight() → moved to LauncherView+Search.swift
 
-        // Show results even if still loading (with whatever we have so far)
-        guard
-            !allApplications.isEmpty || !allShortcuts.isEmpty || !indexedFileResults.isEmpty
-                || !pinnedResults.isEmpty
-        else {
-            // If no items loaded yet, just clear results
-            searchResults = []
-            selectedResultIndex = nil
-            return
-        }
-
-        // Fuzzy match and score all items (apps + shortcuts + indexed file results + extension commands)
-        var scoredItems: [(item: SearchResult, score: Double)] = []
-
-        if showContextInDock && !showMediaLayer {
-            updateL2Results(l2ExtensionResults)
-            return
-        }
-
-        // Search regular items
-        // L1: Include shortcuts + apps/files (full Spotlight list)
-        // L2: Context-only extensions (no standard search results)
-        // L3: Exclude shortcuts (web/browser search)
-        let searchableItems: [SearchResult]
-        if showContextInDock && !showMediaLayer {
-            searchableItems = []
-        } else {
-            searchableItems = showMediaLayer ? allItems.filter { $0.type != .shortcut } : allItems
-        }
-
-        // L1 shows apps and registered CLI tools; indexed files are added separately.
-        var filteredItems = searchableItems.filter {
-            $0.type == .application || $0.type == .cliTool
-        }
-        if settings.enableSpotlightSearch {
-            filteredItems += indexedFileResults.filter(includeIndexedSearchResult)
-        }
-
-        // Quick pre-filter: skip items that don't even contain the first character
-        // This eliminates ~90% of the list before the expensive fuzzy match
-        // Strip .app suffix typed by the user (e.g. "Clock.app" → "Clock") before matching.
-        let strippedQuery: String = {
-            let lower = query.lowercased()
-            return lower.hasSuffix(".app")
-                ? String(query.dropLast(4)).trimmingCharacters(in: .whitespaces)
-                : query
-        }()
-        let queryLower = strippedQuery.lowercased()
-        let preFiltered = filteredItems.filter {
-            $0.title.lowercased().contains(queryLower.prefix(1))
-        }
-
-        for item in preFiltered {
-            if let score = FuzzyMatcher.score(strippedQuery, against: item.title) {
-                var scoredItem = item
-                scoredItem.score = score
-
-                // Get usage (frecency) score for this item
-                let usageScore = UsageTracker.shared.getScore(for: item.trackingIdentifier)
-
-                // Enhanced type priority system
-                let typePriority: Double
-                switch item.type {
-                case .extensionCommand:
-                    typePriority = 20.0  // Highest - instant commands
-                case .application:
-                    typePriority = 15.0  // Very high - apps are primary
-                case .folder:
-                    typePriority = 14.0  // Just below apps
-                case .shortcut:
-                    typePriority = 12.0
-                case .calendarEvent, .reminder:
-                    typePriority = 10.0  // High - calendar/reminders
-                case .mail, .message:
-                    typePriority = 9.0  // High - communications
-                case .document:
-                    typePriority = 7.0  // Medium - documents
-                case .note:
-                    typePriority = 6.0
-                case .contact:
-                    typePriority = 5.0
-                case .file:
-                    typePriority = 3.0
-                case .photo:
-                    typePriority = 2.0
-                case .cliTool:
-                    typePriority = 13.0  // Just below apps — CLI tools are surfaced prominently
-                case .webSearch:
-                    typePriority = 1.0  // Lowest - only show when no other matches
-                }
-
-                // Combine scores with weighted frecency
-                // Fuzzy match score (0-1000) + type priority (0-20) + usage score * multiplier
-                // Usage score is heavily weighted to create learning behavior
-                var finalScore = score + typePriority + (usageScore * 8.0)
-
-                // CONTEXT BOOST: Huge boost for shortcuts that match current context
-                if item.type == .shortcut,
-                    let metadata = shortcutMetadataCache[item.title],
-                    metadata.matches(context: currentContext)
-                {
-                    finalScore += 500.0  // Massive boost for context-matching shortcuts
-                }
-
-                scoredItems.append((item: scoredItem, score: finalScore))
-            }
-        }
-
-        // L2 extensions show only as chips next to the input field.
-
-        // Sort by score and limit to top results
-        let sortedResults =
-            scoredItems
-            .sorted { $0.score > $1.score }
-            .prefix(20)  // Increased limit to accommodate grouping
-            .map { $0.item }
-
-        // Group results by type, marking context-matching shortcuts as suggested
-        var grouped = GroupedResults()
-        for result in sortedResults {
-            let isSuggested =
-                result.type == .shortcut
-                && shortcutMetadataCache[result.title]?.matches(context: currentContext) == true
-            grouped.add(result, isSuggested: isSuggested)
-        }
-
-        grouped.pinnedResults = pinnedResults
-        grouped.pinnedSectionTitle = pinnedResultsTitle
-
-        // Get flat list for navigation (match visual order in dock mode)
-        let newResults =
-            settings.effectiveDockAtBottom
-            ? Array(grouped.allResults.reversed()) : grouped.allResults
-
-        let oldSelectedResultID: UUID? = {
-            if let oldIndex = selectedResultIndex,
-                oldIndex >= 0,
-                oldIndex < searchResults.count
-            {
-                return searchResults[oldIndex].id
-            }
-            return nil
-        }()
-
-        // Defer the result write so it never fires during a body pass
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                self.searchResults = newResults
-                self.groupedResults = grouped
-
-                if self.isKeyboardNavigation && !isNewQuery,
-                    let oldID = oldSelectedResultID,
-                    let newIndex = self.searchResults.firstIndex(where: { $0.id == oldID })
-                {
-                    self.selectedResultIndex = newIndex
-                } else if !self.searchResults.isEmpty {
-                    let defaultIndex =
-                        self.settings.effectiveDockAtBottom
-                        ? max(self.searchResults.count - 1, 0) : 0
-                    self.selectedResultIndex = defaultIndex
-                    if self.settings.effectiveDockAtBottom {
-                        self.shouldAutoScrollToSelection = true
-                    }
-                } else {
-                    self.selectedResultIndex = nil
-                }
-            }
-        }
-        if settings.effectiveDockAtBottom {
-            searchResultsRevision += 1
-        }
-
-        print("✅ Updated to \(searchResults.count) items across \(grouped.sections.count) sections")
-    }
-
-    func findApplications(matching query: String) -> [SearchResult] {
-        // This method is now deprecated - we use the cached allItems instead
-        return allItems.filter { item in
-            item.title.lowercased().contains(query)
-        }
-    }
+    // findApplications() → moved to LauncherView+Search.swift
 
     // MARK: - Browser Search Function
     // MARK: - Smart Positioning Function
@@ -31777,10 +30919,10 @@ struct LauncherView: View {
         // This function is kept for compatibility but does nothing
     }
 
-    private func openInDefaultBrowser() {
-        guard !searchText.isEmpty else { return }
+    func openInDefaultBrowser() {
+        guard !searchState.query.isEmpty else { return }
 
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let query = searchState.query.trimmingCharacters(in: .whitespaces)
 
         // Determine if it's a URL or search query
         var urlString: String
@@ -31811,7 +30953,7 @@ struct LauncherView: View {
         NSWorkspace.shared.open(url)
 
         // Clear search text
-        searchText = ""
+        searchState.query = ""
 
         print("🌐 Opening in default browser: \(urlString)")
     }
@@ -31853,8 +30995,8 @@ struct LauncherView: View {
     }
 
     private func quickLookSelectedItem() {
-        guard let index = selectedResultIndex, index < searchResults.count else { return }
-        let result = searchResults[index]
+        guard let index = searchState.selectedIndex, index < searchState.results.count else { return }
+        let result = searchState.results[index]
 
         // Handle contacts separately - show contact preview
         if result.type == .contact {
@@ -32007,310 +31149,7 @@ class QuickLookDataSource: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDel
     }
 }
 
-struct ResultRow: View {
-    let result: SearchResult
-    let isSelected: Bool
-    @ObservedObject private var settings = AppSettings.shared
-
-    private var isPinned: Bool {
-        result.type == .application && settings.isPinned(path: result.subtitle)
-    }
-
-    private var typeLabel: String? {
-        switch result.type {
-        case .shortcut:
-            return "SHORTCUT"
-        case .folder:
-            return "FOLDER"
-        case .document:
-            return "DOCUMENT"
-        case .file:
-            return "FILE"
-        case .contact:
-            return "CONTACT"
-        case .calendarEvent:
-            return "EVENT"
-        case .reminder:
-            return "REMINDER"
-        case .note:
-            return "NOTE"
-        case .mail:
-            return "MAIL"
-        case .photo:
-            return "PHOTO"
-        case .message:
-            return "MESSAGE"
-        case .extensionCommand:
-            return "EXTENSION"
-        case .webSearch:
-            return "WEB"
-        case .application:
-            return nil
-        case .cliTool:
-            return "CLI"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Icon
-            Group {
-                if let icon = result.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    // Default icons based on type
-                    switch result.type {
-                    case .application:
-                        Image(systemName: "app")
-                            .foregroundColor(.blue)
-                    case .shortcut:
-                        Image(systemName: "shortcut")
-                            .foregroundColor(.orange)
-                    case .file, .document:
-                        Image(systemName: "doc")
-                            .foregroundColor(.gray)
-                    case .folder:
-                        Image(systemName: "folder")
-                            .foregroundColor(.blue)
-                    case .contact:
-                        Image(systemName: "person.crop.circle")
-                            .foregroundColor(.purple)
-                    case .calendarEvent:
-                        Image(systemName: "calendar")
-                            .foregroundColor(.red)
-                    case .reminder:
-                        Image(systemName: "checklist")
-                            .foregroundColor(.orange)
-                    case .note:
-                        Image(systemName: "note.text")
-                            .foregroundColor(.yellow)
-                    case .mail:
-                        Image(systemName: "envelope.fill")
-                            .foregroundColor(.blue)
-                    case .photo:
-                        Image(systemName: "photo")
-                            .foregroundColor(.pink)
-                    case .message:
-                        Image(systemName: "message.fill")
-                            .foregroundColor(.green)
-                    case .extensionCommand:
-                        Image(systemName: "puzzlepiece.extension.fill")
-                            .foregroundColor(.indigo)
-                    case .webSearch:
-                        Image(systemName: "globe")
-                            .foregroundColor(.blue)
-                    case .cliTool:
-                        Image(systemName: "terminal.fill")
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-            .frame(width: 32, height: 32)
-
-            // Text
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(result.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    if let label = typeLabel {
-                        Text(label)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(badgeColor)
-                            )
-                    }
-
-                    if isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Text(result.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Spotlight-style Tab hint for any result when selected
-            if isSelected {
-                HStack(spacing: 4) {
-                    Text(
-                        result.type == .application
-                            ? "Open panel"
-                            : result.type == .cliTool
-                                ? "Attach CLI"
-                                : result.type == .folder
-                                    ? "Browse" : result.type == .contact ? "Contact" : "More"
-                    )
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    Text("tab")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color(nsColor: .tertiaryLabelColor).opacity(0.2))
-                        .cornerRadius(4)
-                }
-                .padding(.trailing, 4)
-            }
-
-            // Quick Actions for Contacts
-            if result.type == .contact, let contactData = result.contactData {
-                HStack(spacing: 8) {
-                    // Email button
-                    if !contactData.primaryEmail.isEmpty {
-                        ContactQuickActionButton(
-                            icon: "envelope.fill",
-                            color: .blue,
-                            tooltip: "Email"
-                        ) {
-                            if let url = URL(string: "mailto:\(contactData.primaryEmail)") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    }
-
-                    // Message button
-                    if !contactData.primaryEmail.isEmpty {
-                        ContactQuickActionButton(
-                            icon: "message.fill",
-                            color: .green,
-                            tooltip: "Message"
-                        ) {
-                            if let url = URL(string: "imessage:\(contactData.primaryEmail)") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    }
-
-                    // Call button
-                    if !contactData.primaryPhone.isEmpty {
-                        ContactQuickActionButton(
-                            icon: "phone.fill",
-                            color: .orange,
-                            tooltip: "Call"
-                        ) {
-                            if let url = URL(string: "tel:\(contactData.primaryPhone)") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    }
-
-                    // Spacebar hint
-                    if isSelected {
-                        Text("Space")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color(nsColor: .tertiaryLabelColor).opacity(0.2))
-                            .cornerRadius(4)
-                    }
-                }
-                .padding(.trailing, 4)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-    }
-
-    private var iconName: String {
-        switch result.type {
-        case .application:
-            return "app.fill"
-        case .shortcut:
-            return "bolt.fill"
-        case .folder:
-            return "folder.fill"
-        case .document:
-            return "doc.fill"
-        case .file:
-            return "doc.fill"
-        case .contact:
-            return "person.crop.circle.fill"
-        case .calendarEvent:
-            return "calendar"
-        case .reminder:
-            return "checklist"
-        case .note:
-            return "note.text"
-        case .mail:
-            return "envelope.fill"
-        case .photo:
-            return "photo"
-        case .message:
-            return "message.fill"
-        case .extensionCommand:
-            return "puzzlepiece.extension.fill"
-        case .webSearch:
-            return "globe"
-        case .cliTool:
-            return "terminal.fill"
-        }
-    }
-
-    private var badgeColor: SwiftUI.Color {
-        switch result.type {
-        case .shortcut:
-            return SwiftUI.Color.secondary.opacity(0.15)
-        case .folder:
-            return SwiftUI.Color.blue.opacity(0.15)
-        case .document, .file:
-            return SwiftUI.Color.green.opacity(0.15)
-        case .contact:
-            return SwiftUI.Color.purple.opacity(0.15)
-        case .calendarEvent:
-            return SwiftUI.Color.red.opacity(0.15)
-        case .reminder:
-            return SwiftUI.Color.orange.opacity(0.15)
-        case .note:
-            return SwiftUI.Color.yellow.opacity(0.15)
-        case .mail:
-            return SwiftUI.Color.blue.opacity(0.15)
-        case .photo:
-            return SwiftUI.Color.pink.opacity(0.15)
-        case .message:
-            return SwiftUI.Color.green.opacity(0.15)
-        case .extensionCommand:
-            return SwiftUI.Color.indigo.opacity(0.15)
-        case .webSearch:
-            return SwiftUI.Color.blue.opacity(0.15)
-        case .application:
-            return SwiftUI.Color.clear
-        case .cliTool:
-            return SwiftUI.Color.green.opacity(0.15)
-        }
-    }
-}
-
-// MARK: - Notification Names
-extension Notification.Name {
-    static let launcherWindowOpened = Notification.Name("launcherWindowOpened")
-    static let folderPreviewShouldClose = Notification.Name("folderPreviewShouldClose")
-    static let frontmostAppDetected = Notification.Name("frontmostAppDetected")
-    static let userContextDetected = Notification.Name("userContextDetected")
-    static let toggleAIExtensions = Notification.Name("toggleAIExtensions")
-    static let focusSearchField = Notification.Name("focusSearchField")
-    static let activateGlobalContext = Notification.Name("activateGlobalContext")
-    static let activateClipboardScope = Notification.Name("activateClipboardScope")
-    static let escapePressed = Notification.Name("escapePressed")
-    static let launcherBackspacePressed = Notification.Name("launcherBackspacePressed")
-}
+// ResultRow moved to ResultRow.swift
 
 // MARK: - Folder Preview View
 struct FolderPreviewView: View {
@@ -33709,25 +32548,7 @@ struct ContactDetailRow: View {
 }
 
 // MARK: - Contact Quick Action Button
-struct ContactQuickActionButton: View {
-    let icon: String
-    let color: SwiftUI.Color
-    let tooltip: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(color)
-                .frame(width: 24, height: 24)
-                .background(color.opacity(0.12))
-                .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
-        .help(tooltip)
-    }
-}
+// ContactQuickActionButton moved to ResultRow.swift
 
 // MARK: - Resize Handle Component
 struct ResizeHandle: View {
@@ -34546,7 +33367,7 @@ struct L2ExtensionChipButton: View {
 struct AIExtensionChipButton: View {
     let suggestion: SuggestedExtension
     let context: UserContext
-    @Binding var aiChatMessages: [AIChatMessage]
+    @Binding var chatMessages: [AIChatMessage]
 
     @State private var isHovered = false
     @State private var isExecuting = false
@@ -34620,7 +33441,7 @@ struct AIExtensionChipButton: View {
             role: .user,
             content: "Run \(suggestion.scriptExtension.displayName)"
         )
-        aiChatMessages.append(actionMessage)
+        chatMessages.append(actionMessage)
 
         Task {
             do {
@@ -34641,7 +33462,7 @@ struct AIExtensionChipButton: View {
                         content: result.isEmpty ? "✅ Completed successfully" : result,
                         isError: false
                     )
-                    aiChatMessages.append(resultMessage)
+                    chatMessages.append(resultMessage)
                 }
             } catch {
                 print("❌ [Extension] Error: \(error.localizedDescription)")
@@ -34655,7 +33476,7 @@ struct AIExtensionChipButton: View {
                         content: "❌ Error: \(error.localizedDescription)",
                         isError: true
                     )
-                    aiChatMessages.append(errorMessage)
+                    chatMessages.append(errorMessage)
                 }
             }
         }

@@ -613,6 +613,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let contentView = LauncherView(onClose: {
             self.hideLauncher()
         })
+        .environmentObject(ContextDockEnvironment.shared)
 
         launcherWindow = KeyableWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 60),
@@ -1331,15 +1332,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             recordFrontmostApp(currentApp)
             print("📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")")
-            // Immediately update ContentView's frontmostAppName so the dock reflects the real app
+            // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
             DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .frontmostAppDetected,
-                    object: nil,
-                    userInfo: [
-                        "name":     currentApp.localizedName     ?? "",
-                        "bundleID": currentApp.bundleIdentifier  ?? ""
-                    ]
+                ContextDockEnvironment.shared.frontmostAppDidChange(
+                    name: currentApp.localizedName ?? "",
+                    bundleID: currentApp.bundleIdentifier ?? ""
                 )
             }
         }
@@ -1459,13 +1456,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 print("📊 [AppDelegate] Detection completed!")
                 print("📊 [AppDelegate] Detected context: \(context.description)")
-                print("📤 [AppDelegate] Posting .userContextDetected notification...")
-                NotificationCenter.default.post(
-                    name: .userContextDetected,
-                    object: nil,
-                    userInfo: ["context": context]
-                )
-                print("✅ [AppDelegate] Notification posted successfully")
+                print("📤 [AppDelegate] Delivering context to ContextDockEnvironment...")
+                ContextDockEnvironment.shared.userContextDidDetect(context)
+                print("✅ [AppDelegate] Context delivered successfully")
                 print("🔍 [AppDelegate] ========================================")
             }
         }
@@ -1485,16 +1478,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         print("📊 [AppDelegate] Detection completed!")
         print("📊 [AppDelegate] Detected context: \(context.description)")
-        print("📤 [AppDelegate] Posting .userContextDetected notification...")
+        print("📤 [AppDelegate] Delivering context to ContextDockEnvironment...")
 
-        // Post notification immediately on main thread
-        NotificationCenter.default.post(
-            name: .userContextDetected,
-            object: nil,
-            userInfo: ["context": context]
-        )
+        ContextDockEnvironment.shared.userContextDidDetect(context)
 
-        print("✅ [AppDelegate] Notification posted successfully")
+        print("✅ [AppDelegate] Context delivered successfully")
         print("🔍 [AppDelegate] ========================================")
     }
     
@@ -1521,13 +1509,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
                     // Skip if it's ILauncher itself
                     if bundleID != Bundle.main.bundleIdentifier {
-                        // Post notification with frontmost app info
                         DispatchQueue.main.async {
-                            NotificationCenter.default.post(
-                                name: .frontmostAppDetected,
-                                object: nil,
-                                userInfo: ["name": appName, "bundleID": bundleID]
-                            )
+                            ContextDockEnvironment.shared.frontmostAppDidChange(name: appName, bundleID: bundleID)
                         }
                         print("🎯 Detected frontmost app BEFORE activation: \(appName) (\(bundleID))")
                     }
@@ -1616,15 +1599,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AXWebReader.shared.invalidate(pid: pid)
         }
 
-        // Notify ContentView immediately so it can reload menu items for the new app
+        // Notify LauncherView immediately so it can reload menu items for the new app
         DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: .frontmostAppDetected,
-                object: nil,
-                userInfo: [
-                    "name":     app.localizedName     ?? "",
-                    "bundleID": app.bundleIdentifier  ?? ""
-                ]
+            ContextDockEnvironment.shared.frontmostAppDidChange(
+                name: app.localizedName ?? "",
+                bundleID: app.bundleIdentifier ?? ""
             )
         }
     }

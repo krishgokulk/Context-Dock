@@ -302,10 +302,6 @@ class L2IntentRegistry: ObservableObject {
 
 // MARK: - Notification Names
 
-extension Notification.Name {
-    static let intentConflictDetected = Notification.Name("com.ilauncher.intentConflictDetected")
-}
-
 // MARK: - Intent Assignments Settings View
 
 struct IntentAssignmentsView: View {

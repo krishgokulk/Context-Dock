@@ -122,6 +122,3 @@ final class AppPanelChatStore {
 
 // MARK: - Notification for tool removal
 
-extension Notification.Name {
-    static let appPanelToolRemoved = Notification.Name("AppPanelToolRemoved")
-}

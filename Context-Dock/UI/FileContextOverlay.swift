@@ -27,12 +27,6 @@ private final class FileContextOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-// MARK: - Notification
-
-extension NSNotification.Name {
-    static let overlayAskAboutSelection = NSNotification.Name("ContextDockAskAboutSelection")
-}
-
 // MARK: - Controller
 
 @MainActor

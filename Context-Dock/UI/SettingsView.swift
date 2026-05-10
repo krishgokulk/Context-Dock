@@ -6932,14 +6932,6 @@ struct ShortcutPickerView: View {
     }
 }
 // MARK: - Notification Names
-extension Notification.Name {
-    static let menuBarIconVisibilityChanged = Notification.Name("menuBarIconVisibilityChanged")
-    static let hotkeyChanged = Notification.Name("hotkeyChanged")
-    static let chatHistoryCleared = Notification.Name("chatHistoryCleared")
-    static let activateContextDock = Notification.Name("activateContextDock")
-    static let switchToL1 = Notification.Name("switchToL1")
-}
-
 // MARK: - Launch at Login Toggle
 struct LaunchAtLoginToggle: View {
     @StateObject private var launchHelper = LaunchAtLoginHelper.shared

@@ -185,6 +185,3 @@ class SettingsBackupManager {
 }
 
 // MARK: - Notification Names
-extension Notification.Name {
-    static let settingsImported = Notification.Name("settingsImported")
-}

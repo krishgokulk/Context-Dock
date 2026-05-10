@@ -417,10 +417,6 @@ class BinaryWatcherService: ObservableObject {
 
 // MARK: - Notification Names
 
-extension Notification.Name {
-    static let newBinaryDiscovered = Notification.Name("com.ilauncher.newBinaryDiscovered")
-}
-
 // MARK: - Discovery Banner View
 
 struct BinaryDiscoveryBanner: View {
