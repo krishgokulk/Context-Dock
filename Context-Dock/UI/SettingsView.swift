@@ -269,14 +269,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "Search Style", systemImage: "list.bullet.rectangle") {
-                SettingsRow {
-                    GeneralToggleLabel("List View",
-                        caption: "Show actions as a scrollable Spotlight-style list instead of horizontal pills.")
-                    Toggle("", isOn: $settings.useListViewForPills).labelsHidden()
-                }
-            }
-
             CardSection(title: "Built-in Extensions", systemImage: "puzzlepiece.extension") {
                 SettingsRow {
                     GeneralToggleLabel("Enable Built-in Extensions",

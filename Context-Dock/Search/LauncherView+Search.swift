@@ -42,8 +42,14 @@ extension LauncherView {
             return
         }
 
+        // L2 context dock — pills handle filtering, search runs after debounce only
         if showContextInDock && !showMediaLayer {
-            // L2 context dock: pills filter in the dock row — don't touch the result sheet.
+            debounceTask?.cancel()
+            debounceTask = Task(priority: .userInitiated) {
+                try? await Task.sleep(nanoseconds: 120_000_000)  // 120 ms
+                guard !Task.isCancelled else { return }
+                await performSearchAsync()
+            }
             return
         }
 
@@ -67,7 +73,7 @@ extension LauncherView {
             withAnimation(.easeInOut(duration: 0.2)) {
                 searchState.results = []
                 searchState.selectedIndex = nil
-                searchState.indexedFileResults = []
+                indexedFileResults = []
                 searchState.isInSmartMode = false
                 searchState.lastSmartQuery = ""
                 searchState.activeSmartQueryKey = nil
@@ -144,7 +150,7 @@ extension LauncherView {
             withAnimation(.easeInOut(duration: 0.2)) {
                 searchState.results = browserResults
                 searchState.selectedIndex = browserResults.isEmpty ? nil : 0
-                searchState.indexedFileResults = []
+                indexedFileResults = []
             }
             return
         }
@@ -155,7 +161,7 @@ extension LauncherView {
         {
             searchIndexedFiles(for: query)
         } else {
-            searchState.indexedFileResults = []
+            indexedFileResults = []
         }
 
         // Debounce then score on a background task — main thread stays free
@@ -197,22 +203,22 @@ extension LauncherView {
 
         let snap = await MainActor.run { () -> Snap in
             let q = searchState.query.trimmingCharacters(in: .whitespaces)
-            let isNew = q != searchState.lastQuery
+            let isNew = q != lastQuery
             if isNew {
-                searchState.lastQuery = q
-                searchState.isKeyboardNavigation = false
+                lastQuery = q
+                isKeyboardNavigation = false
             }
 
             var candidates = allItems.filter { $0.type == .application || $0.type == .cliTool }
             if settings.enableSpotlightSearch {
-                candidates += searchState.indexedFileResults.filter(includeIndexedSearchResult)
+                candidates += indexedFileResults.filter(includeIndexedSearchResult)
             }
 
             return Snap(
                 query: q,
                 isNewQuery: isNew,
                 hasItems: !allApplications.isEmpty || !allShortcuts.isEmpty
-                    || !searchState.indexedFileResults.isEmpty || !searchState.pinnedResults.isEmpty,
+                    || !indexedFileResults.isEmpty || !searchState.pinnedResults.isEmpty,
                 showContextInDock: showContextInDock,
                 showMediaLayer: showMediaLayer,
                 l2ExtensionResults: l2.extensionResults,
@@ -224,7 +230,7 @@ extension LauncherView {
                 context: currentContext,
                 selectedIndex: searchState.selectedIndex,
                 existingResults: searchState.results,
-                isKeyboardNav: searchState.isKeyboardNavigation
+                isKeyboardNav: isKeyboardNavigation
             )
         }
 
@@ -335,7 +341,7 @@ extension LauncherView {
                     let defaultIndex = settings.effectiveDockAtBottom
                         ? max(searchState.results.count - 1, 0) : 0
                     searchState.selectedIndex = defaultIndex
-                    if settings.effectiveDockAtBottom { searchState.shouldAutoScroll = true }
+                    if settings.effectiveDockAtBottom { shouldAutoScroll = true }
                 } else {
                     searchState.selectedIndex = nil
                 }

@@ -12,18 +12,14 @@ import SwiftUI
 
 struct SearchState {
     var query: String = ""
-    var lastQuery: String = ""
     var results: [SearchResult] = []
     var grouped: GroupedResults = GroupedResults()
     var selectedIndex: Int? = nil
-    var isKeyboardNavigation: Bool = false
-    var shouldAutoScroll: Bool = false
     var revision: Int = 0
     var pinnedResults: [SearchResult] = []
     var pinnedTitle: String? = nil
     var pinnedTypesToExclude: Set<SearchResult.ResultType> = []
     var appPanelAllItems: [SearchResult] = []
-    var indexedFileResults: [SearchResult] = []
     var isLoadingApps: Bool = false
     var isInSmartMode: Bool = false
     var lastSmartQuery: String = ""

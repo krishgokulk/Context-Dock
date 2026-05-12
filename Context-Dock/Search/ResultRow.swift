@@ -6,11 +6,7 @@ import SwiftUI
 struct ResultRow: View {
     let result: SearchResult
     let isSelected: Bool
-    @ObservedObject private var settings = AppSettings.shared
-
-    private var isPinned: Bool {
-        result.type == .application && settings.isPinned(path: result.subtitle)
-    }
+    let isPinned: Bool
 
     private var typeLabel: String? {
         switch result.type {
@@ -169,6 +165,7 @@ struct ResultRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+        .animation(.easeInOut(duration: 0.1), value: isSelected)
     }
 
     private var badgeColor: SwiftUI.Color {
@@ -188,6 +185,15 @@ struct ResultRow: View {
         case .application:       return .clear
         case .cliTool:           return .green.opacity(0.15)
         }
+    }
+}
+
+// Skip re-rendering when result identity, selection, and pin state are unchanged.
+extension ResultRow: Equatable {
+    static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
+        lhs.result.id == rhs.result.id &&
+        lhs.isSelected == rhs.isSelected &&
+        lhs.isPinned == rhs.isPinned
     }
 }
 

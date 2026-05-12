@@ -101,8 +101,13 @@ class ShortcutsLinkQuery {
 
 struct LauncherView: View {
     @State var searchState = SearchState()
-    // Isolated from searchState so keystroke mutations don't trigger a struct-wide re-render
+    // These are isolated from searchState so their mutations don't trigger a struct-wide re-render
+    // (SwiftUI re-renders all readers of a @State struct when ANY property changes)
     @State var debounceTask: Task<Void, Never>? = nil
+    @State var indexedFileResults: [SearchResult] = []
+    @State var lastQuery: String = ""
+    @State var isKeyboardNavigation: Bool = false
+    @State var shouldAutoScroll: Bool = false
     // rem-powered Reminders panel chat
     @State private var remPanelChatMessages: [AIChatMessage] = []
     @State private var remPanelIsProcessing: Bool = false
@@ -349,6 +354,7 @@ struct LauncherView: View {
     @State private var cachedDockPills: [DockPill] = []
     @State private var pendingAIMenuProposal: AIMenuProposal? = nil
     @State private var dockPillBuildTask: Task<Void, Never>? = nil
+    @State private var pendingDockPillQuery: String? = nil
     @State private var lastFinderSelectionRefresh: Date = .distantPast
     @State private var lastPillQuery: String = ""
     @State private var menuDebugText: String = "menu debug unavailable"
@@ -357,6 +363,10 @@ struct LauncherView: View {
     @State private var previousEnabledIDs: Set<UUID> = []
     // Arrow-key pill navigation: index into the unified pill list
     @State private var focusedAppPillIndex: Int? = nil
+    @State private var cachedGlobalAppQuery: String = ""
+    @State private var cachedGlobalAppMatches: [SearchResult] = []
+    @State private var pendingGlobalAppQuery: String? = nil
+    @State private var globalAppMatchTask: Task<Void, Never>? = nil
     // Dock magnification: tracks which pill the mouse is near
     @State private var hoveredDockPillIndex: Int? = nil
     // Scroll-to-navigate: true when mouse is over the action pill row
@@ -574,7 +584,13 @@ struct LauncherView: View {
         }
 
         if listViewDockHeight > 0 {
-            return statusBarHeight + pinnedAppsHeight + listViewDockHeight + 12
+            var total = statusBarHeight + pinnedAppsHeight + listViewDockHeight + 12
+            // Fixed results allocation: always reserve space for up to 6 results (300pt)
+            // so the window doesn't resize as result count changes on each keystroke.
+            if !searchState.results.isEmpty && !aiMode.isActive {
+                total += 310
+            }
+            return total
         }
 
         if !searchState.results.isEmpty {
@@ -664,9 +680,34 @@ struct LauncherView: View {
         shouldShowSeparateActionList
     }
 
+    private var hasActiveDockContextSelection: Bool {
+        if !axContext.selectedFilePaths.isEmpty { return true }
+        let selectedText = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !selectedText.isEmpty { return true }
+        switch currentContext {
+        case .filesSelected(let urls) where !urls.isEmpty && !isDismissedFinderSelection(urls):
+            return true
+        case .textSelected(let text) where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            return true
+        case .url(let url) where !url.isEmpty:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var shouldUsePureGlobalAppSearch: Bool {
+        isGlobalContextActive
+            && !hasActiveDockContextSelection
+            && searchState.activeSmartQueryKey == nil
+            && searchState.contextApp == nil
+            && lockedSubmenuParent == nil
+            && !aiMode.isActive
+            && !showMediaLayer
+    }
+
     private var shouldShowSeparateActionList: Bool {
-        guard settings.useListViewForPills,
-              showContextInDock,
+        guard showContextInDock,
               !showMediaLayer,
               !aiMode.isActive,
               searchState.activeSmartQueryKey != "clipboard",
@@ -677,30 +718,27 @@ struct LauncherView: View {
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
         let pills = currentCachedDockPills(for: pillQuery)
-        guard pills.contains(where: { !$0.isSeparator }) else { return false }
-
-        let hasActiveContextSelection: Bool = {
-            if !axContext.selectedFilePaths.isEmpty { return true }
-            let txt = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !txt.isEmpty { return true }
-            switch currentContext {
-            case .filesSelected(let urls) where !urls.isEmpty: return true
-            case .textSelected(let text) where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                return true
-            case .url(let url) where !url.isEmpty: return true
-            default: return false
-            }
-        }()
+        let hasActiveContextSelection = hasActiveDockContextSelection
 
         let showPinnedRow = q.isEmpty && (pills.isEmpty || (isGlobalContextActive && !hasActiveContextSelection))
         let showGlobalAppSearch =
             isGlobalContextActive && !q.isEmpty
-            && !globalApplicationMatches(for: q, limit: 1).isEmpty
-        return !showPinnedRow && !showGlobalAppSearch
+            && (shouldUsePureGlobalAppSearch || !currentGlobalAppMatches(for: q).isEmpty || pendingGlobalAppQuery == q)
+        if shouldUsePureGlobalAppSearch {
+            return !q.isEmpty
+        }
+        let hasListContent =
+            pills.contains(where: { !$0.isSeparator })
+            || showGlobalAppSearch
+            || pendingDockPillQuery == pillQuery
+            || (!q.isEmpty && lastPillQuery != pillQuery)
+        return hasListContent && !showPinnedRow
     }
 
     private func currentCachedDockPills(for query: String) -> [DockPill] {
-        lastPillQuery == query ? cachedDockPills : []
+        if lastPillQuery == query { return cachedDockPills }
+        if pendingDockPillQuery == query { return cachedDockPills }
+        return []
     }
 
     private var searchInputVisualWidth: CGFloat {
@@ -718,6 +756,109 @@ struct LauncherView: View {
     private var contextDockInstalledAppScopeMatching: Bool {
         false
     }
+
+    private var maxListViewDockPills: Int {
+        28
+    }
+
+    private func currentGlobalAppMatches(for query: String) -> [SearchResult] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        if cachedGlobalAppQuery == q { return cachedGlobalAppMatches }
+        if pendingGlobalAppQuery == q { return cachedGlobalAppMatches }
+        return []
+    }
+
+    private func focusedDockPillForInputPreview() -> DockPill? {
+        guard usesVerticalListDockLayout,
+              let idx = l2.focusedPillIndex
+        else { return nil }
+
+        let q =
+            isL2ContextActive
+            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            : ""
+        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+        let pills = currentCachedDockPills(for: pillQuery)
+        guard idx >= 0, idx < pills.count, !pills[idx].isSeparator else { return nil }
+        return pills[idx]
+    }
+
+    private func focusedGlobalAppResultForInputPreview() -> SearchResult? {
+        guard usesVerticalListDockLayout,
+              isGlobalContextActive,
+              let idx = focusedAppPillIndex
+        else { return nil }
+
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matches = currentGlobalAppMatches(for: q)
+        guard idx >= 0, idx < matches.count else { return nil }
+        return matches[idx]
+    }
+
+    private func reclaimSearchInputFocus() {
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        if let window = AppDelegate.shared?.launcherWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+            moveSearchInsertionPointToEnd(in: textView)
+            isSearchFieldFocused = true
+            return
+        }
+
+        DispatchQueue.main.async {
+            isSearchFieldFocused = true
+            DispatchQueue.main.async {
+                if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    moveSearchInsertionPointToEnd(in: textView)
+                }
+            }
+        }
+    }
+
+    private func moveSearchInsertionPointToEnd(in textView: NSTextView) {
+        let end = (textView.string as NSString).length
+        textView.setSelectedRange(NSRange(location: end, length: 0))
+    }
+
+    private func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        globalAppMatchTask?.cancel()
+        guard !q.isEmpty else {
+            cachedGlobalAppQuery = ""
+            cachedGlobalAppMatches = []
+            pendingGlobalAppQuery = nil
+            return
+        }
+
+        if delayNanoseconds == 0 {
+            pendingGlobalAppQuery = nil
+            cachedGlobalAppMatches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
+            cachedGlobalAppQuery = q
+            globalAppMatchTask = nil
+            return
+        }
+
+        pendingGlobalAppQuery = q
+        globalAppMatchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !Task.isCancelled else {
+                if pendingGlobalAppQuery == q { pendingGlobalAppQuery = nil }
+                return
+            }
+            cachedGlobalAppMatches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
+            cachedGlobalAppQuery = q
+            if pendingGlobalAppQuery == q { pendingGlobalAppQuery = nil }
+            globalAppMatchTask = nil
+        }
+    }
+
+    // Fixed visible height: 6 rows × 60pt + 12pt padding
+    private let listViewVisibleHeight: CGFloat = 372
 
     private var isExplicitAppScopeLocked: Bool {
         guard let target = l2.targetApp else { return false }
@@ -771,27 +912,16 @@ struct LauncherView: View {
     }
 
     private var listViewDockHeight: CGFloat {
-        guard settings.useListViewForPills,
-              showContextInDock,
+        guard showContextInDock,
               !showMediaLayer,
               !aiMode.isActive,
               shouldShowL2UnifiedDockRow
         else { return 0 }
 
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let rowCount: Int = {
-            if isGlobalContextActive, q.isEmpty {
-                var count = settings.pinnedApps.count
-                if settings.showRunningAppsInBar {
-                    count += (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps).count
-                }
-                return max(1, count)
-            }
-            let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-            let pills = currentCachedDockPills(for: pillQuery)
-            return max(1, pills.filter { !$0.isSeparator }.count)
-        }()
-        let contentHeight = min(CGFloat(rowCount) * 60 + 18, 500)
+        // Fixed 6-row height regardless of current pill count.
+        // Variable height causes a window setFrame on every keystroke → flicker.
+        // Content scrolls within this fixed area; fewer than 6 items leave natural space.
+        let contentHeight = CGFloat(6) * 60 + 18
         let dockChromeHeight = CGFloat(settings.dockIconSize) + 20
         return dockChromeHeight + contentHeight + 12
     }
@@ -851,6 +981,10 @@ struct LauncherView: View {
                 if active {
                     collapseTimer?.cancel()
                     isSearchBarExpanded = true
+                    // reclaimSearchInputFocus() intentionally removed: it was only needed to
+                    // recover focus after the old structural identity switch (dockBaseView ↔
+                    // unifiedListDockCard). The NSTextField now always lives in the same view
+                    // hierarchy, so calling it here would select-all the already-typed text.
                 }
                 updateWindowSize()
             }
@@ -1150,13 +1284,13 @@ struct LauncherView: View {
                 trimClipboardHistoryToLimits()
             }
             .onChange(of: settings.enableL1DocumentSearch) { _, _ in
-                searchState.indexedFileResults = searchState.indexedFileResults.filter(includeIndexedSearchResult)
+                indexedFileResults = indexedFileResults.filter(includeIndexedSearchResult)
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     performSearch()
                 }
             }
             .onChange(of: settings.enableL1FileSearch) { _, _ in
-                searchState.indexedFileResults = searchState.indexedFileResults.filter(includeIndexedSearchResult)
+                indexedFileResults = indexedFileResults.filter(includeIndexedSearchResult)
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     performSearch()
                 }
@@ -2869,8 +3003,8 @@ struct LauncherView: View {
     }
 
     @ViewBuilder
-    private func globalAppSearchPillRow(query: String) -> some View {
-        let matches = globalApplicationMatches(for: query)
+    private func globalAppSearchPillRow(query: String, matches providedMatches: [SearchResult]? = nil) -> some View {
+        let matches = providedMatches ?? globalApplicationMatches(for: query)
 
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
@@ -2982,6 +3116,86 @@ struct LauncherView: View {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
                         proxy.scrollTo("gsearch-pill-\(idx)", anchor: .center)
                     }
+                }
+            }
+        }
+    }
+
+    private func globalAppSearchListView(query: String, matches providedMatches: [SearchResult]? = nil) -> some View {
+        let matches = Array((providedMatches ?? globalApplicationMatches(for: query)).prefix(maxListViewDockPills))
+
+        let makeAction: (SearchResult) -> () -> Void = { result in
+            {
+                result.action()
+                searchState.query = ""
+                focusedAppPillIndex = nil
+                hoveredAppPillIndex = nil
+                let bundleId = result.filePath.flatMap { Bundle(path: $0)?.bundleIdentifier }
+                scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
+                if let bid = bundleId {
+                    AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
+                }
+            }
+        }
+        let makeQuitAction: (SearchResult) -> (() -> Void)? = { result in
+            guard let runningApp = runningApplication(forGlobalResult: result) else { return nil }
+            return { terminateRunningAppFromDock(runningApp) }
+        }
+        let makePinAction: (SearchResult) -> (() -> Void)? = { result in
+            guard let path = result.filePath, !settings.isPinned(path: path) else { return nil }
+            return {
+                let bid = Bundle(path: path)?.bundleIdentifier
+                settings.pinApp(name: result.title, path: path, bundleIdentifier: bid)
+                AppUsageLearner.shared.recordAction("pin:\(result.title)", inBundleID: nil)
+            }
+        }
+
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 2) {
+                    if matches.isEmpty {
+                        HStack {
+                            Text("No apps matching \"\(query)\"")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary.opacity(0.65))
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
+                    } else {
+                        ForEach(Array(matches.enumerated()), id: \.element.id) { idx, result in
+                            appListRow(
+                                icon: result.icon,
+                                name: result.title,
+                                subtitle: runningApplication(forGlobalResult: result) == nil ? "Launch" : "Running",
+                                index: idx,
+                                action: makeAction(result)
+                            )
+                            .id("global-app-list-\(idx)")
+                            .contextMenu {
+                                if let pinAction = makePinAction(result) {
+                                    Button(action: pinAction) {
+                                        Label("Pin to Launcher", systemImage: "pin")
+                                    }
+                                }
+                                if let quitAction = makeQuitAction(result) {
+                                    Divider()
+                                    Button(role: .destructive, action: quitAction) {
+                                        Label("Quit \(result.title)", systemImage: "xmark.circle")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(6)
+            }
+            .frame(maxHeight: 500)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .onChange(of: focusedAppPillIndex) { idx in
+                guard let idx else { return }
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+                    proxy.scrollTo("global-app-list-\(idx)", anchor: .center)
                 }
             }
         }
@@ -12353,15 +12567,23 @@ struct LauncherView: View {
         refreshContext: Bool = true
     ) {
         dockPillBuildTask?.cancel()
+        pendingDockPillQuery = query
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                if pendingDockPillQuery == query { pendingDockPillQuery = nil }
+                return
+            }
             if refreshContext {
                 refreshFinderSelectionContextFromFinder()
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    if pendingDockPillQuery == query { pendingDockPillQuery = nil }
+                    return
+                }
             }
             cachedDockPills = buildDockPills(query: query)
             lastPillQuery = query
+            if pendingDockPillQuery == query { pendingDockPillQuery = nil }
             dockPillBuildTask = nil
         }
     }
@@ -13738,28 +13960,20 @@ struct LauncherView: View {
         VStack(alignment: .leading, spacing: 0) {
 
             // Active selection = files/text/URL right now (not stale clipboard)
-            let hasActiveContextSelection: Bool = {
-                if !axContext.selectedFilePaths.isEmpty { return true }
-                let txt = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !txt.isEmpty { return true }
-                switch currentContext {
-                case .filesSelected(let u) where !u.isEmpty: return true
-                case .textSelected(let t) where !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty: return true
-                case .url(let s) where !s.isEmpty: return true
-                default: return false
-                }
-            }()
+            let hasActiveContextSelection = hasActiveDockContextSelection
+            let pureGlobalAppSearch = shouldUsePureGlobalAppSearch
             let hasAnySelection: Bool =
                 hasActiveContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
+            let globalAppMatches = currentGlobalAppMatches(for: q)
             let hasGlobalAppMatches =
                 isGlobalContextActive && !q.isEmpty
-                && !globalApplicationMatches(for: q, limit: 1).isEmpty
+                && (!globalAppMatches.isEmpty || pendingGlobalAppQuery == q)
             // In global context, only hide app pills when there's a real active selection (not just clipboard)
             let showPinnedRow = q.isEmpty && (pills.isEmpty || (isGlobalContextActive && !hasActiveContextSelection))
             // App search is available for typed app names even when global context has
             // a Desktop/file/text selection, so app launching stays reachable.
             let showGlobalAppSearch = isGlobalContextActive && !q.isEmpty
-                && hasGlobalAppMatches
+                && (pureGlobalAppSearch || hasGlobalAppMatches)
 
             HStack(spacing: 6) {
                 // Submenu locked mode: show vertical child suggestion list instead of pills
@@ -13770,23 +13984,18 @@ struct LauncherView: View {
                             removal: .opacity.combined(with: .scale(scale: 0.97, anchor: settings.effectiveDockAtBottom ? .bottom : .top))
                         ))
                 } else if showGlobalAppSearch {
-                    globalAppSearchPillRow(query: q)
+                    globalAppSearchListView(query: q, matches: globalAppMatches)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 } else if showPinnedRow {
                     pinnedAndRecentAppsRow
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 } else {
-                    if settings.useListViewForPills {
-                        dockPillListView(pills: pills)
-                    } else {
-                        dockPillScrollRow(pills: pills, appQuery: q)
-                    }
+                    dockPillListView(pills: pills)
                 }
             }
             .animation(.spring(response: 0.2, dampingFraction: 0.8), value: hasAnySelection)
         }
         .padding(.horizontal, 2)
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pillQuery)
         .animation(
             .spring(response: 0.22, dampingFraction: 0.85), value: explicitAppTarget?.bundleId
         )
@@ -13796,17 +14005,33 @@ struct LauncherView: View {
             if isGlobalContextActive, !newQuery.isEmpty, allApplications.isEmpty, !searchState.isLoadingApps {
                 loadApplicationsInBackground()
             }
+            if shouldUsePureGlobalAppSearch {
+                l2.appCompletion = nil
+                l2.showResultsPopover = false
+                scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 0)
+                return
+            }
+            if isGlobalContextActive {
+                scheduleGlobalAppMatchRebuild(
+                    query: newQuery,
+                    delayNanoseconds: 18_000_000
+                )
+            }
             if newQuery != lastPillQuery {
                 scheduleDockPillRebuild(
                     query: newQuery,
-                    delayNanoseconds: settings.useListViewForPills ? 0 : 55_000_000,
-                    refreshContext: !settings.useListViewForPills
+                    delayNanoseconds: 20_000_000,
+                    refreshContext: false
                 )
             }
         }
         .onAppear {
             if isGlobalContextActive, !pillQuery.isEmpty, allApplications.isEmpty, !searchState.isLoadingApps {
                 loadApplicationsInBackground()
+            }
+            if shouldUsePureGlobalAppSearch {
+                scheduleGlobalAppMatchRebuild(query: pillQuery, delayNanoseconds: 0)
+                return
             }
             scheduleDockPillRebuild(query: pillQuery, delayNanoseconds: 0)
         }
@@ -15157,10 +15382,11 @@ struct LauncherView: View {
     // MARK: - List view (Spotlight / Raycast-style vertical result sheet)
 
     private func dockPillListView(pills: [DockPill]) -> some View {
-        ScrollViewReader { proxy in
+        let visiblePills = Array(pills.prefix(maxListViewDockPills))
+        return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
-                    ForEach(Array(pills.enumerated()), id: \.element.id) { idx, pill in
+                    ForEach(Array(visiblePills.enumerated()), id: \.element.id) { idx, pill in
                         if pill.isSeparator {
                             if !pill.name.isEmpty {
                                 HStack {
@@ -15182,7 +15408,7 @@ struct LauncherView: View {
                 }
                 .padding(6)
             }
-            .frame(maxHeight: 500)
+            .frame(height: min(CGFloat(visiblePills.filter { !$0.isSeparator }.count) * 60 + 12, listViewVisibleHeight))
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
@@ -15332,7 +15558,7 @@ struct LauncherView: View {
                     if let img = pill.menuItemImage {
                         Image(nsImage: img)
                             .resizable()
-                            .interpolation(.high)
+                            .interpolation(.medium)
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 25, height: 25)
                     } else {
@@ -15341,7 +15567,6 @@ struct LauncherView: View {
                             .foregroundStyle(isActive ? accent : accent.opacity(0.80))
                     }
                 }
-                .animation(.spring(response: 0.22, dampingFraction: 0.75), value: isActive)
 
                 // Name + context
                 VStack(alignment: .leading, spacing: 2) {
@@ -15374,7 +15599,6 @@ struct LauncherView: View {
                             .background(Color.secondary.opacity(0.09))
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
             }
             .frame(height: 58)
@@ -15393,16 +15617,12 @@ struct LauncherView: View {
                             .fill(Color.primary.opacity(0.08))
                     }
                 }
-                .animation(.spring(response: 0.16, dampingFraction: 0.72), value: isKeyboardFocused)
-                .animation(.spring(response: 0.16, dampingFraction: 0.72), value: isHov)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
-                listViewHoveredIndex = hovering ? index : nil
-            }
+            listViewHoveredIndex = hovering ? index : nil
             if hovering { l2.pillNavViaKeyboard = false }
         }
     }
@@ -15591,14 +15811,16 @@ struct LauncherView: View {
         guard showContextInDock, !aiMode.isActive else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let visiblePills =
-            lastPillQuery == q
-            ? cachedDockPills
-            : buildDockPills(query: q)
+            currentCachedDockPills(for: q)
         if isGlobalContextActive {
             if q.isEmpty {
                 return settings.showRunningAppsInBar || !settings.pinnedApps.isEmpty
             }
-            return globalApplicationMatches(for: q, limit: 1).isEmpty == false
+            if shouldUsePureGlobalAppSearch {
+                return true
+            }
+            return !currentGlobalAppMatches(for: q).isEmpty
+                || pendingGlobalAppQuery == q
                 || visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
@@ -16385,14 +16607,15 @@ struct LauncherView: View {
 
     // Shared condition: whether any results panel should be visible.
     private var hasResultsToShow: Bool {
-        !searchState.results.isEmpty
-        || (!searchState.query.isEmpty && !isL2ContextActive)
-        || (aiMode.isActive && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
-        || showFolderPreview
-        || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
-        || searchState.contextApp != nil
-        || searchState.activeSmartQueryKey != nil
-        || shouldShowFinderSearchResultsPanel(for: searchState.query)
+        guard !showMediaLayer else { return false }
+        return !searchState.results.isEmpty
+            || (!searchState.query.isEmpty && !isL2ContextActive)
+            || (aiMode.isActive && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
+            || showFolderPreview
+            || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
+            || searchState.contextApp != nil
+            || searchState.activeSmartQueryKey != nil
+            || shouldShowFinderSearchResultsPanel(for: searchState.query)
     }
 
     // Results card: its own glass container, visually detached from the dock bar.
@@ -16473,15 +16696,10 @@ struct LauncherView: View {
         }
     }
 
-    // Dock bar card: unified glass container when list view is active, transparent otherwise.
-    @ViewBuilder
+    // Dock bar card: always wrapped in the unified glass card so the NSTextField
+    // never changes view-identity (and never loses focus) when pills appear/disappear.
     private func dockCard(inDockMode: Bool) -> some View {
-        if usesVerticalListDockLayout {
-            unifiedListDockCard(inDockMode: inDockMode)
-        } else {
-            dockBaseView(inDockMode: inDockMode)
-                .frame(width: visibleDockWidth, alignment: .leading)
-        }
+        unifiedListDockCard(inDockMode: inDockMode)
     }
 
     @ViewBuilder
@@ -16490,43 +16708,54 @@ struct LauncherView: View {
             dockBaseView(inDockMode: inDockMode)
                 .frame(width: visibleDockWidth, alignment: .leading)
 
-            Rectangle()
-                .fill(Color.white.opacity(isEffectiveDark ? 0.12 : 0.16))
-                .frame(height: 1)
-                .padding(.horizontal, 18)
+            if usesVerticalListDockLayout {
+                Rectangle()
+                    .fill(Color.white.opacity(isEffectiveDark ? 0.12 : 0.16))
+                    .frame(height: 1)
+                    .padding(.horizontal, 18)
 
-            l2UnifiedDockRow
-                .frame(width: visibleDockWidth, alignment: .leading)
-                .frame(maxHeight: 500)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
+                l2UnifiedDockRow
+                    .frame(width: visibleDockWidth, alignment: .leading)
+                    .frame(maxHeight: 500)
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+            }
         }
         .frame(width: visibleDockWidth, alignment: .leading)
         .background(alignment: .topLeading) {
-            GlassBackground(cornerRadius: 28, isDark: isEffectiveDark)
-                .frame(width: visibleDockWidth)
+            if usesVerticalListDockLayout {
+                GlassBackground(cornerRadius: 28, isDark: isEffectiveDark)
+                    .frame(width: visibleDockWidth)
+            }
         }
         .mask(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .frame(width: visibleDockWidth)
+            if usesVerticalListDockLayout {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .frame(width: visibleDockWidth)
+            } else {
+                Rectangle()
+            }
         }
         .overlay(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.42), .white.opacity(0.08)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-                .frame(width: visibleDockWidth)
+            if usesVerticalListDockLayout {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.42), .white.opacity(0.08)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+                    .frame(width: visibleDockWidth)
+            }
         }
-        .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
+        .shadow(color: usesVerticalListDockLayout ? .black.opacity(0.18) : .clear, radius: 24, x: 0, y: 12)
     }
 
     private var panelGapBelowSearchBar: CGFloat {
-        searchState.activeSmartQueryKey == "clipboard" ? 2 : 6
+        searchState.activeSmartQueryKey == "clipboard" ? 2
+            : (usesVerticalListDockLayout && !searchState.results.isEmpty ? 4 : 6)
     }
 
     private var searchBarSection: some View {
@@ -16887,12 +17116,67 @@ struct LauncherView: View {
                             else { return nil }
                             return searchState.results[idx]
                         }()
+                        let focusedDockPill = focusedDockPillForInputPreview()
+                        let focusedGlobalAppResult = focusedGlobalAppResultForInputPreview()
                         // Spotlight-style: show result name in bar whenever a result is selected (even while typing)
-                        let showingResultPreview = selectedResult != nil
+                        let showingResultPreview = focusedDockPill != nil || focusedGlobalAppResult != nil || selectedResult != nil
 
                         ZStack(alignment: .leading) {
                             // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
-                            if let result = selectedResult {
+                            if let pill = focusedDockPill {
+                                let title = pill.name
+                                let typed = searchState.query
+                                let isPrefixMatch = title.lowercased().hasPrefix(typed.lowercased())
+
+                                HStack(spacing: 0) {
+                                    if isPrefixMatch && !typed.isEmpty {
+                                        Text(typed)
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.clear)
+                                        Text(String(title.dropFirst(typed.count)))
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.secondary.opacity(0.45))
+                                            .lineLimit(1)
+                                    } else {
+                                        Text(title)
+                                            .font(.system(size: 15, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                    }
+                                    if let badge = pill.badge, !badge.isEmpty {
+                                        Text("  \(badge)")
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.secondary.opacity(0.25))
+                                    }
+                                    Text("  — ↵")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.secondary.opacity(0.25))
+                                }
+                            } else if let result = focusedGlobalAppResult {
+                                let title = result.title
+                                let typed = searchState.query
+                                let isPrefixMatch = title.lowercased().hasPrefix(typed.lowercased())
+
+                                HStack(spacing: 0) {
+                                    if isPrefixMatch && !typed.isEmpty {
+                                        Text(typed)
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.clear)
+                                        Text(String(title.dropFirst(typed.count)))
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.secondary.opacity(0.45))
+                                            .lineLimit(1)
+                                    } else {
+                                        Text(title)
+                                            .font(.system(size: 15, weight: .medium))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                    }
+                                    Text("  —  \(selectedResultAction(result))")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.secondary.opacity(0.35))
+                                }
+                            } else if let result = selectedResult {
                                 // Intelligent inline completion:
                                 // • Prefix match  → show typed text (invisible spacer) + greyed remainder + action
                                 // • Fuzzy match   → show full result name + action
@@ -17126,6 +17410,16 @@ struct LauncherView: View {
                                 // For fuzzy match or empty: hide it so the full result name shows cleanly.
                                 .opacity(
                                     {
+                                        if let pill = focusedDockPill {
+                                            let isPrefixMatch = pill.name.lowercased().hasPrefix(
+                                                searchState.query.lowercased())
+                                            return (isPrefixMatch && !searchState.query.isEmpty) ? 1 : 0
+                                        }
+                                        if let result = focusedGlobalAppResult {
+                                            let isPrefixMatch = result.title.lowercased().hasPrefix(
+                                                searchState.query.lowercased())
+                                            return (isPrefixMatch && !searchState.query.isEmpty) ? 1 : 0
+                                        }
                                         if let result = selectedResult {
                                             let isPrefixMatch = result.title.lowercased().hasPrefix(
                                                 searchState.query.lowercased())
@@ -17150,6 +17444,21 @@ struct LauncherView: View {
                                     // When a submenu parent is locked, skip all app-scope detection —
                                     // input is purely a child filter, not an app name.
                                     if isL2ContextActive && lockedSubmenuParent == nil {
+                                        let q = newValue
+                                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                                            .lowercased()
+                                        if shouldUsePureGlobalAppSearch {
+                                            l2.appCompletion = nil
+                                            l2.showResultsPopover = false
+                                            focusedAppPillIndex = nil
+                                            l2.focusedPillIndex = nil
+                                            if !q.isEmpty, allApplications.isEmpty, !searchState.isLoadingApps {
+                                                loadApplicationsInBackground()
+                                            }
+                                            scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
+                                            resetCollapseTimer()
+                                            return
+                                        }
                                         let finderFolderSearchActive =
                                             isFinderFolderSearchModeEnabled(for: newValue)
                                             || (finderFolderQueryModeActive
@@ -17159,20 +17468,30 @@ struct LauncherView: View {
                                             l2.showResultsPopover = false
                                         } else {
                                             l2.showResultsPopover = false
-                                            triggerCrossAppMenuLoadIfNeeded(for: newValue)
+                                            if !isGlobalContextActive {
+                                                triggerCrossAppMenuLoadIfNeeded(for: newValue)
+                                            }
                                         }
                                         scheduleFinderSemanticSearchIfNeeded(for: newValue)
                                         updateFinderGoToPills(for: newValue)
-                                        let q = newValue
-                                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                                            .lowercased()
+                                        if isGlobalContextActive {
+                                            scheduleGlobalAppMatchRebuild(
+                                                query: q,
+                                                delayNanoseconds: 10_000_000
+                                            )
+                                        }
                                         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
                                         let pillQuery = finderSearchPopoverActive ? "" : q
                                         scheduleDockPillRebuild(
                                             query: pillQuery,
-                                            delayNanoseconds: settings.useListViewForPills ? 0 : 55_000_000,
+                                            delayNanoseconds: settings.useListViewForPills ? 20_000_000 : 55_000_000,
                                             refreshContext: false
                                         )
+                                        if usesVerticalListDockLayout {
+                                            DispatchQueue.main.async {
+                                                reclaimSearchInputFocus()
+                                            }
+                                        }
                                     }
                                     // Update partial app autocomplete for L2 (skip when submenu locked)
                                     if isL2ContextActive && isGlobalContextActive && lockedSubmenuParent == nil {
@@ -17220,31 +17539,6 @@ struct LauncherView: View {
                                     }
                                     if isL2ContextActive || aiMode.isActive {
                                         scheduleBrowserContextWarmup(reason: "query changed")
-                                    }
-                                    // Auto-lock submenu parent when user types exact name + space
-                                    if isL2ContextActive && lockedSubmenuParent == nil && newValue.hasSuffix(" ") {
-                                        let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-                                        let q = normalizedDockPillText(trimmed)
-                                        if !q.isEmpty, let parent = liveMenuItems.first(where: {
-                                            !$0.isLeaf && normalizedDockPillText($0.title) == q
-                                        }) {
-                                            var leaves: [AXMenuItem] = []
-                                            for child in parent.children {
-                                                if child.isLeaf { leaves.append(child) }
-                                                else { leaves.append(contentsOf: child.children.filter(\.isLeaf)) }
-                                            }
-                                            if !leaves.filter({ $0.isEnabled }).isEmpty {
-                                                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-                                                    lockedSubmenuParent = parent
-                                                    searchState.query = ""
-                                                }
-                                                // Clear all stale app-detection state
-                                                l2.appCompletion = nil
-                                                l2.showResultsPopover = false
-                                                crossAppMenuItems = []
-                                                cachedDockPills = []
-                                            }
-                                        }
                                     }
                                     resetCollapseTimer()
                                 }
@@ -17518,19 +17812,14 @@ struct LauncherView: View {
                                     .transition(.opacity)
                             }
                         } else if !searchState.query.isEmpty {
-                            if settings.useListViewForPills {
-                                pinnedAppsListView
-                            } else {
-                                pinnedAndRecentAppsRow
-                                    .transition(.opacity)
-                            }
+                            pinnedAppsListView
                         }
                     }
                     .frame(maxWidth: .infinity)
                     .frame(
                         height: showMediaLayer
                             ? (mediaObserver.duration > 0 ? 70 : inputPillHeight)
-                            : (settings.useListViewForPills ? nil : (l2.focusedPillIndex != nil ? inputPillHeight : pinnedRowHeight))
+                            : nil
                     )
 
                 }
@@ -18276,7 +18565,7 @@ struct LauncherView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(finderSemanticResults.enumerated()), id: \.element.id) {
                             _, result in
-                            ResultRow(result: result, isSelected: false)
+                            ResultRow(result: result, isSelected: false, isPinned: false)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     executeFinderFolderSearchResult(result)
@@ -25344,12 +25633,17 @@ struct LauncherView: View {
         } else if !searchState.results.isEmpty {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
 
                         // In dock mode, reverse order so first result is at bottom (closest to dock)
                         let sectionsToRender =
                             settings.effectiveDockAtBottom
                             ? Array(searchState.grouped.sections.reversed()) : searchState.grouped.sections
+
+                        // O(1) index lookup — built once per render, used per row
+                        let resultIndexMap = Dictionary(
+                            uniqueKeysWithValues: searchState.results.enumerated().map { ($1.id, $0) }
+                        )
 
                         // Render grouped sections with headers
                         ForEach(Array(sectionsToRender.enumerated()), id: \.offset) {
@@ -25376,22 +25670,20 @@ struct LauncherView: View {
                                 .padding(.bottom, 4)
                             }
 
-                            // Section items
-                            ForEach(Array(itemsToRender.enumerated()), id: \.element.id) {
-                                itemIndex, result in
-                                let globalIndex = getGlobalIndex(for: result)
+                            // Section items — ForEach by id, no Array(enumerated()) wrapper
+                            ForEach(itemsToRender, id: \.id) { result in
+                                let globalIndex = resultIndexMap[result.id] ?? 0
 
                                 resultRowView(for: result, at: globalIndex)
-                                    .id(result.id)  // Add ID for scroll targeting
+                                    .id(result.id)
 
-                                // Divider between items (but not after last item in section)
-                                if itemIndex < itemsToRender.count - 1 {
+                                if result.id != itemsToRender.last?.id {
                                     Divider()
                                         .padding(.leading, 60)
                                 }
                             }
 
-                            // Add space between sections (but not after last section)
+                            // Divider between sections (but not after last section)
                             if sectionIndex < sectionsToRender.count - 1 {
                                 Divider()
                                     .padding(.vertical, 4)
@@ -25417,7 +25709,7 @@ struct LauncherView: View {
                 }
                 .onChange(of: searchState.selectedIndex) { _, newIndex in
                     // Auto-scroll to selected result ONLY when navigating with arrow keys
-                    if searchState.isKeyboardNavigation || searchState.shouldAutoScroll,
+                    if isKeyboardNavigation || shouldAutoScroll,
                         let index = newIndex,
                         index >= 0 && index < searchState.results.count
                     {
@@ -25427,7 +25719,7 @@ struct LauncherView: View {
                             proxy.scrollTo(searchState.results[index].id, anchor: anchor)
                         }
                     }
-                    if searchState.shouldAutoScroll { searchState.shouldAutoScroll = false }
+                    if shouldAutoScroll { shouldAutoScroll = false }
                     // Update context extensions for the newly selected result
                     // so context-based dock pills reflect file type / app context immediately
                     updateL2ContextExtensions()
@@ -25446,8 +25738,10 @@ struct LauncherView: View {
     private func resultRowView(for result: SearchResult, at index: Int) -> some View {
         ResultRow(
             result: result,
-            isSelected: searchState.selectedIndex == index
+            isSelected: searchState.selectedIndex == index,
+            isPinned: result.type == .application && settings.isPinned(path: result.subtitle)
         )
+        .equatable()
         .contentShape(Rectangle())
         .onTapGesture {
             executeResult(result)
@@ -25457,9 +25751,9 @@ struct LauncherView: View {
                 if isSearchFieldFocused {
                     return
                 }
-                if searchState.isKeyboardNavigation {
+                if isKeyboardNavigation {
                     // Switch back to mouse mode but don't steal selection immediately
-                    searchState.isKeyboardNavigation = false
+                    isKeyboardNavigation = false
                     return
                 }
                 searchState.selectedIndex = index
@@ -26737,7 +27031,7 @@ struct LauncherView: View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Global context app search
         if isGlobalContextActive && !q.isEmpty {
-            return globalApplicationMatches(for: q)
+            return currentGlobalAppMatches(for: q)
                 .map { result -> (execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?) in
                     let runningApp = runningApplication(forGlobalResult: result)
                     let quitAction: (() -> Void)? = runningApp.map { app in
@@ -26817,20 +27111,31 @@ struct LauncherView: View {
                 return nil
             }
 
-            // Tab / Right-arrow: submenu parent lock takes absolute priority
-            if (event.keyCode == 48 || event.keyCode == 124),
+            // Right-arrow: complete submenu ghost text without entering the submenu layer.
+            if event.keyCode == 124,
                let subCtx = self.submenuGhostContext,
-               !subCtx.children.isEmpty,
-               self.lockedSubmenuParent == nil
+               let firstChild = subCtx.children.first,
+               self.searchInputCursorIsAtEnd()
             {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-                    self.lockedSubmenuParent = subCtx.parent
-                    self.searchState.query = ""
+                let parentTitle = subCtx.parent.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let childTitle = firstChild.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if self.lockedSubmenuParent != nil {
+                    self.searchState.query = childTitle
+                } else if subCtx.childPrefix.isEmpty {
+                    self.searchState.query = [parentTitle, childTitle]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " ")
+                } else {
+                    self.searchState.query = [parentTitle, childTitle]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " ")
                 }
+                self.lockedSubmenuParent = nil
                 self.l2.appCompletion = nil
                 self.l2.showResultsPopover = false
-                self.crossAppMenuItems = []
-                self.cachedDockPills = []
+                DispatchQueue.main.async {
+                    self.reclaimSearchInputFocus()
+                }
                 return nil
             }
             // Tab: pill ghost completion
@@ -26866,13 +27171,14 @@ struct LauncherView: View {
                 default: return false
                 }
             }()
-            // Use cached pills when query is empty so action pill navigation works
-            // even when the user hasn't typed anything (Apple, About This Mac, etc.)
-            let actionPills = q.isEmpty ? self.cachedDockPills : self.buildDockPills(query: q)
+            // Use the same cached pill list the List View renders. Do not rebuild here;
+            // this key monitor runs on every keyDown.
+            let pillQuery = self.shouldUseFinderSearchPopover(for: q) ? "" : q
+            let actionPills = q.isEmpty ? self.cachedDockPills : self.currentCachedDockPills(for: pillQuery)
             let showPinnedRow = q.isEmpty && (actionPills.isEmpty || (self.isGlobalContextActive && !hasActiveContextSel))
             let hasGlobalAppMatches =
                 self.isGlobalContextActive && !q.isEmpty
-                && !self.globalApplicationMatches(for: q, limit: 1).isEmpty
+                && (!self.currentGlobalAppMatches(for: q).isEmpty || self.pendingGlobalAppQuery == q)
             let showGlobalAppSearch = self.isGlobalContextActive && !q.isEmpty
                 && (!hasActiveContextSel || hasGlobalAppMatches)
             let isAppPillRowActive = showPinnedRow || showGlobalAppSearch
@@ -26920,10 +27226,26 @@ struct LauncherView: View {
                     }
                     self.focusedAppPillIndex = curIdx + 1
                     return nil
-                case 125:  // Down — Global → Context → Media
+                case 125:  // Down — navigate app list in List View; otherwise Global → Context → Media
+                    if self.usesVerticalListDockLayout {
+                        self.focusedAppPillIndex = min((self.focusedAppPillIndex ?? -1) + 1, appPills.count - 1)
+                        self.l2.pillNavViaKeyboard = true
+                        return nil
+                    }
                     self.switchDockLayer(.down)
                     return nil
-                case 126:  // Up — Media → Context → Global
+                case 126:  // Up — navigate app list in List View; otherwise Media → Context → Global
+                    if self.usesVerticalListDockLayout {
+                        if let idx = self.focusedAppPillIndex, idx > 0 {
+                            self.focusedAppPillIndex = idx - 1
+                            self.l2.pillNavViaKeyboard = true
+                        } else {
+                            self.focusedAppPillIndex = nil
+                            self.l2.pillNavViaKeyboard = false
+                            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        }
+                        return nil
+                    }
                     self.switchDockLayer(.up)
                     return nil
                 case 36:  // Enter — launch/activate
@@ -27025,27 +27347,26 @@ struct LauncherView: View {
                 self.l2.focusedPillIndex = idx
                 return nil
 
-            case 125:  // Down — navigate list (list mode) or Global → Context → Media
+            case 125:  // Down — navigate pills when focused, else pass through to SwiftUI
                 if self.showShortcutSheet {
                     let count = self.liveMenuItems.filter(\.isEnabled).count
                     self.shortcutSheetFocusedIdx = min(
                         count - 1, (self.shortcutSheetFocusedIdx ?? -1) + 1)
                     return nil
                 }
-                if self.settings.useListViewForPills {
+                if self.usesVerticalListDockLayout, !pills.isEmpty {
                     let curIdx = self.l2.focusedPillIndex ?? -1
-                    var idx = curIdx + 1
-                    while idx < pills.count && pills[idx].isSeparator { idx += 1 }
-                    if idx < pills.count {
+                    var downIdx = curIdx + 1
+                    while downIdx < pills.count && pills[downIdx].isSeparator { downIdx += 1 }
+                    if downIdx < pills.count {
                         self.l2.pillNavViaKeyboard = true
-                        self.l2.focusedPillIndex = idx
+                        self.l2.focusedPillIndex = downIdx
+                        return nil
                     }
-                    return nil
                 }
-                self.switchDockLayer(.down)
-                return nil
+                return event  // pass through → SwiftUI navigateResults(direction:1)
 
-            case 126:  // Up — navigate list (list mode) or Media → Context → Global
+            case 126:  // Up — navigate pills when focused, else pass through to SwiftUI
                 if self.showShortcutSheet {
                     self.shortcutSheetFocusedIdx = max(0, (self.shortcutSheetFocusedIdx ?? 0) - 1)
                     return nil
@@ -27056,12 +27377,12 @@ struct LauncherView: View {
                     }
                     return nil
                 }
-                if self.settings.useListViewForPills {
+                if self.usesVerticalListDockLayout, !pills.isEmpty {
                     if let cur = self.l2.focusedPillIndex, cur > 0 {
-                        var idx = cur - 1
-                        while idx > 0 && pills[idx].isSeparator { idx -= 1 }
+                        var upIdx = cur - 1
+                        while upIdx > 0 && pills[upIdx].isSeparator { upIdx -= 1 }
                         self.l2.pillNavViaKeyboard = true
-                        self.l2.focusedPillIndex = idx
+                        self.l2.focusedPillIndex = upIdx
                     } else {
                         self.l2.focusedPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
@@ -27069,8 +27390,7 @@ struct LauncherView: View {
                     }
                     return nil
                 }
-                self.switchDockLayer(.up)
-                return nil
+                return event  // pass through → SwiftUI navigateResults(direction:-1)
 
             case 36:  // Return / Enter
                 // Submenu ghost: Enter executes the first matching child
@@ -27240,7 +27560,7 @@ struct LauncherView: View {
         windowResizeTask?.cancel()
         windowResizeTask = Task { @MainActor in
             // One-frame delay breaks out of the current layout pass (prevents constraint crash)
-            try? await Task.sleep(nanoseconds: 16_000_000)  // ~1 frame at 60 fps
+            try? await Task.sleep(nanoseconds: 120_000_000)  // 120 ms — coalesces rapid resize calls during typing
             guard !Task.isCancelled else { return }
             guard !self.suppressOpenResize else { return }
 
@@ -27285,6 +27605,20 @@ struct LauncherView: View {
             // Use animate:false — SwiftUI handles content animation; native animate:true causes
             // cascading position jumps when multiple resize calls overlap mid-animation.
             window.setFrame(newFrame, display: true, animate: false)
+
+            // SwiftUI's @FocusState reconciliation fires asynchronously after setFrame and
+            // calls becomeFirstResponder → selectAll on the NSTextField.
+            // Two DispatchQueue.main.async ticks puts us after that reconciliation pass so
+            // we can collapse any unwanted selection to an insertion point at the end.
+            DispatchQueue.main.async {
+                DispatchQueue.main.async {
+                    guard let fe = window.fieldEditor(false, for: nil) as? NSTextView else { return }
+                    let len = (fe.string as NSString).length
+                    if fe.selectedRange().length > 0, len > 0 {
+                        fe.setSelectedRange(NSRange(location: len, length: 0))
+                    }
+                }
+            }
         }
     }
 
@@ -27665,18 +27999,18 @@ struct LauncherView: View {
         guard settings.enableSpotlightSearch,
             settings.enableL1DocumentSearch || settings.enableL1FileSearch
         else {
-            searchState.indexedFileResults = []
+            indexedFileResults = []
             return
         }
 
         guard !query.isEmpty else {
-            searchState.indexedFileResults = []
+            indexedFileResults = []
             return
         }
 
         guard fileIndexManager.isReady else {
             print("⚠️ File index not ready yet")
-            searchState.indexedFileResults = []
+            indexedFileResults = []
             return
         }
 
@@ -27684,7 +28018,7 @@ struct LauncherView: View {
         let results = fileIndexManager.search(query: query, limit: 20)
             .filter(includeIndexedSearchResult)
 
-        searchState.indexedFileResults = results
+        indexedFileResults = results
     }
 
     func includeIndexedSearchResult(_ result: SearchResult) -> Bool {
@@ -27791,7 +28125,7 @@ struct LauncherView: View {
         }
 
         // Mark as keyboard navigation for auto-scroll
-        searchState.isKeyboardNavigation = true
+        isKeyboardNavigation = true
 
         let movementDirection = direction
 
@@ -34861,9 +35195,14 @@ struct GlassBackground: NSViewRepresentable {
     }
 
     private func configure(_ ve: NSVisualEffectView) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
         ve.alphaValue = settings.launcherWindowOpacity
         ve.layer?.cornerRadius = cornerRadius
         ve.layer?.masksToBounds = true
+        guard let rootLayer = ve.layer else { return }
 
         let dark = resolvedIsDark
 
@@ -34877,38 +35216,44 @@ struct GlassBackground: NSViewRepresentable {
         }
 
         // ── Base fill: subtle, lets the blur show through (like ultraThinMaterial) ──
-        ve.layer?.sublayers?.filter { $0.name == "baseFill" }.forEach { $0.removeFromSuperlayer() }
-        let base = CALayer()
-        base.name = "baseFill"
+        let base = existingLayer(named: "baseFill", in: rootLayer) {
+            let layer = CALayer()
+            layer.name = "baseFill"
+            rootLayer.insertSublayer(layer, at: 0)
+            return layer
+        }
         base.cornerRadius = cornerRadius
         base.frame = ve.bounds
         base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         base.backgroundColor = dark
             ? CGColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.52)   // thin dark tint
             : CGColor(red: 0.97, green: 0.97, blue: 0.99, alpha: 0.65)   // light warm fill
-        ve.layer?.insertSublayer(base, at: 0)
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
-        ve.layer?.sublayers?.filter { $0.name == "gradientOverlay" }.forEach { $0.removeFromSuperlayer() }
-        if ve.bounds.height > 0 {
-            let grad = CAGradientLayer()
-            grad.name = "gradientOverlay"
-            grad.cornerRadius = cornerRadius
-            grad.frame = ve.bounds
-            grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
-            grad.colors = [
-                CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.10 : 0.42),
-                CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.01 : 0.04),
-            ]
-            grad.startPoint = CGPoint(x: 0.5, y: 0)  // top
-            grad.endPoint   = CGPoint(x: 0.5, y: 1)  // bottom
-            ve.layer?.addSublayer(grad)
+        let grad = existingGradientLayer(named: "gradientOverlay", in: rootLayer) {
+            let layer = CAGradientLayer()
+            layer.name = "gradientOverlay"
+            rootLayer.addSublayer(layer)
+            return layer
         }
+        grad.isHidden = ve.bounds.height <= 0
+        grad.cornerRadius = cornerRadius
+        grad.frame = ve.bounds
+        grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        grad.colors = [
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.10 : 0.42),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.01 : 0.04),
+        ]
+        grad.startPoint = CGPoint(x: 0.5, y: 0)  // top
+        grad.endPoint   = CGPoint(x: 0.5, y: 1)  // bottom
 
         // ── Border ring ──
-        ve.layer?.sublayers?.filter { $0.name == "borderRing" }.forEach { $0.removeFromSuperlayer() }
-        let border = CALayer()
-        border.name = "borderRing"
+        let border = existingLayer(named: "borderRing", in: rootLayer) {
+            let layer = CALayer()
+            layer.name = "borderRing"
+            rootLayer.addSublayer(layer)
+            return layer
+        }
         border.cornerRadius = cornerRadius
         border.frame = ve.bounds
         border.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
@@ -34916,7 +35261,25 @@ struct GlassBackground: NSViewRepresentable {
             ? CGColor(red: 1, green: 1, blue: 1, alpha: 0.20)
             : CGColor(red: 0, green: 0, blue: 0, alpha: 0.08)
         border.borderWidth = 1.0
-        ve.layer?.addSublayer(border)
+    }
+
+    private func existingLayer(named name: String, in rootLayer: CALayer, create: () -> CALayer) -> CALayer {
+        if let layer = rootLayer.sublayers?.first(where: { $0.name == name }) {
+            return layer
+        }
+        return create()
+    }
+
+    private func existingGradientLayer(
+        named name: String,
+        in rootLayer: CALayer,
+        create: () -> CAGradientLayer
+    ) -> CAGradientLayer {
+        if let layer = rootLayer.sublayers?.first(where: { $0.name == name }) as? CAGradientLayer {
+            return layer
+        }
+        rootLayer.sublayers?.filter { $0.name == name }.forEach { $0.removeFromSuperlayer() }
+        return create()
     }
 
     private var resolvedIsDark: Bool {
@@ -34944,7 +35307,11 @@ private struct FocusRingSuppressor: NSViewRepresentable {
         return view
     }
 
+    // Run exactly once — re-running every render reassigns isBordered/drawsBackground
+    // on the live NSTextField which causes it to resign first responder on macOS.
     func updateNSView(_ view: NSView, context: Context) {
+        guard !context.coordinator.didSuppress else { return }
+        context.coordinator.didSuppress = true
         DispatchQueue.main.async {
             var root = view.superview
             for _ in 0..<6 {
@@ -34955,12 +35322,18 @@ private struct FocusRingSuppressor: NSViewRepresentable {
         }
     }
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var didSuppress = false
+    }
+
     private func suppressFocusRings(in view: NSView) {
-        view.focusRingType = .none
+        if view.focusRingType != .none { view.focusRingType = .none }
         if let textField = view as? NSTextField {
-            textField.focusRingType = .none
-            textField.isBordered = false
-            textField.drawsBackground = false
+            if textField.focusRingType != .none { textField.focusRingType = .none }
+            if textField.isBordered    { textField.isBordered = false }
+            if textField.drawsBackground { textField.drawsBackground = false }
         }
         view.subviews.forEach { suppressFocusRings(in: $0) }
     }
