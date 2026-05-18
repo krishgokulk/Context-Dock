@@ -153,13 +153,27 @@ final class AXMenuReader {
     }
 
     /// Flatten the tree to all leaf menu items (no submenus), skipping separators.
+    /// Falls back to AppleScript when AX returns an empty tree (Electron, Catalyst apps).
     func allMenuItems(for pid: pid_t, maxDepth: Int = 5) -> [AXMenuItem] {
         let tree = menuTree(for: pid, maxDepth: maxDepth)
         let flattened = flatten(tree, includeGroups: true)
         let probe = lastMenuBarProbe[pid] ?? "probe unavailable"
         let trusted = AXIsProcessTrusted() ? "trusted" : "not_trusted"
-        lastDebugMessage[pid] = "ax \(trusted), \(probe), tree \(flattened.count)"
-        return flattened
+
+        if !flattened.isEmpty {
+            lastDebugMessage[pid] = "ax \(trusted), \(probe), tree \(flattened.count)"
+            return flattened
+        }
+
+        // AX returned nothing — try AppleScript walk (handles Electron, Catalyst, etc.)
+        let appElement = AXUIElementCreateApplication(pid)
+        let (scriptItems, scriptErr) = scriptedMenuItems(for: pid, appElement: appElement)
+        let scriptResult = scriptErr.map { "as_err:\($0)" } ?? "as_ok:\(scriptItems.count)"
+        lastDebugMessage[pid] = "ax \(trusted), \(probe), tree 0, \(scriptResult)"
+        if !scriptItems.isEmpty {
+            menuCache[pid] = CacheEntry(items: scriptItems, date: Date())
+        }
+        return scriptItems
     }
 
     /// Search menu items by keyword — returns up to `maxResults` best matches.

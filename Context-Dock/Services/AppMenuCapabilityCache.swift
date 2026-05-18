@@ -19,6 +19,16 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
     nonisolated var normalizedTitle: String { AppMenuCapabilityCache.normalize(title) }
 }
 
+struct AppMenuCapabilitySummary: Identifiable, Hashable {
+    let bundleIdentifier: String
+    let appName: String
+    let updatedAt: Date
+    let recordCount: Int
+    let samplePaths: [String]
+
+    var id: String { bundleIdentifier }
+}
+
 private struct AppMenuCapabilitySnapshot: Codable {
     var bundleIdentifier: String
     var appName: String
@@ -31,9 +41,20 @@ private struct AppMenuCapabilitySnapshot: Codable {
 final class AppMenuCapabilityCache {
     nonisolated static let shared = AppMenuCapabilityCache()
 
+    private struct MenuItemsCacheKey: Hashable {
+        let bundleIdentifier: String
+        let appName: String
+        let processIdentifier: pid_t
+        let query: String
+        let maxResults: Int
+    }
+
     private let lock = NSLock()
     nonisolated(unsafe) private var snapshots: [String: AppMenuCapabilitySnapshot] = [:]
+    nonisolated(unsafe) private var menuItemsCache: [MenuItemsCacheKey: [AXMenuItem]] = [:]
     private let maxRecordsPerApp = 350
+    private let maxBrowserRecordsPerApp = 2_000
+    private let maxMenuItemsCacheEntries = 256
 
     private init() {
         loadFromDisk()
@@ -66,9 +87,6 @@ final class AppMenuCapabilityCache {
             let key = Self.normalize(path.joined(separator: " > "))
             guard !key.isEmpty, seen.insert(key).inserted else { return nil }
 
-            // Use item.isEnabled if available, default to true
-            let isEnabled = item.isEnabled
-
             return AppMenuCapabilityRecord(
                 bundleIdentifier: bundleIdentifier,
                 appName: appName,
@@ -80,11 +98,27 @@ final class AppMenuCapabilityCache {
                 shortcutModifiers: item.shortcutModifiers,
                 isAppleMenu: isAppleMenu,
                 lastSeen: now,
-                isEnabled: isEnabled  // Store live enabled state
+                isEnabled: true  // Don't persist live AX state — enabled depends on runtime context
             )
         }
 
         guard !records.isEmpty else { return }
+
+        lock.lock()
+        let existingRecords = snapshots[bundleIdentifier]?.records ?? []
+        var mergedByPath = [String: AppMenuCapabilityRecord]()
+        for record in existingRecords {
+            mergedByPath[record.normalizedPath] = record
+        }
+        for record in records {
+            mergedByPath[record.normalizedPath] = record
+        }
+
+        let mergedRecords = mergedByPath.values.sorted {
+            if $0.lastSeen != $1.lastSeen { return $0.lastSeen > $1.lastSeen }
+            if $0.path.count != $1.path.count { return $0.path.count < $1.path.count }
+            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
 
         let snapshot = AppMenuCapabilitySnapshot(
             bundleIdentifier: bundleIdentifier,
@@ -92,11 +126,11 @@ final class AppMenuCapabilityCache {
             bundleVersion: bundleVersion,
             localeIdentifier: localeIdentifier,
             updatedAt: now,
-            records: Array(records.prefix(maxRecordsPerApp))
+            records: Array(mergedRecords.prefix(maxRecords(for: bundleIdentifier)))
         )
 
-        lock.lock()
         snapshots[bundleIdentifier] = snapshot
+        menuItemsCache = menuItemsCache.filter { $0.key.bundleIdentifier != bundleIdentifier }
         lock.unlock()
 
         saveToDisk()
@@ -125,20 +159,32 @@ final class AppMenuCapabilityCache {
         maxResults: Int = 24
     ) -> [AXMenuItem] {
         guard !bundleIdentifier.isEmpty else { return [] }
+        let normalizedQuery = Self.normalize(query)
+        let cacheKey = MenuItemsCacheKey(
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            processIdentifier: processIdentifier,
+            query: normalizedQuery,
+            maxResults: maxResults
+        )
 
         lock.lock()
+        if let cached = menuItemsCache[cacheKey] {
+            lock.unlock()
+            return cached
+        }
         let records = snapshots[bundleIdentifier]?.records ?? []
         lock.unlock()
 
         guard !records.isEmpty else { return [] }
 
-        let ranked = rankedRecords(records, query: query)
+        let ranked = rankedRecords(records, normalizedQuery: normalizedQuery)
         // Cached capability entries are passive metadata for ranking/display.
         // Do not attach a live per-app AX element or consult live AX state here,
         // because this path is called from UI rendering and startup code.
         let placeholderElement = AXUIElementCreateSystemWide()
 
-        return ranked.prefix(maxResults).map { record in
+        let items = ranked.prefix(maxResults).map { record in
             let isAppleMenu = record.isAppleMenu || Self.normalize(record.path.first ?? "") == "apple"
             return AXMenuItem(
                 title: record.title,
@@ -153,6 +199,15 @@ final class AppMenuCapabilityCache {
                 shortcutModifiers: record.shortcutModifiers
             )
         }
+
+        lock.lock()
+        if menuItemsCache.count > maxMenuItemsCacheEntries {
+            menuItemsCache.removeAll(keepingCapacity: true)
+        }
+        menuItemsCache[cacheKey] = items
+        lock.unlock()
+
+        return items
     }
 
     nonisolated func record(path: [String], bundleIdentifier: String) -> AppMenuCapabilityRecord? {
@@ -169,6 +224,52 @@ final class AppMenuCapabilityCache {
         let exists = snapshots[bundleIdentifier]?.records.isEmpty == false
         lock.unlock()
         return exists
+    }
+
+    nonisolated func snapshotAge(bundleIdentifier: String) -> TimeInterval? {
+        guard !bundleIdentifier.isEmpty else { return nil }
+        lock.lock()
+        let updatedAt = snapshots[bundleIdentifier]?.updatedAt
+        lock.unlock()
+        guard let updatedAt else { return nil }
+        return Date().timeIntervalSince(updatedAt)
+    }
+
+    nonisolated func summary(bundleIdentifier: String) -> AppMenuCapabilitySummary? {
+        guard !bundleIdentifier.isEmpty else { return nil }
+        lock.lock()
+        let snapshot = snapshots[bundleIdentifier]
+        lock.unlock()
+        guard let snapshot, !snapshot.records.isEmpty else { return nil }
+        return AppMenuCapabilitySummary(
+            bundleIdentifier: snapshot.bundleIdentifier,
+            appName: snapshot.appName,
+            updatedAt: snapshot.updatedAt,
+            recordCount: snapshot.records.count,
+            samplePaths: snapshot.records.prefix(6).map(\.pathString)
+        )
+    }
+
+    nonisolated func summaries() -> [AppMenuCapabilitySummary] {
+        lock.lock()
+        let snapshotValues = Array(snapshots.values)
+        lock.unlock()
+        return snapshotValues
+            .filter { !$0.records.isEmpty }
+            .map { snapshot in
+                AppMenuCapabilitySummary(
+                    bundleIdentifier: snapshot.bundleIdentifier,
+                    appName: snapshot.appName,
+                    updatedAt: snapshot.updatedAt,
+                    recordCount: snapshot.records.count,
+                    samplePaths: snapshot.records.prefix(6).map(\.pathString)
+                )
+            }
+            .sorted {
+                let lhs = $0.appName.localizedCaseInsensitiveCompare($1.appName)
+                if lhs == .orderedSame { return $0.bundleIdentifier < $1.bundleIdentifier }
+                return lhs == .orderedAscending
+            }
     }
 
     nonisolated func contextBlock(for app: NSRunningApplication, query: String, maxResults: Int = 40) -> String {
@@ -207,7 +308,13 @@ final class AppMenuCapabilityCache {
         _ records: [AppMenuCapabilityRecord],
         query: String
     ) -> [AppMenuCapabilityRecord] {
-        let q = Self.normalize(query)
+        rankedRecords(records, normalizedQuery: Self.normalize(query))
+    }
+
+    nonisolated private func rankedRecords(
+        _ records: [AppMenuCapabilityRecord],
+        normalizedQuery q: String
+    ) -> [AppMenuCapabilityRecord] {
         guard !q.isEmpty else {
             return records.sorted { $0.lastSeen > $1.lastSeen }
         }
@@ -290,6 +397,12 @@ final class AppMenuCapabilityCache {
             return true
         }
 
+        // Filter version-specific dynamic items that become stale after app updates
+        let dynamicTitlePatterns = ["restart to update", "update to", "check for updates in progress"]
+        if dynamicTitlePatterns.contains(where: { normalizedTitle.hasPrefix($0) }) {
+            return false
+        }
+
         return true
     }
 
@@ -306,6 +419,10 @@ final class AppMenuCapabilityCache {
             "org.mozilla.firefox"
         ]
         return browserBundles.contains(bundleIdentifier)
+    }
+
+    nonisolated private func maxRecords(for bundleIdentifier: String) -> Int {
+        isBrowserBundle(bundleIdentifier) ? maxBrowserRecordsPerApp : maxRecordsPerApp
     }
 
     nonisolated private func sanitize(
@@ -356,6 +473,7 @@ final class AppMenuCapabilityCache {
             }
         }
         snapshots = sanitized
+        menuItemsCache.removeAll(keepingCapacity: true)
         if changed {
             saveToDisk()
         }
