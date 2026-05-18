@@ -42,8 +42,27 @@ extension LauncherView {
             return
         }
 
-        // L2 context dock — pills handle filtering, search runs after debounce only
+        // L2 frontmost context dock owns its own pill list. Never leave stale L1
+        // file/search rows visible while the dock is scoped to the frontmost app.
         if showContextInDock && !showMediaLayer {
+            if !isGlobalContextActive {
+                debounceTask?.cancel()
+                searchState.results = []
+                searchState.selectedIndex = nil
+                indexedFileResults = []
+                return
+            }
+
+            // L1 Global Context with no selection is app-control mode; L2 renders
+            // the app/app-menu rows, so L1 file search must stay out.
+            if !hasActiveDockContextSelection {
+                debounceTask?.cancel()
+                searchState.results = []
+                searchState.selectedIndex = nil
+                indexedFileResults = []
+                return
+            }
+
             debounceTask?.cancel()
             debounceTask = Task(priority: .userInitiated) {
                 try? await Task.sleep(nanoseconds: 120_000_000)  // 120 ms

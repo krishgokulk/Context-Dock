@@ -18,12 +18,14 @@ final class AppUsageLearner {
     private let globalAppScoresKey  = "cdock.learn.globalAppScores"    // [bundleID: score]
     private let perAppActionKey     = "cdock.learn.perAppActions"       // [bundleID: [action: score]]
     private let globalQueryKey      = "cdock.learn.globalQueries"       // [query: score]
+    private let queryIntentKey      = "cdock.learn.queryIntent"         // [query: score] +ve=menu, -ve=app
     private let lastSaveKey         = "cdock.learn.lastSave"
 
     // In-memory working copies (written through to UserDefaults periodically)
     private var globalAppScores: [String: Double] = [:]     // bundleID → score
     private var perAppActions:   [String: [String: Double]] = [:] // bundleID → [action → score]
     private var globalQueries:   [String: Double] = [:]     // query → score
+    private var queryIntent:     [String: Double] = [:]     // query → intent bias
 
     // Decay half-life: score halves every 7 days
     private let halfLifeSeconds: Double = 7 * 24 * 3600
@@ -50,6 +52,24 @@ final class AppUsageLearner {
         map[action] = (map[action] ?? 0) + 1.0
         perAppActions[ctx] = map
         scheduleSave()
+    }
+
+    /// Records whether the user picked a menu action or an app for a given query.
+    /// After ≥2 consistent picks the preference overrides heuristics.
+    func recordQueryIntent(query: String, wasMenu: Bool) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard q.count >= 2 else { return }
+        let delta = wasMenu ? 1.0 : -1.0
+        queryIntent[q] = (queryIntent[q] ?? 0) + delta
+        scheduleSave()
+    }
+
+    /// Returns positive if menu is preferred, negative if app is preferred.
+    /// Returns nil if fewer than 2 consistent picks exist (not enough signal).
+    func intentPreference(for query: String) -> Double? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let score = queryIntent[q], abs(score) >= 2.0 else { return nil }
+        return score
     }
 
     /// Call whenever the user executes a non-trivial search query (≥2 chars, not pure whitespace).
@@ -127,6 +147,7 @@ final class AppUsageLearner {
         UserDefaults.standard.set(globalAppScores, forKey: globalAppScoresKey)
         UserDefaults.standard.set(perAppActions,   forKey: perAppActionKey)
         UserDefaults.standard.set(globalQueries,   forKey: globalQueryKey)
+        UserDefaults.standard.set(queryIntent,     forKey: queryIntentKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastSaveKey)
     }
 
@@ -134,6 +155,7 @@ final class AppUsageLearner {
         globalAppScores = UserDefaults.standard.dictionary(forKey: globalAppScoresKey) as? [String: Double] ?? [:]
         perAppActions   = (UserDefaults.standard.dictionary(forKey: perAppActionKey) as? [String: [String: Double]]) ?? [:]
         globalQueries   = UserDefaults.standard.dictionary(forKey: globalQueryKey)   as? [String: Double] ?? [:]
+        queryIntent     = UserDefaults.standard.dictionary(forKey: queryIntentKey)   as? [String: Double] ?? [:]
         applyTimeDecay()
     }
 
@@ -152,5 +174,7 @@ final class AppUsageLearner {
         globalAppScores = globalAppScores.filter { $0.value > threshold }
         perAppActions   = perAppActions.mapValues { $0.filter { $0.value > threshold } }
         globalQueries   = globalQueries.filter { $0.value > threshold }
+        // Intent scores decay but keep sign — remove only truly negligible entries
+        queryIntent     = queryIntent.filter { abs($0.value) > threshold }
     }
 }

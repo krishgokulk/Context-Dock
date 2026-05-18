@@ -16,6 +16,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
     case cliTools        = "CLI Tools"
     case contextTriggers = "Context Triggers"
     case appActions      = "App Actions"
+    case menuCache       = "Menu Cache"
     case systemCommands  = "System Commands"
 
     var id: String { rawValue }
@@ -27,6 +28,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return "terminal.fill"
         case .contextTriggers: return "scope"
         case .appActions:      return "app.connected.to.app.below.fill"
+        case .menuCache:       return "menubar.rectangle"
         case .systemCommands:  return "slider.horizontal.3"
         }
     }
@@ -38,6 +40,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return .green
         case .contextTriggers: return .red
         case .appActions:      return .teal
+        case .menuCache:       return .cyan
         case .systemCommands:  return .indigo
         }
     }
@@ -49,9 +52,22 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return "CLI binaries callable by the AI terminal"
         case .contextTriggers: return "Rules that fire based on screen context"
         case .appActions:      return "User-owned actions bound to installed apps"
+        case .menuCache:       return "Cached app menu snapshots for Global Context"
         case .systemCommands:  return "Global device controls: volume, appearance, display…"
         }
     }
+}
+
+private struct AppMenuCacheRowModel: Identifiable {
+    let bundleId: String
+    let appName: String
+    let appURL: URL?
+    let icon: NSImage?
+    let summary: AppMenuCapabilitySummary?
+
+    var id: String { bundleId }
+    var recordCount: Int { summary?.recordCount ?? 0 }
+    var isCached: Bool { recordCount > 0 }
 }
 
 // MARK: - Main View
@@ -69,9 +85,13 @@ struct AutomationSettingsView: View {
     @State private var selectedPackageID: UUID?
     @State private var selectedAdapterID: String?
     @State private var selectedAdapterActionID: String?
+    @State private var selectedMenuCacheBundleID: String?
     @State private var selectedSystemCommandID: UUID?
     @StateObject private var sysRegistry = SystemCommandsRegistryObservable.shared
     @State private var installedAppsByBundleId: [String: InstalledApplicationEntry] = [:]
+    @State private var menuCacheSummaries: [String: AppMenuCapabilitySummary] = [:]
+    @State private var refreshingMenuCacheBundleID: String?
+    @State private var menuCacheStatusMessage: String?
     @State private var showExtensionSheet = false
     @State private var showPackageSheet = false
     @State private var showRuleSheet = false
@@ -149,6 +169,7 @@ struct AutomationSettingsView: View {
         }
         .task {
             await loadInstalledAppsCatalogIfNeeded()
+            reloadMenuCacheSummaries()
         }
     }
 
@@ -257,6 +278,7 @@ struct AutomationSettingsView: View {
             case .cliTools:        cliList
             case .contextTriggers: triggerList
             case .appActions:      adapterList
+            case .menuCache:       menuCacheList
             case .systemCommands:  systemCommandList
             }
         }
@@ -306,6 +328,20 @@ struct AutomationSettingsView: View {
                 AutomationAdapterDetailView(adapter: adapter, selectedActionID: $selectedAdapterActionID)
             } else {
                 appActionsEmptyDetail
+            }
+
+        case .menuCache:
+            if let bundleID = selectedMenuCacheBundleID,
+               let row = menuCacheRows.first(where: { $0.bundleId == bundleID }) {
+                MenuCacheDetailView(
+                    row: row,
+                    isRefreshing: refreshingMenuCacheBundleID == bundleID,
+                    statusMessage: menuCacheStatusMessage,
+                    openApp: { openAppForMenuCaching(row) },
+                    refreshCache: { refreshMenuCache(for: row) }
+                )
+            } else {
+                menuCacheEmptyDetail
             }
 
         case .systemCommands:
@@ -445,6 +481,30 @@ struct AutomationSettingsView: View {
         }
     }
 
+    private var menuCacheList: some View {
+        Group {
+            if filteredMenuCacheRows.isEmpty {
+                listEmpty(icon: "menubar.rectangle", label: "No installed apps found", action: nil)
+            } else {
+                List(selection: $selectedMenuCacheBundleID) {
+                    Section("Cached") {
+                        ForEach(filteredMenuCacheRows.filter(\.isCached)) { row in
+                            MenuCacheAppRow(row: row)
+                                .tag(row.bundleId)
+                        }
+                    }
+                    Section("Not Cached") {
+                        ForEach(filteredMenuCacheRows.filter { !$0.isCached }) { row in
+                            MenuCacheAppRow(row: row)
+                                .tag(row.bundleId)
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
     private var systemCommandList: some View {
         Group {
             if sysRegistry.commands.isEmpty {
@@ -521,6 +581,44 @@ struct AutomationSettingsView: View {
         }
     }
 
+    private var menuCacheRows: [AppMenuCacheRowModel] {
+        let installedRows = installedAppsByBundleId.values.map { entry in
+            AppMenuCacheRowModel(
+                bundleId: entry.bundleId,
+                appName: entry.name,
+                appURL: entry.url,
+                icon: entry.icon,
+                summary: menuCacheSummaries[entry.bundleId]
+            )
+        }
+        let installedBundleIds = Set(installedAppsByBundleId.keys)
+        let cacheOnlyRows = menuCacheSummaries.values
+            .filter { !installedBundleIds.contains($0.bundleIdentifier) }
+            .map { summary in
+                AppMenuCacheRowModel(
+                    bundleId: summary.bundleIdentifier,
+                    appName: summary.appName,
+                    appURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: summary.bundleIdentifier),
+                    icon: InstalledApplicationsCatalog.icon(for: summary.bundleIdentifier),
+                    summary: summary
+                )
+            }
+        return (installedRows + cacheOnlyRows).sorted { lhs, rhs in
+            if lhs.isCached != rhs.isCached { return lhs.isCached && !rhs.isCached }
+            let order = lhs.appName.localizedCaseInsensitiveCompare(rhs.appName)
+            if order == .orderedSame { return lhs.bundleId < rhs.bundleId }
+            return order == .orderedAscending
+        }
+    }
+
+    private var filteredMenuCacheRows: [AppMenuCacheRowModel] {
+        guard !searchText.isEmpty else { return menuCacheRows }
+        return menuCacheRows.filter {
+            $0.appName.localizedCaseInsensitiveContains(searchText)
+                || $0.bundleId.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     // MARK: Counts
 
     private func count(for cat: AutomationCategory) -> Int {
@@ -530,6 +628,7 @@ struct AutomationSettingsView: View {
         case .cliTools:        return pkgMgr.packages.count
         case .contextTriggers: return settings.axTriggerRules.count
         case .appActions:      return appActionAdapters.count
+        case .menuCache:       return menuCacheSummaries.count
         case .systemCommands:  return sysRegistry.commands.count
         }
     }
@@ -550,6 +649,7 @@ struct AutomationSettingsView: View {
         selectedPackageID    = nil
         selectedAdapterID    = nil
         selectedAdapterActionID = nil
+        selectedMenuCacheBundleID = nil
         searchText = ""
     }
 
@@ -612,16 +712,27 @@ struct AutomationSettingsView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button(action: { showAIImportSheet = true }) {
-                Label("Paste AI", systemImage: "doc.on.clipboard")
+            if selectedCategory == .menuCache {
+                Button {
+                    Task { await loadInstalledAppsCatalogIfNeeded() }
+                    reloadMenuCacheSummaries()
+                } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button(action: { showAIImportSheet = true }) {
+                    Label("Paste AI", systemImage: "doc.on.clipboard")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button(action: presentCreateFlow) {
+                    Label(createButtonTitle, systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            Button(action: presentCreateFlow) {
-                Label(createButtonTitle, systemImage: "plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -678,6 +789,26 @@ struct AutomationSettingsView: View {
                         .foregroundStyle(.tertiary)
                     AppActionSamplesSection()
                 }
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private var menuCacheEmptyDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Label("Menu Cache", systemImage: "menubar.rectangle")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Global Context app scopes use cached menu snapshots when an app is not frontmost. Open or refresh apps here to make those scopes reliable.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider()
+                onboardingStep(number: "1", title: "Open an app", detail: "Choose an app from the list and open it once.")
+                onboardingStep(number: "2", title: "Refresh menus", detail: "If the app is running, click Refresh Cache to read its current menu tree.")
+                onboardingStep(number: "3", title: "Use Global Context", detail: "Queries like “photos favourite” can use cached menus later.")
             }
             .padding(20)
         }
@@ -845,6 +976,8 @@ struct AutomationSettingsView: View {
             showRuleSheet = true
         case .appActions:
             showAdapterSheet = true
+        case .menuCache:
+            break
         case .systemCommands:
             break // system commands are edited inline
         }
@@ -872,6 +1005,84 @@ struct AutomationSettingsView: View {
         clearSelection()
         selectedCategory = .appActions
         selectedAdapterID = id
+    }
+
+    private func reloadMenuCacheSummaries() {
+        menuCacheSummaries = Dictionary(
+            uniqueKeysWithValues: AppMenuCapabilityCache.shared.summaries().map {
+                ($0.bundleIdentifier, $0)
+            }
+        )
+    }
+
+    private func openAppForMenuCaching(_ row: AppMenuCacheRowModel) {
+        guard let appURL = row.appURL else {
+            menuCacheStatusMessage = "Could not find \(row.appName) on disk."
+            return
+        }
+
+        menuCacheStatusMessage = "Opening \(row.appName)…"
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    menuCacheStatusMessage = "Could not open \(row.appName): \(error.localizedDescription)"
+                    return
+                }
+                menuCacheStatusMessage = "\(row.appName) opened. Reading menus…"
+                refreshMenuCache(for: row)
+            }
+        }
+    }
+
+    private func refreshMenuCache(for row: AppMenuCacheRowModel) {
+        let bundleId = row.bundleId
+        let appName = row.appName
+        refreshingMenuCacheBundleID = bundleId
+        menuCacheStatusMessage = "Reading \(appName) menus…"
+
+        Task.detached(priority: .userInitiated) {
+            var runningApp: NSRunningApplication?
+            for _ in 0..<20 {
+                runningApp = await MainActor.run {
+                    NSWorkspace.shared.runningApplications.first {
+                        $0.bundleIdentifier == bundleId && !$0.isTerminated
+                    }
+                }
+                if runningApp != nil { break }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+
+            guard let runningApp else {
+                await MainActor.run {
+                    refreshingMenuCacheBundleID = nil
+                    menuCacheStatusMessage = "\(appName) is not running. Open it once to cache menus."
+                }
+                return
+            }
+
+            var items = await AXMenuReader.shared.refreshAllMenuItems(for: runningApp.processIdentifier, maxDepth: 7)
+            if items.isEmpty {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                items = await AXMenuReader.shared.refreshAllMenuItems(for: runningApp.processIdentifier, maxDepth: 7)
+            }
+
+            if !items.isEmpty {
+                AppMenuCapabilityCache.shared.store(items: items, for: runningApp)
+            }
+            let cachedCount = AppMenuCapabilityCache.shared.summary(bundleIdentifier: bundleId)?.recordCount ?? 0
+
+            await MainActor.run {
+                refreshingMenuCacheBundleID = nil
+                reloadMenuCacheSummaries()
+                if cachedCount > 0 {
+                    menuCacheStatusMessage = "Cached \(cachedCount) menus for \(appName)."
+                } else {
+                    menuCacheStatusMessage = "No menus were readable for \(appName). Check Accessibility permission and keep the app frontmost."
+                }
+            }
+        }
     }
 
     private func loadInstalledAppsCatalogIfNeeded() async {
@@ -1022,7 +1233,172 @@ private struct AutomationAppRow: View {
     }
 }
 
+private struct MenuCacheAppRow: View {
+    let row: AppMenuCacheRowModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(row.isCached ? Color.cyan.opacity(0.14) : Color.secondary.opacity(0.09))
+                    .frame(width: 32, height: 32)
+                if let icon = row.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 21, height: 21)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                } else {
+                    AppBundleIconView(bundleId: row.bundleId, fallbackSymbol: "app.fill", size: 20, cornerRadius: 5)
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.appName)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if row.isCached {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.cyan)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var subtitle: String {
+        row.isCached
+            ? "\(row.recordCount) cached menu\(row.recordCount == 1 ? "" : "s")"
+            : "Not cached"
+    }
+}
+
 // MARK: - Detail Views
+
+private struct MenuCacheDetailView: View {
+    let row: AppMenuCacheRowModel
+    let isRefreshing: Bool
+    let statusMessage: String?
+    let openApp: () -> Void
+    let refreshCache: () -> Void
+
+    private var updatedText: String {
+        guard let updatedAt = row.summary?.updatedAt else { return "Never cached" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: updatedAt, relativeTo: Date())
+    }
+
+    private var isRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == row.bundleId && !$0.isTerminated
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+
+                HStack(spacing: 8) {
+                    Button(action: openApp) {
+                        Label(row.isCached ? "Open App" : "Open and Cache", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(row.appURL == nil || isRefreshing)
+
+                    Button(action: refreshCache) {
+                        if isRefreshing {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Refresh Cache", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isRefreshing || !isRunning)
+                }
+
+                if let statusMessage {
+                    Text(statusMessage)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Divider()
+
+                AutomationDetailSection(title: "CACHE STATUS") {
+                    AutomationDetailRow(label: "Bundle ID", value: row.bundleId, mono: true)
+                    AutomationDetailRow(label: "State", value: row.isCached ? "Cached" : "Not cached")
+                    AutomationDetailRow(label: "Menus", value: "\(row.recordCount)")
+                    AutomationDetailRow(label: "Updated", value: updatedText)
+                }
+
+                if let summary = row.summary, !summary.samplePaths.isEmpty {
+                    AutomationDetailSection(title: "SAMPLE MENUS") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(summary.samplePaths, id: \.self) { path in
+                                Text(path)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 6)
+                                    .background(.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                    }
+                } else {
+                    AutomationDetailSection(title: "HOW TO CACHE") {
+                        Text("Open the app once, keep it frontmost, then click Refresh Cache. Context Dock stores readable app menus for Global Context app scopes.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.cyan.opacity(0.12))
+                    .frame(width: 48, height: 48)
+                if let icon = row.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 34, height: 34)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    AppBundleIconView(bundleId: row.bundleId, fallbackSymbol: "app.fill", size: 32, cornerRadius: 8)
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.appName)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(1)
+                Text(row.isCached ? "\(row.recordCount) cached menus" : "No menu cache yet")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+}
 
 struct ShortcutDetailView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -2305,6 +2681,7 @@ struct NewAutomationSheet: View {
                     case .cliTools:        cliForm
                     case .contextTriggers: triggerForm
                     case .appActions:      appActionsInfo
+                    case .menuCache:       appActionsInfo
                     case .systemCommands:  appActionsInfo
                     }
                 }
@@ -2445,6 +2822,7 @@ struct NewAutomationSheet: View {
         case .cliTools:        return !cliName.isEmpty && !cliCommand.isEmpty
         case .contextTriggers: return !ruleName.isEmpty
         case .appActions:      return false
+        case .menuCache:       return false
         case .systemCommands:  return false
         }
     }
@@ -2481,6 +2859,8 @@ struct NewAutomationSheet: View {
             settings.addAXRule(rule)
 
         case .appActions:
+            break
+        case .menuCache:
             break
         case .systemCommands:
             break

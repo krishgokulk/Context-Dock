@@ -1,5 +1,5 @@
 // OnDeviceStructuredStubs.swift
-// Context-Dock
+// Context-Doc
 //
 // generateMailIntent: keyword-based mail query classifier.
 // Replaces the removed @Generable structured output approach with a deterministic

@@ -120,7 +120,7 @@ final class AXActionResolver {
         let safe = { (s: String) in s.replacingOccurrences(of: "\"", with: "\\\"") }
         let safeApp  = safe(appName)
         let topMenu  = "\"\(safe(path[0]))\""
-        let subItems = path.dropFirst()
+        let subItems = Array(path.dropFirst())
 
         // Build nested AppleScript menu reference, deepest-last
         // "File > Export > PDF" → click menu item "PDF" of menu item "Export" of menu bar item "File"

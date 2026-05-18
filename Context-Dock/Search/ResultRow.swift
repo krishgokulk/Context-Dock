@@ -162,10 +162,14 @@ struct ResultRow: View {
                 .padding(.trailing, 4)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 8)
         .padding(.vertical, 8)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-        .animation(.easeInOut(duration: 0.1), value: isSelected)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
+                .padding(.horizontal, 6)
+        )
+        .animation(.spring(response: 0.18, dampingFraction: 0.82), value: isSelected)
     }
 
     private var badgeColor: SwiftUI.Color {
