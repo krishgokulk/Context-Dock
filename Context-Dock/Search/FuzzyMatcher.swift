@@ -6,13 +6,13 @@ struct FuzzyMatcher {
 
     // Public API — accepts raw strings (lowercases internally).
     // Existing callers in ContentView / FileIndexManager use this.
-    static func score(_ query: String, against target: String) -> Double? {
+    nonisolated static func score(_ query: String, against target: String) -> Double? {
         score(query.lowercased(), againstLower: target.lowercased(), original: target)
     }
 
     // Optimized variant — call when both sides are already lowercased.
     // The search hot-path uses this to avoid repeated lowercased() allocations.
-    static func score(_ queryLower: String, againstLower targetLower: String, original target: String) -> Double? {
+    nonisolated static func score(_ queryLower: String, againstLower targetLower: String, original target: String) -> Double? {
         guard !queryLower.isEmpty, !targetLower.isEmpty else { return nil }
 
         // Fast path: exact match
@@ -26,9 +26,9 @@ struct FuzzyMatcher {
         // Acronym match (e.g. "gc" → "Google Chrome")
         if let s = checkAcronymMatch(queryLower: queryLower, target: target) { return s }
 
-        // Sequential character match using [Character] for O(1) index arithmetic
-        let targetChars = Array(targetLower)
-        let queryChars  = Array(queryLower)
+        // Sequential ASCII/UTF-8 match avoids per-candidate Character array allocation.
+        let targetChars = Array(targetLower.utf8)
+        let queryChars = Array(queryLower.utf8)
         var matchedIndices: [Int] = []
         matchedIndices.reserveCapacity(queryChars.count)
 
@@ -82,7 +82,7 @@ struct FuzzyMatcher {
 
     // MARK: - Private helpers
 
-    private static func checkAcronymMatch(queryLower: String, target: String) -> Double? {
+    nonisolated private static func checkAcronymMatch(queryLower: String, target: String) -> Double? {
         let words = target.split(separator: " ")
         guard words.count >= 2 else { return nil }
         let acronym = words.map { String($0.prefix(1)) }.joined().lowercased()
@@ -90,7 +90,7 @@ struct FuzzyMatcher {
         return 850.0 + Double(queryLower.count) * 10.0
     }
 
-    private static func checkCamelCaseMatch(queryLower: String, target: String) -> Double? {
+    nonisolated private static func checkCamelCaseMatch(queryLower: String, target: String) -> Double? {
         let uppers = target.indices.filter { target[$0].isUppercase }
         guard !uppers.isEmpty else { return nil }
         let camelAcronym = uppers.map { String(target[$0]) }.joined().lowercased()

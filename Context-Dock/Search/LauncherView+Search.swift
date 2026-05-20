@@ -32,7 +32,7 @@ extension LauncherView {
         let query = searchState.query.trimmingCharacters(in: .whitespaces)
 
         if isL2ContextActive {
-            enforceL2ContextMode()
+            dismissMediaLayer()
         }
 
         // L3 media layer active — suppress search results entirely
@@ -264,95 +264,104 @@ extension LauncherView {
             return
         }
 
-        // ── 2. Pure scoring — off MainActor ───────────────────────────────────
-        let strippedQuery: String = {
-            let lower = snap.query.lowercased()
-            return lower.hasSuffix(".app")
-                ? String(snap.query.dropLast(4)).trimmingCharacters(in: .whitespaces)
-                : snap.query
-        }()
-        let queryLower = strippedQuery.lowercased()
-        let firstChar  = queryLower.prefix(1)
+        struct SearchOutput {
+            let grouped: GroupedResults
+            let results: [SearchResult]
+            let oldSelectedID: UUID?
+        }
 
-        // Pre-filter using cached titleLower — no lowercased() allocation per item
-        let preFiltered = snap.candidates.filter { $0.titleLower.contains(firstChar) }
+        // ── 2. Pure scoring — detached so View/MainActor isolation cannot block typing ──
+        let output = await Task.detached(priority: .userInitiated) { () -> SearchOutput in
+            let strippedQuery: String = {
+                let lower = snap.query.lowercased()
+                return lower.hasSuffix(".app")
+                    ? String(snap.query.dropLast(4)).trimmingCharacters(in: .whitespaces)
+                    : snap.query
+            }()
+            let queryLower = strippedQuery.lowercased()
+            let firstChar = queryLower.prefix(1)
 
-        // Batch usage scores: one serial-queue lock instead of one per item
-        let usageScores = UsageTracker.shared.snapshotScores(
-            for: preFiltered.map { $0.trackingIdentifier })
+            let preFiltered = snap.candidates.filter { $0.titleLower.contains(firstChar) }
+            let usageScores = UsageTracker.shared.snapshotScores(
+                for: preFiltered.map { $0.trackingIdentifier })
 
-        var scoredItems: [(item: SearchResult, score: Double)] = []
-        scoredItems.reserveCapacity(preFiltered.count)
+            var scoredItems: [(item: SearchResult, score: Double)] = []
+            scoredItems.reserveCapacity(preFiltered.count)
 
-        for item in preFiltered {
-            // Pass pre-lowercased strings — FuzzyMatcher skips internal lowercasing
-            guard let score = FuzzyMatcher.score(
-                queryLower, againstLower: item.titleLower, original: item.title
-            ) else { continue }
+            for item in preFiltered {
+                guard !Task.isCancelled else { break }
+                guard let score = FuzzyMatcher.score(
+                    queryLower, againstLower: item.titleLower, original: item.title
+                ) else { continue }
 
-            var scoredItem = item
-            scoredItem.score = score
+                var scoredItem = item
+                scoredItem.score = score
+                let usageScore = usageScores[item.trackingIdentifier] ?? 0.0
 
-            let usageScore = usageScores[item.trackingIdentifier] ?? 0.0
+                let typePriority: Double
+                switch item.type {
+                case .extensionCommand: typePriority = 20.0
+                case .application:      typePriority = 15.0
+                case .folder:           typePriority = 14.0
+                case .cliTool:          typePriority = 13.0
+                case .shortcut:         typePriority = 12.0
+                case .calendarEvent, .reminder: typePriority = 10.0
+                case .mail, .message:   typePriority = 9.0
+                case .document:         typePriority = 7.0
+                case .note:             typePriority = 6.0
+                case .contact:          typePriority = 5.0
+                case .file:             typePriority = 3.0
+                case .photo:            typePriority = 2.0
+                case .webSearch:        typePriority = 1.0
+                }
 
-            let typePriority: Double
-            switch item.type {
-            case .extensionCommand: typePriority = 20.0
-            case .application:      typePriority = 15.0
-            case .folder:           typePriority = 14.0
-            case .cliTool:          typePriority = 13.0
-            case .shortcut:         typePriority = 12.0
-            case .calendarEvent, .reminder: typePriority = 10.0
-            case .mail, .message:   typePriority = 9.0
-            case .document:         typePriority = 7.0
-            case .note:             typePriority = 6.0
-            case .contact:          typePriority = 5.0
-            case .file:             typePriority = 3.0
-            case .photo:            typePriority = 2.0
-            case .webSearch:        typePriority = 1.0
+                var finalScore = score + typePriority + (usageScore * 8.0)
+                if item.type == .shortcut,
+                   let metadata = snap.metaCache[item.title],
+                   metadata.matches(context: snap.context)
+                { finalScore += 500.0 }
+
+                scoredItems.append((item: scoredItem, score: finalScore))
             }
 
-            var finalScore = score + typePriority + (usageScore * 8.0)
+            let sortedResults = scoredItems
+                .sorted { $0.score > $1.score }
+                .prefix(20)
+                .map { $0.item }
 
-            if item.type == .shortcut,
-               let metadata = snap.metaCache[item.title],
-               metadata.matches(context: snap.context)
-            { finalScore += 500.0 }
+            var grouped = GroupedResults()
+            for result in sortedResults {
+                let isSuggested = result.type == .shortcut
+                    && snap.metaCache[result.title]?.matches(context: snap.context) == true
+                grouped.add(result, isSuggested: isSuggested)
+            }
+            grouped.pinnedResults = snap.pinnedResults
+            grouped.pinnedSectionTitle = snap.pinnedTitle
 
-            scoredItems.append((item: scoredItem, score: finalScore))
-        }
+            let newResults = snap.dockAtBottom
+                ? Array(grouped.allResults.reversed()) : grouped.allResults
+            let oldSelectedID: UUID? = {
+                guard let idx = snap.selectedIndex, idx >= 0, idx < snap.existingResults.count
+                else { return nil }
+                return snap.existingResults[idx].id
+            }()
+            return SearchOutput(grouped: grouped, results: newResults, oldSelectedID: oldSelectedID)
+        }.value
 
-        let sortedResults = scoredItems
-            .sorted { $0.score > $1.score }
-            .prefix(20)
-            .map { $0.item }
-
-        var grouped = GroupedResults()
-        for result in sortedResults {
-            let isSuggested = result.type == .shortcut
-                && snap.metaCache[result.title]?.matches(context: snap.context) == true
-            grouped.add(result, isSuggested: isSuggested)
-        }
-        grouped.pinnedResults    = snap.pinnedResults
-        grouped.pinnedSectionTitle = snap.pinnedTitle
-
-        let newResults = snap.dockAtBottom
-            ? Array(grouped.allResults.reversed()) : grouped.allResults
-
-        let oldSelectedID: UUID? = {
-            guard let idx = snap.selectedIndex, idx >= 0, idx < snap.existingResults.count
-            else { return nil }
-            return snap.existingResults[idx].id
-        }()
+        guard !Task.isCancelled else { return }
 
         // ── 3. Apply on MainActor ─────────────────────────────────────────────
         await MainActor.run {
+            // Query freshness guard: if query changed while task ran, discard — a newer
+            // task is already in flight. Prevents stale results overwriting fresh UI.
+            guard searchState.query.trimmingCharacters(in: .whitespaces) == snap.query else { return }
+
             withAnimation(.easeInOut(duration: 0.15)) {
-                searchState.results = newResults
-                searchState.grouped = grouped
+                searchState.results = output.results
+                searchState.grouped = output.grouped
 
                 if snap.isKeyboardNav && !snap.isNewQuery,
-                   let oldID = oldSelectedID,
+                   let oldID = output.oldSelectedID,
                    let newIndex = searchState.results.firstIndex(where: { $0.id == oldID })
                 {
                     searchState.selectedIndex = newIndex

@@ -43,8 +43,8 @@ struct L2State {
     var lastAutoRunQuery: String = ""
     var lastAutoRunExtensionID: UUID? = nil
     var lastRunnableQuery: String? = nil
-    var appCompletion: (appName: String, bundleId: String, ghost: String, actionQuery: String)? = nil
-    var targetApp: (name: String, icon: NSImage?, bundleId: String)? = nil
+    var appCompletion: AppCompletion? = nil
+    var targetApp: ScopedApp? = nil
     var focusedPillIndex: Int? = nil
     var pillNavViaKeyboard: Bool = false
     var chatContextKey: String = ""
@@ -70,4 +70,64 @@ struct FrontmostAppState {
     var icon: NSImage? = nil
     var isSectionExpanded: Bool = false
     var lastSwitchDate: Date = .distantPast
+}
+
+// MARK: - Active Selection
+
+/// The current meaningful selection the user has in another app.
+/// "Meaningful" = >3 chars for text (filters cursor-position noise), any file, any URL.
+enum ActiveSelection: Equatable {
+    case text(String)
+    case files([URL])
+    case url(String)
+
+    var label: String {
+        switch self {
+        case .text(let t): return String(t.prefix(50))
+        case .files(let urls):
+            return urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files selected"
+        case .url(let u): return URL(string: u)?.host ?? String(u.prefix(40))
+        }
+    }
+}
+
+// MARK: - Scoped App
+
+struct ScopedApp {
+    var name: String
+    var bundleId: String
+    var icon: NSImage?
+}
+
+extension ScopedApp: Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.bundleId == rhs.bundleId && lhs.name == rhs.name
+    }
+}
+
+// MARK: - App Completion
+
+struct AppCompletion: Equatable {
+    var appName: String
+    var bundleId: String
+    var ghost: String
+    var actionQuery: String
+}
+
+// MARK: - Global Context Activation
+
+struct GlobalContextActivation: Equatable {
+    var autoActivated: Bool
+    var frozenText: String?
+    var frozenIcon: String?
+    var sourceBundleId: String?
+
+    static let manual = GlobalContextActivation(autoActivated: false)
+
+    init(autoActivated: Bool, frozenText: String? = nil, frozenIcon: String? = nil, sourceBundleId: String? = nil) {
+        self.autoActivated = autoActivated
+        self.frozenText = frozenText
+        self.frozenIcon = frozenIcon
+        self.sourceBundleId = sourceBundleId
+    }
 }

@@ -226,6 +226,13 @@ final class AppMenuCapabilityCache {
         return exists
     }
 
+    nonisolated func allCachedBundleIdentifiers() -> [String] {
+        lock.lock()
+        let ids = snapshots.compactMap { k, v in v.records.isEmpty ? nil : k }
+        lock.unlock()
+        return ids
+    }
+
     nonisolated func snapshotAge(bundleIdentifier: String) -> TimeInterval? {
         guard !bundleIdentifier.isEmpty else { return nil }
         lock.lock()

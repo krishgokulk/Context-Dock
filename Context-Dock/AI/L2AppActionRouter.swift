@@ -227,7 +227,7 @@ final class L2AppActionRouter {
     /// Returns a partial match when the user has typed a prefix of an app name but not the full alias.
     /// Used for Spotlight-style ghost text + Tab completion in the L2 search field.
     /// - Returns: (appName, bundleId, ghostSuffix, actionQuery) or nil if no partial prefix match.
-    func partialAppCompletion(for query: String) -> (appName: String, bundleId: String, ghost: String, actionQuery: String)? {
+    func partialAppCompletion(for query: String) -> AppCompletion? {
         let q = normalize(query)
         guard !q.isEmpty, q.count >= 2 else { return nil }
         // Don't trigger if query already fully matches (explicitAppTarget handles that)
@@ -295,7 +295,7 @@ final class L2AppActionRouter {
         guard !candidates.isEmpty else { return nil }
         // Pick highest score; for equal scores prefer shorter alias
         let best = candidates.max { $0.score < $1.score }!
-        return (best.appName, best.bundleId, best.ghost, best.actionQuery)
+        return AppCompletion(appName: best.appName, bundleId: best.bundleId, ghost: best.ghost, actionQuery: best.actionQuery)
     }
 
     private func shouldSuppressPartialCompletion(

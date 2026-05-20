@@ -32,7 +32,7 @@ struct SearchResult: Identifiable {
     }
 
     // Unique identifier for usage tracking (e.g., app bundle ID, file path, contact ID)
-    var trackingIdentifier: String {
+    nonisolated var trackingIdentifier: String {
         switch type {
         case .application:
             return "app:\(subtitle)"  // subtitle contains the full path
@@ -63,7 +63,7 @@ struct SearchResult: Identifiable {
         }
     }
 
-    enum ResultType {
+    enum ResultType: Sendable {
         case application
         case shortcut
         case file
@@ -100,7 +100,7 @@ struct ShortcutMetadata {
     let acceptsPDFs: Bool
     let fileExtensions: [String]  // e.g., ["pdf", "docx", "png"]
 
-    func matches(context: UserContext) -> Bool {
+    nonisolated func matches(context: UserContext) -> Bool {
         switch context {
         case .filesSelected(let urls):
             if acceptsFiles {
@@ -155,16 +155,16 @@ struct GroupedResults {
     var commands: [SearchResult] = []  // Extension commands
     var webResults: [SearchResult] = []  // Web search results
 
-    var allResults: [SearchResult] {
+    nonisolated var allResults: [SearchResult] {
         pinnedResults + apps + commands + shortcuts + suggestedShortcuts + system + contacts + files
             + webResults
     }
 
-    var isEmpty: Bool {
+    nonisolated var isEmpty: Bool {
         allResults.isEmpty
     }
 
-    mutating func add(_ result: SearchResult, isSuggested: Bool = false) {
+    nonisolated mutating func add(_ result: SearchResult, isSuggested: Bool = false) {
         if isSuggested && result.type == .shortcut {
             suggestedShortcuts.append(result)
             return
@@ -190,7 +190,7 @@ struct GroupedResults {
         }
     }
 
-    var sections: [(String, [SearchResult])] {
+    nonisolated var sections: [(String, [SearchResult])] {
         var result: [(String, [SearchResult])] = []
         if !pinnedResults.isEmpty {
             result.append((pinnedSectionTitle ?? "Top Results", pinnedResults))

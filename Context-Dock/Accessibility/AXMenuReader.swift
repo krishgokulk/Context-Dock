@@ -25,7 +25,7 @@ struct AXMenuItem: Identifiable {
 
     // Keyboard shortcut read from kAXMenuItemCmdChar / kAXMenuItemCmdModifiers
     var shortcutChar: String? = nil     // e.g. "n", "t", "w"
-    var shortcutModifiers: Int = 0      // 0=⌘  1=⇧⌘  2=⌥⌘  4=⌃⌘
+    var shortcutModifiers: Int = 0      // 0=⌘  1=⇧⌘  2=⌥⌘  4=⌃⌘  8=no-command (plain key, e.g. IINA Space=pause)
 
     var isChecked: Bool = false  // AXMenuItemMarkChar is non-empty (✓ state)
 
@@ -40,7 +40,7 @@ struct AXMenuItem: Identifiable {
         if shortcutModifiers & 4 != 0 { s += "⌃" }
         if shortcutModifiers & 2 != 0 { s += "⌥" }
         if shortcutModifiers & 1 != 0 { s += "⇧" }
-        s += "⌘"
+        if shortcutModifiers & 8 == 0 { s += "⌘" }  // bit 3 set = no command key
         // Map control characters to their visible symbol equivalents
         switch scalar.value {
         case 8:     s += "⌫"  // Delete / Backspace
@@ -76,6 +76,10 @@ final class AXMenuReader {
     private var lastDebugMessage: [pid_t: String] = [:]
     private var lastMenuBarProbe: [pid_t: String] = [:]
     private let cacheMaxAge: TimeInterval = 60   // invalidate after 60 s or app switch
+
+    // Global AX scan lock — AX API is serialized by the OS accessibility server.
+    // Running two concurrent full-tree reads blocks both threads and freezes input.
+    private var activeScanPID: pid_t = 0
 
     /// Like allMenuItems but returns the cached tree on repeat calls within 60 s.
     func cachedAllMenuItems(for pid: pid_t, maxDepth: Int = 6) -> [AXMenuItem] {
@@ -154,7 +158,11 @@ final class AXMenuReader {
 
     /// Flatten the tree to all leaf menu items (no submenus), skipping separators.
     /// Falls back to AppleScript when AX returns an empty tree (Electron, Catalyst apps).
+    var isScanningMenus: Bool { activeScanPID != 0 }
+
     func allMenuItems(for pid: pid_t, maxDepth: Int = 5) -> [AXMenuItem] {
+        activeScanPID = pid
+        defer { if activeScanPID == pid { activeScanPID = 0 } }
         let tree = menuTree(for: pid, maxDepth: maxDepth)
         let flattened = flatten(tree, includeGroups: true)
         let probe = lastMenuBarProbe[pid] ?? "probe unavailable"
@@ -564,7 +572,8 @@ final class AXMenuReader {
         guard let src = CGEventSource(stateID: .hidSystemState),
               let ch = char.unicodeScalars.first else { return false }
 
-        var cgMods: CGEventFlags = .maskCommand
+        var cgMods: CGEventFlags = []
+        if modifiers & 8 == 0 { cgMods.insert(.maskCommand) }  // bit 3 set = no-command shortcut
         if modifiers & 1 != 0 { cgMods.insert(.maskShift) }
         if modifiers & 2 != 0 { cgMods.insert(.maskAlternate) }
         if modifiers & 4 != 0 { cgMods.insert(.maskControl) }

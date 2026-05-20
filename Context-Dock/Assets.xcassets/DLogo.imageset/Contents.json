@@ -1,17 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "DLogo@1x.png",
+      "filename" : "Dorex.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "DLogo@2x.png",
+      "filename" : "Dorex.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "DLogo@3x.png",
+      "filename" : "Dorex.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
