@@ -962,6 +962,22 @@ struct LauncherView: View {
         }
     }
 
+    private func isQuestionStyleDockQuery(_ query: String) -> Bool {
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty else { return false }
+        if query.contains("?") { return true }
+
+        let prefixes = [
+            "what", "which", "who", "when", "where", "why", "how",
+            "is", "are", "was", "were", "do", "does", "did",
+            "can", "could", "would", "should", "tell", "explain",
+            "describe", "summarize", "analyse", "analyze"
+        ]
+        return prefixes.contains { prefix in
+            q == prefix || q.hasPrefix(prefix + " ")
+        }
+    }
+
     private func bundleIdentifier(forApplicationResult result: SearchResult) -> String? {
         if let path = result.filePath, !path.isEmpty {
             return Bundle(url: URL(fileURLWithPath: path))?.bundleIdentifier
@@ -1260,7 +1276,7 @@ struct LauncherView: View {
     private func scheduleGlobalGroupedListRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         globalGroupedTask?.cancel()
-        guard !q.isEmpty || globalInlineAppScope != nil else {
+        guard (!q.isEmpty || globalInlineAppScope != nil), !isQuestionStyleDockQuery(q) else {
             cachedGlobalGroupedQuery = ""
             cachedGlobalGroupedState = nil
             pendingGlobalGroupedQuery = nil
@@ -1743,7 +1759,7 @@ struct LauncherView: View {
     private func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         globalAppMatchTask?.cancel()
-        guard !q.isEmpty else {
+        guard !q.isEmpty, !isQuestionStyleDockQuery(q) else {
             cachedGlobalAppQuery = ""
             cachedGlobalAppMatches = []
             pendingGlobalAppQuery = nil
@@ -14898,6 +14914,12 @@ struct LauncherView: View {
         refreshContext: Bool = true
     ) {
         dockPillBuildTask?.cancel()
+        if isQuestionStyleDockQuery(query) {
+            cachedDockPills = []
+            lastPillQuery = query
+            pendingDockPillQuery = nil
+            return
+        }
         pendingDockPillQuery = query
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
@@ -14929,6 +14951,7 @@ struct LauncherView: View {
         // skip all pill logic so no app/file/other pills compete with it.
         if lockedSubmenuParent != nil { return [] }
         if lockedFindToken != nil { return [] }
+        if isQuestionStyleDockQuery(q) { return [] }
 
         // AI-found menu action: show as a focused pill instead of in the chat result sheet
         if q.isEmpty, let proposal = pendingAIMenuProposal {
