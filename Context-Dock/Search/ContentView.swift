@@ -11356,12 +11356,9 @@ struct LauncherView: View {
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
-            l2.isLoading = false
             l2.activeRequestID = nil
         }
 
-        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
-        l2.isLoading = true
         let actionId = DockActionFeedback.start(
             "Opening Find",
             subject: targetAppName,
@@ -11375,15 +11372,7 @@ struct LauncherView: View {
                 appName: targetAppName
             ) else {
                 await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open \(targetAppName).",
-                            isError: true
-                        )
-                    )
                     DockActionFeedback.fail(actionId, label: "Couldn't open \(targetAppName)")
-                    l2.isLoading = false
                     l2.currentTask = nil
                 }
                 return
@@ -11397,27 +11386,13 @@ struct LauncherView: View {
 
             await MainActor.run {
                 if opened {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "Opened Find in \(targetAppName)."
-                        )
-                    )
                     DockActionFeedback.complete(actionId)
                     searchState.query = ""
                     l2.focusedPillIndex = nil
                     scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
                 } else {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open Find in \(targetAppName).",
-                            isError: true
-                        )
-                    )
                     DockActionFeedback.fail(actionId, label: "Find unavailable")
                 }
-                l2.isLoading = false
                 l2.currentTask = nil
             }
         }
@@ -11427,25 +11402,12 @@ struct LauncherView: View {
         let searchQuery = intent.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !searchQuery.isEmpty else { return }
 
-        if intent.preferMailboxSearch {
-            let mailIntent = MailSearchIntent(
-                query: searchQuery,
-                tokenKind: .generic,
-                displayLabel: searchQuery
-            )
-            executeMailMailboxSearch(intent: mailIntent, userMessage: intent.userMessage)
-            return
-        }
-
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
-            l2.isLoading = false
             l2.activeRequestID = nil
         }
 
-        l2.chatMessages.append(AIChatMessage(role: .user, content: intent.userMessage))
-        l2.isLoading = true
         let searchActionId = DockActionFeedback.start("Searching", subject: "\(intent.targetAppName) for \"\(searchQuery)\"", icon: "magnifyingglass", tint: .accentColor)
 
         l2.currentTask = Task {
@@ -11454,14 +11416,7 @@ struct LauncherView: View {
                 appName: intent.targetAppName
             ) else {
                 await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open \(intent.targetAppName).",
-                            isError: true
-                        ))
                     DockActionFeedback.fail(searchActionId, label: "Couldn't open \(intent.targetAppName)")
-                    l2.isLoading = false
                     l2.currentTask = nil
                 }
                 return
@@ -11476,26 +11431,14 @@ struct LauncherView: View {
 
             await MainActor.run {
                 if injected {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "Searching \(intent.targetAppName) for \"\(searchQuery)\"."
-                        ))
                     DockActionFeedback.complete(searchActionId)
                     searchState.query = ""
+                    clearFindToken(preserveQuery: false)
                     l2.focusedPillIndex = nil
                     scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
                 } else {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content:
-                                "⚠️ Opened Find in \(intent.targetAppName), but couldn't insert the query automatically.",
-                            isError: true
-                        ))
                     DockActionFeedback.fail(searchActionId, label: "Search field not found")
                 }
-                l2.isLoading = false
                 l2.currentTask = nil
             }
         }
@@ -11543,12 +11486,9 @@ struct LauncherView: View {
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
-            l2.isLoading = false
             l2.activeRequestID = nil
         }
 
-        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
-        l2.isLoading = true
         let actionId = DockActionFeedback.start(
             searchQuery.isEmpty ? "Opening Find" : "Searching",
             subject: searchQuery.isEmpty
@@ -11564,15 +11504,7 @@ struct LauncherView: View {
                 appName: token.targetAppName
             ) else {
                 await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open \(token.targetAppName).",
-                            isError: true
-                        )
-                    )
                     DockActionFeedback.fail(actionId, label: "Couldn't open \(token.targetAppName)")
-                    l2.isLoading = false
                     l2.currentTask = nil
                 }
                 return
@@ -11598,26 +11530,13 @@ struct LauncherView: View {
 
             await MainActor.run {
                 if injected {
-                    let content = searchQuery.isEmpty
-                        ? "Opened \(menuItem.title) in \(token.targetAppName)."
-                        : "Searching \(token.targetAppName) for \"\(searchQuery)\"."
-                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: content))
                     DockActionFeedback.complete(actionId)
                     clearFindToken(preserveQuery: false)
                     l2.focusedPillIndex = nil
                     scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
                 } else {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content:
-                                "⚠️ Opened \(menuItem.title), but couldn't insert the query automatically.",
-                            isError: true
-                        )
-                    )
                     DockActionFeedback.fail(actionId, label: "Search field not found")
                 }
-                l2.isLoading = false
                 l2.currentTask = nil
             }
         }
