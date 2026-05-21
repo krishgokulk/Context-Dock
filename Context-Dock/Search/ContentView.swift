@@ -19804,6 +19804,7 @@ struct LauncherView: View {
             || (!searchState.query.isEmpty && !isL2ContextActive)
             || (aiMode.isActive && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
             || showFolderPreview
+            || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
             || searchState.contextApp != nil
             || searchState.activeSmartQueryKey != nil
