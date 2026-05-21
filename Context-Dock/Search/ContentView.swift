@@ -4279,6 +4279,12 @@ struct LauncherView: View {
             candidateMenuPills.prefix(matches.isEmpty ? maxListViewDockPills : max(0, maxListViewDockPills - matches.count))
         ).map { pill -> DockPill in var p = pill; p.isEnabled = true; return p }
         let menuGroups = groupMenuPillsByTitle(visibleMenuPills)
+        let menuRowIDs: [String] = menuGroups.map { group in
+            group.isGrouped
+                ? "global-menu-group-\(group.id)"
+                : "global-menu-pill-\(group.primaryPill.id)"
+        }
+        let appRowIDs: [String] = matches.map { "global-app-\($0.id)" }
         let showLaunchHint = launchHint != nil && visibleMenuPills.isEmpty
         let isEmpty = matches.isEmpty && visibleMenuPills.isEmpty && providedAppMenuGroups.isEmpty && !showLaunchHint
         let listHeight: CGFloat = isEmpty ? 58 : listViewVisibleHeight
@@ -4342,10 +4348,10 @@ struct LauncherView: View {
                         ForEach(Array(menuGroups.enumerated()), id: \.element.id) { idx, group in
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
-                                    .id("global-menu-list-\(idx)")
+                                    .id(menuRowIDs[idx])
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
-                                    .id("global-menu-list-\(idx)")
+                                    .id(menuRowIDs[idx])
                             }
                         }
                     }
@@ -4363,7 +4369,7 @@ struct LauncherView: View {
                             quitAction: isRunning ? makeQuitAction(result) : nil,
                             action: makeAction(result)
                         )
-                        .id("global-app-list-\(idx)")
+                        .id(appRowIDs[idx])
                         .contextMenu {
                             if let pinAction = makePinAction(result) {
                                 Button(action: pinAction) {
@@ -4386,10 +4392,10 @@ struct LauncherView: View {
                         ForEach(Array(menuGroups.enumerated()), id: \.element.id) { idx, group in
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
-                                    .id("global-menu-list-\(idx)")
+                                    .id(menuRowIDs[idx])
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
-                                    .id("global-menu-list-\(idx)")
+                                    .id(menuRowIDs[idx])
                             }
                         }
                     }
@@ -4409,7 +4415,7 @@ struct LauncherView: View {
                             resultGroupHeader(group.appName, icon: group.icon)
                             ForEach(Array(group.pills.enumerated()), id: \.element.id) { pillIdx, pill in
                                 pillListRow(pill: pill, index: groupBase + pillIdx)
-                                    .id("xapp-pill-\(group.id)-\(pillIdx)")
+                                    .id("xapp-pill-\(group.id)-\(pill.id)")
                             }
                         }
                     }
@@ -4466,17 +4472,17 @@ struct LauncherView: View {
             .frame(height: listHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: focusedAppPillIndex) { idx in
-                guard let idx else { return }
+                guard let idx, idx < appRowIDs.count else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                    proxy.scrollTo("global-app-list-\(idx)", anchor: .center)
+                    proxy.scrollTo(appRowIDs[idx], anchor: .center)
                 }
             }
             .onChange(of: l2.focusedPillIndex) { idx in
                 guard let idx, idx >= matches.count else { return }
                 let menuIdx = idx - matches.count
-                if menuIdx >= 0, menuIdx < visibleMenuPills.count {
+                if menuIdx >= 0, menuIdx < menuRowIDs.count {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                        proxy.scrollTo("global-menu-list-\(menuIdx)", anchor: .center)
+                        proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)
                     }
                 } else if menuIdx >= menuGroups.count {
                     // Cross-app group pill — find which group and local index
@@ -4486,7 +4492,7 @@ struct LauncherView: View {
                         let localIdx = crossIdx - offset
                         if localIdx < group.pills.count {
                             withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                                proxy.scrollTo("xapp-pill-\(group.id)-\(localIdx)", anchor: .center)
+                                proxy.scrollTo("xapp-pill-\(group.id)-\(group.pills[localIdx].id)", anchor: .center)
                             }
                             break
                         }
@@ -4530,6 +4536,8 @@ struct LauncherView: View {
     private func globalApplicationMatches(for query: String, limit: Int = Int.max) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
+        // Short queries are too noisy for app search. Keep 1-2 chars on frontmost menu only.
+        guard q.count >= 3 else { return [] }
 
         if isGenericApplicationListQuery(q) {
             return groupedGlobalApplicationList(limit: limit)
@@ -4678,8 +4686,8 @@ struct LauncherView: View {
         }
 
         // Recent documents from macOS Recent Items — cross-app files.
-        // Only included when query is long enough (≥2 chars) to reduce noise.
-        if isGlobalContextActive, q.count >= 2 {
+        // Only included when query is long enough (≥3 chars) to reduce noise.
+        if isGlobalContextActive, q.count >= 3 {
             for doc in RecentItemsService.shared.recentDocuments() {
                 let docName = doc.name.lowercased()
                 guard docName.contains(q) || docName.hasPrefix(q) else { continue }
@@ -17897,10 +17905,11 @@ struct LauncherView: View {
                                 .padding(.horizontal, 12)
                                 .padding(.top, idx == 0 ? 2 : 8)
                                 .padding(.bottom, 1)
+                                .id("pill-list-\(pill.id)")
                             }
                         } else {
                             pillListRow(pill: pill, index: idx)
-                                .id("pill-list-\(idx)")
+                                .id("pill-list-\(pill.id)")
                         }
                     }
                 }
@@ -17911,8 +17920,9 @@ struct LauncherView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
+                guard idx < visiblePills.count else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                    proxy.scrollTo("pill-list-\(idx)", anchor: .center)
+                    proxy.scrollTo("pill-list-\(visiblePills[idx].id)", anchor: .center)
                 }
             }
         }
