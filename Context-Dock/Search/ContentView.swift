@@ -7845,6 +7845,39 @@ struct LauncherView: View {
             }
     }
 
+    private func dedupeRankedDockPills(_ pills: [DockPill]) -> [DockPill] {
+        var seen = Set<String>()
+        var result: [DockPill] = []
+
+        for pill in pills {
+            let key: String = {
+                let source = pill.sourceBundleId.isEmpty ? "global" : pill.sourceBundleId
+                let name = normalizedDockPillText(
+                    pill.menuItemName.isEmpty ? pill.name : pill.menuItemName
+                )
+                let context = normalizedDockPillText(pill.menuContext ?? pill.badge ?? "")
+
+                switch pill.rankingKind {
+                case "menu", "finderMenu", "submenuParent", "submenuChild":
+                    return "menu:\(source):\(context):\(name)"
+                case "appLaunch":
+                    return "app:\(source):\(name)"
+                case "quickAction", "adapter", "appAdapter", "cliTool", "tool", "userExtension":
+                    return "\(pill.rankingKind):\(source):\(pill.trackingIdentifier.isEmpty ? name : pill.trackingIdentifier)"
+                default:
+                    return "\(pill.rankingKind):\(source):\(name):\(context)"
+                }
+            }()
+
+            guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                seen.insert(key).inserted
+            else { continue }
+            result.append(pill)
+        }
+
+        return result
+    }
+
     private func dockPillHasQuerySignal(
         _ pill: DockPill,
         query: String,
@@ -10039,7 +10072,9 @@ struct LauncherView: View {
 
         var hasChildMenu: Bool {
             guard let parentMenu else { return false }
-            return parentMenu.children.contains { $0.isEnabled }
+            return parentMenu.children.contains { child in
+                child.isEnabled || child.children.contains(where: { $0.isEnabled })
+            }
         }
     }
 
@@ -11227,6 +11262,12 @@ struct LauncherView: View {
                 && normalizedFindTitles.contains(normalizedDockPillText(item.title))
                 && !leafFindChildren(for: item).isEmpty
         }
+            ?? synthesizedFindParentFromCachedPaths(
+                cachedMatches,
+                targetBundleId: targetBundleId,
+                targetAppName: targetAppName
+            )
+
         guard let parent else { return nil }
 
         let fallbackPID =
@@ -11238,6 +11279,42 @@ struct LauncherView: View {
                 }?.processIdentifier ?? 0
             )
         return menuItemWithSourceFallback(parent, pid: fallbackPID, appName: targetAppName)
+    }
+
+    private func synthesizedFindParentFromCachedPaths(
+        _ items: [AXMenuItem],
+        targetBundleId: String,
+        targetAppName: String
+    ) -> AXMenuItem? {
+        let placeholder = AXUIElementCreateSystemWide()
+        var seen = Set<String>()
+        let children: [AXMenuItem] = items.compactMap { item in
+            let normalizedPath = item.path.map(normalizedDockPillText)
+            guard let findIndex = normalizedPath.firstIndex(where: { $0 == "find" || $0 == "find..." }) else {
+                return nil
+            }
+            guard item.path.count > findIndex + 1 else { return nil }
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            let key = item.path.joined(separator: " > ").lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            var child = item
+            child.children = []
+            child.element = placeholder
+            child.sourceAppName = targetAppName
+            return child
+        }
+
+        guard !children.isEmpty else { return nil }
+        return AXMenuItem(
+            title: "Find",
+            path: ["Edit", "Find"],
+            isEnabled: true,
+            element: placeholder,
+            children: children,
+            sourcePID: 0,
+            sourceAppName: targetAppName
+        )
     }
 
     private func makeFindToken(
@@ -16008,9 +16085,10 @@ struct LauncherView: View {
             scopedAppName: scopedAppName,
             isExplicitAppScope: isExplicitAppScope
         )
+        let dedupedRanked = dedupeRankedDockPills(ranked)
         // Treat menu enabled state as advisory. Some apps lazily validate menus only when
         // their native menu opens, so AX can report a runnable action as disabled.
-        let enabled = ranked.filter { pill in
+        let enabled = dedupedRanked.filter { pill in
             if isStaleAvailabilityMenuPill(pill) { return true }
             if !q.isEmpty,
                (pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"),
