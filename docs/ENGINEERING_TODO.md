@@ -10,12 +10,13 @@ Track release work here. Keep each item small enough for one pull request.
 - [x] Use stable row IDs for Global Context app, menu, and cross-app menu rows.
 - [x] Confirm Apple Menu items are excluded from persistent per-app menu cache.
 - [x] Confirm dynamic recent menu branches are excluded from persistent per-app menu cache.
+- [x] [Find] Add first-pass app-scoped Find pill and submit routing before generic Finder/context actions.
 - [x] Verify Debug build with isolated DerivedData.
 
 ## Next
 
 - [ ] [Find] Define `AppFindProfile` routing for app-specific Find/Search behavior.
-- [ ] [Find] Route queries like `find gowri in photos`, `find invoice in mail`, and `find project note in notes` before generic AI/file actions.
+- [ ] [Find] Extract first-pass Find routing into a declarative `AppFindProfile` service.
 - [ ] [Find] Add app-specific Find profiles for Photos, Mail, Notes, Safari, Finder, Preview, TextEdit, Xcode, and VS Code.
 - [ ] [Find] Prefer app-native search surfaces when available: Photos search field, Mailbox Search, Notes search, Finder folder search, browser page find.
 - [ ] [Find] Fall back to `Edit > Find > Find...`, `Cmd+F`, find pasteboard, and AX search-field injection when no profile exists.

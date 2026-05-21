@@ -11140,6 +11140,31 @@ struct LauncherView: View {
         }
     }
 
+    private func resolvedFindTarget(
+        dockScope: DockScopeResolution
+    ) -> (bundleId: String, appName: String)? {
+        if dockScope.isExplicitAppScope,
+            !dockScope.scopedBundleId.isEmpty,
+            !dockScope.scopedAppName.isEmpty
+        {
+            return (dockScope.scopedBundleId, dockScope.scopedAppName)
+        }
+
+        if let target = l2.targetApp, !target.bundleId.hasPrefix("scope://") {
+            return (target.bundleId, target.name)
+        }
+
+        if let app = contextTargetApp(),
+            let bundleId = app.bundleIdentifier,
+            !bundleId.isEmpty,
+            bundleId != Bundle.main.bundleIdentifier
+        {
+            return (bundleId, app.localizedName ?? frontmost.name)
+        }
+
+        return nil
+    }
+
     private func resolvedFindIntent(
         for query: String,
         dockScope: DockScopeResolution,
@@ -11154,30 +11179,7 @@ struct LauncherView: View {
             return nil
         }
 
-        let target: (bundleId: String, appName: String)? = {
-            if dockScope.isExplicitAppScope,
-                !dockScope.scopedBundleId.isEmpty,
-                !dockScope.scopedAppName.isEmpty
-            {
-                return (dockScope.scopedBundleId, dockScope.scopedAppName)
-            }
-
-            if let target = l2.targetApp, !target.bundleId.hasPrefix("scope://") {
-                return (target.bundleId, target.name)
-            }
-
-            if let app = contextTargetApp(),
-                let bundleId = app.bundleIdentifier,
-                !bundleId.isEmpty,
-                bundleId != Bundle.main.bundleIdentifier
-            {
-                return (bundleId, app.localizedName ?? frontmost.name)
-            }
-
-            return nil
-        }()
-
-        guard let target else { return nil }
+        guard let target = resolvedFindTarget(dockScope: dockScope) else { return nil }
         return AppFindIntent(
             query: searchQuery,
             targetBundleId: target.bundleId,
@@ -11217,6 +11219,81 @@ struct LauncherView: View {
 
         AXMenuReader.shared.executeShortcut(char: "f", modifiers: 2, in: pid)
         return true
+    }
+
+    private func openAppFindInterface(
+        targetBundleId: String,
+        targetAppName: String,
+        userMessage: String
+    ) {
+        if let existingTask = l2.currentTask {
+            existingTask.cancel()
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
+        }
+
+        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
+        l2.isLoading = true
+        let actionId = DockActionFeedback.start(
+            "Opening Find",
+            subject: targetAppName,
+            icon: "magnifyingglass",
+            tint: .accentColor
+        )
+
+        l2.currentTask = Task {
+            guard let app = await activateOrLaunchSemanticApp(
+                bundleIdentifier: targetBundleId,
+                appName: targetAppName
+            ) else {
+                await MainActor.run {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "❌ Couldn't open \(targetAppName).",
+                            isError: true
+                        )
+                    )
+                    DockActionFeedback.fail(actionId, label: "Couldn't open \(targetAppName)")
+                    l2.isLoading = false
+                    l2.currentTask = nil
+                }
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            let opened = await openFindInterface(
+                in: app.processIdentifier,
+                bundleIdentifier: targetBundleId
+            )
+
+            await MainActor.run {
+                if opened {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "Opened Find in \(targetAppName)."
+                        )
+                    )
+                    DockActionFeedback.complete(actionId)
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
+                    scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
+                } else {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "❌ Couldn't open Find in \(targetAppName).",
+                            isError: true
+                        )
+                    )
+                    DockActionFeedback.fail(actionId, label: "Find unavailable")
+                }
+                l2.isLoading = false
+                l2.currentTask = nil
+            }
+        }
     }
 
     private func executeAppFindIntent(_ intent: AppFindIntent) {
@@ -11295,6 +11372,65 @@ struct LauncherView: View {
                 l2.currentTask = nil
             }
         }
+    }
+
+    private func makeAppFindIntentPill(
+        fullQuery: String,
+        rawScopedQuery: String,
+        dockScope: DockScopeResolution
+    ) -> DockPill? {
+        guard isFindIntentCommand(rawScopedQuery, fullQuery: fullQuery),
+            let target = resolvedFindTarget(dockScope: dockScope)
+        else { return nil }
+
+        let rawUserQuery = rawDockQuery(matching: fullQuery)
+        if let intent = resolvedFindIntent(
+            for: fullQuery,
+            dockScope: dockScope,
+            rawScopedQuery: rawScopedQuery
+        ) {
+            let queryLabel = messageIntentDisplayText(intent.query, limit: 42)
+            var pill = DockPill(
+                id: "find-intent-\(intent.targetBundleId)-\(normalizedDockPillText(intent.query))",
+                name: "Find \"\(queryLabel)\"",
+                icon: "magnifyingglass",
+                accentColorName: "blue",
+                badge: intent.targetAppName,
+                execute: {
+                    self.executeAppFindIntent(intent)
+                }
+            )
+            pill.sourceBundleId = intent.targetBundleId
+            pill.sourceAppName = intent.targetAppName
+            pill.rankingKind = "semanticIntent"
+            pill.trackingIdentifier =
+                "find-intent:\(intent.targetBundleId):\(normalizedDockPillText(intent.query))"
+            pill.searchTerms = [
+                intent.targetAppName, "find", "search", "lookup", intent.query
+            ]
+            return pill
+        }
+
+        var pill = DockPill(
+            id: "find-mode-\(target.bundleId)",
+            name: "Find in \(target.appName)",
+            icon: "magnifyingglass",
+            accentColorName: "blue",
+            badge: "⌘F",
+            execute: {
+                self.openAppFindInterface(
+                    targetBundleId: target.bundleId,
+                    targetAppName: target.appName,
+                    userMessage: rawUserQuery
+                )
+            }
+        )
+        pill.sourceBundleId = target.bundleId
+        pill.sourceAppName = target.appName
+        pill.rankingKind = "semanticIntent"
+        pill.trackingIdentifier = "find-mode:\(target.bundleId)"
+        pill.searchTerms = [target.appName, "find", "search", "lookup"]
+        return pill
     }
 
     private func makeMessagesSemanticIntentPill(
@@ -14716,8 +14852,11 @@ struct LauncherView: View {
             return [pill]
         }
 
-        // "youtube on web" / "browse tamilgun" / "web X" → immediate web-search pill
-        if let searchTerm = L2AppActionRouter.shared.extractWebSearchQuery(from: q) {
+        // "youtube on web" / "browse tamilgun" / "web X" → immediate web-search pill.
+        // App-scoped search owns queries like "search gowri in photos".
+        if L2AppActionRouter.shared.appScopeTarget(for: q) == nil,
+            let searchTerm = L2AppActionRouter.shared.extractWebSearchQuery(from: q)
+        {
             let browserName = L2AppActionRouter.defaultBrowserName()
             var pill = DockPill(
                 id: "web-search-\(searchTerm)",
@@ -14741,6 +14880,13 @@ struct LauncherView: View {
         pills.append(contentsOf: buildSystemSettingsPills(query: q))
         let scope = resolveDockScope(for: q)
         let rawScopedSearchQuery = rawScopedActionQuery(for: q, scope: scope)
+        if let appFindIntentPill = makeAppFindIntentPill(
+            fullQuery: q,
+            rawScopedQuery: rawScopedSearchQuery,
+            dockScope: scope
+        ) {
+            return [appFindIntentPill]
+        }
         let installedScopeMode = contextDockInstalledAppScopeMatching
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
