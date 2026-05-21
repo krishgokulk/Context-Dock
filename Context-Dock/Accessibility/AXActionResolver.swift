@@ -134,11 +134,14 @@ final class AXActionResolver {
             end tell
             """
         } else {
-            // Walk backwards: last item is the target, all others are ancestors
-            let target   = "\"\(safe(subItems.last!))\""
+            // Walk backwards through nested submenus.
+            // System Events requires `menu 1 of menu item "Parent"` at each submenu level:
+            // View > Sort By > Kind ->
+            // click menu item "Kind" of menu 1 of menu item "Sort By" of menu bar item "View" ...
+            let target = "\"\(safe(subItems.last!))\""
             let ancestors = subItems.dropLast()
-                .map { "menu item \"\(safe($0))\"" }
                 .reversed()
+                .map { "menu 1 of menu item \"\(safe($0))\"" }
                 .joined(separator: " of ")
             script = """
             tell application "System Events"

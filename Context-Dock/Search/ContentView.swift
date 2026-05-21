@@ -387,6 +387,7 @@ struct LauncherView: View {
     @State private var crossAppMenuTask: Task<Void, Never>? = nil
     @State private var crossAppMenuTargetPID: pid_t = 0
     @State private var crossAppMenuNeedsLiveLoad = false
+    @State private var warmingMenuBundleIds: Set<String> = []
     @State private var finderSemanticTask: Task<Void, Never>? = nil
     @State private var finderSemanticQuery: String = ""
     @State private var finderSemanticResults: [SearchResult] = []
@@ -415,9 +416,11 @@ struct LauncherView: View {
     @State private var pendingGlobalGroupedQuery: String? = nil
     @State private var globalGroupedTask: Task<Void, Never>? = nil
     @State private var globalInlineAppScope: GlobalInlineAppScope? = nil
+    @State private var pendingGlobalLaunchContextSwitch: (bundleId: String, appName: String)? = nil
     @State private var suppressGlobalInlineAppScopeDetection = false
     @State private var isHoveringGlobalInlineScopeChip = false
     @State private var isHoveringL2ScopeChip = false
+    @State private var isHoveringFrontmostContextChip = false
     // Dock magnification: tracks which pill the mouse is near
     @State private var hoveredDockPillIndex: Int? = nil
     // Scroll-to-navigate: true when mouse is over the action pill row
@@ -774,6 +777,9 @@ struct LauncherView: View {
         else { return false }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if shouldUsePureGlobalAppSearch {
+            return !q.isEmpty
+        }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
         let pills = currentVisibleDockPills(for: pillQuery)
@@ -783,9 +789,6 @@ struct LauncherView: View {
             && l2.targetApp == nil
             && (pills.isEmpty || (isGlobalContextActive && !hasActiveContextSelection))
         let showGlobalAppSearch = shouldUsePureGlobalAppSearch && !q.isEmpty
-        if shouldUsePureGlobalAppSearch {
-            return !q.isEmpty
-        }
         let hasListContent =
             pills.contains(where: { !$0.isSeparator })
             || showGlobalAppSearch
@@ -807,7 +810,8 @@ struct LauncherView: View {
             let kind = pill.rankingKind.lowercased()
             let name = pill.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if kind == "applaunch" { return false }
-            if badge == "recent items" || kind.contains("recent") || name.hasSuffix(".app") {
+            if !isGlobalContextActive,
+               (badge == "recent items" || kind.contains("recent") || name.hasSuffix(".app")) {
                 return false
             }
             return true
@@ -818,15 +822,92 @@ struct LauncherView: View {
         selectionScopedDockPills(currentCachedDockPills(for: query))
     }
 
+    private func cachedMenuItemsForApp(_ app: NSRunningApplication, maxResults: Int = 120) -> [AXMenuItem] {
+        let pid = app.processIdentifier
+        let name = app.localizedName ?? ""
+        var items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: maxResults)
+        for index in items.indices {
+            items[index].sourcePID = pid
+            items[index].sourceAppName = name
+        }
+        return items
+    }
+
+    private func menuItemWithSourceFallback(_ item: AXMenuItem, pid: pid_t, appName: String) -> AXMenuItem {
+        var copy = item
+        if copy.sourcePID == 0 { copy.sourcePID = pid }
+        if copy.sourceAppName.isEmpty { copy.sourceAppName = appName }
+        copy.children = copy.children.map {
+            menuItemWithSourceFallback($0, pid: pid, appName: appName)
+        }
+        return copy
+    }
+
+    private func lockSubmenuParentForNavigation(_ item: AXMenuItem) {
+        let fallbackPID = item.sourcePID != 0
+            ? item.sourcePID
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        let fallbackName = item.sourceAppName.isEmpty ? frontmost.name : item.sourceAppName
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+            lockedSubmenuParent = menuItemWithSourceFallback(
+                item,
+                pid: fallbackPID,
+                appName: fallbackName
+            )
+            searchState.query = ""
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
+        }
+        l2.appCompletion = nil
+        l2.showResultsPopover = false
+        cachedDockPills = []
+    }
+
+    private func makeMenuDockPill(
+        id: String,
+        item: AXMenuItem,
+        sourceBundleId: String,
+        sourceAppName: String,
+        accentColorName: String = "gray",
+        badge: String?,
+        trackingIdentifier: String,
+        searchTerms: [String],
+        executeLeaf: @escaping () -> Void
+    ) -> DockPill {
+        let isSubmenuParent = !item.children.isEmpty
+        var pill = DockPill(
+            id: id,
+            name: item.title,
+            icon: isSubmenuParent ? "chevron.right.circle" : menuSymbol(for: item),
+            accentColorName: isSubmenuParent ? "blue" : accentColorName,
+            badge: isSubmenuParent ? (badge ?? "Submenu") : badge,
+            execute: {
+                if isSubmenuParent {
+                    lockSubmenuParentForNavigation(item)
+                } else {
+                    executeLeaf()
+                }
+            }
+        )
+        pill.menuItemImage = isSubmenuParent ? nil : resolvedMenuIcon(for: item)
+        pill.menuItemName = item.title
+        pill.sourceBundleId = sourceBundleId
+        pill.sourceAppName = sourceAppName
+        pill.menuContext = menuContextLabel(from: item.path)
+        pill.rankingKind = isSubmenuParent ? "submenuParent" : "menu"
+        pill.isEnabled = isSubmenuParent ? true : item.isEnabled
+        pill.trackingIdentifier = trackingIdentifier
+        pill.searchTerms = searchTerms + item.children.map(\.title)
+        return pill
+    }
+
     private func hasFrontmostMenuPillsInCurrentCache(for query: String) -> Bool {
         guard isGlobalContextActive, !hasActiveDockContextSelection else { return false }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return false }
         guard !resolveDockScope(for: q).isExplicitAppScope else { return false }
-        return currentVisibleDockPills(for: q).contains { pill in
-            guard !pill.isSeparator else { return false }
-            return pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"
-        }
+        return !cachedFrontmostGlobalMenuPills(query: q, maxResults: 1).isEmpty
     }
 
     private func dedupeDockPillsByTrackingIdentifier(_ pills: [DockPill]) -> [DockPill] {
@@ -866,8 +947,8 @@ struct LauncherView: View {
     private func currentGlobalAppMatches(for query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
-        if cachedGlobalAppQuery == q { return cachedGlobalAppMatches }
-        return globalApplicationMatches(for: q, limit: maxListViewDockPills)
+        guard cachedGlobalAppQuery == q else { return [] }
+        return cachedGlobalAppMatches
     }
 
     private func isGenericApplicationListQuery(_ query: String) -> Bool {
@@ -1171,9 +1252,7 @@ struct LauncherView: View {
         if cachedGlobalGroupedQuery == q, let state = cachedGlobalGroupedState {
             return state
         }
-        // No cache hit — compute synchronously so arrow-key nav works immediately
-        // before the async rebuild task completes.
-        return buildGlobalGroupedListNavigationState(for: q)
+        return emptyGlobalGroupedListNavigationState()
     }
 
     private func scheduleGlobalGroupedListRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000) {
@@ -1224,28 +1303,19 @@ struct LauncherView: View {
 
             let isGenericAppQuery = isGenericApplicationListQuery(q)
             let inlineScope = activeGlobalInlineDockScope(for: q)
-            let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
             let rawAppMatches = inlineScope?.isExplicitAppScope == true ? [] : currentGlobalAppMatches(for: q)
             let favorMenu = intentFavorsMenu(q)
             let frontmostSnap = (bundleID: frontmost.bundleID, name: frontmost.name, icon: frontmost.icon)
             let maxPills = maxListViewDockPills
 
-            // Frontmost / inline-scope menu pills — reads cachedDockPills (fast, in-memory).
+            // Frontmost / inline-scope menu pills — global context uses live AX snapshot,
+            // so Apple Menu items stay session-scoped instead of coming from disk cache.
             let frontmostMenuPills: [DockPill] = {
                 if let scope = inlineScope, scope.isExplicitAppScope {
-                    return liveGlobalAppScopeDockPills(query: q, scope: scope)
+                    return cachedGlobalAppScopeDockPills(query: q, scope: scope)
                 }
                 guard !isGenericAppQuery else { return [] }
-                return currentVisibleDockPills(for: pillQuery).filter { pill in
-                    guard !pill.isSeparator else { return false }
-                    guard pill.rankingKind == "menu" || pill.rankingKind == "finderMenu" else { return false }
-                    guard (pill.menuContext ?? "").caseInsensitiveCompare("Apple Menu") != .orderedSame else { return false }
-                    guard pill.rankingKind != "appLaunch" else { return false }
-                    guard !pill.name.lowercased().hasPrefix("open ") || rawAppMatches.isEmpty else { return false }
-                    return pill.name.lowercased().contains(q)
-                }.map { pill in
-                    var p = pill; p.isEnabled = true; return p
-                }
+                return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxPills)
             }()
 
             // Snapshot sorted running apps on MainActor (AppUsageLearner not thread-safe).
@@ -1404,7 +1474,8 @@ struct LauncherView: View {
                 appName: target.appName,
                 appPath: target.appPath,
                 query: target.actionQuery,
-                maxResults: maxListViewDockPills
+                maxResults: maxListViewDockPills,
+                allowLiveRefresh: false
             )
             let icon: NSImage? = {
                 if !target.appPath.isEmpty, FileManager.default.fileExists(atPath: target.appPath) {
@@ -1432,27 +1503,14 @@ struct LauncherView: View {
             return scope?.isExplicitAppScope == true ? [] : currentGlobalAppMatches(for: q)
         }()
 
-        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
         let isGenericAppQuery = isGenericApplicationListQuery(q)
-        // Frontmost app menus — strict contains filter eliminates fuzzy-matched unrelated items.
+        // Frontmost app menus — cache-only so global typing never touches AX.
         let frontmostMenuPills: [DockPill] = {
             if let scope = activeGlobalInlineDockScope(for: q), scope.isExplicitAppScope {
-                return liveGlobalAppScopeDockPills(query: q, scope: scope)
+                return cachedGlobalAppScopeDockPills(query: q, scope: scope)
             }
             guard !isGenericAppQuery else { return [] }
-            return currentVisibleDockPills(for: pillQuery).filter { pill in
-                guard !pill.isSeparator else { return false }
-                guard pill.rankingKind == "menu" || pill.rankingKind == "finderMenu" else { return false }
-                guard (pill.menuContext ?? "").caseInsensitiveCompare("Apple Menu") != .orderedSame else { return false }
-                guard pill.rankingKind != "appLaunch" else { return false }
-                guard !pill.name.lowercased().hasPrefix("open ") || rawAppMatches.isEmpty else { return false }
-                // Strict keyword filter: fuzzy edit-distance matching can surface unrelated menus.
-                return pill.name.lowercased().contains(q)
-            }.map { pill in
-                // AX snapshot captures enabled=false when app was backgrounded.
-                // Frontmost menus are now live — treat all as enabled.
-                var p = pill; p.isEnabled = true; return p
-            }
+            return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxListViewDockPills)
         }()
 
         // Cross-app menus grouped by source app — always shown alongside app results
@@ -1694,32 +1752,23 @@ struct LauncherView: View {
             return
         }
 
-        if cachedGlobalAppQuery != q {
-            cachedGlobalAppQuery = q
-            cachedGlobalAppMatches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
-        }
-
-        if delayNanoseconds == 0 {
-            pendingGlobalAppQuery = nil
-            cachedGlobalAppMatches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
-            cachedGlobalAppQuery = q
-            globalAppMatchTask = nil
-            scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
-            return
-        }
-
         pendingGlobalAppQuery = q
-        globalAppMatchTask = Task { @MainActor in
+        globalAppMatchTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else {
-                if pendingGlobalAppQuery == q { pendingGlobalAppQuery = nil }
+                await MainActor.run {
+                    if self.pendingGlobalAppQuery == q { self.pendingGlobalAppQuery = nil }
+                }
                 return
             }
-            cachedGlobalAppMatches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
-            cachedGlobalAppQuery = q
-            if pendingGlobalAppQuery == q { pendingGlobalAppQuery = nil }
-            globalAppMatchTask = nil
-            scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+            let matches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
+            await MainActor.run {
+                self.cachedGlobalAppMatches = matches
+                self.cachedGlobalAppQuery = q
+                if self.pendingGlobalAppQuery == q { self.pendingGlobalAppQuery = nil }
+                self.globalAppMatchTask = nil
+                self.scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+            }
         }
     }
 
@@ -1774,7 +1823,7 @@ struct LauncherView: View {
             searchState.query = actionQuery
         } else {
             scheduleGlobalAppMatchRebuild(query: actionQuery, delayNanoseconds: 0)
-            scheduleDockPillRebuild(query: actionQuery, delayNanoseconds: 0, refreshContext: false)
+            scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 0)
         }
         warmMenuCacheIfNeeded(bundleId: target.bundleId, appName: target.appName)
         return true
@@ -1790,21 +1839,31 @@ struct LauncherView: View {
             searchState.query = ""
         }
         scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
-        scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
+        scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
     }
 
-    private func liveGlobalAppScopeDockPills(
+    private func cachedGlobalAppScopeDockPills(
         query: String,
         scope: DockScopeResolution
     ) -> [DockPill] {
         guard scope.isExplicitAppScope else { return [] }
         let actionQuery = (scope.scopedSearchQuery.isEmpty ? query : scope.scopedSearchQuery)
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return buildDockPills(query: actionQuery)
+        return cachedScopedAppMenuPills(
+            bundleIdentifier: scope.scopedBundleId,
+            appName: scope.scopedAppName,
+            appPath: globalInlineAppScope?.appPath,
+            query: actionQuery,
+            maxResults: maxListViewDockPills,
+            allowLiveRefresh: false
+        )
             .filter { pill in
                 guard !pill.isSeparator else { return false }
                 guard pill.rankingKind != "appLaunch" else { return false }
-                guard (pill.menuContext ?? "").caseInsensitiveCompare("Apple Menu") != .orderedSame else { return false }
+                if !isGlobalContextActive,
+                   (pill.menuContext ?? "").caseInsensitiveCompare("Apple Menu") == .orderedSame {
+                    return false
+                }
                 guard !actionQuery.isEmpty else { return true }
                 // Match name OR menu context path so e.g. "recent" surfaces "Recently Closed" tabs
                 // whose pill name is the tab title, not the submenu label.
@@ -1812,6 +1871,55 @@ struct LauncherView: View {
                 let contextLower = (pill.menuContext ?? "").lowercased()
                 return nameLower.contains(actionQuery) || contextLower.contains(actionQuery)
             }
+    }
+
+    private func cachedFrontmostGlobalMenuPills(query: String, maxResults: Int) -> [DockPill] {
+        let bundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleId.isEmpty, !appName.isEmpty else { return [] }
+        let liveItems = orderedScopedMenuItemsLikeContextDock(
+            liveMenuItems
+                .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .filter { !($0.path.first?.isEmpty ?? true) }
+                .filter { cachedScopedMenuItemMatchesQuery($0, query: query) },
+            filterQuery: query,
+            limit: maxResults
+        )
+        if !liveItems.isEmpty {
+            let pid = contextTargetApp()?.processIdentifier ?? 0
+            return liveItems.map { item in
+                let path = item.path
+                let shortcutChar = item.shortcutChar
+                let shortcutModifiers = item.shortcutModifiers
+                return makeMenuDockPill(
+                    id: "global-live-menu-\(bundleId)-\(path.joined(separator: ">"))",
+                    item: item,
+                    sourceBundleId: bundleId,
+                    sourceAppName: appName,
+                    badge: item.shortcutDisplay,
+                    trackingIdentifier: "global-live-menu:\(bundleId):\(path.joined(separator: " > ").lowercased())",
+                    searchTerms: item.path + [appName],
+                    executeLeaf: {
+                        guard pid != 0 else { return }
+                        executeDockMenuAction(
+                            sourcePID: pid,
+                            path: path,
+                            shortcutChar: shortcutChar,
+                            shortcutModifiers: shortcutModifiers
+                        )
+                    }
+                )
+            }
+        }
+
+        return cachedScopedAppMenuPills(
+            bundleIdentifier: bundleId,
+            appName: appName,
+            appPath: nil,
+            query: query,
+            maxResults: maxResults,
+            allowLiveRefresh: false
+        )
     }
 
     // Max visible list height: rows beyond this scroll inside the glass card.
@@ -2029,57 +2137,60 @@ struct LauncherView: View {
                     updateL2ContextExtensions()
                     l2.focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
 
-                    // Load live menu items from frontmost app only (primary context)
-                    // Uses structural cache: second open of same app is instant.
+                    // Load live menu items from frontmost app only (primary context).
+                    // Session-scoped only: Apple Menu items should come from live AX, not disk cache.
                     menuLoadTask?.cancel()
+                    let useCacheOnly = false
                     menuLoadTask = Task.detached(priority: .userInitiated) {
                         let app = await MainActor.run { self.contextTargetApp() }
                         guard let app, !app.isTerminated else { return }
                         let pid = app.processIdentifier
                         let name = app.localizedName ?? ""
                         var loadedFromPersistentCache = false
-                        var items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-                        if items.isEmpty {
-                            try? await Task.sleep(nanoseconds: 180_000_000)
-                            items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-                        }
-                        if items.isEmpty {
-                            let snapshotItems = await MainActor.run {
-                                AXContextReader.shared.current.menuItems
-                            }
-                            items = snapshotItems.compactMap { info in
-                                let path = info.fullPath
-                                    .components(separatedBy: " > ")
-                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                    .filter { !$0.isEmpty }
-                                guard let title = path.last, !title.isEmpty else { return nil }
-                                return AXMenuItem(
-                                    title: title,
-                                    path: path,
-                                    isEnabled: info.enabled,
-                                    element: AXUIElementCreateApplication(pid),
-                                    children: [],
-                                    sourcePID: pid,
-                                    sourceAppName: name,
-                                    isAppleMenu: path.first == "Apple",
-                                    shortcutChar: nil,
-                                    shortcutModifiers: 0
-                                )
-                            }
-                        }
-                        if items.isEmpty {
-                            items = AppMenuCapabilityCache.shared.menuItems(
-                                for: app,
-                                maxResults: 120
-                            )
+                        var items: [AXMenuItem] = []
+                        if useCacheOnly {
+                            items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 120)
                             loadedFromPersistentCache = !items.isEmpty
-                        }
-                        for i in items.indices {
-                            items[i].sourcePID = pid
-                            items[i].sourceAppName = name
-                        }
-                        if !loadedFromPersistentCache {
-                            AppMenuCapabilityCache.shared.store(items: items, for: app)
+                        } else {
+                            items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                            if items.isEmpty {
+                                try? await Task.sleep(nanoseconds: 180_000_000)
+                                items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                            }
+                            if items.isEmpty {
+                                let snapshotItems = await MainActor.run {
+                                    AXContextReader.shared.current.menuItems
+                                }
+                                items = snapshotItems.compactMap { info in
+                                    let path = info.fullPath
+                                        .components(separatedBy: " > ")
+                                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                        .filter { !$0.isEmpty }
+                                    guard let title = path.last, !title.isEmpty else { return nil }
+                                    return AXMenuItem(
+                                        title: title,
+                                        path: path,
+                                        isEnabled: info.enabled,
+                                        element: AXUIElementCreateApplication(pid),
+                                        children: [],
+                                        sourcePID: pid,
+                                        sourceAppName: name,
+                                        isAppleMenu: path.first == "Apple",
+                                        shortcutChar: nil,
+                                        shortcutModifiers: 0
+                                    )
+                                }
+                            }
+                            if items.isEmpty {
+                                items = AppMenuCapabilityCache.shared.menuItems(
+                                    for: app,
+                                    maxResults: 120
+                                )
+                                loadedFromPersistentCache = !items.isEmpty
+                            }
+                            if !loadedFromPersistentCache {
+                                AppMenuCapabilityCache.shared.store(items: items, for: app)
+                            }
                         }
                         let debug = AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
                         await MainActor.run {
@@ -2541,6 +2652,13 @@ struct LauncherView: View {
                 }
 
                 print("📱 Received frontmost app: \(appName) (\(bundleID))")
+
+                if let pendingSwitch = pendingGlobalLaunchContextSwitch,
+                   pendingSwitch.bundleId == bundleID,
+                   isGlobalContextActive
+                {
+                    switchGlobalLaunchToContextDock(bundleId: bundleID, appName: appName)
+                }
 
                 if appChanged {
                     l2.appCompletion = nil
@@ -5186,37 +5304,57 @@ struct LauncherView: View {
         // Don't steal focus back — the activated app should remain frontmost
     }
 
-    /// Called when an app is launched/activated from the global context pill row.
-    /// Keeps the global dock visible while pinning the launched app as the inline target
-    /// so its menu/action pills replace app-search results in place.
+    /// Called when an app is launched/activated from global context.
+    /// Waits for macOS to confirm the app is frontmost, then hands off to Context Dock.
     private func scheduleContextDockTransition(bundleId: String?, appName: String) {
         guard let bundleId else { return }
-        let keepGlobalContext = isGlobalContextActive
-        _ = activateInlineDockAppScope(
-            bundleIdentifier: bundleId,
-            appName: appName,
-            queryOverride: "",
-            preserveGlobalContext: keepGlobalContext
-        )
-        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+        pendingGlobalLaunchContextSwitch = (bundleId: bundleId, appName: appName)
+        globalInlineAppScope = nil
+        l2.targetApp = nil
+        searchState.query = ""
+        focusedAppPillIndex = nil
+        hoveredAppPillIndex = nil
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
 
-        // Small delay so the app has time to activate and register as frontmost
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-            _ = self.activateInlineDockAppScope(
-                bundleIdentifier: bundleId,
-                appName: appName,
-                queryOverride: "",
-                preserveGlobalContext: keepGlobalContext
-            )
-            self.frontmost.bundleID = bundleId
-            self.frontmost.name = appName
-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
-                self.frontmost.icon =
-                    self.resolvedApplicationIcon(bundleIdentifier: bundleId, appName: appName)
-                    ?? self.preparedDockIcon(app.icon)
-            }
-            self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+        // Fallback for apps that activate before the observer publishes its event.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+            guard self.pendingGlobalLaunchContextSwitch?.bundleId == bundleId else { return }
+            let activeBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            guard self.frontmost.bundleID == bundleId || activeBundleId == bundleId else { return }
+            self.switchGlobalLaunchToContextDock(bundleId: bundleId, appName: appName)
         }
+    }
+
+    private func switchGlobalLaunchToContextDock(bundleId: String, appName: String) {
+        pendingGlobalLaunchContextSwitch = nil
+        globalContextActivation = nil
+        globalInlineAppScope = nil
+        suppressGlobalInlineAppScopeDetection = false
+        l2.targetApp = nil
+        searchState.query = ""
+        focusedAppPillIndex = nil
+        hoveredAppPillIndex = nil
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        showMediaLayer = false
+        aiMode.isActive = false
+        showContextInDock = true
+        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+            frontmost.bundleID = bundleId
+            frontmost.name = app.localizedName ?? appName
+            frontmost.icon =
+                resolvedApplicationIcon(bundleIdentifier: bundleId, appName: frontmost.name)
+                ?? preparedDockIcon(app.icon)
+        } else {
+            frontmost.bundleID = bundleId
+            frontmost.name = appName
+            frontmost.icon = resolvedApplicationIcon(bundleIdentifier: bundleId, appName: appName)
+        }
+        setFrontmostAppContextOnly(reason: "global launch became frontmost")
+        syncL2DockSession(force: true)
+        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
     }
 
     /// When Persistent Dock Mode is active, center the app's frontmost window in the
@@ -5920,10 +6058,17 @@ struct LauncherView: View {
                         .frame(width: 1, height: separatorHeight)
                         .padding(.horizontal, isExpanded ? 10 : 8)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(label)
-                            .font(.system(size: textSize, weight: isExpanded ? .semibold : .medium))
-                            .foregroundStyle(Color.primary.opacity(isExpanded ? 1.0 : (focused ? 1.0 : 0.9)))
-                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(label)
+                                .font(.system(size: textSize, weight: isExpanded ? .semibold : .medium))
+                                .foregroundStyle(Color.primary.opacity(isExpanded ? 1.0 : (focused ? 1.0 : 0.9)))
+                            if destructiveAction != nil {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: max(9, textSize - 3), weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(isExpanded ? 0.75 : 0.62))
+                            }
+                        }
+                        .lineLimit(1)
                         if isExpanded, let sub = subtitle {
                             Text(sub)
                                 .font(.system(size: 10, weight: .medium))
@@ -7038,37 +7183,95 @@ struct LauncherView: View {
 
     // MARK: - Cross-app / clipboard / session pill helpers
 
+    /// Native share sheet entry for active global selections. This is intentionally
+    /// cache/context based only; it must not trigger live menu or AX reads while typing.
+    func buildGlobalSelectionSharePills(query q: String) -> [DockPill] {
+        guard isGlobalContextActive, hasActiveDockContextSelection else { return [] }
+        let normalizedQuery = normalizedDockPillText(q)
+        if !normalizedQuery.isEmpty {
+            let shareTerms = ["share", "send", "airdrop", "export", "message", "mail"]
+            guard shareTerms.contains(where: {
+                $0.hasPrefix(normalizedQuery) || normalizedQuery.contains($0)
+            }) else { return [] }
+        }
+
+        let context = effectiveAXContextForConversation()
+        guard !ShareIntentRouter.shared.shareItems(for: context).isEmpty else { return [] }
+
+        let badge: String = {
+            switch activeSelection {
+            case .files(let urls):
+                return urls.count == 1 ? "File" : "\(urls.count) Items"
+            case .text:
+                return "Text"
+            case .url:
+                return "URL"
+            case .none:
+                return "Selection"
+            }
+        }()
+        var pill = DockPill(
+            id: "global-selection-share",
+            name: "Share Selection",
+            icon: "square.and.arrow.up",
+            accentColorName: "blue",
+            badge: badge,
+            execute: { showShareSheetForContext() }
+        )
+        pill.rankingKind = "payload"
+        pill.trackingIdentifier = "global-selection-share"
+        pill.searchTerms = ["share", "send", "airdrop", "export", "selection", "files", "text", "url"]
+        return [pill]
+    }
+
     /// Pills for apps that can receive the current context (URL, text, file).
     /// Delegates to CrossAppRouter for capability-aware, content-type routing.
     func buildCrossAppPills(query q: String) -> [DockPill] {
         guard settings.crossAppPills else { return [] }
+        let context = effectiveAXContextForConversation()
+        guard context.selectedFilePaths.isEmpty == false
+            || !(context.selectedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !(context.currentURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+
         let runningIds = Set(
             NSWorkspace.shared.runningApplications
                 .filter { $0.activationPolicy == .regular }
                 .compactMap(\.bundleIdentifier)
         )
         let routed = CrossAppRouter.shared.buildPills(
-            context: axContext,
+            context: context,
             runningBundleIds: runningIds,
             query: q
         )
+        let normalizedQuery = normalizedDockPillText(q)
+        let shareIntentQuery =
+            isGlobalContextActive
+            && hasActiveDockContextSelection
+            && ["share", "send", "airdrop", "export"].contains { term in
+                normalizedQuery.isEmpty || term.hasPrefix(normalizedQuery) || normalizedQuery.contains(term)
+            }
         return routed.compactMap { pill in
-            let normalizedQuery = q.lowercased()
-            let searchable = "\(pill.label.lowercased()) \(pill.appName.lowercased())"
-            if !q.isEmpty && !searchable.contains(normalizedQuery) { return nil }
+            let searchable = normalizedDockPillText("\(pill.label) \(pill.appName)")
+            if !normalizedQuery.isEmpty && !shareIntentQuery && !searchable.contains(normalizedQuery) {
+                return nil
+            }
             var dockPill = DockPill(
-                id: "cross-\(pill.bundleId)",
+                id: "cross-\(pill.bundleId)-\(normalizedDockPillText(pill.label))",
                 name: pill.label,
                 icon: pill.icon,
                 accentColorName: pill.badgeColor,
-                badge: nil,
+                badge: isGlobalContextActive && hasActiveDockContextSelection ? pill.appName : nil,
                 execute: pill.action
             )
             dockPill.sourceBundleId = pill.bundleId
             dockPill.sourceAppName = pill.appName
             dockPill.rankingKind = "crossApp"
             dockPill.trackingIdentifier = "cross:\(pill.bundleId):\(normalizedDockPillText(pill.label))"
-            dockPill.searchTerms = [pill.appName, pill.label]
+            dockPill.searchTerms = [
+                pill.appName, pill.label, "share", "send", "selection", "text", "files", "url"
+            ]
             return dockPill
         }
     }
@@ -7390,6 +7593,7 @@ struct LauncherView: View {
         case "finderSearch": return 104
         case "adapter", "appAdapter": return 108
         case "menu": return 98
+        case "submenuParent": return 96
         case "payload": return 94
         case "cliTool": return 92
         case "quickAction": return 90
@@ -7623,7 +7827,7 @@ struct LauncherView: View {
         scopedAppName: String
     ) -> Bool {
         if query.isEmpty { return true }
-        if ["payload", "finderSearch", "finderCurrent", "finderGoTo", "submenuChild"].contains(pill.rankingKind) {
+        if ["payload", "finderSearch", "finderCurrent", "finderGoTo", "submenuChild", "submenuParent"].contains(pill.rankingKind) {
             return true
         }
 
@@ -7663,6 +7867,7 @@ struct LauncherView: View {
         guard showContextInDock, !app.isTerminated else { return }
         let pid = app.processIdentifier
         let name = app.localizedName ?? ""
+        let useCacheOnly = isGlobalContextActive
 
         menuLoadTask?.cancel()
         liveMenuRefreshTask?.cancel()
@@ -7673,43 +7878,46 @@ struct LauncherView: View {
 
         menuLoadTask = Task.detached(priority: .userInitiated) {
             var loadedFromPersistentCache = false
-            var items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-            if items.isEmpty {
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-            }
-            if items.isEmpty {
-                let snapshotItems = await MainActor.run { AXContextReader.shared.current.menuItems }
-                items = snapshotItems.compactMap { info in
-                    let path = info.fullPath
-                        .components(separatedBy: " > ")
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    guard let title = path.last, !title.isEmpty else { return nil }
-                    return AXMenuItem(
-                        title: title,
-                        path: path,
-                        isEnabled: info.enabled,
-                        element: AXUIElementCreateApplication(pid),
-                        children: [],
-                        sourcePID: pid,
-                        sourceAppName: name,
-                        isAppleMenu: path.first == "Apple",
-                        shortcutChar: nil,
-                        shortcutModifiers: 0
-                        )
-                }
-            }
-            if items.isEmpty {
+            var items: [AXMenuItem] = []
+
+            if useCacheOnly {
                 items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 120)
                 loadedFromPersistentCache = !items.isEmpty
-            }
-            for i in items.indices {
-                items[i].sourcePID = pid
-                items[i].sourceAppName = name
-            }
-            if !loadedFromPersistentCache {
-                AppMenuCapabilityCache.shared.store(items: items, for: app)
+            } else {
+                items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                if items.isEmpty {
+                    try? await Task.sleep(nanoseconds: 180_000_000)
+                    items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                }
+                if items.isEmpty {
+                    let snapshotItems = await MainActor.run { AXContextReader.shared.current.menuItems }
+                    items = snapshotItems.compactMap { info in
+                        let path = info.fullPath
+                            .components(separatedBy: " > ")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        guard let title = path.last, !title.isEmpty else { return nil }
+                        return AXMenuItem(
+                            title: title,
+                            path: path,
+                            isEnabled: info.enabled,
+                            element: AXUIElementCreateApplication(pid),
+                            children: [],
+                            sourcePID: pid,
+                            sourceAppName: name,
+                            isAppleMenu: path.first == "Apple",
+                            shortcutChar: nil,
+                            shortcutModifiers: 0
+                        )
+                    }
+                }
+                if items.isEmpty {
+                    items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 120)
+                    loadedFromPersistentCache = !items.isEmpty
+                }
+                if !loadedFromPersistentCache {
+                    AppMenuCapabilityCache.shared.store(items: items, for: app)
+                }
             }
             let debug = AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
             await MainActor.run {
@@ -11764,7 +11972,8 @@ struct LauncherView: View {
         appName: String,
         appPath: String?,
         query: String = "",
-        maxResults: Int = 24
+        maxResults: Int = 24,
+        allowLiveRefresh: Bool = true
     ) -> [DockPill] {
         guard !bundleIdentifier.isEmpty else { return [] }
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -11773,7 +11982,7 @@ struct LauncherView: View {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
         }
         let liveMatches: [AXMenuItem] = {
-            guard let runningApp else { return [] }
+            guard allowLiveRefresh, let runningApp else { return [] }
             let pid = runningApp.processIdentifier
             var live = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
             if live.isEmpty {
@@ -11821,13 +12030,15 @@ struct LauncherView: View {
             let shortcutChar = item.shortcutChar
             let shortcutModifiers = item.shortcutModifiers
             let menuAppPath = appPath
-            var pill = DockPill(
+            return makeMenuDockPill(
                 id: "cached-all-menu-\(bundleIdentifier)-\(path.joined(separator: ">"))",
-                name: item.title,
-                icon: menuSymbol(for: item),
-                accentColorName: "gray",
+                item: item,
+                sourceBundleId: bundleIdentifier,
+                sourceAppName: appName,
                 badge: item.shortcutDisplay,
-                execute: {
+                trackingIdentifier: "cached-menu:\(bundleIdentifier):\(path.joined(separator: " > ").lowercased())",
+                searchTerms: item.path + [appName],
+                executeLeaf: {
                     executeCachedMenuAction(
                         bundleIdentifier: bundleIdentifier,
                         appName: appName,
@@ -11838,16 +12049,6 @@ struct LauncherView: View {
                     )
                 }
             )
-            pill.menuItemImage = resolvedMenuIcon(for: item)
-            pill.menuItemName = item.title
-            pill.sourceBundleId = bundleIdentifier
-            pill.sourceAppName = appName
-            pill.menuContext = menuContextLabel(from: item.path)
-            pill.rankingKind = "menu"
-            pill.isEnabled = item.isEnabled
-            pill.trackingIdentifier = "cached-menu:\(bundleIdentifier):\(path.joined(separator: " > ").lowercased())"
-            pill.searchTerms = item.path + [appName]
-            return pill
         }
     }
 
@@ -11949,19 +12150,30 @@ struct LauncherView: View {
     // After scraping, updates crossAppMenuItems if that app is the current scope target,
     // then triggers a pill rebuild so results appear without another keystroke.
     private func warmMenuCacheIfNeeded(bundleId: String, appName: String) {
+        guard !bundleId.isEmpty else { return }
         let staleThreshold: TimeInterval = 7 * 24 * 3600
         let age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleId) ?? .infinity
         guard age > staleThreshold else { return }  // fresh snapshot exists — skip
+        guard warmingMenuBundleIds.insert(bundleId).inserted else { return }
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleId && !$0.isTerminated
-        }) else { return }
+        }) else {
+            warmingMenuBundleIds.remove(bundleId)
+            return
+        }
         Task.detached(priority: .background) {
             // Defer 2 s so the user finishes typing before we start an AX scan.
             // AX API is globally serialized — an immediate scan blocks main-thread AX reads → input freeze.
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                await MainActor.run { self.warmingMenuBundleIds.remove(bundleId) }
+                return
+            }
             // Skip if another scan already running (avoid concurrent AX contention).
-            guard !AXMenuReader.shared.isScanningMenus else { return }
+            guard !AXMenuReader.shared.isScanningMenus else {
+                await MainActor.run { self.warmingMenuBundleIds.remove(bundleId) }
+                return
+            }
             let pid = app.processIdentifier
             var items = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
             for i in items.indices {
@@ -11973,6 +12185,7 @@ struct LauncherView: View {
                 if self.l2.targetApp?.bundleId == bundleId {
                     self.crossAppMenuItems = items
                 }
+                self.warmingMenuBundleIds.remove(bundleId)
                 scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
             }
         }
@@ -12296,7 +12509,7 @@ struct LauncherView: View {
 
         if let targetApp {
             seedCrossAppMenuCache(for: targetApp)
-            loadCrossAppMenu(for: targetApp)  // always read + persist all menus on scope
+            loadCrossAppMenu(for: targetApp)
         } else {
             crossAppMenuTargetPID = 0
             crossAppMenuNeedsLiveLoad = false
@@ -12606,6 +12819,19 @@ struct LauncherView: View {
         var context = axContext
         if context.selectedFilePaths.isEmpty {
             context.selectedFilePaths = effectiveSelectedFileURLsForConversation().map(\.path)
+        }
+        if (context.currentURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           case .url(let urlString) = currentContext {
+            context.currentURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if (context.selectedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if case .textSelected(let text) = currentContext {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { context.selectedText = trimmed }
+            } else if let frozenSelectionText {
+                let trimmed = frozenSelectionText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { context.selectedText = trimmed }
+            }
         }
         return context
     }
@@ -14320,7 +14546,8 @@ struct LauncherView: View {
         crossAppMenuItems = cachedItems
     }
 
-    /// Load menu items for a target app into crossAppMenuItems (skips if already loaded for same PID).
+    /// Load menu items for a target app into crossAppMenuItems from the persistent cache.
+    /// Live AX scraping is deferred by warmMenuCacheIfNeeded so typing stays responsive.
     private func loadCrossAppMenu(for app: NSRunningApplication) {
         let pid = app.processIdentifier
         guard pid != 0 else { return }
@@ -14332,22 +14559,15 @@ struct LauncherView: View {
             crossAppMenuTask?.cancel()
             crossAppMenuTask = Task.detached(priority: .userInitiated) {
                 let name = app.localizedName ?? ""
-                var loadedFromPersistentCache = false
-                var items = AXMenuReader.shared.allMenuItems(for: pid, maxDepth: 6)
-                if items.isEmpty {
-                    items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 120)
-                    loadedFromPersistentCache = !items.isEmpty
-                }
+                var items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 120)
                 for i in items.indices {
                     items[i].sourcePID = pid
                     items[i].sourceAppName = name
                 }
-                if !loadedFromPersistentCache {
-                    AppMenuCapabilityCache.shared.store(items: items, for: app)
-                }
                 await MainActor.run {
                     guard self.crossAppMenuTargetPID == pid else { return }
                     self.crossAppMenuItems = items
+                    self.warmMenuCacheIfNeeded(bundleId: app.bundleIdentifier ?? "", appName: name)
                 }
             }
         }
@@ -14506,6 +14726,7 @@ struct LauncherView: View {
         }
 
         var pills: [DockPill] = []
+        pills.append(contentsOf: buildGlobalSelectionSharePills(query: q))
         // Safari page-level command pills (search, click, open) — appear before AX menu items
         pills.append(contentsOf: buildSafariCommandPills(query: q))
         // System Settings pane deep-links (Wallpaper, Wi-Fi, etc.) — sidebar isn't menu-scanned
@@ -14551,7 +14772,7 @@ struct LauncherView: View {
         }()
         let isExplicitAppScope = scope.isExplicitAppScope
         let isGlobalScope = scope.isGlobalScope
-        let allowAppleMenuItems = false
+        let allowAppleMenuItems = isGlobalContextActive
         let scopedBundleId = scope.scopedBundleId
         let scopedAppName = scope.scopedAppName
         let scopedSearchQuery = scope.scopedSearchQuery
@@ -14599,6 +14820,7 @@ struct LauncherView: View {
             let isPayloadIntent = payloadIntentWords.contains { scopedSearchQuery.contains($0) }
             return isPayloadIntent ? rawPayloadActionPills : []
         }()
+        let crossAppPills = !isExplicitAppScope ? buildCrossAppPills(query: q) : []
         let semanticFinderPills: [DockPill] = {
             guard !shouldUseFinderSearchPopover(for: q) else { return [] }
             guard finderFolderAttachedForDock else { return [] }
@@ -14805,6 +15027,10 @@ struct LauncherView: View {
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
             && !isScopedToOtherApp
 
+        if isGlobalContextActive && hasActiveDockContextSelection {
+            pills.append(contentsOf: crossAppPills)
+        }
+
         if useSeededMenuPills && !hasStrongContextQuery {
             let seedItems = Array(
                 liveMenuItems
@@ -14819,18 +15045,17 @@ struct LauncherView: View {
                     item.sourcePID != 0
                     ? item.sourcePID
                     : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
-                let badge: String? = item.shortcutDisplay
                 let shortcutChar = item.shortcutChar
                 let shortcutMods = item.shortcutModifiers
-                let menuImg = resolvedMenuIcon(for: item)
-
-                var pill = DockPill(
+                let pill = makeMenuDockPill(
                     id: "menu-seed-\(item.id)",
-                    name: item.title,
-                    icon: menuSymbol(for: item),
-                    accentColorName: "gray",
-                    badge: badge,
-                    execute: {
+                    item: item,
+                    sourceBundleId: activeBundleId,
+                    sourceAppName: scopedAppName,
+                    badge: item.shortcutDisplay,
+                    trackingIdentifier: "menu-seed:\(activeBundleId):\(path.joined(separator: " > ").lowercased())",
+                    searchTerms: item.path + [scopedAppName],
+                    executeLeaf: {
                         guard sourcePID != 0 else { return }
                         self.executeDockMenuAction(
                             sourcePID: sourcePID,
@@ -14840,13 +15065,6 @@ struct LauncherView: View {
                         )
                     }
                 )
-                pill.menuItemImage = menuImg
-                pill.menuItemName = item.title
-                pill.sourceBundleId = activeBundleId
-                pill.sourceAppName = scopedAppName
-                pill.menuContext = menuContextLabel(from: item.path)
-                pill.rankingKind = "menu"
-                pill.isEnabled = item.isEnabled
                 pills.append(pill)
             }
         }
@@ -15008,44 +15226,23 @@ struct LauncherView: View {
         let scopedRunningMenuMatches:
             (NSRunningApplication, String, Bool) -> [AXMenuItem] = { app, filterQ, preferCached in
                 let pid = app.processIdentifier
-                var liveItems = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
-                var refreshedLiveItems = false
-                if liveItems.isEmpty {
-                    liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-                    refreshedLiveItems = !liveItems.isEmpty
-                }
-                if !liveItems.isEmpty {
-                    for index in liveItems.indices {
-                        liveItems[index].sourcePID = pid
-                        liveItems[index].sourceAppName = app.localizedName ?? scopedAppName
-                    }
-                    if refreshedLiveItems || !AppMenuCapabilityCache.shared.hasSnapshot(bundleIdentifier: app.bundleIdentifier ?? "") {
-                        AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
-                    }
-                }
-                let liveMatches = liveItems.filter { menuItemMatchesQuery($0, filterQ) }
                 let cachedMatches = crossAppMenuItems.filter { item in
                     item.sourcePID == pid
                         && menuItemMatchesQuery(item, filterQ)
                 }
-                if preferCached {
-                    let seedMatches =
-                        (cachedMatches + liveMatches).isEmpty
-                        ? persistentMenuMatches(app, filterQ, pureScopeCandidateLimit)
-                        : cachedMatches + liveMatches
-                    return orderedScopedMenuMatches(
-                        dedupeMenuItems(menuItemsAllowedForCurrentScope(seedMatches)),
-                        filterQuery: filterQ,
-                        limit: pureScopeMenuLimit
-                    )
-                }
-
-                let matches = dedupeMenuItems(
-                    menuItemsAllowedForCurrentScope(
-                        cachedMatches + liveMatches + persistentMenuMatches(app, filterQ, 24)
-                    )
+                let persistentMatches = persistentMenuMatches(
+                    app,
+                    filterQ,
+                    preferCached ? pureScopeCandidateLimit : 24
                 )
-                return orderedScopedMenuMatches(matches, filterQuery: filterQ, limit: 16)
+                let matches = dedupeMenuItems(
+                    menuItemsAllowedForCurrentScope(cachedMatches + persistentMatches)
+                )
+                return orderedScopedMenuMatches(
+                    matches,
+                    filterQuery: filterQ,
+                    limit: preferCached ? pureScopeMenuLimit : 16
+                )
             }
         let scopedClosedMenuMatches:
             (String, String, String, Bool) -> [AXMenuItem] = { bundleId, appName, filterQ, preferCached in
@@ -15184,13 +15381,16 @@ struct LauncherView: View {
                 let mod = item.shortcutModifiers
                 let badge: String? =
                     item.shortcutDisplay ?? (path.count >= 2 ? path[path.count - 2] : nil)
-                var pill = DockPill(
+                let pill = makeMenuDockPill(
                     id: "ctx-menu-\(item.id)",
-                    name: item.title,
-                    icon: menuSymbol(for: item),
+                    item: item,
+                    sourceBundleId: scopedBundleId,
+                    sourceAppName: scopedAppName,
                     accentColorName: "blue",
                     badge: badge,
-                    execute: {
+                    trackingIdentifier: "ctx-menu:\(scopedBundleId):\(path.joined(separator: " > ").lowercased())",
+                    searchTerms: item.path + [scopedAppName],
+                    executeLeaf: {
                         guard sourcePID != 0 else { return }
                         self.executeDockMenuAction(
                             sourcePID: sourcePID,
@@ -15200,12 +15400,6 @@ struct LauncherView: View {
                         )
                     }
                 )
-                pill.menuItemImage = resolvedMenuIcon(for: item)
-                pill.menuItemName = item.title
-                pill.sourceBundleId = scopedBundleId
-                pill.sourceAppName = scopedAppName
-                pill.menuContext = menuContextLabel(from: item.path)
-                pill.rankingKind = "menu"
                 pills.append(pill)
             }
         }
@@ -15450,13 +15644,16 @@ struct LauncherView: View {
                 let shortcutHint = item.shortcutDisplay
 
                 let isFav = favs.contains(item.title)
-                let menuImg = resolvedMenuIcon(for: item)
-                var pill = DockPill(
-                    id: "menu-\(item.id)", name: item.title,
-                    icon: menuSymbol(for: item),
+                var pill = makeMenuDockPill(
+                    id: "menu-\(item.id)",
+                    item: item,
+                    sourceBundleId: menuBundleId,
+                    sourceAppName: menuAppName,
                     accentColorName: isFav ? "yellow" : "gray",
                     badge: shortcutHint ?? pillBadge,
-                    execute: {
+                    trackingIdentifier: "menu:\(menuBundleId):\(path.joined(separator: " > ").lowercased())",
+                    searchTerms: item.path + [menuAppName],
+                    executeLeaf: {
                         AppInteractionStore.shared.record(
                             bundleId: menuBundleId,
                             appName: menuAppName,
@@ -15483,18 +15680,8 @@ struct LauncherView: View {
                             shortcutModifiers: shortcutMods
                         )
                     })
-                pill.menuItemImage = menuImg
                 pill.isFavourited = isFav
-                pill.menuItemName = item.title
-                pill.sourceBundleId = menuBundleId
-                pill.sourceAppName = menuAppName
-                pill.menuContext = menuContextLabel(from: item.path)
-                pill.rankingKind = "menu"
-                pill.isEnabled = item.isEnabled
-                pill.trackingIdentifier =
-                    "menu:\(menuBundleId):\(path.joined(separator: " > ").lowercased())"
-                pill.searchTerms = item.path + [menuAppName]
-                if sourcePID != 0, item.title.lowercased().hasPrefix("share") {
+                if item.children.isEmpty, sourcePID != 0, item.title.lowercased().hasPrefix("share") {
                     pill = DockPill(
                         id: pill.id, name: pill.name,
                         icon: "square.and.arrow.up",
@@ -15516,7 +15703,9 @@ struct LauncherView: View {
             }
         }
         if !isExplicitAppScope {
-            pills += buildCrossAppPills(query: q)
+            if !(isGlobalContextActive && hasActiveDockContextSelection) {
+                pills += crossAppPills
+            }
         }
         let resolvedRulePills = AXTriggerRuleEngine.shared.evaluate(context: axContext)
         if !isExplicitAppScope {
@@ -15539,9 +15728,10 @@ struct LauncherView: View {
             scopedAppName: scopedAppName,
             isExplicitAppScope: isExplicitAppScope
         )
-        // Drop disabled menu-item pills entirely — grayed items clutter the row when no
-        // message/selection is active. Non-menu pills (file, clipboard, etc.) always appear.
+        // Treat menu enabled state as advisory. Some apps lazily validate menus only when
+        // their native menu opens, so AX can report a runnable action as disabled.
         let enabled = ranked.filter { pill in
+            if isStaleAvailabilityMenuPill(pill) { return true }
             if !q.isEmpty,
                (pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"),
                dockPillHasQuerySignal(
@@ -15557,6 +15747,7 @@ struct LauncherView: View {
                 || pill.rankingKind == "finderSelection" || pill.rankingKind == "payload"
                 || pill.rankingKind == "cliTool" || pill.rankingKind == "tool"
                 || pill.rankingKind == "userExtension" || pill.rankingKind == "submenuChild"
+                || pill.rankingKind == "submenuParent"
         }
 
         // When global context has an active file/folder/text selection and no explicit app scope,
@@ -15846,6 +16037,10 @@ struct LauncherView: View {
         pill.execute()
     }
 
+    private func isStaleAvailabilityMenuPill(_ pill: DockPill) -> Bool {
+        pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"
+    }
+
     private func directAppActionQuery(for query: String) -> String? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
@@ -16127,11 +16322,6 @@ struct LauncherView: View {
                 } else {
                     scheduleGlobalGroupedListRebuild(query: newQuery, delayNanoseconds: 18_000_000)
                 }
-                scheduleDockPillRebuild(
-                    query: newQuery,
-                    delayNanoseconds: 18_000_000,
-                    refreshContext: false
-                )
                 // If query resolves to a running app with no cached menus, warm on the fly
                 if !newQuery.isEmpty {
                     let scope = resolveDockScope(for: newQuery)
@@ -16159,7 +16349,6 @@ struct LauncherView: View {
                 } else {
                     scheduleGlobalGroupedListRebuild(query: pillQuery, delayNanoseconds: 0)
                 }
-                scheduleDockPillRebuild(query: pillQuery, delayNanoseconds: 0, refreshContext: false)
                 return
             }
             scheduleDockPillRebuild(query: pillQuery, delayNanoseconds: 0)
@@ -17875,7 +18064,7 @@ struct LauncherView: View {
         let isKeyboardFocused = l2.focusedPillIndex == index
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
-        let isDisabled = !pill.isEnabled
+        let isDisabled = !pill.isEnabled && !isStaleAvailabilityMenuPill(pill)
         let subtitle = (pill.menuContext?.isEmpty == false) ? pill.menuContext! : (pill.badge ?? "Run")
 
         Button {
@@ -18308,8 +18497,6 @@ struct LauncherView: View {
     private var shouldShowL2UnifiedDockRow: Bool {
         guard showContextInDock, !aiMode.isActive else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let visiblePills =
-            currentVisibleDockPills(for: q)
         if isGlobalContextActive {
             if q.isEmpty {
                 return settings.showRunningAppsInBar || !settings.pinnedApps.isEmpty
@@ -18317,9 +18504,11 @@ struct LauncherView: View {
             if shouldUsePureGlobalAppSearch {
                 return true
             }
+            let visiblePills = currentVisibleDockPills(for: q)
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
+        let visiblePills = currentVisibleDockPills(for: q)
         return visiblePills.contains { !$0.isSeparator }
     }
 
@@ -19211,6 +19400,18 @@ struct LauncherView: View {
             || shouldShowFinderSearchResultsPanel(for: searchState.query)
     }
 
+    private var shouldShowFrontmostContextChip: Bool {
+        showContextInDock
+            && !isGlobalContextActive
+            && settings.enableFrontmostDetection
+            && l2.targetApp == nil
+            && globalInlineAppScope == nil
+            && !showMediaLayer
+            && !aiMode.isActive
+            && !frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && frontmost.icon != nil
+    }
+
     // Results card: its own glass container, visually detached from the dock bar.
     @ViewBuilder
     private var resultsCard: some View {
@@ -19600,9 +19801,9 @@ struct LauncherView: View {
                                 ? "Switch to frontmost app context"
                                 : "Switch to Global Context"
                         )
-                        // Hide standalone icon when scope badge is pinned — icon lives inside the badge
-                        .opacity((l2.targetApp != nil || globalInlineAppScope != nil) && showContextInDock ? 0 : 1)
-                        .frame(width: (l2.targetApp != nil || globalInlineAppScope != nil) && showContextInDock ? 0 : nil)
+                        // Hide standalone icon when a context/scope chip owns the left slot.
+                        .opacity((l2.targetApp != nil || globalInlineAppScope != nil || shouldShowFrontmostContextChip) && showContextInDock ? 0 : 1)
+                        .frame(width: (l2.targetApp != nil || globalInlineAppScope != nil || shouldShowFrontmostContextChip) && showContextInDock ? 0 : nil)
                     }
 
                     // Spotlight-style app context chip — shown after Tab/→ on app result
@@ -19638,6 +19839,54 @@ struct LauncherView: View {
                         )
                     }
 
+                    // Soft frontmost context chip — same visual language as app scope,
+                    // but not locked. Frontmost app changes still update this chip.
+                    if shouldShowFrontmostContextChip, let icon = frontmost.icon {
+                        let accent = icon.dominantSwiftUIColor
+                        let chipTextColor: SwiftUI.Color = systemColorScheme == .dark
+                            ? SwiftUI.Color.white.opacity(0.94)
+                            : SwiftUI.Color.black.opacity(0.82)
+                        HStack(spacing: 6) {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            Text(frontmost.name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(chipTextColor)
+                                .lineLimit(1)
+                        }
+                        .padding(.leading, 8)
+                        .padding(.trailing, isHoveringFrontmostContextChip ? 9 : 8)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: Capsule(style: .continuous))
+                        .background(accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12), in: Capsule(style: .continuous))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(accent.opacity(systemColorScheme == .dark ? 0.36 : 0.24), lineWidth: 0.8)
+                        )
+                        .shadow(color: accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12), radius: 7, x: 0, y: 2)
+                        .help("Frontmost app context")
+                        .onTapGesture {
+                            if !frontmost.bundleID.isEmpty {
+                                _ = activateInlineDockAppScope(
+                                    bundleIdentifier: frontmost.bundleID,
+                                    appName: frontmost.name,
+                                    queryOverride: searchState.query,
+                                    expand: true,
+                                    preserveGlobalContext: isGlobalContextActive
+                                )
+                            }
+                        }
+                        .onHover { hovering in
+                            withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
+                                isHoveringFrontmostContextChip = hovering
+                            }
+                        }
+                        .transition(.scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
+                    }
+
                     // Pinned L2 scope badge — full capsule matching global inline scope style.
                     if let target = l2.targetApp, showContextInDock {
                         let scopeIcon: NSImage = target.icon
@@ -19664,9 +19913,7 @@ struct LauncherView: View {
                                 .foregroundStyle(chipTextColor)
                                 .lineLimit(1)
                             Button {
-                                withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-                                    l2.targetApp = nil
-                                }
+                                exitL2DockScope()
                             } label: {
                                 Image(systemName: "minus")
                                     .font(.system(size: 9, weight: .bold))
@@ -19789,7 +20036,7 @@ struct LauncherView: View {
                     // Vertical separator between icon and text — mirrors expanded appPillButton
                     // Separator and text field are hidden when a context pill is keyboard-focused
                     // (the input shrinks to icon-only to give pills more room)
-                    if showContextInDock && !isGlobalContextActive && l2.targetApp == nil && !aiMode.isActive
+                    if showContextInDock && !isGlobalContextActive && l2.targetApp == nil && !shouldShowFrontmostContextChip && !aiMode.isActive
                         && l2.focusedPillIndex == nil {
                         Rectangle()
                             .fill(Color.white.opacity(0.16))
@@ -20184,11 +20431,6 @@ struct LauncherView: View {
                                             } else {
                                                 scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 18_000_000)
                                             }
-                                            scheduleDockPillRebuild(
-                                                query: q,
-                                                delayNanoseconds: 18_000_000,
-                                                refreshContext: false
-                                            )
                                             resetCollapseTimer()
                                             return
                                         }
@@ -20388,6 +20630,39 @@ struct LauncherView: View {
                             .help("Dismiss selection")
                         } else if isGlobalContextActive {
                             // Global context: + connects to the frontmost app's context dock
+                            if settings.enableFrontmostDetection,
+                               let icon = frontmost.icon,
+                               !frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Button {
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                        globalContextActivation = nil
+                                        showContextInDock = true
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 16, height: 16)
+                                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                        Text(frontmost.name)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary.opacity(0.82))
+                                            .lineLimit(1)
+                                            .frame(maxWidth: 96)
+                                    }
+                                    .padding(.leading, 7)
+                                    .padding(.trailing, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.regularMaterial, in: Capsule(style: .continuous))
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .strokeBorder(icon.dominantSwiftUIColor.opacity(systemColorScheme == .dark ? 0.34 : 0.24), lineWidth: 0.7)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .help("Connect to \(frontmost.name)")
+                            }
                             Button {
                                 withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                                     globalContextActivation = nil
@@ -28253,8 +28528,18 @@ struct LauncherView: View {
 
     /// Exits the pinned L2 dock scope (l2.targetApp) without clearing other state.
     private func exitL2DockScope() {
+        let retainedQuery = searchState.query
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             l2.targetApp = nil
+            isHoveringL2ScopeChip = false
+            focusedAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+        }
+        scheduleDockPillRebuild(query: retainedQuery, delayNanoseconds: 0, refreshContext: false)
+        if isGlobalContextActive {
+            scheduleGlobalAppMatchRebuild(query: retainedQuery, delayNanoseconds: 0)
+            scheduleGlobalGroupedListRebuild(query: retainedQuery, delayNanoseconds: 0)
         }
         syncL2DockSession(force: true)
     }
