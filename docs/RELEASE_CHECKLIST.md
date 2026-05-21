@@ -28,6 +28,7 @@ Use this checklist before every public or shared build.
 - [ ] Context Dock pill shows only the frontmost app icon/name.
 - [ ] Context Dock result sheet does not jump to top while typing.
 - [ ] Frontmost app menu commands appear and execute.
+- [ ] `find [query]` in scoped app opens the correct app-native Find/Search surface.
 - [ ] App switch refreshes menu commands for the new app.
 - [ ] Finder selection actions appear when files/folders are selected.
 - [ ] Safari commands appear with page/tab context.
@@ -50,6 +51,9 @@ Use this checklist before every public or shared build.
 - [ ] Visual Studio Code
 - [ ] Terminal
 - [ ] System Settings
+- [ ] Photos Find/Search
+- [ ] Notes Find/Search
+- [ ] Mail Mailbox Search and message-local Find
 - [ ] Messages/Mail if installed and signed in
 
 ## Release Notes

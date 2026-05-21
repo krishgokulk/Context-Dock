@@ -21,3 +21,4 @@ All notable changes to Context-Dock are tracked here.
 - Add debug timing around result rebuilds, menu reads, and menu cache lookups.
 - Extract duplicate menu loading logic into a shared service.
 - Define a shared result list state model for Global Context and Context Dock.
+- Add app-specific Find/Search routing for Photos, Mail, Notes, and other scoped apps.

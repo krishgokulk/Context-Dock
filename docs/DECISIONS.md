@@ -40,3 +40,15 @@ Decision:
 - Context Dock vertical rows use `DockPill.id`.
 - Global Context app rows use `SearchResult.id`.
 - Global Context menu rows use `DockPill.id` plus source context where needed.
+
+## 2026-05-21: Find Commands Need App-Specific Profiles
+
+Every macOS app exposes "Find" differently. Some apps use plain `Edit > Find > Find...`, some expose app-level search, and some have multiple Find variants. Mail has Mailbox Search plus message-local Find. Notes has note-list search and in-note Find. Photos needs library search, not text find.
+
+Decision:
+
+- Route explicit `find/search [query] in [app]` intents before generic AI/file actions.
+- Use app-specific `AppFindProfile` behavior where known.
+- Prefer app-native library/mailbox/note search for content queries.
+- Use `Edit > Find > Find...`, `Cmd+F`, find pasteboard, and AX injection as fallback only.
+- Keep per-app Find behavior declarative so new apps can be added without expanding `ContentView.swift`.

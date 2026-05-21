@@ -14,6 +14,12 @@ Track release work here. Keep each item small enough for one pull request.
 
 ## Next
 
+- [ ] [Find] Define `AppFindProfile` routing for app-specific Find/Search behavior.
+- [ ] [Find] Route queries like `find gowri in photos`, `find invoice in mail`, and `find project note in notes` before generic AI/file actions.
+- [ ] [Find] Add app-specific Find profiles for Photos, Mail, Notes, Safari, Finder, Preview, TextEdit, Xcode, and VS Code.
+- [ ] [Find] Prefer app-native search surfaces when available: Photos search field, Mailbox Search, Notes search, Finder folder search, browser page find.
+- [ ] [Find] Fall back to `Edit > Find > Find...`, `Cmd+F`, find pasteboard, and AX search-field injection when no profile exists.
+- [ ] [Find] Add manual QA cases for `find [query] in [app]`, `[app] find [query]`, and scoped Context Dock queries.
 - [ ] Add debug timing for `scheduleDockPillRebuild`.
 - [ ] Add debug timing for `scheduleGlobalGroupedListRebuild`.
 - [ ] Add debug timing for `AXMenuReader.refreshAllMenuItems`.
@@ -34,4 +40,5 @@ Track release work here. Keep each item small enough for one pull request.
 
 - [ ] Automated UI tests for keyboard navigation.
 - [ ] Snapshot tests for result list row identity.
+- [ ] Automated tests for Find routing once app-specific profiles are extracted.
 - [ ] Telemetry export for local performance traces.
