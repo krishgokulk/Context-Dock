@@ -384,6 +384,8 @@ struct LauncherView: View {
     @State private var crossAppMenuItems: [AXMenuItem] = []
     // Locked submenu parent — when set, searchState.query is treated as child prefix
     @State private var lockedSubmenuParent: AXMenuItem? = nil
+    @State private var lockedFindToken: AppFindToken? = nil
+    @State private var showFindTokenMenu = false
     @State private var crossAppMenuTask: Task<Void, Never>? = nil
     @State private var crossAppMenuTargetPID: pid_t = 0
     @State private var crossAppMenuNeedsLiveLoad = false
@@ -10013,6 +10015,18 @@ struct LauncherView: View {
         let preferMailboxSearch: Bool
     }
 
+    private struct AppFindToken {
+        let targetBundleId: String
+        let targetAppName: String
+        let parentMenu: AXMenuItem?
+        var selectedMenu: AXMenuItem?
+
+        var hasChildMenu: Bool {
+            guard let parentMenu else { return false }
+            return parentMenu.children.contains { $0.isEnabled }
+        }
+    }
+
     private func mailSearchDisplayLabel(
         query: String,
         tokenKind: MailSearchTokenKind
@@ -11165,6 +11179,119 @@ struct LauncherView: View {
         return nil
     }
 
+    private func leafFindChildren(for parent: AXMenuItem) -> [AXMenuItem] {
+        var leaves: [AXMenuItem] = []
+        for child in parent.children {
+            if child.isLeaf {
+                leaves.append(child)
+            } else {
+                leaves.append(contentsOf: child.children.filter(\.isLeaf))
+            }
+        }
+        return leaves.filter { $0.isEnabled }
+    }
+
+    private func findMenuParent(
+        targetBundleId: String,
+        targetAppName: String
+    ) -> AXMenuItem? {
+        let liveMatches = targetBundleId == frontmost.bundleID ? liveMenuItems : []
+        let cachedMatches = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: targetBundleId,
+            appName: targetAppName,
+            processIdentifier: 0,
+            query: "find",
+            maxResults: 32
+        )
+        let candidates = liveMatches + cachedMatches
+        let normalizedFindTitles: Set<String> = ["find", "find..."]
+
+        let parent = candidates.first { item in
+            !item.children.isEmpty
+                && normalizedFindTitles.contains(normalizedDockPillText(item.title))
+                && !leafFindChildren(for: item).isEmpty
+        }
+        guard let parent else { return nil }
+
+        let fallbackPID =
+            parent.sourcePID != 0
+            ? parent.sourcePID
+            : (
+                NSWorkspace.shared.runningApplications.first {
+                    $0.bundleIdentifier == targetBundleId && !$0.isTerminated
+                }?.processIdentifier ?? 0
+            )
+        return menuItemWithSourceFallback(parent, pid: fallbackPID, appName: targetAppName)
+    }
+
+    private func makeFindToken(
+        targetBundleId: String,
+        targetAppName: String
+    ) -> AppFindToken {
+        AppFindToken(
+            targetBundleId: targetBundleId,
+            targetAppName: targetAppName,
+            parentMenu: findMenuParent(
+                targetBundleId: targetBundleId,
+                targetAppName: targetAppName
+            ),
+            selectedMenu: nil
+        )
+    }
+
+    @discardableResult
+    private func activateFindTokenIfNeeded(from rawQuery: String) -> Bool {
+        guard showContextInDock, !aiMode.isActive, lockedFindToken == nil else { return false }
+
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let scope = resolveDockScope(for: trimmed)
+        let rawScopedQuery = rawScopedActionQuery(for: trimmed, scope: scope)
+        guard isFindIntentCommand(rawScopedQuery, fullQuery: trimmed),
+            let target = resolvedFindTarget(dockScope: scope)
+        else { return false }
+
+        let payload = findIntentPayload(from: rawScopedQuery)
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            lockedFindToken = makeFindToken(
+                targetBundleId: target.bundleId,
+                targetAppName: target.appName
+            )
+            showFindTokenMenu = false
+            if searchState.query != payload {
+                searchState.query = payload
+            }
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
+        }
+        l2.appCompletion = nil
+        l2.showResultsPopover = false
+        cachedDockPills = []
+        if scope.isExplicitAppScope,
+           l2.targetApp?.bundleId != target.bundleId {
+            _ = activateInlineDockAppScope(
+                bundleIdentifier: target.bundleId,
+                appName: target.appName,
+                queryOverride: payload,
+                preserveGlobalContext: isGlobalContextActive
+            )
+        }
+        return true
+    }
+
+    private func clearFindToken(preserveQuery: Bool = true) {
+        withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+            lockedFindToken = nil
+            showFindTokenMenu = false
+            if !preserveQuery {
+                searchState.query = ""
+            }
+        }
+        scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0)
+    }
+
     private func resolvedFindIntent(
         for query: String,
         dockScope: DockScopeResolution,
@@ -11374,63 +11501,126 @@ struct LauncherView: View {
         }
     }
 
-    private func makeAppFindIntentPill(
-        fullQuery: String,
-        rawScopedQuery: String,
-        dockScope: DockScopeResolution
-    ) -> DockPill? {
-        guard isFindIntentCommand(rawScopedQuery, fullQuery: fullQuery),
-            let target = resolvedFindTarget(dockScope: dockScope)
-        else { return nil }
+    private func executeFindToken(_ token: AppFindToken, userMessage: String) {
+        let searchQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let rawUserQuery = rawDockQuery(matching: fullQuery)
-        if let intent = resolvedFindIntent(
-            for: fullQuery,
-            dockScope: dockScope,
-            rawScopedQuery: rawScopedQuery
-        ) {
-            let queryLabel = messageIntentDisplayText(intent.query, limit: 42)
-            var pill = DockPill(
-                id: "find-intent-\(intent.targetBundleId)-\(normalizedDockPillText(intent.query))",
-                name: "Find \"\(queryLabel)\"",
-                icon: "magnifyingglass",
-                accentColorName: "blue",
-                badge: intent.targetAppName,
-                execute: {
-                    self.executeAppFindIntent(intent)
-                }
+        if let selectedMenu = token.selectedMenu {
+            executeFindTokenMenu(
+                selectedMenu,
+                token: token,
+                searchQuery: searchQuery,
+                userMessage: userMessage
             )
-            pill.sourceBundleId = intent.targetBundleId
-            pill.sourceAppName = intent.targetAppName
-            pill.rankingKind = "semanticIntent"
-            pill.trackingIdentifier =
-                "find-intent:\(intent.targetBundleId):\(normalizedDockPillText(intent.query))"
-            pill.searchTerms = [
-                intent.targetAppName, "find", "search", "lookup", intent.query
-            ]
-            return pill
+            return
         }
 
-        var pill = DockPill(
-            id: "find-mode-\(target.bundleId)",
-            name: "Find in \(target.appName)",
+        if searchQuery.isEmpty {
+            openAppFindInterface(
+                targetBundleId: token.targetBundleId,
+                targetAppName: token.targetAppName,
+                userMessage: userMessage
+            )
+            return
+        }
+
+        executeAppFindIntent(
+            AppFindIntent(
+                query: searchQuery,
+                targetBundleId: token.targetBundleId,
+                targetAppName: token.targetAppName,
+                userMessage: userMessage,
+                preferMailboxSearch: token.targetBundleId == "com.apple.mail"
+            )
+        )
+    }
+
+    private func executeFindTokenMenu(
+        _ menuItem: AXMenuItem,
+        token: AppFindToken,
+        searchQuery: String,
+        userMessage: String
+    ) {
+        if let existingTask = l2.currentTask {
+            existingTask.cancel()
+            l2.currentTask = nil
+            l2.isLoading = false
+            l2.activeRequestID = nil
+        }
+
+        l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
+        l2.isLoading = true
+        let actionId = DockActionFeedback.start(
+            searchQuery.isEmpty ? "Opening Find" : "Searching",
+            subject: searchQuery.isEmpty
+                ? token.targetAppName
+                : "\(token.targetAppName) for \"\(searchQuery)\"",
             icon: "magnifyingglass",
-            accentColorName: "blue",
-            badge: "⌘F",
-            execute: {
-                self.openAppFindInterface(
-                    targetBundleId: target.bundleId,
-                    targetAppName: target.appName,
-                    userMessage: rawUserQuery
+            tint: .accentColor
+        )
+
+        l2.currentTask = Task {
+            guard let app = await activateOrLaunchSemanticApp(
+                bundleIdentifier: token.targetBundleId,
+                appName: token.targetAppName
+            ) else {
+                await MainActor.run {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "❌ Couldn't open \(token.targetAppName).",
+                            isError: true
+                        )
+                    )
+                    DockActionFeedback.fail(actionId, label: "Couldn't open \(token.targetAppName)")
+                    l2.isLoading = false
+                    l2.currentTask = nil
+                }
+                return
+            }
+
+            let pid = app.processIdentifier
+            let path = menuItem.path
+            let clicked = AXMenuReader.shared.clickMenuItem(path: path, in: pid)
+            if !clicked, let sc = menuItem.shortcutChar, !sc.isEmpty {
+                _ = AXMenuReader.shared.executeShortcut(
+                    char: sc,
+                    modifiers: menuItem.shortcutModifiers,
+                    in: pid
                 )
             }
-        )
-        pill.sourceBundleId = target.bundleId
-        pill.sourceAppName = target.appName
-        pill.rankingKind = "semanticIntent"
-        pill.trackingIdentifier = "find-mode:\(target.bundleId)"
-        pill.searchTerms = [target.appName, "find", "search", "lookup"]
-        return pill
+
+            var injected = searchQuery.isEmpty
+            if !searchQuery.isEmpty {
+                setFindPasteboardString(searchQuery)
+                try? await Task.sleep(nanoseconds: 160_000_000)
+                injected = await injectSearchQuery(searchQuery, into: pid)
+            }
+
+            await MainActor.run {
+                if injected {
+                    let content = searchQuery.isEmpty
+                        ? "Opened \(menuItem.title) in \(token.targetAppName)."
+                        : "Searching \(token.targetAppName) for \"\(searchQuery)\"."
+                    l2.chatMessages.append(AIChatMessage(role: .assistant, content: content))
+                    DockActionFeedback.complete(actionId)
+                    clearFindToken(preserveQuery: false)
+                    l2.focusedPillIndex = nil
+                    scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
+                } else {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content:
+                                "⚠️ Opened \(menuItem.title), but couldn't insert the query automatically.",
+                            isError: true
+                        )
+                    )
+                    DockActionFeedback.fail(actionId, label: "Search field not found")
+                }
+                l2.isLoading = false
+                l2.currentTask = nil
+            }
+        }
     }
 
     private func makeMessagesSemanticIntentPill(
@@ -14819,6 +15009,7 @@ struct LauncherView: View {
         // When a submenu parent is locked, the dropdown handles child display directly —
         // skip all pill logic so no app/file/other pills compete with it.
         if lockedSubmenuParent != nil { return [] }
+        if lockedFindToken != nil { return [] }
 
         // AI-found menu action: show as a focused pill instead of in the chat result sheet
         if q.isEmpty, let proposal = pendingAIMenuProposal {
@@ -14880,13 +15071,6 @@ struct LauncherView: View {
         pills.append(contentsOf: buildSystemSettingsPills(query: q))
         let scope = resolveDockScope(for: q)
         let rawScopedSearchQuery = rawScopedActionQuery(for: q, scope: scope)
-        if let appFindIntentPill = makeAppFindIntentPill(
-            fullQuery: q,
-            rawScopedQuery: rawScopedSearchQuery,
-            dockScope: scope
-        ) {
-            return [appFindIntentPill]
-        }
         let installedScopeMode = contextDockInstalledAppScopeMatching
         let runningOnly = contextDockRunningOnlyAppMatching && !installedScopeMode
         let runningBundleIds = runningOnly ? runningBundleIdsForContextDock() : []
@@ -16431,7 +16615,13 @@ struct LauncherView: View {
 
             HStack(spacing: 6) {
                 // Submenu locked mode: show vertical child suggestion list instead of pills
-                if let locked = lockedSubmenuParent, let subCtx = submenuGhostContext {
+                if let findToken = lockedFindToken, showFindTokenMenu, findToken.hasChildMenu {
+                    findTokenDropdownView(findToken)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: settings.effectiveDockAtBottom ? .bottom : .top)),
+                            removal: .opacity.combined(with: .scale(scale: 0.97, anchor: settings.effectiveDockAtBottom ? .bottom : .top))
+                        ))
+                } else if let locked = lockedSubmenuParent, let subCtx = submenuGhostContext {
                     submenuDropdownView(parent: locked, children: subCtx.children, prefix: subCtx.childPrefix)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: settings.effectiveDockAtBottom ? .bottom : .top)),
@@ -18168,6 +18358,151 @@ struct LauncherView: View {
                 }
             }
         }
+        .transition(.asymmetric(
+            insertion: .opacity.combined(with: .scale(
+                scale: 0.95,
+                anchor: settings.effectiveDockAtBottom ? .bottom : .top)
+            ),
+            removal: .opacity.combined(with: .scale(
+                scale: 0.95,
+                anchor: settings.effectiveDockAtBottom ? .bottom : .top)
+            )
+        ))
+    }
+
+    @ViewBuilder
+    private func findTokenChip(_ token: AppFindToken) -> some View {
+        let selectedTitle = token.selectedMenu?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let label = selectedTitle.isEmpty ? "Find" : "Find"
+        HStack(spacing: 0) {
+            Button {
+                clearFindToken(preserveQuery: true)
+            } label: {
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .lineLimit(1)
+                    .padding(.leading, 10)
+                    .padding(.trailing, token.hasChildMenu ? 6 : 10)
+            }
+            .buttonStyle(.plain)
+            .help(selectedTitle.isEmpty ? "Remove Find mode" : selectedTitle)
+
+            if token.hasChildMenu {
+                Button {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                        showFindTokenMenu.toggle()
+                        l2.focusedPillIndex = nil
+                        listViewHoveredIndex = nil
+                    }
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color(nsColor: .labelColor).opacity(0.88))
+                            .frame(width: 20, height: 20)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                    }
+                    .padding(.trailing, 4)
+                }
+                .buttonStyle(.plain)
+                .help("Choose Find menu")
+            }
+
+            if !selectedTitle.isEmpty {
+                Text(selectedTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.trailing, 9)
+            }
+        }
+        .frame(height: 30)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.white.opacity(showFindTokenMenu ? 0.32 : 0.18), lineWidth: 0.7)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: selectedTitle)
+    }
+
+    @ViewBuilder
+    private func findTokenDropdownView(_ token: AppFindToken) -> some View {
+        let children = token.parentMenu.map(leafFindChildren(for:)) ?? []
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Find in \(token.targetAppName)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+
+                ForEach(Array(children.enumerated()), id: \.element.id) { idx, child in
+                    let isHov = listViewHoveredIndex == (12000 + idx)
+                    let selected = token.selectedMenu?.id == child.id
+                    Button {
+                        withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                            if var updatedToken = lockedFindToken {
+                                updatedToken.selectedMenu = child
+                                lockedFindToken = updatedToken
+                            }
+                            showFindTokenMenu = false
+                            listViewHoveredIndex = nil
+                        }
+                        DispatchQueue.main.async { isSearchFieldFocused = true }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: selected ? "checkmark.circle.fill" : menuSymbol(for: child))
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                                .frame(width: 20)
+                            Text(child.title)
+                                .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                                .foregroundStyle(Color(nsColor: .labelColor))
+                                .lineLimit(1)
+                            Spacer()
+                            if let shortcut = child.shortcutDisplay, !shortcut.isEmpty {
+                                Text(shortcut)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary.opacity(0.55))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        .regularMaterial,
+                                        in: RoundedRectangle(cornerRadius: 4)
+                                    )
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            (isHov || selected)
+                                ? Color(nsColor: .labelColor).opacity(selected ? 0.10 : 0.07)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        listViewHoveredIndex = hovering ? (12000 + idx) : nil
+                    }
+                    .padding(.horizontal, 6)
+                }
+                .padding(.bottom, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: 280)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 8)
         .transition(.asymmetric(
             insertion: .opacity.combined(with: .scale(
                 scale: 0.95,
@@ -20189,6 +20524,11 @@ struct LauncherView: View {
                         .animation(.spring(response: 0.22, dampingFraction: 0.8), value: locked.title)
                     }
 
+                    if let findToken = lockedFindToken, showContextInDock {
+                        findTokenChip(findToken)
+                            .transition(.scale(scale: 0.82, anchor: .leading).combined(with: .opacity))
+                    }
+
                     // Vertical separator between icon and text — mirrors expanded appPillButton
                     // Separator and text field are hidden when a context pill is keyboard-focused
                     // (the input shrinks to icon-only to give pills more room)
@@ -20563,6 +20903,14 @@ struct LauncherView: View {
                                     if !newValue.isEmpty, pendingAIMenuProposal != nil {
                                         pendingAIMenuProposal = nil
                                     }
+                                    if lockedFindToken == nil {
+                                        if activateFindTokenIfNeeded(from: newValue) {
+                                            return
+                                        }
+                                    } else {
+                                        l2.appCompletion = nil
+                                        l2.showResultsPopover = false
+                                    }
                                     // In L2 context dock mode, pills filter in the pill row —
                                     // do NOT run L1 search (which would expand the window with results).
                                     if !aiMode.isActive && !showContextInDock {
@@ -20570,7 +20918,7 @@ struct LauncherView: View {
                                     }
                                     // When a submenu parent is locked, skip all app-scope detection —
                                     // input is purely a child filter, not an app name.
-                                    if isL2ContextActive && lockedSubmenuParent == nil {
+                                    if isL2ContextActive && lockedSubmenuParent == nil && lockedFindToken == nil {
                                         let q = newValue
                                             .trimmingCharacters(in: .whitespacesAndNewlines)
                                             .lowercased()
@@ -20623,7 +20971,7 @@ struct LauncherView: View {
                                     }
                                     // Update partial app autocomplete for L2 (skip when submenu locked
                                     // or when files/text/folders are actively selected).
-                                    if isL2ContextActive && isGlobalContextActive && lockedSubmenuParent == nil
+                                    if isL2ContextActive && isGlobalContextActive && lockedSubmenuParent == nil && lockedFindToken == nil
                                         && !hasActiveDockContextSelection {
                                         let trimmed = newValue.trimmingCharacters(in: .whitespaces)
                                         let installedScopeMode = contextDockInstalledAppScopeMatching
@@ -20663,7 +21011,7 @@ struct LauncherView: View {
                                                 }
                                             }
                                         }
-                                    } else if lockedSubmenuParent != nil
+                                    } else if lockedSubmenuParent != nil || lockedFindToken != nil
                                         || (isL2ContextActive && (!isGlobalContextActive || hasActiveDockContextSelection)) {
                                         // Locked: clear any stale app completion
                                         l2.appCompletion = nil
@@ -20692,6 +21040,10 @@ struct LauncherView: View {
                                             if let firstResult = finderSemanticResults.first {
                                                 executeFinderFolderSearchResult(firstResult)
                                             }
+                                            return
+                                        }
+                                        if let findToken = lockedFindToken {
+                                            executeFindToken(findToken, userMessage: "find \(trimmed)")
                                             return
                                         }
                                         if l2.focusedPillIndex != nil,
@@ -24417,6 +24769,10 @@ struct LauncherView: View {
     private func handleL2Query(_ query: String, skipMenuRouter: Bool) {
         guard !query.isEmpty else { return }
         if handleL2TaskControlQueryIfNeeded(query) {
+            return
+        }
+        if let findToken = lockedFindToken {
+            executeFindToken(findToken, userMessage: "find \(query)")
             return
         }
         if tryExecuteTriggerRuleByName(query) { return }
@@ -30279,8 +30635,21 @@ struct LauncherView: View {
                 return nil
             }
 
+            if event.keyCode == 51,
+               self.lockedFindToken != nil,
+               self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.clearFindToken(preserveQuery: false)
+                return nil
+            }
+
             // Right arrow: accept app ghost text (fill field with full name), no scope entry.
             if event.keyCode == 124 {
+                if let findToken = self.lockedFindToken, findToken.hasChildMenu {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                        self.showFindTokenMenu = true
+                    }
+                    return nil
+                }
                 if let completion = self.l2.appCompletion, !completion.ghost.isEmpty {
                     let full = completion.appName
                     if !full.isEmpty && self.searchState.query.lowercased() != full.lowercased() {
@@ -30617,6 +30986,11 @@ struct LauncherView: View {
                 return event  // pass through → SwiftUI navigateResults(direction:-1)
 
             case 36:  // Return / Enter
+                if let findToken = self.lockedFindToken {
+                    let payload = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.executeFindToken(findToken, userMessage: "find \(payload)")
+                    return nil
+                }
                 // Submenu ghost: Enter executes the first matching child
                 if let subCtx = self.submenuGhostContext, let firstChild = subCtx.children.first {
                     let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
@@ -30683,6 +31057,10 @@ struct LauncherView: View {
                 return event
 
             case 53:  // Escape — clear pill focus and return to input field
+                if self.lockedFindToken != nil {
+                    self.clearFindToken(preserveQuery: true)
+                    return nil
+                }
                 if self.l2.focusedPillIndex != nil {
                     self.l2.focusedPillIndex = nil
                     self.l2.pillNavViaKeyboard = false

@@ -11,6 +11,7 @@ Track release work here. Keep each item small enough for one pull request.
 - [x] Confirm Apple Menu items are excluded from persistent per-app menu cache.
 - [x] Confirm dynamic recent menu branches are excluded from persistent per-app menu cache.
 - [x] [Find] Add first-pass app-scoped Find pill and submit routing before generic Finder/context actions.
+- [x] [Find] Replace result-row Find with inline input token and optional child-menu picker.
 - [x] Verify Debug build with isolated DerivedData.
 
 ## Next
