@@ -413,12 +413,6 @@ struct GeneralSettingsView: View {
                             caption: "Pinned apps stay available in the base search layer.")
                         Toggle("", isOn: .constant(true)).disabled(true).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow {
-                        GeneralToggleLabel("Show Running Apps",
-                            caption: "Display running apps next to pinned apps. Right-click to pin or quit.")
-                        Toggle("", isOn: $settings.showRunningAppsInBar).labelsHidden()
-                    }
                 }
             }
 

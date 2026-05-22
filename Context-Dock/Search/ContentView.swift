@@ -716,7 +716,7 @@ struct LauncherView: View {
         if showContextInDock {
             if aiMode.isActive { return false }
             if isGlobalContextActive {
-                return settings.showRunningAppsInBar || !settings.pinnedApps.isEmpty
+                return !settings.pinnedApps.isEmpty
                     || !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
             return hasAIExtensionsToShow || !searchState.query.isEmpty
@@ -2461,12 +2461,6 @@ struct LauncherView: View {
                     }
                 }
             }
-            .onChange(of: settings.showRunningAppsInBar) { _, newValue in
-                if newValue {
-                    runningRegularApps = currentRegularRunningApps()
-                }
-                updateWindowSize()
-            }
             .onChange(of: settings.clipboardHistoryRetentionHours) { _, _ in
                 pruneExpiredClipboardEntries()
             }
@@ -3897,51 +3891,6 @@ struct LauncherView: View {
                             settings: settings
                         ))
                 }
-
-                // Running apps (when enabled) — shown after pinned, deduplicated
-                if settings.showRunningAppsInBar {
-                    let pinnedPaths = Set(settings.pinnedApps.map { $0.path })
-                    let pinnedBundleIds = Set(
-                        settings.pinnedApps.compactMap { $0.bundleIdentifier })
-                    let runningApps = runningRegularApps.filter { app in
-                        guard let path = app.bundleURL?.path else { return false }
-                        return !pinnedPaths.contains(path)
-                            && (app.bundleIdentifier == nil
-                                || !pinnedBundleIds.contains(app.bundleIdentifier!))
-                    }
-
-                    if !runningApps.isEmpty && !settings.pinnedApps.isEmpty {
-                        Divider()
-                            .frame(height: 28)
-                            .padding(.horizontal, 2)
-                    }
-
-                    ForEach(runningApps, id: \.processIdentifier) { app in
-                        appIconButton(
-                            icon: resolvedRunningAppIcon(for: app),
-                            label: app.localizedName ?? "App",
-                            isRunning: true,
-                            hoverKey: "running-\(app.processIdentifier)",
-                            onCloseRunningApp: { terminateRunningAppFromDock(app) },
-                            action: { activateRunningAppFromDock(app) }
-                        )
-                        .contextMenu {
-                            Button("Pin to Launcher") {
-                                if let path = app.bundleURL?.path,
-                                    let name = app.localizedName
-                                {
-                                    settings.pinApp(
-                                        name: name, path: path,
-                                        bundleIdentifier: app.bundleIdentifier)
-                                }
-                            }
-                        Divider()
-                        Button("Quit \(app.localizedName ?? "App")", role: .destructive) {
-                                terminateRunningAppFromDock(app)
-                        }
-                        }
-                    }
-                }
             }
         }
     }
@@ -4008,69 +3957,22 @@ struct LauncherView: View {
 
     @ViewBuilder
     private var pinnedAndRecentAppsRow: some View {
-        let pinnedPaths = Set(settings.pinnedApps.map { $0.path })
-        let pinnedBundleIds = Set(settings.pinnedApps.compactMap { $0.bundleIdentifier })
-
-        // The input field already represents the frontmost app in global context mode —
-        // remove it from the pill row so it never appears twice.
-        let inGlobalAutoFocus = isGlobalContextActive && settings.showRunningAppsInBar
         let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
 
-        let dockApps: [NSRunningApplication] = {
-            guard settings.showRunningAppsInBar else { return [] }
-            let source =
-                runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
-            var seen = Set<String>()
-            let filtered = source.filter { app in
-                guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return false }
-                // Input field already represents the frontmost — skip from pill row
-                if inGlobalAutoFocus, app.bundleIdentifier == frontmost.bundleID { return false }
-                if let path = app.bundleURL?.path, pinnedPaths.contains(path) { return false }
-                if let bundleId = app.bundleIdentifier, pinnedBundleIds.contains(bundleId) {
-                    return false
-                }
-                if !searchQuery.isEmpty,
-                   !(app.localizedName ?? "").lowercased().contains(searchQuery) { return false }
-                let key = app.bundleIdentifier ?? app.bundleURL?.path ?? "\(app.processIdentifier)"
-                return seen.insert(key).inserted
-            }
-            return filtered
-        }()
-
-        // Pinned apps visible in the pill row (frontmost hidden when input field represents it)
-        let basePinnedApps = inGlobalAutoFocus
-            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmost.bundleID }
-            : settings.pinnedApps
+        let basePinnedApps = settings.pinnedApps
         let visiblePinnedApps = searchQuery.isEmpty
             ? basePinnedApps
             : basePinnedApps.filter { $0.name.lowercased().contains(searchQuery) }
 
         let pinnedCount = visiblePinnedApps.count
-
-        // Auto-detect frontmost app index so global context highlights it without keyboard input.
-        // Disabled when inGlobalAutoFocus — the input field is already the frontmost representation.
-        let autoFrontmostIdx: Int? = {
-            guard !inGlobalAutoFocus,
-                  isGlobalContextActive, settings.showRunningAppsInBar,
-                  focusedAppPillIndex == nil else { return nil }
-            // Check pinned apps first
-            if let i = visiblePinnedApps.firstIndex(where: {
-                $0.bundleIdentifier == frontmost.bundleID }) { return i }
-            // Check running apps list (using same order as dockApps above)
-            if let i = dockApps.firstIndex(where: {
-                $0.bundleIdentifier == frontmost.bundleID }) { return pinnedCount + i }
-            return nil
-        }()
-
-        // Keyboard navigation (focusedAppPillIndex) takes priority; auto-detection is the fallback
-        let focusedIdx = focusedAppPillIndex ?? autoFrontmostIdx
+        let focusedIdx = focusedAppPillIndex
 
         if let kbIdx = focusedAppPillIndex {
             // ── Keyboard nav cascade: prev compact | FOCUSED expanded fills | next compact ──
             // Mirrors context dock action-pill cascade exactly.
             let allAppItems = buildAppCascadeItems(
                 pinnedApps: visiblePinnedApps,
-                runningApps: dockApps,
+                runningApps: [],
                 pinnedCount: pinnedCount
             )
             let prevItem    = allAppItems.first(where: { $0.index == kbIdx - 1 })
@@ -4140,43 +4042,6 @@ struct LauncherView: View {
                             }
                         }
 
-                        if !dockApps.isEmpty && !visiblePinnedApps.isEmpty {
-                            Divider().frame(height: 28).padding(.horizontal, 2)
-                        }
-
-                        ForEach(Array(dockApps.enumerated()), id: \.element.processIdentifier) { offset, app in
-                            let idx = pinnedCount + offset
-                            appPillButton(
-                                icon: resolvedRunningAppIcon(for: app), label: app.localizedName ?? "App",
-                                hoverKey: "dock-running-\(app.processIdentifier)",
-                                focused: idx == focusedIdx, index: idx,
-                                destructiveAction: { terminateRunningAppFromDock(app) },
-                                action: {
-                                    activateRunningAppFromDock(app)
-                                    if isGlobalContextActive { scheduleContextDockTransition(bundleId: app.bundleIdentifier, appName: app.localizedName ?? "App") }
-                                }
-                            )
-                            .id("app-pill-\(idx)")
-                            .scrollTransition(.interactive, axis: .horizontal) { effect, phase in
-                                effect
-                                    .rotation3DEffect(.degrees(phase.value * 22), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
-                                    .scaleEffect(max(0.78, 1 - abs(phase.value) * 0.18))
-                                    .opacity(max(0.45, 1 - abs(phase.value) * 0.38))
-                            }
-                            .contextMenu {
-                                Button {
-                                    if let path = app.bundleURL?.path, let name = app.localizedName {
-                                        settings.pinApp(name: name, path: path, bundleIdentifier: app.bundleIdentifier)
-                                    }
-                                } label: {
-                                    Label("Pin to Launcher", systemImage: "pin")
-                                }
-                                Divider()
-                                Button(role: .destructive) { terminateRunningAppFromDock(app) } label: {
-                                    Label("Quit \(app.localizedName ?? "App")", systemImage: "xmark.circle")
-                                }
-                            }
-                        }
                     }
                 }
                 .onChange(of: focusedAppPillIndex) { idx in
@@ -18958,30 +18823,10 @@ struct LauncherView: View {
     @ViewBuilder
     private var pinnedAppsListView: some View {
         let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
-        let inGlobalAutoFocus = isGlobalContextActive && settings.showRunningAppsInBar
-        let basePinned = inGlobalAutoFocus
-            ? settings.pinnedApps.filter { $0.bundleIdentifier != frontmost.bundleID }
-            : settings.pinnedApps
+        let basePinned = settings.pinnedApps
         let visiblePinned = searchQuery.isEmpty
             ? basePinned
             : basePinned.filter { $0.name.lowercased().contains(searchQuery) }
-        let pinnedBundleIds = Set(settings.pinnedApps.compactMap { $0.bundleIdentifier })
-        let visibleRunning: [NSRunningApplication] = {
-            guard settings.showRunningAppsInBar else { return [] }
-            let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
-            var seen = Set<String>()
-            return source.filter { app in
-                guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return false }
-                if inGlobalAutoFocus, app.bundleIdentifier == frontmost.bundleID { return false }
-                if let bid = app.bundleIdentifier, pinnedBundleIds.contains(bid) { return false }
-                if let path = app.bundleURL?.path,
-                   Set(settings.pinnedApps.map { $0.path }).contains(path) { return false }
-                if !searchQuery.isEmpty,
-                   !(app.localizedName ?? "").lowercased().contains(searchQuery) { return false }
-                let key = app.bundleIdentifier ?? app.bundleURL?.path ?? "\(app.processIdentifier)"
-                return seen.insert(key).inserted
-            }
-        }()
 
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 2) {
@@ -18996,25 +18841,6 @@ struct LauncherView: View {
                             launchPinnedApp(app)
                             if isGlobalContextActive {
                                 scheduleContextDockTransition(bundleId: app.bundleIdentifier, appName: app.name)
-                            }
-                        }
-                    )
-                    .id("app-list-\(idx)")
-                }
-                if !visiblePinned.isEmpty && !visibleRunning.isEmpty {
-                    Divider().padding(.horizontal, 8).padding(.vertical, 2)
-                }
-                ForEach(Array(visibleRunning.enumerated()), id: \.element.processIdentifier) { offset, app in
-                    let idx = visiblePinned.count + offset
-                    appListRow(
-                        icon: resolvedRunningAppIcon(for: app),
-                        name: app.localizedName ?? "App",
-                        subtitle: "Running",
-                        index: idx,
-                        action: {
-                            activateRunningAppFromDock(app)
-                            if isGlobalContextActive {
-                                scheduleContextDockTransition(bundleId: app.bundleIdentifier, appName: app.localizedName ?? "App")
                             }
                         }
                     )
@@ -19145,9 +18971,21 @@ struct LauncherView: View {
             .frame(height: 58)
             .padding(.horizontal, 10)
             .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isKeyboardFocused ? Color.accentColor.opacity(0.18) : Color.primary.opacity(isHov ? 0.075 : 0))
-                    .animation(.spring(response: 0.2, dampingFraction: 0.75), value: isActive)
+                ZStack {
+                    if isKeyboardFocused {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.24))
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.white.opacity(0.10))
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1)
+                    } else if isHov {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.08))
+                    }
+                }
+                .animation(.easeOut(duration: 0.10), value: isKeyboardFocused)
+                .animation(.easeOut(duration: 0.10), value: isHov)
             }
             .contentShape(Rectangle())
         }
@@ -19168,7 +19006,7 @@ struct LauncherView: View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if isGlobalContextActive {
             if q.isEmpty {
-                return settings.showRunningAppsInBar || !settings.pinnedApps.isEmpty
+                return !settings.pinnedApps.isEmpty
             }
             if shouldUsePureGlobalAppSearch {
                 return true
@@ -30756,35 +30594,15 @@ struct LauncherView: View {
                     }, quit: quitAction, remove: removeAction)
                 }
         }
-        // In global context, frontmost app is shown by the input field — exclude from pill row
-        let inGlobalAutoFocus = isGlobalContextActive && settings.showRunningAppsInBar
         // Pinned row
         var items: [(execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?)] = []
         for app in settings.pinnedApps {
-            if inGlobalAutoFocus && app.bundleIdentifier == frontmost.bundleID { continue }
             let ri = runningApp(for: app)
             let captured = app
             items.append((
                 execute: { launchPinnedApp(captured) },
                 quit: ri.map { r in { terminateRunningAppFromDock(r) } },
                 remove: { settings.unpinApp(captured) }
-            ))
-        }
-        guard settings.showRunningAppsInBar else { return items }
-        let pinnedPaths = Set(settings.pinnedApps.map { $0.path })
-        let pinnedBundleIds = Set(settings.pinnedApps.compactMap { $0.bundleIdentifier })
-        var seen = pinnedBundleIds.union(pinnedPaths)
-        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
-        for app in source {
-            guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
-            if inGlobalAutoFocus && app.bundleIdentifier == frontmost.bundleID { continue }
-            let key = app.bundleIdentifier ?? app.bundleURL?.path ?? "\(app.processIdentifier)"
-            guard seen.insert(key).inserted else { continue }
-            let captured = app
-            items.append((
-                execute: { activateRunningAppFromDock(captured) },
-                quit: { terminateRunningAppFromDock(captured) },
-                remove: nil
             ))
         }
         return items
