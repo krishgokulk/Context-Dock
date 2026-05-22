@@ -1304,6 +1304,7 @@ struct LauncherView: View {
                 if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
                 return
             }
+            guard pendingGlobalGroupedQuery == q else { return }
 
             // ── Phase 1: snapshot @State + compute @State-dependent parts on MainActor ──
             // (fast — all reads from in-memory caches or simple property lookups)
@@ -1380,7 +1381,7 @@ struct LauncherView: View {
                     .map { ($0.bundleIdentifier!, $0.localizedName ?? "", $0.icon, $0.processIdentifier) }
             }()
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
 
             // ── Phase 2: cross-app cache reads off MainActor ─────────────────────────
             // AppMenuCapabilityCache uses NSLock — thread-safe for concurrent reads.
@@ -1423,7 +1424,7 @@ struct LauncherView: View {
                 return result
             }.value
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
 
             // ── Phase 3: convert descriptors → DockPills + build final state on MainActor ─
             let crossAppGroups: [AppMenuGroup] = zip(snappedRunningApps, crossDescriptors)
@@ -1483,7 +1484,7 @@ struct LauncherView: View {
                 menuFirst: favorMenu && !menuPills.isEmpty
             )
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
             cachedGlobalGroupedQuery = q
             cachedGlobalGroupedState = state
             if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
@@ -1803,12 +1804,37 @@ struct LauncherView: View {
             }
             let matches = globalApplicationMatches(for: q, limit: maxListViewDockPills)
             await MainActor.run {
+                guard self.pendingGlobalAppQuery == q else { return }
                 self.cachedGlobalAppMatches = matches
                 self.cachedGlobalAppQuery = q
                 if self.pendingGlobalAppQuery == q { self.pendingGlobalAppQuery = nil }
                 self.globalAppMatchTask = nil
                 self.scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
             }
+        }
+    }
+
+    private func clearGlobalContextQuerySmoothly() {
+        var transaction = Transaction(animation: .easeOut(duration: 0.12))
+        transaction.disablesAnimations = false
+        withTransaction(transaction) {
+            globalAppMatchTask?.cancel()
+            globalGroupedTask?.cancel()
+            pendingGlobalAppQuery = nil
+            pendingGlobalGroupedQuery = nil
+            cachedGlobalAppQuery = ""
+            cachedGlobalAppMatches = []
+            cachedGlobalGroupedQuery = ""
+            cachedGlobalGroupedState = nil
+            focusedAppPillIndex = nil
+            hoveredAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            l2.appCompletion = nil
+            l2.showResultsPopover = false
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
         }
     }
 
@@ -21269,9 +21295,13 @@ struct LauncherView: View {
                             aiModeControls
                         } else if !searchState.query.isEmpty {
                             Button(action: {
-                                searchState.query = ""
-                                searchState.results = []
-                                searchState.selectedIndex = nil
+                                if isGlobalContextActive {
+                                    clearGlobalContextQuerySmoothly()
+                                } else {
+                                    searchState.query = ""
+                                    searchState.results = []
+                                    searchState.selectedIndex = nil
+                                }
                             }) {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.secondary.opacity(0.5))
