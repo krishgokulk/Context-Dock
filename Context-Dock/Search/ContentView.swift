@@ -953,6 +953,19 @@ struct LauncherView: View {
         return cachedGlobalAppMatches
     }
 
+    private func shouldIncludeGlobalMenuResults(
+        query: String,
+        appMatches: [SearchResult],
+        isGenericAppQuery: Bool
+    ) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !isGenericAppQuery else { return false }
+
+        // App launch is the hot path in Global Context. If app rows already match,
+        // skip frontmost/cross-app menu filtering so running-app caches cannot stall typing.
+        return appMatches.isEmpty
+    }
+
     private func isGenericApplicationListQuery(_ query: String) -> Bool {
         switch normalizedDockPillText(query) {
         case "app", "apps", "application", "applications":
@@ -1322,6 +1335,11 @@ struct LauncherView: View {
             let isGenericAppQuery = isGenericApplicationListQuery(q)
             let inlineScope = activeGlobalInlineDockScope(for: q)
             let rawAppMatches = inlineScope?.isExplicitAppScope == true ? [] : currentGlobalAppMatches(for: q)
+            let includeMenuResults = shouldIncludeGlobalMenuResults(
+                query: q,
+                appMatches: rawAppMatches,
+                isGenericAppQuery: isGenericAppQuery
+            )
             let favorMenu = intentFavorsMenu(q)
             let frontmostSnap = (bundleID: frontmost.bundleID, name: frontmost.name, icon: frontmost.icon)
             let maxPills = maxListViewDockPills
@@ -1332,7 +1350,7 @@ struct LauncherView: View {
                 if let scope = inlineScope, scope.isExplicitAppScope {
                     return cachedGlobalAppScopeDockPills(query: q, scope: scope)
                 }
-                guard !isGenericAppQuery else { return [] }
+                guard includeMenuResults else { return [] }
                 return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxPills)
             }()
 
@@ -1341,6 +1359,7 @@ struct LauncherView: View {
             let ownBundleId = Bundle.main.bundleIdentifier ?? ""
             let snappedRunningApps: [(bundleID: String, name: String, icon: NSImage?, pid: pid_t)] = {
                 guard !isGenericAppQuery,
+                      includeMenuResults,
                       settings.enableLearnedGhostSuggestions,
                       isGlobalContextActive,
                       !hasActiveDockContextSelection,
@@ -1522,19 +1541,23 @@ struct LauncherView: View {
         }()
 
         let isGenericAppQuery = isGenericApplicationListQuery(q)
+        let includeMenuResults = shouldIncludeGlobalMenuResults(
+            query: q,
+            appMatches: rawAppMatches,
+            isGenericAppQuery: isGenericAppQuery
+        )
         // Frontmost app menus — cache-only so global typing never touches AX.
         let frontmostMenuPills: [DockPill] = {
             if let scope = activeGlobalInlineDockScope(for: q), scope.isExplicitAppScope {
                 return cachedGlobalAppScopeDockPills(query: q, scope: scope)
             }
-            guard !isGenericAppQuery else { return [] }
+            guard includeMenuResults else { return [] }
             return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxListViewDockPills)
         }()
 
-        // Cross-app menus grouped by source app — always shown alongside app results
-        // so users can see matching actions from every running app (not just the frontmost).
+        // Cross-app menus are fallback/action results. Keep them out of app-launch filtering.
         let crossAppGroups: [AppMenuGroup] = {
-            guard !isGenericAppQuery else { return [] }
+            guard includeMenuResults else { return [] }
             return crossAppMenuGroups(for: q)
         }()
 
