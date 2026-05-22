@@ -960,6 +960,8 @@ struct LauncherView: View {
     ) -> Bool {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !isGenericAppQuery else { return false }
+        guard q.count >= 3 else { return false }
+        guard pendingGlobalAppQuery != q.lowercased() else { return false }
 
         // App launch is the hot path in Global Context. If app rows already match,
         // skip frontmost/cross-app menu filtering so running-app caches cannot stall typing.
@@ -4577,8 +4579,6 @@ struct LauncherView: View {
     private func globalApplicationMatches(for query: String, limit: Int = Int.max) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
-        // Short queries are too noisy for app search. Keep 1-2 chars on frontmost menu only.
-        guard q.count >= 3 else { return [] }
 
         if isGenericApplicationListQuery(q) {
             return groupedGlobalApplicationList(limit: limit)
