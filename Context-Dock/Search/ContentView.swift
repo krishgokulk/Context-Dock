@@ -10061,10 +10061,12 @@ struct LauncherView: View {
         let targetBundleId: String
         let targetAppName: String
         let userMessage: String
+        let commandTitle: String
         let preferMailboxSearch: Bool
     }
 
     private struct AppFindToken {
+        let title: String
         let targetBundleId: String
         let targetAppName: String
         let parentMenu: AXMenuItem?
@@ -10076,6 +10078,12 @@ struct LauncherView: View {
                 child.isEnabled || child.children.contains(where: { $0.isEnabled })
             }
         }
+    }
+
+    private struct AppSearchProfile {
+        let preferredMenuTitles: [String]
+        let tryVisibleSearchFieldFirst: Bool
+        let pressReturnAfterInject: Bool
     }
 
     private func mailSearchDisplayLabel(
@@ -11205,6 +11213,81 @@ struct LauncherView: View {
         }
     }
 
+    private func findTokenTitle(for rawScopedQuery: String) -> String {
+        let normalized = normalizedDockPillText(rawScopedQuery)
+        if normalized == "search" || normalized.hasPrefix("search ") {
+            return "Search"
+        }
+        if normalized == "lookup" || normalized.hasPrefix("lookup ")
+            || normalized == "look for" || normalized.hasPrefix("look for ")
+        {
+            return "Search"
+        }
+        return "Find"
+    }
+
+    private func appSearchProfile(
+        bundleIdentifier: String,
+        appName: String,
+        commandTitle: String
+    ) -> AppSearchProfile {
+        let bundle = bundleIdentifier.lowercased()
+        let name = normalizedDockPillText(appName)
+        let command = normalizedDockPillText(commandTitle)
+        let isSearchCommand = command == "search"
+
+        if bundle == "com.apple.mail" {
+            return AppSearchProfile(
+                preferredMenuTitles: ["mailbox search", "find..."],
+                tryVisibleSearchFieldFirst: false,
+                pressReturnAfterInject: true
+            )
+        }
+
+        if bundle == "com.apple.notes" || name == "notes" {
+            return AppSearchProfile(
+                preferredMenuTitles: ["note list search...", "note list search", "find..."],
+                tryVisibleSearchFieldFirst: false,
+                pressReturnAfterInject: false
+            )
+        }
+
+        if bundle == "com.apple.photos" || name == "photos" {
+            return AppSearchProfile(
+                preferredMenuTitles: ["search", "find", "find..."],
+                tryVisibleSearchFieldFirst: true,
+                pressReturnAfterInject: false
+            )
+        }
+
+        let browserLike =
+            name.contains("youtube")
+            || name.contains("safari")
+            || name.contains("chrome")
+            || name.contains("firefox")
+            || name.contains("brave")
+            || name.contains("edge")
+            || bundle.contains("safari")
+            || bundle.contains("chrome")
+            || bundle.contains("firefox")
+            || bundle.contains("brave")
+            || bundle.contains("edge")
+
+        if browserLike || isSearchCommand {
+            return AppSearchProfile(
+                preferredMenuTitles: ["search", "find", "find..."],
+                tryVisibleSearchFieldFirst: browserLike,
+                pressReturnAfterInject: browserLike
+            )
+        }
+
+        return AppSearchProfile(
+            preferredMenuTitles: ["find", "find..."],
+            tryVisibleSearchFieldFirst: false,
+            pressReturnAfterInject: false
+        )
+    }
+
     private func resolvedFindTarget(
         dockScope: DockScopeResolution
     ) -> (bundleId: String, appName: String)? {
@@ -11318,10 +11401,12 @@ struct LauncherView: View {
     }
 
     private func makeFindToken(
+        title: String,
         targetBundleId: String,
         targetAppName: String
     ) -> AppFindToken {
         AppFindToken(
+            title: title,
             targetBundleId: targetBundleId,
             targetAppName: targetAppName,
             parentMenu: findMenuParent(
@@ -11348,6 +11433,7 @@ struct LauncherView: View {
         let payload = findIntentPayload(from: rawScopedQuery)
         withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
             lockedFindToken = makeFindToken(
+                title: findTokenTitle(for: rawScopedQuery),
                 targetBundleId: target.bundleId,
                 targetAppName: target.appName
             )
@@ -11405,36 +11491,36 @@ struct LauncherView: View {
             targetBundleId: target.bundleId,
             targetAppName: target.appName,
             userMessage: query,
+            commandTitle: findTokenTitle(for: rawScopedQuery),
             preferMailboxSearch: target.bundleId == "com.apple.mail"
         )
     }
 
-    private func openFindInterface(in pid: pid_t, bundleIdentifier: String) async -> Bool {
-        if bundleIdentifier == "com.apple.mail" {
-            let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-            if let mailboxSearchPath = liveItems.first(where: { item in
-                normalizedDockPillText(item.title) == "mailbox search"
-                    || normalizedDockPillText(item.path.joined(separator: " ")) ==
-                        "edit find mailbox search"
-            })?.path,
-                AXMenuReader.shared.clickMenuItem(path: mailboxSearchPath, in: pid)
-            {
-                return true
-            }
-        } else {
-            let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-            if let findPath = liveItems.first(where: { item in
-                let title = normalizedDockPillText(item.title)
-                let path = normalizedDockPillText(item.path.joined(separator: " "))
-                return title == "find"
-                    || title == "find..."
-                    || path == "edit find find"
-                    || path == "edit find find..."
-            })?.path,
-                AXMenuReader.shared.clickMenuItem(path: findPath, in: pid)
-            {
-                return true
-            }
+    private func openFindInterface(
+        in pid: pid_t,
+        bundleIdentifier: String,
+        appName: String,
+        commandTitle: String = "Find"
+    ) async -> Bool {
+        let profile = appSearchProfile(
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            commandTitle: commandTitle
+        )
+        let preferredTitles = Set(profile.preferredMenuTitles.map { normalizedDockPillText($0) })
+        let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+
+        if let preferredPath = liveItems.first(where: { item in
+            let title = normalizedDockPillText(item.title)
+            let path = normalizedDockPillText(item.path.joined(separator: " "))
+            return preferredTitles.contains(title)
+                || profile.preferredMenuTitles.contains(where: { preferred in
+                    path.hasSuffix(" " + normalizedDockPillText(preferred))
+                })
+        })?.path,
+            AXMenuReader.shared.clickMenuItem(path: preferredPath, in: pid)
+        {
+            return true
         }
 
         AXMenuReader.shared.executeShortcut(char: "f", modifiers: 2, in: pid)
@@ -11474,7 +11560,8 @@ struct LauncherView: View {
             try? await Task.sleep(nanoseconds: 180_000_000)
             let opened = await openFindInterface(
                 in: app.processIdentifier,
-                bundleIdentifier: targetBundleId
+                bundleIdentifier: targetBundleId,
+                appName: targetAppName
             )
 
             await MainActor.run {
@@ -11518,9 +11605,33 @@ struct LauncherView: View {
             let pid = app.processIdentifier
             try? await Task.sleep(nanoseconds: 180_000_000)
             setFindPasteboardString(searchQuery)
-            _ = await openFindInterface(in: pid, bundleIdentifier: intent.targetBundleId)
-            try? await Task.sleep(nanoseconds: 160_000_000)
-            let injected = await injectSearchQuery(searchQuery, into: pid)
+            let profile = appSearchProfile(
+                bundleIdentifier: intent.targetBundleId,
+                appName: intent.targetAppName,
+                commandTitle: intent.commandTitle
+            )
+            var injected = false
+            if profile.tryVisibleSearchFieldFirst {
+                injected = await injectSearchQuery(
+                    searchQuery,
+                    into: pid,
+                    pressReturn: profile.pressReturnAfterInject
+                )
+            }
+            if !injected {
+                _ = await openFindInterface(
+                    in: pid,
+                    bundleIdentifier: intent.targetBundleId,
+                    appName: intent.targetAppName,
+                    commandTitle: intent.commandTitle
+                )
+                try? await Task.sleep(nanoseconds: 160_000_000)
+                injected = await injectSearchQuery(
+                    searchQuery,
+                    into: pid,
+                    pressReturn: profile.pressReturnAfterInject
+                )
+            }
 
             await MainActor.run {
                 if injected {
@@ -11565,6 +11676,7 @@ struct LauncherView: View {
                 targetBundleId: token.targetBundleId,
                 targetAppName: token.targetAppName,
                 userMessage: userMessage,
+                commandTitle: token.title,
                 preferMailboxSearch: token.targetBundleId == "com.apple.mail"
             )
         )
@@ -18393,7 +18505,7 @@ struct LauncherView: View {
     @ViewBuilder
     private func findTokenChip(_ token: AppFindToken) -> some View {
         let selectedTitle = token.selectedMenu?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let label = selectedTitle.isEmpty ? "Find" : "Find"
+        let label = token.title
         HStack(spacing: 0) {
             Button {
                 clearFindToken(preserveQuery: true)
