@@ -701,10 +701,7 @@ struct LauncherView: View {
     }
 
     private var shouldShowFloatingAppLogo: Bool {
-        !showMediaLayer
-            && settings.showFloatingAppLogo
-            && (settings.enableLayer2 || (aiMode.isActive && hasAIExtensionsToShow)
-                || notificationManager.unreadCount > 0)
+        false
     }
 
     private var floatingAppLogoOccupiedWidth: CGFloat {
@@ -20351,7 +20348,12 @@ struct LauncherView: View {
                                 }
                             } else if showContextInDock && settings.enableFrontmostDetection {
                                 // l2.targetApp overrides frontmost icon after Tab completion
+                                let focusedGlobalAppResult = focusedGlobalAppResultForInputPreview()
                                 let topGlobalAppResult = topGlobalAppResultForInputPreview()
+                                let previewGlobalAppResult = focusedGlobalAppResult ?? topGlobalAppResult
+                                let previewGlobalAppBundleId = previewGlobalAppResult.flatMap {
+                                    bundleIdentifier(forApplicationResult: $0)
+                                }
                                 let scopedGlobalAppIcon = globalScopedAppIcon(for: searchState.query)
                                 let preferFrontmostMenuIcon =
                                     hasFrontmostMenuPillsInCurrentCache(for: searchState.query)
@@ -20359,11 +20361,11 @@ struct LauncherView: View {
                                     (scopedGlobalAppIcon != nil || (shouldUsePureGlobalAppSearch && !preferFrontmostMenuIcon) || hasActiveDockContextSelection)
                                     ? nil : typedL2AppIcon(for: searchState.query)
                                 // In Finder desktop-only mode (no window open) treat icon as nil → globe
-                                let displayIcon = scopedGlobalAppIcon?.icon ?? topGlobalAppResult?.icon ?? l2.targetApp?.icon ?? typedAppIcon?.icon ?? frontmost.icon
+                                let displayIcon = scopedGlobalAppIcon?.icon ?? previewGlobalAppResult?.icon ?? l2.targetApp?.icon ?? typedAppIcon?.icon ?? frontmost.icon
                                 let menuIcon = menuInputIconForSearchText(
-                                    hasAppMatch: scopedGlobalAppIcon != nil || topGlobalAppResult != nil || l2.targetApp != nil || typedAppIcon != nil
+                                    hasAppMatch: scopedGlobalAppIcon != nil || previewGlobalAppResult != nil || l2.targetApp != nil || typedAppIcon != nil
                                 )
-                                if isGlobalContextActive && !preferFrontmostMenuIcon && l2.targetApp == nil && typedAppIcon == nil && topGlobalAppResult == nil && scopedGlobalAppIcon == nil {
+                                if isGlobalContextActive && !preferFrontmostMenuIcon && l2.targetApp == nil && typedAppIcon == nil && previewGlobalAppResult == nil && scopedGlobalAppIcon == nil {
                                     if let selIcon = activeSelectionIcon {
                                         // Active selection: icon mirrors the content type (file, text, link, clipboard)
                                         Image(systemName: selIcon)
@@ -20416,7 +20418,7 @@ struct LauncherView: View {
                                         .opacity(isHoveringSearchIcon ? 1.0 : 0.9)
                                         .transition(.scale(scale: 0.7).combined(with: .opacity))
                                         .id(
-                                            scopedGlobalAppIcon?.bundleId ?? l2.targetApp?.bundleId ?? typedAppIcon?.bundleId
+                                            scopedGlobalAppIcon?.bundleId ?? previewGlobalAppBundleId ?? l2.targetApp?.bundleId ?? typedAppIcon?.bundleId
                                                 ?? frontmost.bundleID
                                         )
                                 } else {
@@ -30819,6 +30821,23 @@ struct LauncherView: View {
             // Tab in global context explicitly enters app scope.
             // Typing alone stays global so cross-app suggestions cannot steal the query.
             if event.keyCode == 48, self.isGlobalContextActive {
+                if self.shouldUsePureGlobalAppSearch,
+                   let result = self.focusedOrTopGlobalAppResult(),
+                   let bundleId = self.bundleIdentifier(forApplicationResult: result) {
+                    let appName = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let activated = self.activateInlineDockAppScope(
+                        bundleIdentifier: bundleId,
+                        appName: appName,
+                        queryOverride: "",
+                        preserveGlobalContext: true
+                    )
+                    if activated {
+                        self.focusedAppPillIndex = nil
+                        self.l2.focusedPillIndex = nil
+                        return nil
+                    }
+                }
+
                 // Pure global search mode: use globalInlineAppScope (lightweight, no L2 session switch).
                 // Tab on "notes" → Notes scope, query="".
                 // Tab on "new note" → Notes scope, query="new".
@@ -30844,23 +30863,6 @@ struct LauncherView: View {
                     return nil
                 }
 
-                let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !q.isEmpty,
-                   let result = self.topGlobalAppResultForInputPreview(),
-                   let bundleId = self.bundleIdentifier(forApplicationResult: result) {
-                    let appName = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let activated = self.activateInlineDockAppScope(
-                        bundleIdentifier: bundleId,
-                        appName: appName,
-                        queryOverride: "",
-                        preserveGlobalContext: true
-                    )
-                    if activated {
-                        self.focusedAppPillIndex = nil
-                        self.l2.focusedPillIndex = nil
-                        return nil
-                    }
-                }
             }
             // Tab: pill ghost completion (prefix match on current pill name)
             if event.keyCode == 48, !self.isGlobalContextActive, let ghost = self.ghostPillCompletion {

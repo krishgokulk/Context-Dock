@@ -700,7 +700,7 @@ class AppSettings: ObservableObject {
     @AppStorage("persistentContextDockAutoHide") var persistentContextDockAutoHide: Bool = false
     @AppStorage("enableFileContextOverlay") var enableFileContextOverlay: Bool = true
     @AppStorage("showRunningAppsInBar") var showRunningAppsInBar: Bool = false
-    @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = true
+    @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = false
 
     /// True when anything should anchor at the bottom and grow upward.
     /// Persistent context dock always implies bottom-anchored layout.

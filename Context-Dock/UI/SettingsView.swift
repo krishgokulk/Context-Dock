@@ -506,14 +506,6 @@ struct GeneralSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-
-            CardSection(title: "Floating App Logo", systemImage: "app.badge") {
-                SettingsRow {
-                    GeneralToggleLabel("Show Floating App Logo",
-                        caption: "Display a separate floating logo button beside the dock row.")
-                    Toggle("", isOn: $settings.showFloatingAppLogo).labelsHidden()
-                }
-            }
         }
     }
 
