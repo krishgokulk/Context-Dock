@@ -965,6 +965,14 @@ struct LauncherView: View {
         return appMatches.isEmpty
     }
 
+    private var shouldShowGlobalInputLoadingIndicator: Bool {
+        guard isGlobalContextActive, shouldUsePureGlobalAppSearch else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        if searchState.isLoadingApps { return true }
+        return pendingGlobalAppQuery == q || pendingGlobalGroupedQuery == q
+    }
+
     private func isGenericApplicationListQuery(_ query: String) -> Bool {
         switch normalizedDockPillText(query) {
         case "app", "apps", "application", "applications":
@@ -1197,6 +1205,42 @@ struct LauncherView: View {
         let appName: String
         let icon: NSImage?
         let pills: [DockPill]
+    }
+
+    private struct GlobalInputLoadingDots: View {
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                Canvas { context, size in
+                    let dotCount = 10
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let radius = min(size.width, size.height) * 0.36
+                    let dotSize = min(size.width, size.height) * 0.10
+                    let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+
+                    for index in 0..<dotCount {
+                        let progress = (Double(index) / Double(dotCount) + time * 1.15)
+                            .truncatingRemainder(dividingBy: 1)
+                        let angle = Double(index) / Double(dotCount) * .pi * 2
+                        let x = center.x + CGFloat(cos(angle)) * radius
+                        let y = center.y + CGFloat(sin(angle)) * radius
+                        let opacity = 0.18 + progress * 0.72
+                        let rect = CGRect(
+                            x: x - dotSize / 2,
+                            y: y - dotSize / 2,
+                            width: dotSize,
+                            height: dotSize
+                        )
+                        context.fill(
+                            Path(ellipseIn: rect),
+                            with: .color(Color.accentColor.opacity(opacity))
+                        )
+                    }
+                }
+            }
+            .accessibilityLabel("Loading")
+        }
     }
 
     /// Lightweight descriptor for a cross-app menu pill computed off the main thread.
@@ -4260,20 +4304,7 @@ struct LauncherView: View {
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
-                    if isLoading && !hasRenderableRows {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .scaleEffect(0.82)
-                            Text(isScopedMenuMode ? "Loading menus..." : "Searching apps...")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.secondary.opacity(0.62))
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 14)
-                        .transition(.opacity)
-                    } else if isEmpty {
+                    if isEmpty {
                         HStack {
                             Text(
                                 isScopedMenuMode
@@ -4423,7 +4454,6 @@ struct LauncherView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: listHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .animation(.easeOut(duration: 0.14), value: isLoading)
             .animation(.easeOut(duration: 0.16), value: hasRenderableRows)
             .onChange(of: focusedAppPillIndex) { idx in
                 guard let idx, idx < appRowIDs.count else { return }
@@ -21189,6 +21219,10 @@ struct LauncherView: View {
                             }
                         } else if aiMode.isActive {
                             aiModeControls
+                        } else if shouldShowGlobalInputLoadingIndicator {
+                            GlobalInputLoadingDots()
+                                .frame(width: 26, height: 26)
+                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
                         } else if !searchState.query.isEmpty {
                             Button(action: {
                                 if isGlobalContextActive {
