@@ -374,6 +374,7 @@ struct LauncherView: View {
     var frozenSelectionIcon: String? { globalContextActivation?.frozenIcon }
     var frozenSelectionSourceBundleId: String? { globalContextActivation?.sourceBundleId }
     @State private var dismissedFinderSelectionSignature: String? = nil
+    @State private var suppressedAutomaticFinderSelectionSignature: String? = nil
     // Safari tab picker popover
     @State private var showSafariTabPicker: Bool = false
     @State private var safariTabPickerTabs: [SafariTab] = []
@@ -791,8 +792,6 @@ struct LauncherView: View {
         let hasListContent =
             pills.contains(where: { !$0.isSeparator })
             || showGlobalAppSearch
-            || pendingDockPillQuery == pillQuery
-            || (!q.isEmpty && lastPillQuery != pillQuery)
         return hasListContent && !showPinnedRow
     }
 
@@ -994,6 +993,17 @@ struct LauncherView: View {
         guard !q.isEmpty else { return false }
         if searchState.isLoadingApps { return true }
         return pendingGlobalAppQuery == q || pendingGlobalGroupedQuery == q
+    }
+
+    private var shouldShowContextDockInputLoadingIndicator: Bool {
+        guard showContextInDock,
+              !isGlobalContextActive,
+              !aiMode.isActive,
+              !showMediaLayer
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+        return pendingDockPillQuery == pillQuery || (!q.isEmpty && lastPillQuery != pillQuery)
     }
 
     private func isGenericApplicationListQuery(_ query: String) -> Bool {
@@ -2064,9 +2074,6 @@ struct LauncherView: View {
             .filter { !$0.isSeparator }
             .count
         if pillCount > 0 { return min(maxListViewDockPills, pillCount) }
-        if pendingDockPillQuery == pillQuery || (!q.isEmpty && lastPillQuery != pillQuery) {
-            return 1
-        }
         return 0
     }
 
@@ -2364,6 +2371,7 @@ struct LauncherView: View {
                     if let pid = activeApp?.processIdentifier {
                         selectionModel.start(for: pid)
                     }
+                    suppressCurrentFinderSelectionBaseline()
                     // Refresh running apps list (for Layer 1 bar) — off main thread
                     runningRegularApps = currentRegularRunningApps()
                     // Refresh AX context periodically while dock is open so pills update as user interacts
@@ -2795,6 +2803,13 @@ struct LauncherView: View {
                     globalClipboardText = ""
                     // Stamp time so autoSwitch won't re-fire from the AX observer debounce
                     frontmost.lastSwitchDate = Date()
+                    if bundleID == "com.apple.finder" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            self.suppressCurrentFinderSelectionBaseline()
+                        }
+                    } else {
+                        suppressedAutomaticFinderSelectionSignature = nil
+                    }
                 }
 
                 // Scope lock: when user explicitly entered an app scope (l2.targetApp set),
@@ -6741,6 +6756,48 @@ struct LauncherView: View {
         isDismissedFinderSelection(urls.map(\.path))
     }
 
+    private func isSuppressedAutomaticFinderSelection(_ paths: [String]) -> Bool {
+        guard let signature = suppressedAutomaticFinderSelectionSignature,
+              !signature.isEmpty,
+              !paths.isEmpty
+        else { return false }
+        return finderSelectionSignature(paths) == signature
+    }
+
+    private func isSuppressedAutomaticFinderSelection(_ urls: [URL]) -> Bool {
+        isSuppressedAutomaticFinderSelection(urls.map(\.path))
+    }
+
+    private func updateSuppressedAutomaticFinderSelectionAfterSelectionChange(_ paths: [String]) {
+        guard let signature = suppressedAutomaticFinderSelectionSignature else { return }
+        if paths.isEmpty || finderSelectionSignature(paths) != signature {
+            suppressedAutomaticFinderSelectionSignature = nil
+        }
+    }
+
+    private func suppressCurrentFinderSelectionBaseline() {
+        guard showContextInDock else { return }
+        guard frontmost.bundleID == "com.apple.finder"
+            || AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier == "com.apple.finder"
+            || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
+        else { return }
+
+        let urls = canonicalExistingURLs(ContextDetector.shared.getFinderSelectedFiles())
+        let paths = urls.map(\.path)
+        guard !paths.isEmpty else {
+            suppressedAutomaticFinderSelectionSignature = nil
+            return
+        }
+        suppressedAutomaticFinderSelectionSignature = finderSelectionSignature(paths)
+        if axContext.bundleId == "com.apple.finder" {
+            axContext.selectedFilePaths = []
+        }
+        if case .filesSelected(let current) = currentContext,
+           finderSelectionSignature(current) == suppressedAutomaticFinderSelectionSignature {
+            currentContext = .none
+        }
+    }
+
     private func updateDismissedFinderSelectionAfterSelectionChange(_ paths: [String]) {
         guard let dismissedFinderSelectionSignature else { return }
         if paths.isEmpty || finderSelectionSignature(paths) != dismissedFinderSelectionSignature {
@@ -6753,12 +6810,14 @@ struct LauncherView: View {
             axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
         )
         if !liveSelection.isEmpty {
+            if isSuppressedAutomaticFinderSelection(liveSelection) { return [] }
             return isDismissedFinderSelection(liveSelection) ? [] : liveSelection
         }
 
         if case .filesSelected(let urls) = currentContext {
             let contextSelection = canonicalExistingURLs(urls)
             if !contextSelection.isEmpty {
+                if isSuppressedAutomaticFinderSelection(contextSelection) { return [] }
                 return isDismissedFinderSelection(contextSelection) ? [] : contextSelection
             }
         }
@@ -9080,6 +9139,20 @@ struct LauncherView: View {
         }
 
         if newCtx.bundleId == "com.apple.finder" {
+            updateSuppressedAutomaticFinderSelectionAfterSelectionChange(newCtx.selectedFilePaths)
+            if isSuppressedAutomaticFinderSelection(newCtx.selectedFilePaths) {
+                var suppressedCtx = newCtx
+                suppressedCtx.selectedFilePaths = []
+                if case .filesSelected(let urls) = currentContext,
+                   isSuppressedAutomaticFinderSelection(urls) {
+                    currentContext = .none
+                }
+                axContext = suppressedCtx
+                detectAndUpdateContext()
+                checkClipboardForGlobalContext()
+                autoReturnFromGlobalContextIfNeeded()
+                return
+            }
             updateDismissedFinderSelectionAfterSelectionChange(newCtx.selectedFilePaths)
             if isDismissedFinderSelection(newCtx.selectedFilePaths) {
                 var suppressedCtx = newCtx
@@ -9127,6 +9200,17 @@ struct LauncherView: View {
         let urls = canonicalExistingURLs(ContextDetector.shared.getFinderSelectedFiles())
         guard !urls.isEmpty else { return }
         let paths = urls.map(\.path)
+        updateSuppressedAutomaticFinderSelectionAfterSelectionChange(paths)
+        if isSuppressedAutomaticFinderSelection(paths) {
+            if axContext.bundleId == "com.apple.finder" {
+                axContext.selectedFilePaths = []
+            }
+            if case .filesSelected(let current) = currentContext,
+               isSuppressedAutomaticFinderSelection(current) {
+                currentContext = .none
+            }
+            return
+        }
         updateDismissedFinderSelectionAfterSelectionChange(paths)
         if isDismissedFinderSelection(paths) {
             if axContext.bundleId == "com.apple.finder" {
@@ -21208,6 +21292,10 @@ struct LauncherView: View {
                         } else if aiMode.isActive {
                             aiModeControls
                         } else if shouldShowGlobalInputLoadingIndicator {
+                            GlobalInputLoadingDots()
+                                .frame(width: 26, height: 26)
+                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        } else if shouldShowContextDockInputLoadingIndicator {
                             GlobalInputLoadingDots()
                                 .frame(width: 26, height: 26)
                                 .transition(.opacity.combined(with: .scale(scale: 0.92)))
