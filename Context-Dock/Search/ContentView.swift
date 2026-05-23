@@ -2265,6 +2265,7 @@ struct LauncherView: View {
                         }
                         let debug = AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
                         await MainActor.run {
+                            guard self.contextTargetApp()?.processIdentifier == pid else { return }
                             self.liveMenuItems = items
                             self.menuDebugText = "\(name): \(items.count) menus, \(debug)"
                             self.lastLiveMenuSignature = self.menuSignature(for: items)
@@ -7896,6 +7897,7 @@ struct LauncherView: View {
             }
             let debug = AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
             await MainActor.run {
+                guard self.contextTargetApp()?.processIdentifier == pid else { return }
                 self.liveMenuItems = items
                 self.menuDebugText = "\(name): \(items.count) menus, \(debug)"
                 self.lastLiveMenuSignature = self.menuSignature(for: items)
@@ -14622,6 +14624,7 @@ struct LauncherView: View {
             return
         }
 
+        finderSemanticQuery = semanticQuery
         isFinderSemanticLoading = false
         finderSemanticTask = Task(priority: .userInitiated) {
             try? await Task.sleep(nanoseconds: 180_000_000)
@@ -14644,6 +14647,7 @@ struct LauncherView: View {
             let initialMatches = mergeFinderSemanticMatches(advancedMatches, with: fastMatches)
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard finderSemanticQuery == semanticQuery else { return }
                 applyFinderSemanticMatches(initialMatches, query: semanticQuery)
                 isFinderSemanticLoading = false
             }
@@ -14662,6 +14666,7 @@ struct LauncherView: View {
             let merged = mergeFinderSemanticMatches(initialMatches, with: spotlightMatches)
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard finderSemanticQuery == semanticQuery else { return }
                 applyFinderSemanticMatches(merged, query: semanticQuery)
                 isFinderSemanticLoading = false
             }
@@ -15042,6 +15047,7 @@ struct LauncherView: View {
                     return
                 }
             }
+            guard pendingDockPillQuery == query else { return }
             cachedDockPills = buildDockPills(query: query)
             lastPillQuery = query
             if pendingDockPillQuery == query { pendingDockPillQuery = nil }
@@ -15193,6 +15199,21 @@ struct LauncherView: View {
         let rawFinderSelectionMenuPills =
             isFinderScopedDock && !finderFolderAttachedForDock
             ? buildFinderSelectionMenuPills(query: q, excludingTitles: finderFileTitleSet) : []
+        let finderMenuIntentTerms = [
+            "menu", "command", "cmd", "shortcut", "finder menu",
+            "view", "go", "sort", "arrange", "new folder", "new window",
+            "show view options", "connect to server", "empty bin", "trash"
+        ]
+        let finderTypedQuery = (scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let finderShouldPreferFiles =
+            isFinderScopedDock
+            && finderTypedQuery.count >= 2
+            && (!rawFinderFilePills.isEmpty || !rawFinderHomeFolderPills.isEmpty || !rawAttachedFinderFolderPills.isEmpty)
+            && !finderMenuIntentTerms.contains { finderTypedQuery.contains($0) }
+        let filteredFinderSelectionMenuPills =
+            finderShouldPreferFiles ? [] : rawFinderSelectionMenuPills
         let payloadActionPills: [DockPill] = {
             guard isExplicitAppScope, !scopedSearchQuery.isEmpty else {
                 return rawPayloadActionPills
@@ -15284,7 +15305,7 @@ struct LauncherView: View {
             appPath: installedMenuTarget?.appPath
         )
         let hasStrongContextQuery = !payloadActionPills.isEmpty
-        let shouldSuppressMenuForContext = finderFolderAttachedForDock
+        let shouldSuppressMenuForContext = finderFolderAttachedForDock || finderShouldPreferFiles
         let activeBundleId = isGlobalScope ? "" : scopedBundleId
         let scopedAppKey =
             isGlobalScope
@@ -15529,7 +15550,7 @@ struct LauncherView: View {
             return enriched
         })
 
-        pills.append(contentsOf: rawFinderSelectionMenuPills)
+        pills.append(contentsOf: filteredFinderSelectionMenuPills)
 
         pills.append(contentsOf: rawFinderHomeFolderPills)
 
