@@ -1943,17 +1943,20 @@ struct LauncherView: View {
         let bundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !bundleId.isEmpty, !appName.isEmpty else { return [] }
+        let appleMenuFallback = buildGlobalAppleMenuFallbackPills(query: query)
         let liveItems = orderedScopedMenuItemsLikeContextDock(
             liveMenuItems
                 .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .filter { !($0.path.first?.isEmpty ?? true) }
+                .filter { !isAppleMenuItem($0) }
+                .filter { normalizedDockPillText($0.path.joined(separator: " ")).contains("recent items") == false }
                 .filter { cachedScopedMenuItemMatchesQuery($0, query: query) },
             filterQuery: query,
-            limit: maxResults
+            limit: max(0, maxResults - appleMenuFallback.count)
         )
-        if !liveItems.isEmpty {
+        if !liveItems.isEmpty || !appleMenuFallback.isEmpty {
             let pid = contextTargetApp()?.processIdentifier ?? 0
-            return liveItems.map { item in
+            let livePills = liveItems.map { item in
                 let path = item.path
                 let shortcutChar = item.shortcutChar
                 let shortcutModifiers = item.shortcutModifiers
@@ -1976,9 +1979,10 @@ struct LauncherView: View {
                     }
                 )
             }
+            return (appleMenuFallback + livePills).prefix(maxResults).map { $0 }
         }
 
-        return cachedScopedAppMenuPills(
+        let cachedPills = cachedScopedAppMenuPills(
             bundleIdentifier: bundleId,
             appName: appName,
             appPath: nil,
@@ -1986,6 +1990,7 @@ struct LauncherView: View {
             maxResults: maxResults,
             allowLiveRefresh: false
         )
+        return (appleMenuFallback + cachedPills).prefix(maxResults).map { $0 }
     }
 
     // Max visible list height: rows beyond this scroll inside the glass card.
@@ -2204,9 +2209,9 @@ struct LauncherView: View {
                     l2.focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
 
                     // Load live menu items from frontmost app only (primary context).
-                    // Session-scoped only: Apple Menu items should come from live AX, not disk cache.
+                    // Global Context stays cache-only; Apple Menu uses static fallback pills.
                     menuLoadTask?.cancel()
-                    let useCacheOnly = false
+                    let useCacheOnly = isGlobalContextActive
                     menuLoadTask = Task.detached(priority: .userInitiated) {
                         let app = await MainActor.run { self.contextTargetApp() }
                         guard let app, !app.isTerminated else { return }
@@ -16157,9 +16162,6 @@ struct LauncherView: View {
             }),
             ("App Store...", ["app store", "updates", "software"], "app.badge", {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/App Store.app"))
-            }),
-            ("Recent Items", ["recent", "recent items"], "clock.arrow.circlepath", {
-                clickAppleMenuItem(named: "Recent Items")
             }),
             ("Force Quit...", ["force quit", "quit app", "force"], "exclamationmark.octagon", {
                 clickAppleMenuItem(named: "Force Quit...")
