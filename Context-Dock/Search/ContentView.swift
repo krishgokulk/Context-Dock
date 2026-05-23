@@ -4187,6 +4187,7 @@ struct LauncherView: View {
         launchHint: (bundleId: String, appName: String, appPath: String?)? = nil,
         scopedMenuAppName: String? = nil,
         scopedMenuActionQuery: String = "",
+        isLoading: Bool = false,
         menuFirst: Bool = false
     ) -> some View {
         let rawMatches = Array((providedMatches ?? globalApplicationMatches(for: query)).prefix(maxListViewDockPills))
@@ -4223,8 +4224,9 @@ struct LauncherView: View {
         }
         let appRowIDs: [String] = matches.map { "global-app-\($0.id)" }
         let showLaunchHint = launchHint != nil && visibleMenuPills.isEmpty
-        let isEmpty = matches.isEmpty && visibleMenuPills.isEmpty && providedAppMenuGroups.isEmpty && !showLaunchHint
-        let listHeight: CGFloat = isEmpty ? 58 : listViewVisibleHeight
+        let hasRenderableRows = !matches.isEmpty || !visibleMenuPills.isEmpty || !providedAppMenuGroups.isEmpty || showLaunchHint
+        let isEmpty = !isLoading && !hasRenderableRows
+        let listHeight: CGFloat = hasRenderableRows ? listViewVisibleHeight : 86
 
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
@@ -4258,7 +4260,20 @@ struct LauncherView: View {
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
-                    if matches.isEmpty && visibleMenuPills.isEmpty && providedAppMenuGroups.isEmpty {
+                    if isLoading && !hasRenderableRows {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.82)
+                            Text(isScopedMenuMode ? "Loading menus..." : "Searching apps...")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary.opacity(0.62))
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
+                        .transition(.opacity)
+                    } else if isEmpty {
                         HStack {
                             Text(
                                 isScopedMenuMode
@@ -4408,6 +4423,8 @@ struct LauncherView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: listHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .animation(.easeOut(duration: 0.14), value: isLoading)
+            .animation(.easeOut(duration: 0.16), value: hasRenderableRows)
             .onChange(of: focusedAppPillIndex) { idx in
                 guard let idx, idx < appRowIDs.count else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
@@ -16678,6 +16695,13 @@ struct LauncherView: View {
                 }?.subtitle ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)?.path
                 return (bundleId, appName, path)
             }()
+            let globalSearchLoading =
+                showGlobalAppSearch && !q.isEmpty && scopedAppLaunchHint == nil
+                && (
+                    searchState.isLoadingApps
+                    || pendingGlobalGroupedQuery == q
+                    || (!effectiveAppScope && (pendingGlobalAppQuery == q || cachedGlobalAppQuery != q))
+                )
 
             HStack(spacing: 6) {
                 // Submenu locked mode: show vertical child suggestion list instead of pills
@@ -16702,6 +16726,7 @@ struct LauncherView: View {
                         launchHint: scopedAppLaunchHint,
                         scopedMenuAppName: scopedMenuListContext?.appName,
                         scopedMenuActionQuery: scopedMenuListContext?.actionQuery ?? "",
+                        isLoading: globalSearchLoading,
                         menuFirst: intentFavorsMenu(q) && (!globalMenuPills.isEmpty || !globalCrossAppGroups.isEmpty)
                     )
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -16728,7 +16753,7 @@ struct LauncherView: View {
                 l2.appCompletion = nil
                 l2.showResultsPopover = false
                 if globalInlineAppScope == nil {
-                    scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 0)
+                    scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 12_000_000)
                 } else {
                     scheduleGlobalGroupedListRebuild(query: newQuery, delayNanoseconds: 18_000_000)
                 }
@@ -20976,7 +21001,7 @@ struct LauncherView: View {
                                                 loadApplicationsInBackground()
                                             }
                                             if globalInlineAppScope == nil {
-                                                scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
+                                                scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 12_000_000)
                                             } else {
                                                 scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 18_000_000)
                                             }
