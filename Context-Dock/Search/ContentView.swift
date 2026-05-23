@@ -4487,7 +4487,11 @@ struct LauncherView: View {
         return preparedDockIcon(NSWorkspace.shared.icon(forFile: app.path))
     }
 
-    private func globalApplicationMatches(for query: String, limit: Int = Int.max) -> [SearchResult] {
+    private func globalApplicationMatches(
+        for query: String,
+        limit: Int = Int.max,
+        includeRecentItems: Bool = true
+    ) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
 
@@ -4540,7 +4544,7 @@ struct LauncherView: View {
 
         // Recent apps from macOS Recent Items — higher signal than full installed list.
         // Deduped by seen set; running/pinned apps already inserted win on action (activate vs open).
-        if isGlobalContextActive {
+        if isGlobalContextActive && includeRecentItems {
             for recent in RecentItemsService.shared.recentApplications() {
                 guard !shouldIgnoreApplicationFromAppSearch(
                     appName: recent.name,
@@ -4639,7 +4643,7 @@ struct LauncherView: View {
 
         // Recent documents from macOS Recent Items — cross-app files.
         // Only included when query is long enough (≥3 chars) to reduce noise.
-        if isGlobalContextActive, q.count >= 3 {
+        if isGlobalContextActive, includeRecentItems, q.count >= 3 {
             for doc in RecentItemsService.shared.recentDocuments() {
                 let docName = doc.name.lowercased()
                 guard docName.contains(q) || docName.hasPrefix(q) else { continue }
@@ -16622,7 +16626,13 @@ struct LauncherView: View {
             let hasActiveContextSelection = hasActiveDockContextSelection
             let hasAnySelection: Bool =
                 hasActiveContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
-            let globalAppMatches = currentGlobalAppMatches(for: q)
+            let cachedGlobalAppMatches = currentGlobalAppMatches(for: q)
+            // First paint should never wait on Recent Items or menu work. Use the app index
+            // synchronously, then let the async cache publish richer ranked results.
+            let globalAppMatches =
+                cachedGlobalAppMatches.isEmpty && pureGlobalAppSearch && !q.isEmpty
+                ? globalApplicationMatches(for: q, limit: maxListViewDockPills, includeRecentItems: false)
+                : cachedGlobalAppMatches
             let genericAppListQuery = isGenericApplicationListQuery(q)
             let preferFrontmostMenuResults =
                 !genericAppListQuery
@@ -16700,7 +16710,7 @@ struct LauncherView: View {
                 && (
                     searchState.isLoadingApps
                     || pendingGlobalGroupedQuery == q
-                    || (!effectiveAppScope && (pendingGlobalAppQuery == q || cachedGlobalAppQuery != q))
+                    || (!effectiveAppScope && pendingGlobalAppQuery == q && globalAppMatches.isEmpty)
                 )
 
             HStack(spacing: 6) {
