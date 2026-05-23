@@ -950,7 +950,34 @@ struct LauncherView: View {
         return cachedGlobalAppMatches
     }
 
-    private func shouldIncludeGlobalMenuResults(
+    private func currentOrImmediateGlobalAppMatches(for query: String) -> [SearchResult] {
+        let cached = currentGlobalAppMatches(for: query)
+        if !cached.isEmpty { return cached }
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, shouldUsePureGlobalAppSearch else { return [] }
+        return globalApplicationMatches(for: q, limit: maxListViewDockPills, includeRecentItems: false)
+    }
+
+    private func hasStrongGlobalAppMatch(query: String, appMatches: [SearchResult]) -> Bool {
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty, let first = appMatches.first else { return false }
+        let title = normalizedDockPillText(first.title)
+        if title == q || title.hasPrefix(q) { return true }
+        return first.score >= 8_900
+    }
+
+    private func shouldIncludeFrontmostGlobalMenuResults(
+        query: String,
+        appMatches: [SearchResult],
+        isGenericAppQuery: Bool
+    ) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !isGenericAppQuery else { return false }
+        guard q.count >= 2 else { return false }
+        return intentFavorsMenu(q.lowercased())
+    }
+
+    private func shouldIncludeCrossAppGlobalMenuResults(
         query: String,
         appMatches: [SearchResult],
         isGenericAppQuery: Bool
@@ -958,11 +985,7 @@ struct LauncherView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, !isGenericAppQuery else { return false }
         guard q.count >= 3 else { return false }
-        guard pendingGlobalAppQuery != q.lowercased() else { return false }
-
-        // App launch is the hot path in Global Context. If app rows already match,
-        // skip frontmost/cross-app menu filtering so running-app caches cannot stall typing.
-        return appMatches.isEmpty
+        return !hasStrongGlobalAppMatch(query: q, appMatches: appMatches)
     }
 
     private var shouldShowGlobalInputLoadingIndicator: Bool {
@@ -1378,8 +1401,13 @@ struct LauncherView: View {
 
             let isGenericAppQuery = isGenericApplicationListQuery(q)
             let inlineScope = activeGlobalInlineDockScope(for: q)
-            let rawAppMatches = inlineScope?.isExplicitAppScope == true ? [] : currentGlobalAppMatches(for: q)
-            let includeMenuResults = shouldIncludeGlobalMenuResults(
+            let rawAppMatches = inlineScope?.isExplicitAppScope == true ? [] : currentOrImmediateGlobalAppMatches(for: q)
+            let includeFrontmostMenus = shouldIncludeFrontmostGlobalMenuResults(
+                query: q,
+                appMatches: rawAppMatches,
+                isGenericAppQuery: isGenericAppQuery
+            )
+            let includeCrossAppMenus = shouldIncludeCrossAppGlobalMenuResults(
                 query: q,
                 appMatches: rawAppMatches,
                 isGenericAppQuery: isGenericAppQuery
@@ -1388,13 +1416,13 @@ struct LauncherView: View {
             let frontmostSnap = (bundleID: frontmost.bundleID, name: frontmost.name, icon: frontmost.icon)
             let maxPills = maxListViewDockPills
 
-            // Frontmost / inline-scope menu pills — global context uses live AX snapshot,
-            // so Apple Menu items stay session-scoped instead of coming from disk cache.
+            // Frontmost / inline-scope menu pills: cache-only in Global Context.
+            // Live AX scanning belongs to Context Dock/app-switch warmers, not typing.
             let frontmostMenuPills: [DockPill] = {
                 if let scope = inlineScope, scope.isExplicitAppScope {
                     return cachedGlobalAppScopeDockPills(query: q, scope: scope)
                 }
-                guard includeMenuResults else { return [] }
+                guard includeFrontmostMenus else { return [] }
                 return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxPills)
             }()
 
@@ -1403,7 +1431,7 @@ struct LauncherView: View {
             let ownBundleId = Bundle.main.bundleIdentifier ?? ""
             let snappedRunningApps: [(bundleID: String, name: String, icon: NSImage?, pid: pid_t)] = {
                 guard !isGenericAppQuery,
-                      includeMenuResults,
+                      includeCrossAppMenus,
                       settings.enableLearnedGhostSuggestions,
                       isGlobalContextActive,
                       !hasActiveDockContextSelection,
@@ -1431,8 +1459,10 @@ struct LauncherView: View {
             // AppMenuCapabilityCache uses NSLock — thread-safe for concurrent reads.
             // DockPill closures cannot be created here (capture self); use descriptors instead.
             let perAppCap = q.count == 1 ? 3 : (q.count == 2 ? 4 : 6)
-            let crossDescriptors: [[CrossAppPillDescriptor]] = await Task.detached(priority: .userInitiated) {
-                var result: [[CrossAppPillDescriptor]] = []
+            let crossDescriptorGroups:
+                [(bundleID: String, name: String, icon: NSImage?, descs: [CrossAppPillDescriptor])] =
+                await Task.detached(priority: .userInitiated) {
+                var result: [(bundleID: String, name: String, icon: NSImage?, descs: [CrossAppPillDescriptor])] = []
                 var total = 0
                 for app in snappedRunningApps {
                     guard total < maxPills else { break }
@@ -1462,7 +1492,7 @@ struct LauncherView: View {
                         ))
                     }
                     guard !appDescs.isEmpty else { continue }
-                    result.append(appDescs)
+                    result.append((bundleID: app.bundleID, name: app.name, icon: app.icon, descs: appDescs))
                     total += appDescs.count
                 }
                 return result
@@ -1471,8 +1501,9 @@ struct LauncherView: View {
             guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
 
             // ── Phase 3: convert descriptors → DockPills + build final state on MainActor ─
-            let crossAppGroups: [AppMenuGroup] = zip(snappedRunningApps, crossDescriptors)
-                .compactMap { (app, descs) -> AppMenuGroup? in
+            let crossAppGroups: [AppMenuGroup] = crossDescriptorGroups
+                .compactMap { group -> AppMenuGroup? in
+                    let descs = group.descs
                     guard !descs.isEmpty else { return nil }
                     let pills: [DockPill] = descs.map { d in
                         let bid = d.bundleID, path = d.path, sc = d.shortcutChar, mod = d.shortcutModifiers
@@ -1491,7 +1522,7 @@ struct LauncherView: View {
                         pill.rankingKind = "menu"
                         return pill
                     }
-                    return AppMenuGroup(id: app.bundleID, appName: app.name, icon: app.icon, pills: pills)
+                    return AppMenuGroup(id: group.bundleID, appName: group.name, icon: group.icon, pills: pills)
                 }
 
             let frontmostMenuGroups: [AppMenuGroup] = {
@@ -1581,11 +1612,16 @@ struct LauncherView: View {
 
         let rawAppMatches: [SearchResult] = {
             let scope = activeGlobalInlineDockScope(for: q)
-            return scope?.isExplicitAppScope == true ? [] : currentGlobalAppMatches(for: q)
+            return scope?.isExplicitAppScope == true ? [] : currentOrImmediateGlobalAppMatches(for: q)
         }()
 
         let isGenericAppQuery = isGenericApplicationListQuery(q)
-        let includeMenuResults = shouldIncludeGlobalMenuResults(
+        let includeFrontmostMenus = shouldIncludeFrontmostGlobalMenuResults(
+            query: q,
+            appMatches: rawAppMatches,
+            isGenericAppQuery: isGenericAppQuery
+        )
+        let includeCrossAppMenus = shouldIncludeCrossAppGlobalMenuResults(
             query: q,
             appMatches: rawAppMatches,
             isGenericAppQuery: isGenericAppQuery
@@ -1595,13 +1631,13 @@ struct LauncherView: View {
             if let scope = activeGlobalInlineDockScope(for: q), scope.isExplicitAppScope {
                 return cachedGlobalAppScopeDockPills(query: q, scope: scope)
             }
-            guard includeMenuResults else { return [] }
+            guard includeFrontmostMenus else { return [] }
             return cachedFrontmostGlobalMenuPills(query: q, maxResults: maxListViewDockPills)
         }()
 
         // Cross-app menus are fallback/action results. Keep them out of app-launch filtering.
         let crossAppGroups: [AppMenuGroup] = {
-            guard includeMenuResults else { return [] }
+            guard includeCrossAppMenus else { return [] }
             return crossAppMenuGroups(for: q)
         }()
 
@@ -1935,7 +1971,6 @@ struct LauncherView: View {
             scheduleGlobalAppMatchRebuild(query: actionQuery, delayNanoseconds: 0)
             scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 0)
         }
-        warmMenuCacheIfNeeded(bundleId: target.bundleId, appName: target.appName)
         return true
     }
 
@@ -1988,44 +2023,8 @@ struct LauncherView: View {
         let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !bundleId.isEmpty, !appName.isEmpty else { return [] }
         let appleMenuFallback = buildGlobalAppleMenuFallbackPills(query: query)
-        let liveItems = orderedScopedMenuItemsLikeContextDock(
-            liveMenuItems
-                .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .filter { !($0.path.first?.isEmpty ?? true) }
-                .filter { !isAppleMenuItem($0) }
-                .filter { normalizedDockPillText($0.path.joined(separator: " ")).contains("recent items") == false }
-                .filter { cachedScopedMenuItemMatchesQuery($0, query: query) },
-            filterQuery: query,
-            limit: max(0, maxResults - appleMenuFallback.count)
-        )
-        if !liveItems.isEmpty || !appleMenuFallback.isEmpty {
-            let pid = contextTargetApp()?.processIdentifier ?? 0
-            let livePills = liveItems.map { item in
-                let path = item.path
-                let shortcutChar = item.shortcutChar
-                let shortcutModifiers = item.shortcutModifiers
-                return makeMenuDockPill(
-                    id: "global-live-menu-\(bundleId)-\(path.joined(separator: ">"))",
-                    item: item,
-                    sourceBundleId: bundleId,
-                    sourceAppName: appName,
-                    badge: item.shortcutDisplay,
-                    trackingIdentifier: "global-live-menu:\(bundleId):\(path.joined(separator: " > ").lowercased())",
-                    searchTerms: item.path + [appName],
-                    executeLeaf: {
-                        guard pid != 0 else { return }
-                        executeDockMenuAction(
-                            sourcePID: pid,
-                            path: path,
-                            shortcutChar: shortcutChar,
-                            shortcutModifiers: shortcutModifiers
-                        )
-                    }
-                )
-            }
-            return (appleMenuFallback + livePills).prefix(maxResults).map { $0 }
-        }
-
+        // Global Context is a read-only fast path: persistent cache only, no live AX snapshot.
+        // Context Dock/app-switch warmers are responsible for refreshing this cache.
         let cachedPills = cachedScopedAppMenuPills(
             bundleIdentifier: bundleId,
             appName: appName,
@@ -16656,13 +16655,9 @@ struct LauncherView: View {
             let hasActiveContextSelection = hasActiveDockContextSelection
             let hasAnySelection: Bool =
                 hasActiveContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
-            let cachedGlobalAppMatches = currentGlobalAppMatches(for: q)
-            // First paint should never wait on Recent Items or menu work. Use the app index
-            // synchronously, then let the async cache publish richer ranked results.
-            let globalAppMatches =
-                cachedGlobalAppMatches.isEmpty && pureGlobalAppSearch && !q.isEmpty
-                ? globalApplicationMatches(for: q, limit: maxListViewDockPills, includeRecentItems: false)
-                : cachedGlobalAppMatches
+            // App results filter from the first typed character. Cache enriches ranking later,
+            // but first paint never waits on menus, Recent Items, or AX.
+            let globalAppMatches = currentOrImmediateGlobalAppMatches(for: q)
             let genericAppListQuery = isGenericApplicationListQuery(q)
             let preferFrontmostMenuResults =
                 !genericAppListQuery
@@ -16796,13 +16791,6 @@ struct LauncherView: View {
                     scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 12_000_000)
                 } else {
                     scheduleGlobalGroupedListRebuild(query: newQuery, delayNanoseconds: 18_000_000)
-                }
-                // If query resolves to a running app with no cached menus, warm on the fly
-                if !newQuery.isEmpty {
-                    let scope = resolveDockScope(for: newQuery)
-                    if scope.isExplicitAppScope {
-                        warmMenuCacheIfNeeded(bundleId: scope.scopedBundleId, appName: scope.scopedAppName)
-                    }
                 }
                 return
             }
