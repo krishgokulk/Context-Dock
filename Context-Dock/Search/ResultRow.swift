@@ -31,45 +31,25 @@ struct ResultRow: View {
     var body: some View {
         HStack(spacing: 12) {
             // Icon
-            Group {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(iconTint.opacity(0.13))
+                    .frame(width: 34, height: 34)
                 if let icon = result.icon {
                     Image(nsImage: icon)
                         .resizable()
+                        .renderingMode(.original)
+                        .interpolation(.medium)
                         .aspectRatio(contentMode: .fit)
+                        .frame(width: 25, height: 25)
                 } else {
-                    switch result.type {
-                    case .application:
-                        Image(systemName: "app").foregroundColor(.blue)
-                    case .shortcut:
-                        Image(systemName: "shortcut").foregroundColor(.orange)
-                    case .file, .document:
-                        Image(systemName: "doc").foregroundColor(.gray)
-                    case .folder:
-                        Image(systemName: "folder").foregroundColor(.blue)
-                    case .contact:
-                        Image(systemName: "person.crop.circle").foregroundColor(.purple)
-                    case .calendarEvent:
-                        Image(systemName: "calendar").foregroundColor(.red)
-                    case .reminder:
-                        Image(systemName: "checklist").foregroundColor(.orange)
-                    case .note:
-                        Image(systemName: "note.text").foregroundColor(.yellow)
-                    case .mail:
-                        Image(systemName: "envelope.fill").foregroundColor(.blue)
-                    case .photo:
-                        Image(systemName: "photo").foregroundColor(.pink)
-                    case .message:
-                        Image(systemName: "message.fill").foregroundColor(.green)
-                    case .extensionCommand:
-                        Image(systemName: "puzzlepiece.extension.fill").foregroundColor(.indigo)
-                    case .webSearch:
-                        Image(systemName: "globe").foregroundColor(.blue)
-                    case .cliTool:
-                        Image(systemName: "terminal.fill").foregroundColor(.green)
-                    }
+                    Image(systemName: fallbackIconName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(iconTint)
+                        .frame(width: 25, height: 25)
                 }
             }
-            .frame(width: 32, height: 32)
+            .frame(width: 34, height: 34)
 
             // Text
             VStack(alignment: .leading, spacing: 2) {
@@ -188,6 +168,40 @@ struct ResultRow: View {
         case .webSearch:         return .blue.opacity(0.15)
         case .application:       return .clear
         case .cliTool:           return .green.opacity(0.15)
+        }
+    }
+
+    private var fallbackIconName: String {
+        switch result.type {
+        case .application: return "app"
+        case .shortcut: return "shortcut"
+        case .file, .document: return "doc"
+        case .folder: return "folder"
+        case .contact: return "person.crop.circle"
+        case .calendarEvent: return "calendar"
+        case .reminder: return "checklist"
+        case .note: return "note.text"
+        case .mail: return "envelope.fill"
+        case .photo: return "photo"
+        case .message: return "message.fill"
+        case .extensionCommand: return "puzzlepiece.extension.fill"
+        case .webSearch: return "globe"
+        case .cliTool: return "terminal.fill"
+        }
+    }
+
+    private var iconTint: SwiftUI.Color {
+        switch result.type {
+        case .application, .folder, .mail, .webSearch: return .blue
+        case .shortcut, .reminder: return .orange
+        case .file, .document: return .secondary
+        case .contact: return .purple
+        case .calendarEvent: return .red
+        case .note: return .yellow
+        case .photo: return .pink
+        case .message: return .green
+        case .extensionCommand: return .indigo
+        case .cliTool: return .green
         }
     }
 }

@@ -232,7 +232,7 @@ final class FileContextOverlayController: ObservableObject {
         let preferredLimit = trimmedQuery.isEmpty ? max(limit, 12) : limit
         let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
         let items = (liveItems.isEmpty ? AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6) : liveItems)
-            .filter { $0.isEnabled && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { item -> AXMenuItem in
                 var item = item
                 item.sourcePID = pid

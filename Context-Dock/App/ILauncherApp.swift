@@ -189,6 +189,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var singleCommandLocalCancelMonitor: Any?
     var commandAloneActive: Bool = false
     var commandAloneDownTime: TimeInterval = 0
+    var persistentDockModifierMonitor: Any?
+    var persistentDockModifierLocalMonitor: Any?
+    var persistentDockModifierActive: Bool = false
     /// True when the launcher was opened / switched via the context-dock shortcut.
     /// ContentView reads this on `launcherWindowOpened` to keep the app in L2.
     var isDockContextMode: Bool = false
@@ -275,6 +278,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerDoubleOptionMonitor()
         registerSingleOptionFocusMonitor()
         registerSingleCommandGlobalContextMonitor()
+        registerPersistentDockModifierExpansionMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
@@ -450,6 +454,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerClipboardScopeHotkey()
         registerDoubleOptionMonitor()
         registerSingleCommandGlobalContextMonitor()
+        registerPersistentDockModifierExpansionMonitor()
     }
     
     func setupMenuBar() {
@@ -892,6 +897,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(monitor)
             singleCommandLocalCancelMonitor = nil
         }
+        if let monitor = persistentDockModifierMonitor {
+            NSEvent.removeMonitor(monitor)
+            persistentDockModifierMonitor = nil
+        }
+        if let monitor = persistentDockModifierLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            persistentDockModifierLocalMonitor = nil
+        }
     }
 
     func registerContextDockHotkey() {
@@ -1099,6 +1112,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             handleFlagsChanged($0)
         }
         singleCommandLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            handleFlagsChanged(event)
+            return event
+        }
+    }
+
+    func registerPersistentDockModifierExpansionMonitor() {
+        if let m = persistentDockModifierMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockModifierMonitor = nil
+        }
+        if let m = persistentDockModifierLocalMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockModifierLocalMonitor = nil
+        }
+
+        persistentDockModifierActive = false
+
+        let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let active = flags.contains(.command) || flags.contains(.option)
+            guard active != self.persistentDockModifierActive else { return }
+
+            self.persistentDockModifierActive = active
+            guard self.settings.persistentContextDock else { return }
+            NotificationCenter.default.post(
+                name: .persistentDockModifierExpansionChanged,
+                object: nil,
+                userInfo: ["isDown": active]
+            )
+        }
+
+        persistentDockModifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            handleFlagsChanged($0)
+        }
+        persistentDockModifierLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             handleFlagsChanged(event)
             return event
         }
@@ -1587,7 +1636,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         Task.detached(priority: .background) {
-            _ = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
+            var items = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
+            for index in items.indices {
+                items[index].sourcePID = pid
+                items[index].sourceAppName = app.localizedName ?? ""
+            }
+            AppMenuCapabilityCache.shared.store(items: items, for: app)
         }
 
         // Browser windows are expensive AX trees. Do not eagerly crawl page text just

@@ -13,6 +13,7 @@ import Contacts
 import FoundationModels
 import PDFKit
 import Quartz  // For Quick Look
+import Vision
 // WebKit removed — L3 is now the media player layer
 import SwiftTerm  // For terminal integration
 import SwiftUI
@@ -314,6 +315,9 @@ struct LauncherView: View {
     @State private var isHoveringSearchIcon = false
     @State private var isHoveringInputField = false  // Track if mouse is over input field area
     @State private var collapseTimer: Task<Void, Never>? = nil
+    @State private var suppressMouseDrivenInteractionUntil: Date = .distantPast
+    @State private var persistentDockModifierExpansionActive = false
+    @State private var persistentDockCollapseTask: Task<Void, Never>? = nil
 
     // Layer memory — restored when closing chat
     @State private var chatReturnContextInDock = false
@@ -617,10 +621,11 @@ struct LauncherView: View {
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + folderPreviewHeight + 10
         }
 
-        // App panel (calendar/reminders/notes/etc.) — split view with fixed height
-        if searchState.activeSmartQueryKey != nil {
-            let panelHeight: CGFloat = searchState.activeSmartQueryKey == "clipboard" ? 430 : 480
-            let panelGap: CGFloat = searchState.activeSmartQueryKey == "clipboard" ? 2 : 10
+        // App panel (calendar/reminders/notes/etc.) — split view with fixed height.
+        // Clipboard uses the shared dock result sheet, not the legacy app panel.
+        if searchState.activeSmartQueryKey != nil && searchState.activeSmartQueryKey != "clipboard" {
+            let panelHeight: CGFloat = 480
+            let panelGap: CGFloat = 10
             return statusBarHeight + pinnedAppsHeight + searchBarHeight + panelHeight + panelGap
         }
 
@@ -673,6 +678,40 @@ struct LauncherView: View {
             return expandedDockWidth
         }
         return collapsedDockWidth
+    }
+
+    private var persistentDockHasExpandedWork: Bool {
+        let hasQuery = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasQuery
+            || !searchState.results.isEmpty
+            || searchState.isLoadingApps
+            || showFolderPreview
+            || searchState.activeSmartQueryKey != nil
+            || searchState.contextApp != nil
+            || usesVerticalListDockLayout
+            || aiMode.isActive
+            || aiMode.isLoading
+            || aiMode.streamingId != nil
+            || !aiMode.messages.isEmpty
+            || showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading)
+            || isGlobalContextActive
+            || l2.targetApp != nil
+            || isSearchFieldFocused
+    }
+
+    private var acceptsMouseDrivenDockInteraction: Bool {
+        Date() >= suppressMouseDrivenInteractionUntil
+    }
+
+    private func beginMouseDrivenInteractionGrace(_ seconds: TimeInterval = 0.45) {
+        suppressMouseDrivenInteractionUntil = Date().addingTimeInterval(seconds)
+        isHoveringSearchIcon = false
+        isHoveringInputField = false
+        isHoveringDockArea = false
+        hoveredDockAppKey = nil
+        hoveredAppPillIndex = nil
+        hoveredDockPillIndex = nil
+        listViewHoveredIndex = nil
     }
 
     private var notificationDockPopoverWidth: CGFloat {
@@ -772,7 +811,6 @@ struct LauncherView: View {
         guard showContextInDock,
               !showMediaLayer,
               !aiMode.isActive,
-              searchState.activeSmartQueryKey != "clipboard",
               shouldShowL2UnifiedDockRow
         else { return false }
 
@@ -797,6 +835,16 @@ struct LauncherView: View {
 
     private func currentCachedDockPills(for query: String) -> [DockPill] {
         if lastPillQuery == query { return cachedDockPills }
+        if searchState.activeSmartQueryKey == "clipboard" {
+            return buildClipboardHistoryPills(query: query)
+        }
+        if isL2ContextActive, !shouldUsePureGlobalAppSearch,
+           !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return buildDockPills(query: query)
+        }
+        if pendingDockPillQuery == query {
+            return contextDockPreviewPills(for: query)
+        }
         return []
     }
 
@@ -818,6 +866,31 @@ struct LauncherView: View {
 
     private func currentVisibleDockPills(for query: String) -> [DockPill] {
         selectionScopedDockPills(currentCachedDockPills(for: query))
+    }
+
+    private func contextDockPreviewPills(for query: String) -> [DockPill] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, !cachedDockPills.isEmpty else { return cachedDockPills }
+        let scope = resolveDockScope(for: q)
+        let filtered = cachedDockPills.filter { pill in
+            guard !pill.isSeparator else { return false }
+            return dockPillHasQuerySignal(
+                pill,
+                query: q,
+                rawQuery: q,
+                scopedBundleId: scope.scopedBundleId,
+                scopedAppName: scope.scopedAppName
+            )
+        }
+        guard !filtered.isEmpty else { return cachedDockPills }
+        return rankDockPills(
+            filtered,
+            rawQuery: q,
+            rankingQuery: scope.scopedSearchQuery.isEmpty ? q : scope.scopedSearchQuery,
+            scopedBundleId: scope.scopedBundleId,
+            scopedAppName: scope.scopedAppName,
+            isExplicitAppScope: scope.isExplicitAppScope
+        )
     }
 
     private func cachedMenuItemsForApp(_ app: NSRunningApplication, maxResults: Int = 120) -> [AXMenuItem] {
@@ -895,9 +968,95 @@ struct LauncherView: View {
         pill.menuContext = menuContextLabel(from: item.path)
         pill.rankingKind = isSubmenuParent ? "submenuParent" : "menu"
         pill.isEnabled = isSubmenuParent ? true : item.isEnabled
+        pill.hasLiveAvailability = item.hasLiveAvailability
+        pill.menuStatusBadge = menuStatusBadge(for: item, bundleIdentifier: sourceBundleId)
+        pill.keyboardShortcutLabel = item.shortcutDisplay ?? badge
+        if let resolvedURL = resolveCachedMenuFileURL(from: item) {
+            pill.resolvedURL = resolvedURL
+            pill.quickLookURL = resolvedURL
+            pill.menuStatusBadge = "Cached File"
+        }
         pill.trackingIdentifier = trackingIdentifier
         pill.searchTerms = searchTerms + item.children.map(\.title)
+        if let resolvedURL = pill.resolvedURL {
+            pill.searchTerms.append(resolvedURL.path)
+        }
         return pill
+    }
+
+    private func resolveCachedMenuFileURL(from item: AXMenuItem) -> URL? {
+        guard item.children.isEmpty else { return nil }
+        let path = item.path.map(normalizedDockPillText)
+        let likelyDocumentMenu =
+            path.contains("window")
+            || path.contains("recent items")
+            || path.contains("open recent")
+            || path.contains("documents")
+        guard likelyDocumentMenu else { return nil }
+        return resolveCachedFileURL(fromMenuTitle: item.title)
+    }
+
+    private func resolveCachedFileURL(fromMenuTitle title: String) -> URL? {
+        let cleaned = cleanCachedMenuFileTitle(title)
+        guard cleaned.count >= 3 else { return nil }
+        let normalizedCleaned = normalizedDockPillText(cleaned)
+
+        for doc in RecentItemsService.shared.recentDocuments() {
+            let names = [
+                doc.url.lastPathComponent,
+                doc.url.deletingPathExtension().lastPathComponent,
+                doc.name
+            ].map(normalizedDockPillText)
+            if names.contains(normalizedCleaned),
+               FileManager.default.fileExists(atPath: doc.url.path) {
+                return doc.url
+            }
+        }
+
+        let matches = fileIndexManager.advancedSearch(AdvancedFileSearchQuery(
+            rootPath: NSHomeDirectory(),
+            residualQuery: cleaned,
+            includeDirectories: false,
+            filesOnly: true,
+            limit: 12
+        ))
+        if let exact = matches.first(where: {
+            normalizedDockPillText($0.name) == normalizedCleaned
+                || normalizedDockPillText(URL(fileURLWithPath: $0.path).lastPathComponent) == normalizedCleaned
+        }) {
+            return URL(fileURLWithPath: exact.path)
+        }
+        return nil
+    }
+
+    private func cleanCachedMenuFileTitle(_ title: String) -> String {
+        var value = title
+            .replacingOccurrences(of: "…", with: "")
+            .replacingOccurrences(of: "...", with: "")
+            .replacingOccurrences(of: " (Edited)", with: "")
+            .replacingOccurrences(of: " — Edited", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.contains(" - ") {
+            value = value.components(separatedBy: " - ").first ?? value
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func menuStatusBadge(for item: AXMenuItem, bundleIdentifier: String) -> String? {
+        if item.hasLiveAvailability {
+            return item.isEnabled ? "Live" : "Unavailable now"
+        }
+        if !bundleIdentifier.isEmpty,
+           warmingMenuBundleIds.contains(bundleIdentifier) {
+            return "Updating..."
+        }
+        if !bundleIdentifier.isEmpty,
+           NSWorkspace.shared.runningApplications.contains(where: {
+               $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
+           }) {
+            return "Cached"
+        }
+        return bundleIdentifier.isEmpty ? "Cached" : "Needs app launch"
     }
 
     private func hasFrontmostMenuPillsInCurrentCache(for query: String) -> Bool {
@@ -1003,7 +1162,7 @@ struct LauncherView: View {
         else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        return pendingDockPillQuery == pillQuery || (!q.isEmpty && lastPillQuery != pillQuery)
+        return cachedDockPills.isEmpty && pendingDockPillQuery == pillQuery
     }
 
     private func isGenericApplicationListQuery(_ query: String) -> Bool {
@@ -1370,6 +1529,13 @@ struct LauncherView: View {
             cachedGlobalGroupedState = nil
             pendingGlobalGroupedQuery = nil
             return
+        }
+
+        // First paint must not wait for the debounced background pass. This keeps Global
+        // Context rows visible while typing and gives arrow-key navigation a current model.
+        if shouldUsePureGlobalAppSearch || globalInlineAppScope != nil {
+            cachedGlobalGroupedQuery = q
+            cachedGlobalGroupedState = buildGlobalGroupedListNavigationState(for: q)
         }
 
         pendingGlobalGroupedQuery = q
@@ -1883,6 +2049,7 @@ struct LauncherView: View {
             return
         }
 
+        scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
         pendingGlobalAppQuery = q
         globalAppMatchTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(nanoseconds: delayNanoseconds)
@@ -2004,7 +2171,7 @@ struct LauncherView: View {
         guard scope.isExplicitAppScope else { return [] }
         let actionQuery = (scope.scopedSearchQuery.isEmpty ? query : scope.scopedSearchQuery)
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return cachedScopedAppMenuPills(
+        let pills = cachedScopedAppMenuPills(
             bundleIdentifier: scope.scopedBundleId,
             appName: scope.scopedAppName,
             appPath: globalInlineAppScope?.appPath,
@@ -2012,6 +2179,12 @@ struct LauncherView: View {
             maxResults: maxListViewDockPills,
             allowLiveRefresh: false
         )
+            + scopedSpecialAppPills(
+                bundleIdentifier: scope.scopedBundleId,
+                appName: scope.scopedAppName,
+                query: actionQuery
+            )
+        return pills
             .filter { pill in
                 guard !pill.isSeparator else { return false }
                 guard pill.rankingKind != "appLaunch" else { return false }
@@ -2062,6 +2235,10 @@ struct LauncherView: View {
             let state = globalGroupedListNavigationState(for: q)
             if state.totalCount > 0 {
                 return min(maxListViewDockPills, state.totalCount)
+            }
+            let immediateAppCount = currentOrImmediateGlobalAppMatches(for: q).count
+            if immediateAppCount > 0 {
+                return min(maxListViewDockPills, immediateAppCount)
             }
             if pendingGlobalGroupedQuery == q || pendingGlobalAppQuery == q {
                 return 1
@@ -2645,6 +2822,21 @@ struct LauncherView: View {
             .onChange(of: lastLiveMenuSignature) { _, _ in
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
             }
+            .onChange(of: settings.persistentContextDock) { _, enabled in
+                persistentDockModifierExpansionActive = false
+                persistentDockCollapseTask?.cancel()
+                if enabled {
+                    persistentDockCollapseTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        collapsePersistentDockIfIdle(force: true)
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                        isSearchBarExpanded = true
+                    }
+                    updateWindowSize()
+                }
+            }
             // Global context always shows a fully expanded input — same size as context dock
             .onChange(of: isGlobalContextActive) { _, active in
                 if active { isSearchBarExpanded = true }
@@ -2725,6 +2917,10 @@ struct LauncherView: View {
                     }
                     isSearchFieldFocused = true
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .persistentDockModifierExpansionChanged)) {
+                notification in
+                handlePersistentDockModifierExpansionChanged(notification)
             }
             .onReceive(contextEnv.userContextUpdates) { context in
                 // Receive pre-detected context from AppDelegate (before ILauncher becomes frontmost)
@@ -2883,6 +3079,7 @@ struct LauncherView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateContextDock)) { _ in
+                beginMouseDrivenInteractionGrace()
                 // Instant switch — no animation so the layer change feels immediate
                 showMediaLayer = false
                 aiMode.isActive = false
@@ -2891,6 +3088,7 @@ struct LauncherView: View {
                 setFrontmostAppContextOnly(reason: "activate context dock")
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { _ in
+                beginMouseDrivenInteractionGrace()
                 showMediaLayer = false
                 aiMode.isActive = false
                 showContextInDock = true
@@ -2952,6 +3150,7 @@ struct LauncherView: View {
     }
 
     private func handleLauncherWindowOpened() {
+        beginMouseDrivenInteractionGrace()
         suppressOpenResize = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
             suppressOpenResize = false
@@ -2993,6 +3192,14 @@ struct LauncherView: View {
         }
         syncL2DockSession(force: true)
         backgroundScanRunningAppMenusIfNeeded()
+
+        if settings.persistentContextDock {
+            persistentDockCollapseTask?.cancel()
+            persistentDockCollapseTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 650_000_000)
+                collapsePersistentDockIfIdle(force: true)
+            }
+        }
     }
 
     /// Low-priority background scan: snapshot menus for all running regular apps
@@ -3108,8 +3315,7 @@ struct LauncherView: View {
             }
             .onKeyPress(.upArrow) {
                 if searchState.activeSmartQueryKey == "clipboard" {
-                    navigateClipboardScope(direction: -1)
-                    return .handled
+                    return .ignored
                 }
                 if !showFolderPreview {
                     navigateResults(direction: -1)
@@ -3141,8 +3347,7 @@ struct LauncherView: View {
                     }
                 }
                 if searchState.activeSmartQueryKey == "clipboard" {
-                    navigateClipboardScope(direction: 1)
-                    return .handled
+                    return .ignored
                 }
                 if !showFolderPreview {
                     navigateResults(direction: 1)
@@ -3219,10 +3424,14 @@ struct LauncherView: View {
                         return .handled
                     }
                     if searchState.activeSmartQueryKey == "clipboard" {
-                        if focusedClipboardEntryIndex != nil {
-                            quickLookFocusedClipboardEntry()
-                        } else {
-                            navigateClipboardScope(direction: 1)
+                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let pills = currentVisibleDockPills(for: q)
+                        if let focused = l2.focusedPillIndex,
+                           pills.indices.contains(focused),
+                           !pills[focused].isSeparator {
+                            executeDockPill(pills[focused])
+                        } else if let first = pills.first(where: { !$0.isSeparator }) {
+                            executeDockPill(first)
                         }
                         return .handled
                     }
@@ -3425,7 +3634,17 @@ struct LauncherView: View {
             // Right Arrow: accept ghost text completion (fill app name) without entering scope.
             // Does NOT enter L2 scope — that's Tab's job.
             .onKeyPress(.rightArrow) {
-                if let completion = l2.appCompletion, !completion.ghost.isEmpty {
+                if let findToken = lockedFindToken,
+                   findToken.hasChildMenu,
+                   searchInputCursorIsAtEnd() {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                        showFindTokenMenu = true
+                    }
+                    return .handled
+                }
+                if let completion = l2.appCompletion,
+                   !completion.ghost.isEmpty,
+                   searchInputCursorIsAtEnd() {
                     let full = completion.appName
                     if !full.isEmpty && searchState.query.lowercased() != full.lowercased() {
                         withAnimation(.easeInOut(duration: 0.1)) {
@@ -3434,7 +3653,7 @@ struct LauncherView: View {
                         return .handled
                     }
                 }
-                return showContextInDock ? .handled : .ignored
+                return .ignored
             }
     }
 
@@ -5817,6 +6036,20 @@ struct LauncherView: View {
         guard normalizedPath.contains("window") else { return false }
         guard let title = normalizedPath.last else { return false }
 
+        if title.contains("full screen") || title.contains("fullscreen") {
+            return setFrontmostWindowFullScreenForApp(
+                sourceApp,
+                shouldEnter: !title.contains("exit")
+            )
+        }
+
+        if title == "fill" || title.contains("fill") {
+            return fillFrontmostWindowForApp(
+                pid: sourceApp.processIdentifier,
+                appName: sourceApp.localizedName ?? "App"
+            )
+        }
+
         if title == "centre" || title == "center" {
             return centerFrontmostWindowForApp(
                 pid: sourceApp.processIdentifier,
@@ -5826,6 +6059,81 @@ struct LauncherView: View {
         }
 
         return false
+    }
+
+    @MainActor
+    private func setFrontmostWindowFullScreenForApp(
+        _ app: NSRunningApplication,
+        shouldEnter: Bool
+    ) -> Bool {
+        let pid = app.processIdentifier
+        if app.isHidden { app.unhide() }
+        app.activate(options: [.activateIgnoringOtherApps])
+
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+           let windows = windowsRef as? [AXUIElement],
+           let window = windows.first {
+            let desired: CFBoolean = shouldEnter ? true as CFBoolean : false as CFBoolean
+            let result = AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, desired)
+            if result == .success {
+                AppToast.show(
+                    shouldEnter ? "Entering full screen" : "Exiting full screen",
+                    icon: "arrow.up.left.and.arrow.down.right",
+                    tint: .blue.opacity(0.9)
+                )
+                return true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            _ = AXMenuReader.shared.executeShortcut(char: "f", modifiers: 4, in: pid)
+        }
+        return true
+    }
+
+    @MainActor
+    private func fillFrontmostWindowForApp(
+        pid: pid_t,
+        appName: String
+    ) -> Bool {
+        guard let screen = NSScreen.main else { return false }
+        let visibleFrame = screen.visibleFrame
+        let screenHeight = screen.frame.height
+        let targetX = visibleFrame.minX
+        let targetY = screenHeight - visibleFrame.maxY
+
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement],
+              let window = windows.first
+        else {
+            AppToast.show("No \(appName) window found", icon: "macwindow", tint: .orange)
+            return true
+        }
+
+        var minimizedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef) == .success,
+           (minimizedRef as? Bool) == true {
+            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
+
+        var targetSize = CGSize(width: visibleFrame.width, height: visibleFrame.height)
+        var targetPoint = CGPoint(x: targetX, y: targetY)
+        guard let sizeValue = AXValueCreate(.cgSize, &targetSize),
+              let pointValue = AXValueCreate(.cgPoint, &targetPoint)
+        else { return true }
+
+        let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+        let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+        if sizeResult == .success || positionResult == .success {
+            AppToast.show("Filled \(appName)", icon: "rectangle.inset.filled", tint: .blue.opacity(0.9))
+        } else {
+            AppToast.show("Could not fill \(appName)", icon: "exclamationmark.triangle", tint: .orange)
+        }
+        return true
     }
 
     @MainActor
@@ -6188,6 +6496,7 @@ struct LauncherView: View {
             TapGesture(count: 2).onEnded { pinAction?() }
         )
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.15, dampingFraction: 0.80)) {
                 hoveredDockAppKey = hovering ? hoverKey : nil
                 if let index { hoveredAppPillIndex = hovering ? index : nil }
@@ -6253,6 +6562,7 @@ struct LauncherView: View {
         }
         .frame(width: outerSz, height: outerSz)
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             guard let hoverKey else { return }
             if hovering {
                 hoveredDockAppKey = hoverKey
@@ -6297,6 +6607,7 @@ struct LauncherView: View {
         .buttonStyle(.plain)
         .help(pill.name)
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             if !l2.pillNavViaKeyboard {
                 l2.focusedPillIndex = hovering ? index : nil
             }
@@ -6625,6 +6936,7 @@ struct LauncherView: View {
         let timestamp: Date
         var filePaths: [String] = []
         var imageData: Data? = nil
+        var ocrText: String = ""
         var sourceAppName: String = ""
         var sourceBundleId: String = ""
 
@@ -6683,6 +6995,11 @@ struct LauncherView: View {
         var rankingScore: Double = 0
         var menuItemImage: NSImage? = nil  // native icon read from AX kAXImageAttribute
         var menuContext: String? = nil     // parent menu name, e.g. "File", "Recent Items"
+        var hasLiveAvailability: Bool = false
+        var menuStatusBadge: String? = nil
+        var keyboardShortcutLabel: String? = nil
+        var quickLookURL: URL? = nil
+        var resolvedURL: URL? = nil
     }
 
     struct AIMenuProposal {
@@ -6776,26 +7093,9 @@ struct LauncherView: View {
     }
 
     private func suppressCurrentFinderSelectionBaseline() {
-        guard showContextInDock else { return }
-        guard frontmost.bundleID == "com.apple.finder"
-            || AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier == "com.apple.finder"
-            || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
-        else { return }
-
-        let urls = canonicalExistingURLs(ContextDetector.shared.getFinderSelectedFiles())
-        let paths = urls.map(\.path)
-        guard !paths.isEmpty else {
-            suppressedAutomaticFinderSelectionSignature = nil
-            return
-        }
-        suppressedAutomaticFinderSelectionSignature = finderSelectionSignature(paths)
-        if axContext.bundleId == "com.apple.finder" {
-            axContext.selectedFilePaths = []
-        }
-        if case .filesSelected(let current) = currentContext,
-           finderSelectionSignature(current) == suppressedAutomaticFinderSelectionSignature {
-            currentContext = .none
-        }
+        // Finder's selected row on window open is meaningful context for Global Context.
+        // Do not suppress it; dismissal still uses dismissedFinderSelectionSignature.
+        suppressedAutomaticFinderSelectionSignature = nil
     }
 
     private func updateDismissedFinderSelectionAfterSelectionChange(_ paths: [String]) {
@@ -7084,6 +7384,7 @@ struct LauncherView: View {
                 pill.sourceBundleId = "com.apple.finder"
                 pill.sourceAppName = "Finder"
                 pill.rankingKind = candidate.isDirectory ? "finderGoTo" : "finderSearch"
+                pill.quickLookURL = url
                 pill.trackingIdentifier = candidate.isDirectory
                     ? finderGoToTrackingIdentifier(for: itemPath)
                     : "finder-home-search:\(itemPath.lowercased())"
@@ -7180,8 +7481,10 @@ struct LauncherView: View {
     private func buildFinderSelectionMenuPills(query q: String, excludingTitles: Set<String>) -> [DockPill] {
         guard !effectiveFinderSelectionURLsForPills().isEmpty else { return [] }
 
+        let openWithFilter = openWithChildFilter(from: q)
+        let menuQuery = openWithFilter == nil ? q : "open"
         let limit = q.isEmpty ? 12 : 10
-        let items = FileContextOverlayController.shared.finderMenuResults(query: q, limit: limit)
+        let items = FileContextOverlayController.shared.finderMenuResults(query: menuQuery, limit: limit)
 
         var pills: [DockPill] = []
         for item in items {
@@ -7224,13 +7527,129 @@ struct LauncherView: View {
             pill.sourceAppName = "Finder"
             pill.menuContext = menuContextLabel(from: item.path)
             pill.rankingKind = "finderMenu"
+            pill.isEnabled = item.isEnabled
+            pill.hasLiveAvailability = false
             pill.trackingIdentifier =
                 "finder-menu:\(path.joined(separator: " > ").lowercased())"
             pill.searchTerms = item.path + ["finder", "files", "selection"]
             pills.append(pill)
+
+            let isOpenWithMenu =
+                normalizedTitle == "open with"
+                || item.path.contains { normalizedDockPillText($0) == "open with" }
+            if let openWithFilter, isOpenWithMenu, !item.children.isEmpty {
+                let children = leafOpenWithChildren(for: item, filter: openWithFilter)
+                for child in children {
+                    let childPath = child.path
+                    let childPID = child.sourcePID != 0 ? child.sourcePID : sourcePID
+                    let childShortcut = child.shortcutChar
+                    let childMods = child.shortcutModifiers
+                    var childPill = DockPill(
+                        id: "finder-open-with-\(child.id)",
+                        name: child.title,
+                        icon: "app.badge",
+                        accentColorName: "blue",
+                        badge: "Open With",
+                        execute: {
+                            guard childPID != 0 else { return }
+                            executeDockMenuAction(
+                                sourcePID: childPID,
+                                path: childPath,
+                                shortcutChar: childShortcut,
+                                shortcutModifiers: childMods
+                            )
+                        }
+                    )
+                    childPill.menuItemImage = openWithAppIcon(for: child)
+                    childPill.menuItemName = child.title
+                    childPill.sourceBundleId = "com.apple.finder"
+                    childPill.sourceAppName = "Finder"
+                    childPill.menuContext = "Open With"
+                    childPill.rankingKind = "submenuChild"
+                    childPill.trackingIdentifier =
+                        "finder-open-with:\(childPath.joined(separator: " > ").lowercased())"
+                    childPill.searchTerms = child.path + ["open", "open with", child.title, "app"]
+                    childPill.isEnabled = true
+                    childPill.hasLiveAvailability = false
+                    pills.append(childPill)
+                }
+            }
         }
 
         return pills
+    }
+
+    private func leafOpenWithChildren(for parent: AXMenuItem, filter: String) -> [AXMenuItem] {
+        var leaves: [AXMenuItem] = []
+        for child in parent.children {
+            if child.isLeaf {
+                leaves.append(child)
+            } else {
+                leaves.append(contentsOf: child.children.filter(\.isLeaf))
+            }
+        }
+
+        let normalizedFilter = normalizedDockPillText(filter)
+        let filtered = leaves.filter { child in
+            guard !isAppleMenuItem(child) else { return false }
+            let title = normalizedDockPillText(child.title)
+            guard !title.isEmpty else { return false }
+            if normalizedFilter.isEmpty { return true }
+            return title.contains(normalizedFilter)
+                || title.split(separator: " ").contains { $0.hasPrefix(normalizedFilter) }
+        }
+
+        return Array(filtered.prefix(12))
+    }
+
+    private func openWithChildFilter(from query: String) -> String? {
+        let normalized = normalizedDockPillText(query)
+        if normalized == "open" || normalized == "open with" { return "" }
+        if normalized.hasPrefix("open with ") {
+            return String(normalized.dropFirst("open with ".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if normalized.hasPrefix("open ") {
+            return String(normalized.dropFirst("open ".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func openWithAppIcon(for item: AXMenuItem) -> NSImage? {
+        if let image = resolvedMenuIcon(for: item) { return image }
+
+        let title = item.title
+            .replacingOccurrences(of: #"\s*\(default\)\s*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let appName = title.hasSuffix(".app") ? String(title.dropLast(4)) : title
+        let candidates = [title, "\(appName).app", appName]
+
+        for result in allApplications where result.type == .application {
+            let resultName = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pathName = URL(fileURLWithPath: result.subtitle).lastPathComponent
+            if candidates.contains(where: {
+                $0.compare(resultName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+                    || $0.compare(pathName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            }) {
+                return preparedDockIcon(result.icon)
+            }
+        }
+
+        let dirs = [
+            "/Applications",
+            "/System/Applications",
+            "/System/Applications/Utilities",
+            "\(NSHomeDirectory())/Applications"
+        ]
+        for dir in dirs {
+            let path = "\(dir)/\(appName).app"
+            if FileManager.default.fileExists(atPath: path) {
+                return preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
+            }
+        }
+        return nil
     }
 
     // MARK: - Cross-app / clipboard / session pill helpers
@@ -9092,6 +9511,7 @@ struct LauncherView: View {
         if !liveMenuItems.isEmpty {
             let items = liveMenuItems
             let previousIDs = previousEnabledIDs
+            let appForAvailability = contextTargetApp()
             Task.detached(priority: .userInitiated) {
                 // Re-read enabled states off the main thread — one attribute call per item,
                 // no tree traversal, but still AX IPC and therefore not free.
@@ -9107,6 +9527,10 @@ struct LauncherView: View {
                 let deltaIDs = newEnabledIDs.subtracting(previousIDs)
                 let delta = updated.filter { deltaIDs.contains($0.id) && !self.isAppleMenuItem($0) }
                     .sorted { ($0.shortcutChar != nil ? 0 : 1) < ($1.shortcutChar != nil ? 0 : 1) }
+
+                if let appForAvailability {
+                    AppMenuCapabilityCache.shared.updateAvailability(items: updated, for: appForAvailability)
+                }
 
                 await MainActor.run {
                     self.previousEnabledIDs = newEnabledIDs
@@ -9241,6 +9665,13 @@ struct LauncherView: View {
 
         pruneExpiredClipboardEntries()
 
+        _ = importCurrentPasteboardToClipboardHistory()
+    }
+
+    @discardableResult
+    private func importCurrentPasteboardToClipboardHistory() -> Bool {
+        let pb = NSPasteboard.general
+
         if let fileURLs = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
             let paths = fileURLs
                 .filter { $0.isFileURL }
@@ -9248,23 +9679,24 @@ struct LauncherView: View {
                 .filter { !$0.isEmpty }
             if !paths.isEmpty {
                 addClipboardEntry(text: paths.joined(separator: "\n"), filePaths: paths)
-                return
+                return true
             }
         }
 
         if let image = NSImage(pasteboard: pb),
            let tiffData = image.tiffRepresentation {
             addClipboardEntry(text: "Image copied to clipboard", filePaths: [], imageData: tiffData)
-            return
+            return true
         }
 
         guard pb.pasteboardItems?.first?.types.contains(.string) == true,
               let text = pb.string(forType: .string)
-        else { return }
+        else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 3 else { return }
+        guard trimmed.count > 3 else { return false }
 
         addClipboardEntry(text: trimmed, filePaths: [])
+        return true
     }
 
     private func addClipboardEntry(text: String, filePaths: [String], imageData: Data? = nil) {
@@ -9289,6 +9721,9 @@ struct LauncherView: View {
         }
         clipboardHistory.insert(entry, at: 0)
         trimClipboardHistoryToLimits()
+        if imageData != nil {
+            scheduleClipboardOCR(for: entry.id, imageData: imageData)
+        }
         if searchState.activeSmartQueryKey == "clipboard" {
             searchState.appPanelAllItems = clipboardSearchResults()
         }
@@ -9304,8 +9739,11 @@ struct LauncherView: View {
                 globalContextActivation = GlobalContextActivation(autoActivated: true)
             }
         }
-        // Rebuild pills so clipboard chip appears immediately
-        scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+        // Rebuild pills so clipboard chip or clipboard scope rows appear immediately.
+        let rebuildQuery = searchState.activeSmartQueryKey == "clipboard"
+            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            : lastPillQuery
+        scheduleDockPillRebuild(query: rebuildQuery, delayNanoseconds: 0, refreshContext: false)
     }
 
     private func scheduleClipboardIndicatorAutoHide() {
@@ -9330,6 +9768,42 @@ struct LauncherView: View {
 
     private func clipboardRetentionInterval() -> TimeInterval {
         TimeInterval(max(1, settings.clipboardHistoryRetentionHours)) * 3600
+    }
+
+    private func scheduleClipboardOCR(for entryID: UUID, imageData: Data?) {
+        guard let imageData,
+              let nsImage = NSImage(data: imageData),
+              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return }
+
+        Task.detached(priority: .utility) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            do {
+                try handler.perform([request])
+                let text = (request.results ?? [])
+                    .compactMap { $0.topCandidates(1).first?.string }
+                    .joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return }
+                await MainActor.run {
+                    updateClipboardOCR(entryID: entryID, text: text)
+                }
+            } catch {
+                // OCR is best-effort; clipboard row still works without recognized text.
+            }
+        }
+    }
+
+    private func updateClipboardOCR(entryID: UUID, text: String) {
+        guard let index = clipboardHistory.firstIndex(where: { $0.id == entryID }) else { return }
+        clipboardHistory[index].ocrText = text
+        if searchState.activeSmartQueryKey == "clipboard" {
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
+        }
     }
 
     private func trimClipboardHistoryToLimits() {
@@ -11231,7 +11705,7 @@ struct LauncherView: View {
 
         var cleaned = trimmed
         let patterns = [
-            #"(?i)\b(search|find|lookup|look\s+for|show|display|view|open)\b"#,
+            #"(?i)\b(search|find|lookup|look\s+for|show|display)\b"#,
             #"(?i)\b(photos?\s+of|pictures?\s+of|images?\s+of)\b"#,
             #"(?i)^\s*of\s+"#,
             #"(?i)\b(selected|selection|this|that|text)\b"#,
@@ -11252,7 +11726,7 @@ struct LauncherView: View {
     private func isFindIntentCommand(_ rawScopedQuery: String, fullQuery: String) -> Bool {
         let raw = normalizedDockPillText(rawScopedQuery)
         let full = normalizedDockPillText(fullQuery)
-        let prefixes = ["find", "search", "lookup", "look for", "show", "display", "view", "open"]
+        let prefixes = ["find", "search", "lookup", "look for", "show", "display"]
         if prefixes.contains(where: { prefix in
             raw == prefix || raw.hasPrefix(prefix + " ")
                 || full == prefix || full.hasPrefix(prefix + " ")
@@ -12582,6 +13056,14 @@ struct LauncherView: View {
         guard !queryTokens.isEmpty else { return false }
         let titleTokens = Set(dockPillTokens(title))
         let pathTokens = Set(corpora.flatMap(dockPillTokens))
+        let orderedQueryTokens = dockPillTokens(normalizedQuery)
+        if orderedQueryTokens.allSatisfy({ qToken in
+            qToken.count == 1
+                ? titleTokens.contains { $0.hasPrefix(qToken) }
+                : pathTokens.contains { $0 == qToken || $0.hasPrefix(qToken) || $0.contains(qToken) }
+        }) {
+            return true
+        }
         if !queryTokens.intersection(titleTokens).isEmpty { return true }
         if !queryTokens.intersection(pathTokens).isEmpty { return true }
 
@@ -12613,12 +13095,20 @@ struct LauncherView: View {
             ) ?? 0)
 
             let queryTokens = Set(dockPillTokens(normalizedQuery))
+            let orderedQueryTokens = dockPillTokens(normalizedQuery)
             let titleTokens = Set(dockPillTokens(title))
             let contextTokens = Set(dockPillTokens(menuContext))
             let pathTokens = Set(pathParts.flatMap(dockPillTokens))
             score += queryTokens.intersection(titleTokens).count * 120
             score += queryTokens.intersection(contextTokens).count * 96
             score += queryTokens.intersection(pathTokens).count * 54
+            if orderedQueryTokens.allSatisfy({ qToken in
+                qToken.count == 1
+                    ? titleTokens.contains { $0.hasPrefix(qToken) }
+                    : pathTokens.contains { $0 == qToken || $0.hasPrefix(qToken) || $0.contains(qToken) }
+            }) {
+                score += 260 + orderedQueryTokens.count * 40
+            }
 
             if !item.isEnabled { score -= 60 }
             if menuContext == "services" || menuContext == "open with" {
@@ -13092,6 +13582,9 @@ struct LauncherView: View {
         }
         l2.focusedPillIndex = nil
         isSearchFieldFocused = true
+        _ = importCurrentPasteboardToClipboardHistory()
+        let q = queryOverride.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
         updateWindowSize()
     }
 
@@ -14237,6 +14730,7 @@ struct LauncherView: View {
             pill.sourceBundleId = "com.apple.finder"
             pill.sourceAppName = "Finder"
             pill.rankingKind = match.source == "Current Folder" ? "finderCurrent" : "finderSearch"
+            pill.quickLookURL = URL(fileURLWithPath: match.path)
             pill.trackingIdentifier = "finder-search:\(match.path.lowercased())"
             pill.searchTerms = match.searchTerms
             pill.rankingScore = match.score
@@ -14278,6 +14772,7 @@ struct LauncherView: View {
         preview.sourceBundleId = "com.apple.finder"
         preview.sourceAppName = "Finder"
         preview.rankingKind = "finderContext"
+        preview.quickLookURL = firstURL
         preview.trackingIdentifier = "finder-preview:\(firstURL.path.lowercased())"
         preview.searchTerms = ["preview", "quick look", "finder", firstURL.lastPathComponent, normalized]
         pills.append(preview)
@@ -14434,29 +14929,75 @@ struct LauncherView: View {
 
         let folderPath = URL(fileURLWithPath: attachedFinderFolderSearchPath).standardizedFileURL.path
         let folderURL = URL(fileURLWithPath: folderPath)
-        let urls = (try? FileManager.default.contentsOfDirectory(
+        let folderName = folderURL.lastPathComponent.isEmpty ? "Current Folder" : folderURL.lastPathComponent
+        var candidates: [String: (url: URL, isDirectory: Bool, score: Double)] = [:]
+
+        func addCandidate(url: URL, isDirectory: Bool, score: Double) {
+            let standardized = url.standardizedFileURL
+            let itemPath = standardized.path
+            guard standardized.deletingLastPathComponent().path == folderPath else { return }
+            guard !standardized.lastPathComponent.hasPrefix(".") else { return }
+            if let existing = candidates[itemPath], existing.score >= score { return }
+            candidates[itemPath] = (standardized, isDirectory, score)
+        }
+
+        let directURLs = (try? FileManager.default.contentsOfDirectory(
             at: folderURL,
             includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         )) ?? []
-
-        let scored = urls.compactMap { url -> (url: URL, isDirectory: Bool, score: Double)? in
+        for url in directURLs {
             guard let score = finderSemanticScore(query: semanticQuery, for: url),
-                  score >= 120 else { return nil }
+                  score >= 120 else { continue }
             let values = (try? url.resourceValues(forKeys: [.isDirectoryKey])) ?? URLResourceValues()
-            return (url, values.isDirectory ?? url.hasDirectoryPath, score)
+            addCandidate(
+                url: url,
+                isDirectory: values.isDirectory ?? url.hasDirectoryPath,
+                score: score + 60
+            )
         }
 
-        return scored
+        let indexed = fileIndexManager.advancedSearch(AdvancedFileSearchQuery(
+            rootPath: folderPath,
+            residualQuery: semanticQuery,
+            includeDirectories: true,
+            filesOnly: false,
+            limit: 48
+        ))
+        for file in indexed where file.parentPath == folderPath {
+            addCandidate(
+                url: URL(fileURLWithPath: file.path),
+                isDirectory: file.isDirectory,
+                score: finderSemanticScore(query: semanticQuery, for: URL(fileURLWithPath: file.path)) ?? 650
+            )
+        }
+
+        if settings.enableSpotlightSearch, semanticQuery.count >= 3 {
+            for match in runFinderSpotlightSearch(
+                query: semanticQuery,
+                currentFolderPath: folderPath,
+                limit: 18
+            ) {
+                addCandidate(
+                    url: URL(fileURLWithPath: match.path),
+                    isDirectory: match.isDirectory,
+                    score: match.score + 25
+                )
+            }
+        }
+
+        return candidates.values
             .sorted {
                 if $0.score != $1.score { return $0.score > $1.score }
                 if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
                 return $0.url.lastPathComponent.localizedCaseInsensitiveCompare($1.url.lastPathComponent)
                     == .orderedAscending
             }
-            .prefix(8)
+            .prefix(10)
             .map { item in
                 let itemPath = item.url.standardizedFileURL.path
+                let icon = NSWorkspace.shared.icon(forFile: itemPath)
+                icon.size = NSSize(width: 32, height: 32)
                 var pill = DockPill(
                     id: "finder-attached-\(itemPath)",
                     name: item.url.lastPathComponent,
@@ -14470,7 +15011,7 @@ struct LauncherView: View {
                         searchTerms: []
                     )),
                     accentColorName: item.isDirectory ? "blue" : "teal",
-                    badge: URL(fileURLWithPath: folderPath).lastPathComponent,
+                    badge: folderName,
                     execute: {
                         recordFinderCurrentFolderLaunch(itemPath: itemPath, folderPath: folderPath)
                         if item.isDirectory {
@@ -14485,6 +15026,8 @@ struct LauncherView: View {
                 pill.sourceBundleId = "com.apple.finder"
                 pill.sourceAppName = "Finder"
                 pill.rankingKind = "finderCurrent"
+                pill.menuItemImage = icon
+                pill.quickLookURL = item.url
                 pill.trackingIdentifier = finderCurrentFolderTrackingIdentifier(
                     folderPath: folderPath,
                     itemPath: itemPath
@@ -15165,6 +15708,10 @@ struct LauncherView: View {
             return
         }
         pendingDockPillQuery = query
+        if !refreshContext || !query.isEmpty {
+            cachedDockPills = buildDockPills(query: query)
+            lastPillQuery = query
+        }
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else {
@@ -15197,6 +15744,10 @@ struct LauncherView: View {
         if lockedSubmenuParent != nil { return [] }
         if lockedFindToken != nil { return [] }
         if isQuestionStyleDockQuery(q) { return [] }
+
+        if searchState.activeSmartQueryKey == "clipboard" {
+            return buildClipboardHistoryPills(query: q)
+        }
 
         // AI-found menu action: show as a focused pill instead of in the chat result sheet
         if q.isEmpty, let proposal = pendingAIMenuProposal {
@@ -15346,8 +15897,7 @@ struct LauncherView: View {
             && finderTypedQuery.count >= 2
             && (!rawFinderFilePills.isEmpty || !rawFinderHomeFolderPills.isEmpty || !rawAttachedFinderFolderPills.isEmpty)
             && !finderMenuIntentTerms.contains { finderTypedQuery.contains($0) }
-        let filteredFinderSelectionMenuPills =
-            finderShouldPreferFiles ? [] : rawFinderSelectionMenuPills
+        let filteredFinderSelectionMenuPills = rawFinderSelectionMenuPills
         let payloadActionPills: [DockPill] = {
             guard isExplicitAppScope, !scopedSearchQuery.isEmpty else {
                 return rawPayloadActionPills
@@ -15384,16 +15934,7 @@ struct LauncherView: View {
                 .lowercased()
             return makeFinderSemanticQuickActionPills(query: semanticQuery)
         }()
-        if shouldShowFinderHomeSearchOnly {
-            return rankDockPills(
-                rawFinderHomeFolderPills,
-                rawQuery: q,
-                rankingQuery: finderHomeSearchQuery,
-                scopedBundleId: scopedBundleId,
-                scopedAppName: scopedAppName,
-                isExplicitAppScope: isExplicitAppScope
-            )
-        }
+        _ = shouldShowFinderHomeSearchOnly
         if finderFolderAttachedForDock {
             return rankDockPills(
                 rawFinderFilePills
@@ -15439,7 +15980,7 @@ struct LauncherView: View {
             appPath: installedMenuTarget?.appPath
         )
         let hasStrongContextQuery = !payloadActionPills.isEmpty
-        let shouldSuppressMenuForContext = finderFolderAttachedForDock || finderShouldPreferFiles
+        let shouldSuppressMenuForContext = finderFolderAttachedForDock
         let activeBundleId = isGlobalScope ? "" : scopedBundleId
         let scopedAppKey =
             isGlobalScope
@@ -16235,6 +16776,8 @@ struct LauncherView: View {
                     pill.sourceAppName = menuAppName
                     pill.menuContext = menuContextLabel(from: item.path)
                     pill.rankingKind = "menu"
+                    pill.hasLiveAvailability = item.hasLiveAvailability
+                    pill.menuStatusBadge = menuStatusBadge(for: item, bundleIdentifier: menuBundleId)
                     pill.trackingIdentifier =
                         "menu:\(menuBundleId):\(path.joined(separator: " > ").lowercased())"
                     pill.searchTerms = item.path + [menuAppName, "share"]
@@ -16572,11 +17115,27 @@ struct LauncherView: View {
 
     private func executeDockPill(_ pill: DockPill) {
         UsageTracker.shared.recordAccess(for: defaultDockPillTrackingIdentifier(pill))
+        if let url = pill.resolvedURL,
+           FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.open(url)
+            searchState.query = ""
+            l2.focusedPillIndex = nil
+            return
+        }
         pill.execute()
     }
 
     private func isStaleAvailabilityMenuPill(_ pill: DockPill) -> Bool {
-        pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"
+        guard pill.rankingKind == "menu" || pill.rankingKind == "finderMenu" else {
+            return false
+        }
+        if !pill.hasLiveAvailability { return true }
+        // In Global Context with selected files/text, Context Dock owns focus. Several
+        // apps recalculate kAXEnabled only while their native menu is open, so a runnable
+        // selection action can report disabled. Execution still validates volatile paths.
+        if isGlobalContextActive && hasActiveDockContextSelection { return true }
+        if hasActiveDockContextSelection && pill.sourceBundleId == "com.apple.finder" { return true }
+        return false
     }
 
     private func directAppActionQuery(for query: String) -> String? {
@@ -16839,7 +17398,7 @@ struct LauncherView: View {
                 } else if showGlobalAppSearch {
                     globalAppSearchListView(
                         query: q,
-                        matches: globalNavIsScopedAppMenus ? [] : displayedGlobalAppMatches,
+                        matches: globalNavIsScopedAppMenus ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
                         menuPills: globalMenuPills,
                         appMenuGroups: globalCrossAppGroups,
                         launchHint: scopedAppLaunchHint,
@@ -17865,6 +18424,13 @@ struct LauncherView: View {
         return nil
     }
 
+    private func sourceAppIcon(bundleId: String) -> NSImage? {
+        guard !bundleId.isEmpty,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
     private func clipboardEntrySubtitle(_ entry: ClipboardEntry) -> String {
         var parts: [String] = []
         if !entry.sourceAppName.isEmpty {
@@ -18054,6 +18620,57 @@ struct LauncherView: View {
         return NSImage(systemSymbolName: entry.icon, accessibilityDescription: entry.preview)
     }
 
+    private func clipboardEntriesForScope(query: String) -> [ClipboardEntry] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let entries = relevantClipboardHistory()
+        guard !q.isEmpty, q != "clip", q != "clipboard" else { return entries }
+        return entries.filter {
+            $0.preview.lowercased().contains(q)
+                || $0.text.lowercased().contains(q)
+                || $0.ocrText.lowercased().contains(q)
+                || $0.filePaths.joined(separator: " ").lowercased().contains(q)
+                || $0.sourceAppName.lowercased().contains(q)
+                || clipboardEntrySubtitle($0).lowercased().contains(q)
+        }
+    }
+
+    private func buildClipboardHistoryPills(query q: String) -> [DockPill] {
+        let entries = clipboardEntriesForScope(query: q)
+        return entries.prefix(maxListViewDockPills).enumerated().map { index, entry in
+            var pill = DockPill(
+                id: "clipboard-history-\(entry.id.uuidString)",
+                name: entry.preview.isEmpty ? "Clipboard Item" : entry.preview,
+                icon: entry.icon,
+                accentColorName: entry.imageData != nil ? "purple" : (entry.fileCount > 0 ? "green" : "blue"),
+                badge: clipboardEntrySubtitle(entry),
+                execute: {
+                    openClipboardEntry(entry)
+                    searchState.query = ""
+                    focusedClipboardEntryIndex = nil
+                    l2.focusedPillIndex = nil
+                }
+            )
+            pill.menuItemImage = clipboardEntryImage(for: entry)
+            pill.sourceBundleId = entry.sourceBundleId
+            pill.sourceAppName = entry.sourceAppName.isEmpty ? "Clipboard" : entry.sourceAppName
+            pill.rankingKind = "clipboard"
+            pill.trackingIdentifier = "clipboard:\(entry.id.uuidString)"
+            pill.searchTerms = [
+                entry.preview,
+                entry.text,
+                entry.ocrText,
+                entry.filePaths.joined(separator: " "),
+                entry.sourceAppName,
+                clipboardEntrySubtitle(entry),
+                "clipboard",
+                "clip"
+            ]
+            pill.quickLookURL = quickLookURL(for: entry)
+            pill.rankingScore = Double(maxListViewDockPills - index)
+            return pill
+        }
+    }
+
     @ViewBuilder
     private var clipboardScopeView: some View {
         VStack(spacing: 0) {
@@ -18127,14 +18744,7 @@ struct LauncherView: View {
     }
 
     private func filteredClipboardEntriesForScope() -> [ClipboardEntry] {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let entries = relevantClipboardHistory()
-        guard !q.isEmpty, q != "clip", q != "clipboard" else { return entries }
-        return entries.filter {
-            $0.preview.lowercased().contains(q)
-                || $0.text.lowercased().contains(q)
-                || clipboardEntrySubtitle($0).lowercased().contains(q)
-        }
+        clipboardEntriesForScope(query: searchState.query)
     }
 
     private func navigateClipboardScope(direction: Int) {
@@ -18210,6 +18820,38 @@ struct LauncherView: View {
         let previewURL = directory.appendingPathComponent("\(entry.id.uuidString).txt")
         try? entry.text.write(to: previewURL, atomically: true, encoding: .utf8)
         return previewURL
+    }
+
+    private func currentFocusedDockPillForQuickLook() -> DockPill? {
+        guard isL2ContextActive, usesVerticalListDockLayout else { return nil }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+        let pills = currentVisibleDockPills(for: pillQuery)
+        let index = l2.focusedPillIndex ?? listViewHoveredIndex
+        guard let index, pills.indices.contains(index), !pills[index].isSeparator else { return nil }
+        return pills[index]
+    }
+
+    private func quickLookDockPill(_ pill: DockPill) -> Bool {
+        guard let url = pill.quickLookURL else { return false }
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        guard let panel = QLPreviewPanel.shared() else { return false }
+        if panel.isVisible,
+           let currentDataSource = quickLookDataSource,
+           currentDataSource.urls.first == url {
+            panel.orderOut(nil)
+            quickLookDataSource = nil
+            return true
+        }
+        let dataSource = QuickLookDataSource(urls: [url])
+        quickLookDataSource = dataSource
+        panel.dataSource = dataSource
+        panel.delegate = dataSource
+        panel.reloadData()
+        if !panel.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+        }
+        return true
     }
 
     private func openClipboardEntry(_ entry: ClipboardEntry) {
@@ -18419,6 +19061,7 @@ struct LauncherView: View {
         }  // end else
         }  // end Group
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             isHoveringPillRow = hovering
             if !hovering { pillScrollAccumulator = 0 }
         }
@@ -18447,13 +19090,23 @@ struct LauncherView: View {
                                 .id("pill-list-\(pill.id)")
                             }
                         } else {
+                            let currentGroup = dockListGroupTitle(for: pill)
+                            let previousGroup: String? = {
+                                guard idx > 0 else { return nil }
+                                let previous = visiblePills[idx - 1]
+                                guard !previous.isSeparator else { return nil }
+                                return dockListGroupTitle(for: previous)
+                            }()
+                            if currentGroup != previousGroup {
+                                resultGroupHeader(currentGroup)
+                                    .padding(.top, idx == 0 ? 0 : 6)
+                            }
                             pillListRow(pill: pill, index: idx)
                                 .id("pill-list-\(pill.id)")
                         }
                     }
                 }
                 .padding(6)
-                .animation(.easeInOut(duration: 0.15), value: visiblePills.map(\.id))
             }
             .frame(height: listViewVisibleHeight)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -18465,6 +19118,77 @@ struct LauncherView: View {
                 }
             }
         }
+    }
+
+    private func dockListGroupTitle(for pill: DockPill) -> String {
+        let kind = pill.rankingKind.lowercased()
+        let badge = (pill.badge ?? "").lowercased()
+        let context = (pill.menuContext ?? "").lowercased()
+        let name = pill.name.lowercased()
+
+        if kind == "clipboard" {
+            return "Clipboard Items"
+        }
+        if kind == "findermenu" {
+            return "Finder Menus"
+        }
+        if kind == "finderselection" || kind == "findercontext" {
+            return "Finder Actions"
+        }
+        if kind == "findergoto" {
+            return "Home Folders"
+        }
+        if kind == "findercurrent" || kind == "findersearch" {
+            if pill.icon.localizedCaseInsensitiveContains("folder")
+                || badge.contains("folder")
+                || name.contains("folder") {
+                return kind == "findercurrent" ? "Current Folder" : "Home Folders"
+            }
+            return "Files"
+        }
+        if kind.contains("finder") || badge.contains("finder") {
+            return "Finder"
+        }
+        if kind.contains("menu") || !context.isEmpty {
+            if let root = dockMenuRootTitle(for: pill) {
+                return root == "Apple" ? "Apple Menu" : "\(root) Menu"
+            }
+            if let context = pill.menuContext, !context.isEmpty {
+                return context == "Apple Menu" ? context : "\(context) Menu"
+            }
+            return "Menus"
+        }
+        if kind.contains("semantic") || kind.contains("payload") {
+            return "Actions"
+        }
+        if kind.contains("applaunch") {
+            return "Apps"
+        }
+        if badge.contains("folder") {
+            return "Folders"
+        }
+        if badge.contains("file") || name.contains(".") {
+            return "Files"
+        }
+        return "Actions"
+    }
+
+    private func dockMenuRootTitle(for pill: DockPill) -> String? {
+        let knownRoots = [
+            "Apple", "File", "Edit", "Selection", "View", "Go", "Run", "Terminal",
+            "Window", "Help", "History", "Bookmarks", "Navigate", "Product",
+            "Debug", "Source Control", "Format", "Tools", "Playback", "Controls",
+            "Audio", "Video", "Subtitles"
+        ]
+        for term in pill.searchTerms {
+            let cleaned = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let match = knownRoots.first(where: {
+                normalizedDockPillText($0) == normalizedDockPillText(cleaned)
+            }) {
+                return match
+            }
+        }
+        return nil
     }
 
     // Liquid glass floating suggestion panel — appears below input like the macOS autocomplete popover.
@@ -18539,7 +19263,10 @@ struct LauncherView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .onHover { h in listViewHoveredIndex = h ? (10000 + idx) : nil }
+                        .onHover { h in
+                            guard acceptsMouseDrivenDockInteraction else { return }
+                            listViewHoveredIndex = h ? (10000 + idx) : nil
+                        }
                         .padding(.horizontal, 6)
                         .id("submenu-drop-\(idx)")
                     }
@@ -18691,6 +19418,7 @@ struct LauncherView: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { hovering in
+                        guard acceptsMouseDrivenDockInteraction else { return }
                         listViewHoveredIndex = hovering ? (12000 + idx) : nil
                     }
                     .padding(.horizontal, 6)
@@ -18760,6 +19488,8 @@ struct LauncherView: View {
         let isActive = isKeyboardFocused || isHov
         let isDisabled = !pill.isEnabled && !isStaleAvailabilityMenuPill(pill)
         let subtitle = (pill.menuContext?.isEmpty == false) ? pill.menuContext! : (pill.badge ?? "Run")
+        let shortcutLabel = pill.keyboardShortcutLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceIcon = pill.rankingKind == "clipboard" ? sourceAppIcon(bundleId: pill.sourceBundleId) : nil
 
         Button {
             guard !isDisabled else { return }
@@ -18798,6 +19528,13 @@ struct LauncherView: View {
                         .foregroundStyle(isDisabled ? .tertiary : .primary)
                         .lineLimit(1)
                     HStack(spacing: 5) {
+                        if let sourceIcon {
+                            Image(nsImage: sourceIcon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 14, height: 14)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
                         Text(subtitle)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -18810,6 +19547,14 @@ struct LauncherView: View {
                                 .padding(.vertical, 2)
                                 .background(Color.secondary.opacity(0.10))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
+                        } else if let status = pill.menuStatusBadge, pill.rankingKind == "menu" || pill.rankingKind == "submenuParent" {
+                            Text(status)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.10))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                     }
                 }
@@ -18817,8 +19562,18 @@ struct LauncherView: View {
                 Spacer(minLength: 0)
 
                 // Source app + return badge
-                if isActive {
-                    HStack(spacing: 5) {
+                HStack(spacing: 5) {
+                    if let shortcutLabel, !shortcutLabel.isEmpty,
+                       pill.rankingKind == "menu" || pill.rankingKind == "submenuParent" || pill.rankingKind == "submenuChild" {
+                        Text(shortcutLabel)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary.opacity(0.78))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.10))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    if isActive {
                         if !pill.sourceAppName.isEmpty {
                             Text(pill.sourceAppName)
                                 .font(.system(size: 11))
@@ -18857,6 +19612,7 @@ struct LauncherView: View {
         .buttonStyle(.plain)
         .opacity(isDisabled ? 0.45 : 1.0)
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             listViewHoveredIndex = hovering ? index : nil
             if hovering { l2.pillNavViaKeyboard = false }
         }
@@ -18966,6 +19722,7 @@ struct LauncherView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             listViewHoveredIndex = hovering ? index : nil
             if hovering { l2.pillNavViaKeyboard = false }
         }
@@ -19151,6 +19908,7 @@ struct LauncherView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
+            guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 hoveredAppPillIndex = hovering ? index : nil
             }
@@ -19164,6 +19922,9 @@ struct LauncherView: View {
     private var shouldShowL2UnifiedDockRow: Bool {
         guard showContextInDock, !aiMode.isActive else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if searchState.activeSmartQueryKey == "clipboard" {
+            return currentVisibleDockPills(for: q).contains { !$0.isSeparator }
+        }
         if isGlobalContextActive {
             if q.isEmpty {
                 return !settings.pinnedApps.isEmpty
@@ -19306,6 +20067,7 @@ struct LauncherView: View {
             .buttonStyle(.plain)
             .help(pill.name)
             .onHover { hovering in
+                guard acceptsMouseDrivenDockInteraction else { return }
                 if !l2.pillNavViaKeyboard {
                     l2.focusedPillIndex = hovering ? index : nil
                 }
@@ -19347,6 +20109,8 @@ struct LauncherView: View {
 
     /// Best-effort icon for a menu item. AXImage covers most items; Services items need name lookup.
     private func resolvedMenuIcon(for item: AXMenuItem) -> NSImage? {
+        if let appIcon = resolvedApplicationMenuIcon(for: item) { return appIcon }
+        if let shareIcon = resolvedShareMenuIcon(for: item) { return shareIcon }
         if let img = item.image { return img }
         let isService = item.path.contains(where: { $0 == "Services" })
         guard isService else { return nil }
@@ -19355,6 +20119,180 @@ struct LauncherView: View {
             resolveUncachedServiceMenuIcon(for: item)
         }
     }
+
+    private func resolvedApplicationMenuIcon(for item: AXMenuItem) -> NSImage? {
+        let normalizedPath = item.path.map(normalizedDockPillText)
+        guard normalizedPath.contains("open with") || normalizedPath.dropLast().last == "open with" else {
+            return nil
+        }
+        let rawTitle = item.title
+            .replacingOccurrences(of: "...", with: "")
+            .replacingOccurrences(of: "…", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTitle.isEmpty else { return nil }
+        return MenuIconMemoryCache.shared.image(for: "open-with:\(rawTitle)") {
+            if let app = NSWorkspace.shared.runningApplications.first(where: {
+                ($0.localizedName ?? "").caseInsensitiveCompare(rawTitle) == .orderedSame
+                    && !$0.isTerminated
+            }) {
+                return preparedDockIcon(app.icon)
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: rawTitle) {
+                return NSWorkspace.shared.icon(forFile: url.path)
+            }
+            let searchNames = [rawTitle, rawTitle.replacingOccurrences(of: ".app", with: "")]
+            for dir in ["/Applications", "/System/Applications", "\(NSHomeDirectory())/Applications"] {
+                for name in searchNames {
+                    let path = "\(dir)/\(name).app"
+                    if FileManager.default.fileExists(atPath: path) {
+                        return NSWorkspace.shared.icon(forFile: path)
+                    }
+                }
+            }
+            return nil
+        }
+    }
+
+    private func resolvedShareMenuIcon(for item: AXMenuItem) -> NSImage? {
+        let normalizedPath = item.path.map(normalizedDockPillText)
+        guard normalizedPath.contains("share") else { return nil }
+        let rawTitle = item.title
+            .replacingOccurrences(of: "...", with: "")
+            .replacingOccurrences(of: "…", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTitle.isEmpty else { return nil }
+
+        return MenuIconMemoryCache.shared.image(for: "share:\(rawTitle)") {
+            if let serviceIcon = resolvedSharingServiceIcon(named: rawTitle) {
+                return serviceIcon
+            }
+            if let direct = resolvedInstalledAppIcon(named: rawTitle) {
+                return direct
+            }
+
+            let normalizedTitle = normalizedDockPillText(rawTitle)
+            let aliases: [(String, String)] = [
+                ("add to photos", "Photos"),
+                ("photos", "Photos"),
+                ("airdrop", "AirDrop"),
+                ("mail", "Mail"),
+                ("messages", "Messages"),
+                ("notes", "Notes"),
+                ("reminders", "Reminders"),
+                ("freeform", "Freeform"),
+                ("maps", "Maps"),
+                ("shortcuts", "Shortcuts")
+            ]
+            if let alias = aliases.first(where: { normalizedTitle.contains($0.0) }),
+               let icon = resolvedInstalledAppIcon(named: alias.1) {
+                return icon
+            }
+
+            if normalizedTitle == "airdrop" {
+                return NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: "AirDrop")
+            }
+            return nil
+        }
+    }
+
+    private func resolvedSharingServiceIcon(named title: String) -> NSImage? {
+        let context = effectiveAXContextForConversation()
+        var items = ShareIntentRouter.shared.shareItems(for: context)
+        if items.isEmpty, let app = AppDelegate.shared?.previousFrontmostApp,
+           let bid = app.bundleIdentifier,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
+            items = [url]
+        }
+        guard !items.isEmpty else { return nil }
+
+        let normalizedTitle = normalizedShareDestinationText(title)
+        guard !normalizedTitle.isEmpty else { return nil }
+        let services = NSSharingService.sharingServices(forItems: items)
+        let match = services.first { service in
+            let serviceTitle = normalizedShareDestinationText(service.title)
+            return serviceTitle == normalizedTitle
+                || serviceTitle.contains(normalizedTitle)
+                || normalizedTitle.contains(serviceTitle)
+        }
+        return match?.image
+    }
+
+    private func resolvedInstalledAppIcon(named appName: String) -> NSImage? {
+        let cleaned = cleanShareDestinationAppName(appName)
+        guard !cleaned.isEmpty else { return nil }
+        let normalizedCleaned = normalizedDockPillText(cleaned)
+
+        if let match = allApplications.first(where: {
+            let title = normalizedDockPillText($0.title)
+            return title == normalizedCleaned
+                || title.contains(normalizedCleaned)
+                || normalizedCleaned.contains(title)
+        }), let path = match.filePath {
+            return preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
+        }
+
+        let rawBundleName = appName
+            .replacingOccurrences(of: ".app", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            ($0.localizedName ?? "").caseInsensitiveCompare(cleaned) == .orderedSame
+                && !$0.isTerminated
+        }) {
+            return preparedDockIcon(app.icon)
+        }
+
+        if let match = allApplications.first(where: {
+            normalizedDockPillText($0.title) == normalizedDockPillText(cleaned)
+        }), let path = match.filePath {
+            return preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
+        }
+
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: cleaned) {
+            return preparedDockIcon(NSWorkspace.shared.icon(forFile: url.path))
+        }
+
+        let candidates = [
+            "/Applications/\(cleaned).app",
+            "/Applications/\(rawBundleName).app",
+            "/System/Applications/\(cleaned).app",
+            "/System/Applications/\(rawBundleName).app",
+            "/System/Applications/Utilities/\(cleaned).app",
+            "/System/Applications/Utilities/\(rawBundleName).app",
+            "\(NSHomeDirectory())/Applications/\(cleaned).app"
+        ]
+        for path in candidates where FileManager.default.fileExists(atPath: path) {
+            return preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
+        }
+
+        if let discovered = InstalledApplicationsCatalog.discoverInstalledApps().first(where: {
+            let name = normalizedDockPillText($0.name)
+            return name == normalizedCleaned
+                || name.contains(normalizedCleaned)
+                || normalizedCleaned.contains(name)
+        }) {
+            return preparedDockIcon(discovered.icon ?? NSWorkspace.shared.icon(forFile: discovered.url.path))
+        }
+        return nil
+    }
+
+    private func cleanShareDestinationAppName(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: ".app", with: "")
+            .replacingOccurrences(of: "\\b(share|sharing|extension|service)\\b", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedShareDestinationText(_ value: String) -> String {
+        cleanShareDestinationAppName(value)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9 ]+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
 
     private func resolveUncachedServiceMenuIcon(for item: AXMenuItem) -> NSImage? {
         let name = item.title.lowercased()
@@ -20064,7 +21002,7 @@ struct LauncherView: View {
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (showContextInDock && (!l2.chatMessages.isEmpty || l2.isLoading))
             || searchState.contextApp != nil
-            || searchState.activeSmartQueryKey != nil
+            || (searchState.activeSmartQueryKey != nil && searchState.activeSmartQueryKey != "clipboard")
             || shouldShowFinderSearchResultsPanel(for: searchState.query)
     }
 
@@ -20330,6 +21268,7 @@ struct LauncherView: View {
                         .menuStyle(.borderlessButton)
                         .fixedSize()
                         .onHover { hovering in
+                            guard acceptsMouseDrivenDockInteraction else { return }
                             isHoveringSearchIcon = hovering
                             if hovering {
                                 expandSearchBar()
@@ -20464,6 +21403,7 @@ struct LauncherView: View {
                         }
                         .buttonStyle(.plain)
                         .onHover { hovering in
+                            guard acceptsMouseDrivenDockInteraction else { return }
                             isHoveringSearchIcon = hovering
                             if hovering && !suppressHoverExpand {
                                 expandSearchBar()
@@ -21207,6 +22147,14 @@ struct LauncherView: View {
                                     if newValue {
                                         collapseTimer?.cancel()
                                     } else {
+                                        if settings.persistentContextDock {
+                                            persistentDockCollapseTask?.cancel()
+                                            persistentDockCollapseTask = Task { @MainActor in
+                                                try? await Task.sleep(nanoseconds: 180_000_000)
+                                                collapsePersistentDockIfIdle()
+                                            }
+                                            return
+                                        }
                                         if searchState.query.isEmpty && !usesVerticalListDockLayout {
                                             startCollapseTimer()
                                         }
@@ -21482,6 +22430,7 @@ struct LauncherView: View {
                     .animation(.easeInOut(duration: 0.3), value: frontmost.bundleID)
                 }
                 .onHover { hovering in
+                    guard acceptsMouseDrivenDockInteraction else { return }
                     isHoveringInputField = hovering
 
                     // Auto-shrink when mouse leaves input field (if no text and not focused)
@@ -21536,6 +22485,7 @@ struct LauncherView: View {
 
                 }
                 .onHover { hovering in
+                    guard acceptsMouseDrivenDockInteraction else { return }
                     isHoveringDockArea = hovering
                     // When mouse enters the dock area, switch from keyboard nav to hover nav
                     if hovering { l2.pillNavViaKeyboard = false }
@@ -21746,7 +22696,9 @@ struct LauncherView: View {
                 aiChatSection
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else if showContextInDock && !showMediaLayer
-                && (searchState.contextApp != nil || searchState.activeSmartQueryKey != nil)
+                && (searchState.contextApp != nil
+                    || (searchState.activeSmartQueryKey != nil
+                        && searchState.activeSmartQueryKey != "clipboard"))
             {
                 appPanelView
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -29954,6 +30906,44 @@ struct LauncherView: View {
         startCollapseTimer()
     }
 
+    private func handlePersistentDockModifierExpansionChanged(_ notification: Notification) {
+        guard settings.persistentContextDock else { return }
+        let isDown = notification.userInfo?["isDown"] as? Bool ?? false
+        persistentDockCollapseTask?.cancel()
+        persistentDockModifierExpansionActive = isDown
+
+        if isDown {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                isSearchBarExpanded = true
+            }
+            updateWindowSize()
+            return
+        }
+
+        persistentDockCollapseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            collapsePersistentDockIfIdle()
+        }
+    }
+
+    private func collapsePersistentDockIfIdle(force: Bool = false) {
+        guard settings.persistentContextDock else { return }
+        guard acceptsMouseDrivenDockInteraction else { return }
+
+        if force {
+            isSearchFieldFocused = false
+        }
+
+        guard !persistentDockModifierExpansionActive && !persistentDockHasExpandedWork else {
+            return
+        }
+
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            isSearchBarExpanded = false
+        }
+        updateWindowSize()
+    }
+
     private func startCollapseTimer() {
         // Auto-collapse disabled — bar only collapses when user clicks the search icon
         collapseTimer?.cancel()
@@ -30710,6 +31700,11 @@ struct LauncherView: View {
             // Don't intercept if in AI mode (allow typing spaces in AI queries)
             guard !aiMode.isActive else { return event }
 
+            if let pill = currentFocusedDockPillForQuickLook(),
+               quickLookDockPill(pill) {
+                return nil
+            }
+
             // Only intercept if we have a selected result
             guard let index = searchState.selectedIndex, index < searchState.results.count else { return event }
 
@@ -30818,21 +31813,23 @@ struct LauncherView: View {
 
             // Right arrow: accept app ghost text (fill field with full name), no scope entry.
             if event.keyCode == 124 {
-                if let findToken = self.lockedFindToken, findToken.hasChildMenu {
+                if let findToken = self.lockedFindToken,
+                   findToken.hasChildMenu,
+                   self.searchInputCursorIsAtEnd() {
                     withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
                         self.showFindTokenMenu = true
                     }
                     return nil
                 }
-                if let completion = self.l2.appCompletion, !completion.ghost.isEmpty {
+                if let completion = self.l2.appCompletion,
+                   !completion.ghost.isEmpty,
+                   self.searchInputCursorIsAtEnd() {
                     let full = completion.appName
                     if !full.isEmpty && self.searchState.query.lowercased() != full.lowercased() {
                         self.searchState.query = full
                         return nil
                     }
                 }
-                // No ghost — swallow in context dock (Up/Down own navigation)
-                return self.showContextInDock ? nil : event
             }
             // Tab in global context explicitly enters app scope.
             // Typing alone stays global so cross-app suggestions cannot steal the query.
@@ -30914,6 +31911,15 @@ struct LauncherView: View {
                     return nil
                 case 36:  // Return — execute focused grouped row, or first row if none focused
                     return self.executeFocusedGlobalGroupedListRow() ? nil : event
+                case 123:  // Left — exit result focus, return to input field
+                    if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
+                        self.focusedAppPillIndex = nil
+                        self.l2.focusedPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        return nil
+                    }
+                    return event
                 case 53:  // Escape — leave result focus first; keep query intact
                     if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
                         self.focusedAppPillIndex = nil
@@ -30966,6 +31972,12 @@ struct LauncherView: View {
                     return nil
                 case 123:  // Left — mirror context dock: wrap to input field at start
                     guard self.focusedAppPillIndex != nil else { return event }
+                    if self.usesVerticalListDockLayout {
+                        self.focusedAppPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        return nil
+                    }
                     let curLeft = self.focusedAppPillIndex ?? 0
                     if curLeft <= 0 {
                         self.focusedAppPillIndex = nil
@@ -30979,12 +31991,7 @@ struct LauncherView: View {
                         self.focusedAppPillIndex = nil
                         return event
                     }
-                    guard self.focusedAppPillIndex != nil else {
-                        guard self.searchInputCursorIsAtEnd() else { return event }
-                        self.focusedAppPillIndex = 0
-                        self.l2.pillNavViaKeyboard = true
-                        return nil
-                    }
+                    guard self.focusedAppPillIndex != nil else { return event }
                     let curIdx = self.focusedAppPillIndex ?? -1
                     if curIdx >= appPills.count - 1 {
                         self.focusedAppPillIndex = nil
@@ -31066,6 +32073,12 @@ struct LauncherView: View {
                     return nil
                 }
                 guard self.l2.focusedPillIndex != nil else { return event }
+                if self.usesVerticalListDockLayout {
+                    self.l2.focusedPillIndex = nil
+                    self.l2.pillNavViaKeyboard = false
+                    DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                    return nil
+                }
                 let curLeft = self.l2.focusedPillIndex ?? 0
                 if curLeft <= 0 {
                     // Already at first pill — return focus to input field
@@ -31092,14 +32105,7 @@ struct LauncherView: View {
                         count - 1, (self.shortcutSheetFocusedIdx ?? -1) + 1)
                     return nil
                 }
-                guard self.l2.focusedPillIndex != nil else {
-                    guard self.searchInputCursorIsAtEnd() else { return event }
-                    self.l2.pillNavViaKeyboard = true
-                    var idx = 0
-                    while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                    self.l2.focusedPillIndex = idx
-                    return nil
-                }
+                guard self.l2.focusedPillIndex != nil else { return event }
                 let curIdx = self.l2.focusedPillIndex ?? -1
                 if curIdx >= pills.count - 1 {
                     // Already at last pill — return focus to input field

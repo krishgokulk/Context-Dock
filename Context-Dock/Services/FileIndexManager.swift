@@ -161,7 +161,8 @@ final class FileIndexManager: ObservableObject {
         scored.sort { $0.1 > $1.1 }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         return scored.prefix(limit).map { (file, _) in
-            let icon = NSWorkspace.shared.icon(forFile: file.path)
+            let icon = (NSWorkspace.shared.icon(forFile: file.path).copy() as? NSImage)
+                ?? NSWorkspace.shared.icon(forFile: file.path)
             icon.size = NSSize(width: 32, height: 32)
             let displayPath = file.path.replacingOccurrences(of: homeDir, with: "~")
             let resultType: SearchResult.ResultType = file.isDirectory ? .folder :

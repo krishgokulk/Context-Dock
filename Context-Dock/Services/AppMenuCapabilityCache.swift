@@ -14,6 +14,61 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
     let lastSeen: Date
     var isEnabled: Bool = true  // Added to track enabled state from store
 
+    private enum CodingKeys: String, CodingKey {
+        case bundleIdentifier
+        case appName
+        case bundleVersion
+        case localeIdentifier
+        case title
+        case path
+        case shortcutChar
+        case shortcutModifiers
+        case isAppleMenu
+        case lastSeen
+        case isEnabled
+    }
+
+    init(
+        bundleIdentifier: String,
+        appName: String,
+        bundleVersion: String,
+        localeIdentifier: String,
+        title: String,
+        path: [String],
+        shortcutChar: String?,
+        shortcutModifiers: Int,
+        isAppleMenu: Bool,
+        lastSeen: Date,
+        isEnabled: Bool = true
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.appName = appName
+        self.bundleVersion = bundleVersion
+        self.localeIdentifier = localeIdentifier
+        self.title = title
+        self.path = path
+        self.shortcutChar = shortcutChar
+        self.shortcutModifiers = shortcutModifiers
+        self.isAppleMenu = isAppleMenu
+        self.lastSeen = lastSeen
+        self.isEnabled = isEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+        appName = try container.decode(String.self, forKey: .appName)
+        bundleVersion = try container.decode(String.self, forKey: .bundleVersion)
+        localeIdentifier = try container.decode(String.self, forKey: .localeIdentifier)
+        title = try container.decode(String.self, forKey: .title)
+        path = try container.decode([String].self, forKey: .path)
+        shortcutChar = try container.decodeIfPresent(String.self, forKey: .shortcutChar)
+        shortcutModifiers = try container.decode(Int.self, forKey: .shortcutModifiers)
+        isAppleMenu = try container.decode(Bool.self, forKey: .isAppleMenu)
+        lastSeen = try container.decode(Date.self, forKey: .lastSeen)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+
     nonisolated var pathString: String { path.joined(separator: " > ") }
     nonisolated var normalizedPath: String { AppMenuCapabilityCache.normalize(pathString) }
     nonisolated var normalizedTitle: String { AppMenuCapabilityCache.normalize(title) }
@@ -98,7 +153,7 @@ final class AppMenuCapabilityCache {
                 shortcutModifiers: item.shortcutModifiers,
                 isAppleMenu: isAppleMenu,
                 lastSeen: now,
-                isEnabled: true  // Don't persist live AX state — enabled depends on runtime context
+                isEnabled: item.isEnabled
             )
         }
 
@@ -134,6 +189,39 @@ final class AppMenuCapabilityCache {
         lock.unlock()
 
         saveToDisk()
+    }
+
+    nonisolated func updateAvailability(items: [AXMenuItem], for app: NSRunningApplication) {
+        guard let bundleIdentifier = app.bundleIdentifier, !bundleIdentifier.isEmpty else { return }
+        var enabledByPath: [String: Bool] = [:]
+        enabledByPath.reserveCapacity(items.count)
+        for item in items {
+            let key = Self.normalize(item.path.joined(separator: " > "))
+            guard !key.isEmpty else { continue }
+            enabledByPath[key] = (enabledByPath[key] ?? false) || item.isEnabled
+        }
+        guard !enabledByPath.isEmpty else { return }
+
+        lock.lock()
+        guard var snapshot = snapshots[bundleIdentifier] else {
+            lock.unlock()
+            return
+        }
+        var changed = false
+        snapshot.records = snapshot.records.map { record in
+            guard let enabled = enabledByPath[record.normalizedPath],
+                  enabled != record.isEnabled else { return record }
+            var updated = record
+            updated.isEnabled = enabled
+            changed = true
+            return updated
+        }
+        if changed {
+            snapshot.updatedAt = Date()
+            snapshots[bundleIdentifier] = snapshot
+            menuItemsCache = menuItemsCache.filter { $0.key.bundleIdentifier != bundleIdentifier }
+        }
+        lock.unlock()
     }
 
     nonisolated func menuItems(
@@ -195,6 +283,7 @@ final class AppMenuCapabilityCache {
                 sourcePID: processIdentifier,
                 sourceAppName: appName,
                 isAppleMenu: isAppleMenu,
+                hasLiveAvailability: false,
                 shortcutChar: record.shortcutChar,
                 shortcutModifiers: record.shortcutModifiers
             )
@@ -459,7 +548,9 @@ final class AppMenuCapabilityCache {
         if modifiers & 4 != 0 { output += "⌃" }
         if modifiers & 2 != 0 { output += "⌥" }
         if modifiers & 1 != 0 { output += "⇧" }
-        output += "⌘\(ch)"
+        if modifiers & 16 != 0 { output += "🌐" }
+        if modifiers & 8 == 0 { output += "⌘" }
+        output += ch
         return output
     }
 

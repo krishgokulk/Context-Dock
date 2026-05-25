@@ -22,10 +22,11 @@ struct AXMenuItem: Identifiable {
     var sourceAppName: String = ""      // Display name of the source app
     var isAppleMenu: Bool = false       // True for universal Apple-menu items (System Settings, Sleep…)
     var image: NSImage? = nil           // Native icon from AXImage attribute, if available
+    var hasLiveAvailability: Bool = true // false for persistent-cache placeholders
 
     // Keyboard shortcut read from kAXMenuItemCmdChar / kAXMenuItemCmdModifiers
     var shortcutChar: String? = nil     // e.g. "n", "t", "w"
-    var shortcutModifiers: Int = 0      // 0=⌘  1=⇧⌘  2=⌥⌘  4=⌃⌘  8=no-command (plain key, e.g. IINA Space=pause)
+    var shortcutModifiers: Int = 0      // 0=⌘  1=⇧⌘  2=⌥⌘  4=⌃⌘  8=no-command  16=fn/globe
 
     var isChecked: Bool = false  // AXMenuItemMarkChar is non-empty (✓ state)
 
@@ -40,6 +41,7 @@ struct AXMenuItem: Identifiable {
         if shortcutModifiers & 4 != 0 { s += "⌃" }
         if shortcutModifiers & 2 != 0 { s += "⌥" }
         if shortcutModifiers & 1 != 0 { s += "⇧" }
+        if shortcutModifiers & 16 != 0 { s += "🌐" }
         if shortcutModifiers & 8 == 0 { s += "⌘" }  // bit 3 set = no command key
         // Map control characters to their visible symbol equivalents
         switch scalar.value {
@@ -577,6 +579,7 @@ final class AXMenuReader {
         if modifiers & 1 != 0 { cgMods.insert(.maskShift) }
         if modifiers & 2 != 0 { cgMods.insert(.maskAlternate) }
         if modifiers & 4 != 0 { cgMods.insert(.maskControl) }
+        if modifiers & 16 != 0 { cgMods.insert(.maskSecondaryFn) }
 
         let keyCode = virtualKeyCode(for: ch.value)
         guard keyCode != 0xFFFF else { return false }  // unsupported key — let caller fall back
