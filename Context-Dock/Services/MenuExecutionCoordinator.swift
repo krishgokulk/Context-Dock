@@ -134,6 +134,7 @@ final class MenuExecutionCoordinator {
                 sourceApp.activate(options: [.activateIgnoringOtherApps])
                 Self.unminimizeWindows(pid: pid)
             }
+            await AXActionResolver.waitForActivation(of: sourceApp)
             try? await Task.sleep(nanoseconds: 80_000_000)
 
             if let liveMatch = await Self.waitForExecutableMenuItem(
@@ -162,8 +163,12 @@ final class MenuExecutionCoordinator {
                     path: executablePath,
                     sourceApp: sourceApp
                 )
-            let shortcutSent =
+            let pasteMenuClicked =
                 !directWindowActionHandled
+                && Self.isPasteMenuPath(executablePath)
+                && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
+            let shortcutSent =
+                !directWindowActionHandled && !pasteMenuClicked
                 && !preferredShortcut.isEmpty
                 && AXMenuReader.shared.executeShortcut(
                     char: preferredShortcut,
@@ -172,7 +177,7 @@ final class MenuExecutionCoordinator {
                 )
 
             let menuClicked =
-                !directWindowActionHandled && !shortcutSent
+                !directWindowActionHandled && !pasteMenuClicked && !shortcutSent
                 && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
             let fallbackWindowActionHandled =
                 !directWindowActionHandled && !shortcutSent && !menuClicked && isWindowMenuAction
@@ -181,7 +186,8 @@ final class MenuExecutionCoordinator {
                     sourceApp: sourceApp
                 )
             let actionSent =
-                directWindowActionHandled || shortcutSent || menuClicked || fallbackWindowActionHandled
+                directWindowActionHandled || pasteMenuClicked || shortcutSent || menuClicked
+                || fallbackWindowActionHandled
 
             if !actionSent {
                 AXActionResolver.shared.execute(menuPath: executablePath, in: sourceApp)
@@ -468,6 +474,10 @@ final class MenuExecutionCoordinator {
         guard let last = path.last else { return false }
         let normalized = normalizedMenuText(last)
         return normalized == "quit" || normalized.hasPrefix("quit ")
+    }
+
+    private static func isPasteMenuPath(_ path: [String]) -> Bool {
+        normalizedMenuText(path.last ?? "") == "paste"
     }
 
     private static func isCloseWindowMenuPath(_ path: [String]) -> Bool {

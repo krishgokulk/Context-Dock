@@ -126,6 +126,7 @@ final class GlobalContextEngine {
         let pid = app.processIdentifier
         await prepareAppForMenuExecution(app)
         await AXActionResolver.waitForActivation(of: app)
+        await waitForAppShortcutReadiness(app)
         try? await Task.sleep(nanoseconds: 120_000_000)
 
         let isWindowMenuAction = isWindowMenuPath(request.path)
@@ -388,6 +389,30 @@ final class GlobalContextEngine {
         }
     }
 
+    nonisolated private func waitForAppShortcutReadiness(_ app: NSRunningApplication) async {
+        let bundleIdentifier = app.bundleIdentifier ?? ""
+        let pid = app.processIdentifier
+        guard !bundleIdentifier.isEmpty else { return }
+
+        for attempt in 0..<12 {
+            let frontmostBundleIdentifier =
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            let axApp = AXUIElementCreateApplication(pid)
+            var focusedWindow: CFTypeRef?
+            let hasFocusedWindow =
+                AXUIElementCopyAttributeValue(
+                    axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow
+                ) == .success
+                && focusedWindow != nil
+            if frontmostBundleIdentifier == bundleIdentifier && app.isActive && hasFocusedWindow {
+                return
+            }
+            if attempt < 11 {
+                try? await Task.sleep(nanoseconds: 60_000_000)
+            }
+        }
+    }
+
     nonisolated private func waitForExecutableMenuItem(
         path: [String],
         app: NSRunningApplication,
@@ -457,6 +482,13 @@ final class GlobalContextEngine {
         app: NSRunningApplication
     ) -> Bool {
         let shortcut = shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalizedTitle = path.last?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        if normalizedTitle == "paste",
+           AXMenuReader.shared.clickMenuItem(path: path, in: pid) {
+            return true
+        }
         if !shortcut.isEmpty,
            AXMenuReader.shared.executeShortcut(char: shortcut, modifiers: shortcutModifiers, in: pid) {
             return true

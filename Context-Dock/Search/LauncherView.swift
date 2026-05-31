@@ -2046,6 +2046,12 @@ struct LauncherView: View {
         return nil
     }
 
+    func globalGroupedVisibleOrder(state: GlobalGroupedListNavigationState) -> [Int] {
+        let appIndices = Array(0..<state.appResults.count)
+        let menuIndices = Array(state.appResults.count..<state.totalCount)
+        return state.menuFirst ? menuIndices + appIndices : appIndices + menuIndices
+    }
+
     func setGlobalGroupedFocus(
         _ index: Int?,
         state: GlobalGroupedListNavigationState
@@ -2077,21 +2083,25 @@ struct LauncherView: View {
         }
 
         if direction > 0 {
-            let next = min(
-                (currentGlobalGroupedFocusIndex(state: state) ?? -1) + 1, state.totalCount - 1)
-            setGlobalGroupedFocus(next, state: state)
+            let visibleOrder = globalGroupedVisibleOrder(state: state)
+            let current = currentGlobalGroupedFocusIndex(state: state)
+                .flatMap { visibleOrder.firstIndex(of: $0) } ?? -1
+            setGlobalGroupedFocus(visibleOrder[min(current + 1, visibleOrder.count - 1)], state: state)
             return true
         }
 
         if direction < 0 {
-            guard let current = currentGlobalGroupedFocusIndex(state: state) else {
+            let visibleOrder = globalGroupedVisibleOrder(state: state)
+            guard let focused = currentGlobalGroupedFocusIndex(state: state),
+                let current = visibleOrder.firstIndex(of: focused)
+            else {
                 setGlobalGroupedFocus(nil, state: state)
                 return true
             }
             if current <= 0 {
                 setGlobalGroupedFocus(nil, state: state)
             } else {
-                setGlobalGroupedFocus(current - 1, state: state)
+                setGlobalGroupedFocus(visibleOrder[current - 1], state: state)
             }
             return true
         }
@@ -2104,7 +2114,10 @@ struct LauncherView: View {
         let state = globalGroupedListNavigationState(for: q)
         guard state.totalCount > 0 else { return false }
 
-        let index = currentGlobalGroupedFocusIndex(state: state) ?? 0
+        let index =
+            currentGlobalGroupedFocusIndex(state: state)
+            ?? globalGroupedVisibleOrder(state: state).first
+            ?? 0
         if index < state.appResults.count {
             executeGlobalAppSearchResult(state.appResults[index])
             return true
