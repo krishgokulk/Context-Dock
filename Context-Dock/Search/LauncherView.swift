@@ -1773,6 +1773,7 @@ struct LauncherView: View {
                         guard let bid = app.bundleIdentifier else { return false }
                         return app.activationPolicy == .regular
                             && !app.isTerminated
+                            && bid != "com.apple.finder"
                             && bid != frontmostSnap.bundleID
                             && bid != ownBundleId
                             && GlobalContextEngine.shared.hasMenuSnapshot(bundleIdentifier: bid)
@@ -1801,7 +1802,8 @@ struct LauncherView: View {
                 GlobalContextEngine.shared.crossAppMenuDescriptorGroups(
                     query: q,
                     runningApps: snappedRunningApps,
-                    excludedBundleIDs: [frontmostSnap.bundleID, ownBundleId].filter { !$0.isEmpty }
+                    excludedBundleIDs: [frontmostSnap.bundleID, ownBundleId, "com.apple.finder"]
+                        .filter { !$0.isEmpty }
                         .reduce(into: Set<String>()) { $0.insert($1) },
                     includeCachedNonRunning: false,
                     limit: maxPills
@@ -1814,7 +1816,10 @@ struct LauncherView: View {
             let crossAppGroups = appMenuGroups(from: crossDescriptorGroups)
 
             let frontmostMenuGroups: [AppMenuGroup] = {
-                guard !frontmostMenuPills.isEmpty, inlineScope?.isExplicitAppScope != true else {
+                guard frontmostSnap.bundleID != "com.apple.finder",
+                    !frontmostMenuPills.isEmpty,
+                    inlineScope?.isExplicitAppScope != true
+                else {
                     return []
                 }
                 return [
@@ -1893,14 +1898,17 @@ struct LauncherView: View {
             ),
             !target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
-            let pills = cachedScopedAppMenuPills(
-                bundleIdentifier: target.bundleId,
-                appName: target.appName,
-                appPath: target.appPath,
-                query: target.actionQuery,
-                maxResults: maxListViewDockPills,
-                allowLiveRefresh: false
-            )
+            let pills =
+                target.bundleId == "com.apple.finder"
+                ? []
+                : cachedScopedAppMenuPills(
+                    bundleIdentifier: target.bundleId,
+                    appName: target.appName,
+                    appPath: target.appPath,
+                    query: target.actionQuery,
+                    maxResults: maxListViewDockPills,
+                    allowLiveRefresh: false
+                )
             let icon: NSImage? = {
                 if !target.appPath.isEmpty, FileManager.default.fileExists(atPath: target.appPath) {
                     return NSWorkspace.shared.icon(forFile: target.appPath)
@@ -1962,6 +1970,7 @@ struct LauncherView: View {
                 $0.bundleIdentifier == frontmost.bundleID && !$0.isTerminated
             }
             guard let bundleID = app?.bundleIdentifier,
+                bundleID != "com.apple.finder",
                 !frontmostMenuPills.isEmpty,
                 activeGlobalInlineDockScope(for: q)?.isExplicitAppScope != true
             else { return [] }
@@ -2142,27 +2151,37 @@ struct LauncherView: View {
     }
 
     @discardableResult
-    func enterFocusedOrTopGlobalAppScopeIfPossible() -> Bool {
+    func focusTopGlobalAppResultIfPossible() -> Bool {
         guard isGlobalContextActive,
             shouldUsePureGlobalAppSearch,
             searchInputCursorIsAtEnd(),
-            let result = focusedOrTopGlobalAppResult(),
-            let bundleId = bundleIdentifier(forApplicationResult: result)
+            !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
 
-        let appName = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !appName.isEmpty else { return false }
-        let activated = activateInlineDockAppScope(
-            bundleIdentifier: bundleId,
-            appName: appName,
-            queryOverride: "",
-            preserveGlobalContext: true
-        )
-        if activated {
-            focusedAppPillIndex = nil
-            l2.focusedPillIndex = nil
-        }
-        return activated
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let state = globalGroupedListNavigationState(for: q)
+        let matches =
+            state.appResults.isEmpty
+            ? currentOrImmediateGlobalAppMatches(for: q)
+            : state.appResults
+        guard !matches.isEmpty else { return false }
+        focusedAppPillIndex = min(focusedAppPillIndex ?? 0, matches.count - 1)
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = true
+        return true
+    }
+
+    @discardableResult
+    func executeScopedRunningAppIfIdle() -> Bool {
+        guard isGlobalContextActive,
+            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let scopedBundleID = currentGlobalScopedBundleID,
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == scopedBundleID && !$0.isTerminated
+            })
+        else { return false }
+        activateRunningAppFromDock(app)
+        return true
     }
 
     func reclaimSearchInputFocus() {
@@ -2387,7 +2406,9 @@ struct LauncherView: View {
     func appMenuGroups(from descriptorGroups: [GlobalMenuDescriptorGroup]) -> [AppMenuGroup]
     {
         descriptorGroups.compactMap { group -> AppMenuGroup? in
-            guard !group.descriptors.isEmpty else { return nil }
+            guard group.bundleID != "com.apple.finder", !group.descriptors.isEmpty else {
+                return nil
+            }
             return AppMenuGroup(
                 id: group.bundleID,
                 appName: group.appName,
@@ -2431,7 +2452,9 @@ struct LauncherView: View {
         query: String,
         scope: DockScopeResolution
     ) -> [DockPill] {
-        guard scope.isExplicitAppScope else { return [] }
+        guard scope.isExplicitAppScope, scope.scopedBundleId != "com.apple.finder" else {
+            return []
+        }
         let actionQuery = (scope.scopedSearchQuery.isEmpty ? query : scope.scopedSearchQuery)
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pills =
@@ -2470,7 +2493,9 @@ struct LauncherView: View {
     func cachedFrontmostGlobalMenuPills(query: String, maxResults: Int) -> [DockPill] {
         let bundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bundleId.isEmpty, !appName.isEmpty else { return [] }
+        guard !bundleId.isEmpty, bundleId != "com.apple.finder", !appName.isEmpty else {
+            return []
+        }
         let appleMenuFallback = buildGlobalAppleMenuFallbackPills(query: query)
         // Global Context is a read-only fast path: persistent cache only, no live AX snapshot.
         // Context Dock/app-switch warmers are responsible for refreshing this cache.
@@ -3695,6 +3720,9 @@ struct LauncherView: View {
             }
             .onKeyPress(.return) {
                 if !showFolderPreview {
+                    if executeScopedRunningAppIfIdle() {
+                        return .handled
+                    }
                     // Submenu ghost: Enter executes the first matching child directly
                     if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
                         let frontPID =
@@ -3956,10 +3984,10 @@ struct LauncherView: View {
                 }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
-            // Right Arrow: enter visible Global app scope, otherwise accept ghost text.
+            // Right Arrow: focus visible Global app result, otherwise accept ghost text.
             .onKeyPress(.rightArrow) {
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    enterFocusedOrTopGlobalAppScopeIfPossible()
+                    focusTopGlobalAppResultIfPossible()
                 {
                     return .handled
                 }
@@ -15843,6 +15871,7 @@ struct LauncherView: View {
             guard let bid = app.bundleIdentifier else { return nil }
             guard app.activationPolicy == .regular,
                 !app.isTerminated,
+                bid != "com.apple.finder",
                 GlobalContextEngine.shared.hasMenuSnapshot(bundleIdentifier: bid)
             else { return nil }
             return GlobalMenuAppSnapshot(
@@ -15856,9 +15885,8 @@ struct LauncherView: View {
         let descriptors = GlobalContextEngine.shared.crossAppMenuDescriptorGroups(
             query: lower,
             runningApps: runningApps,
-            excludedBundleIDs: [frontmost.bundleID, ownBundleId].filter { !$0.isEmpty }.reduce(
-                into: Set<String>()
-            ) { $0.insert($1) },
+            excludedBundleIDs: [frontmost.bundleID, ownBundleId, "com.apple.finder"]
+                .filter { !$0.isEmpty }.reduce(into: Set<String>()) { $0.insert($1) },
             includeCachedNonRunning: false,
             limit: limit
         )
@@ -23435,10 +23463,10 @@ struct LauncherView: View {
                 return nil
             }
 
-            // Right arrow: enter visible Global app scope, otherwise accept app ghost text.
+            // Right arrow: focus visible Global app result, otherwise accept app ghost text.
             if event.keyCode == 124 {
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    self.enterFocusedOrTopGlobalAppScopeIfPossible()
+                    self.focusTopGlobalAppResultIfPossible()
                 {
                     return nil
                 }
@@ -23538,6 +23566,10 @@ struct LauncherView: View {
 
             let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
+
+            if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
+                return nil
+            }
 
             if self.isGlobalContextActive,
                 q.isEmpty,
