@@ -1144,10 +1144,36 @@ struct LauncherView: View {
 
     func currentOrImmediateGlobalAppMatches(for query: String) -> [SearchResult] {
         let cached = currentGlobalAppMatches(for: query)
-        if !cached.isEmpty { return cached }
+        if !cached.isEmpty { return dedupeGlobalApplicationResults(cached) }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty, shouldUsePureGlobalAppSearch else { return [] }
         return instantGlobalApplicationMatches(for: q, limit: maxListViewDockPills)
+    }
+
+    func globalApplicationIdentityKey(
+        for result: SearchResult,
+        explicitBundleIdentifier: String? = nil
+    ) -> String {
+        if let bundleIdentifier =
+            explicitBundleIdentifier ?? bundleIdentifier(forApplicationResult: result),
+            !bundleIdentifier.isEmpty
+        {
+            return "bundle:\(bundleIdentifier.lowercased())"
+        }
+        if let path = result.filePath ?? (result.subtitle == "Running" ? nil : result.subtitle),
+            !path.isEmpty
+        {
+            return "path:\(URL(fileURLWithPath: path).standardizedFileURL.path.lowercased())"
+        }
+        return "name:\(normalizedDockPillText(result.title))"
+    }
+
+    func dedupeGlobalApplicationResults(_ results: [SearchResult]) -> [SearchResult] {
+        var seen = Set<String>()
+        return results.filter { result in
+            guard result.type == .application else { return true }
+            return seen.insert(globalApplicationIdentityKey(for: result)).inserted
+        }
     }
 
     func instantGlobalApplicationMatches(for query: String, limit: Int) -> [SearchResult] {
@@ -1161,10 +1187,11 @@ struct LauncherView: View {
         var seen = Set<String>()
         var order = 0
 
-        func add(_ result: SearchResult, key explicitKey: String? = nil) {
+        func add(_ result: SearchResult, bundleIdentifier explicitBundleId: String? = nil) {
             let title = result.title.lowercased()
             guard title.hasPrefix(q) || title.contains(q) else { return }
-            let key = explicitKey ?? result.filePath ?? result.subtitle.lowercased() + "|" + title
+            let key = globalApplicationIdentityKey(
+                for: result, explicitBundleIdentifier: explicitBundleId)
             guard seen.insert(key).inserted else { return }
 
             var enriched = result
@@ -1174,7 +1201,9 @@ struct LauncherView: View {
             order += 1
         }
 
-        for app in runningRegularApps where candidates.count < limit {
+        let runningSource =
+            runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
+        for app in runningSource where candidates.count < limit {
             guard let name = app.localizedName else { continue }
             guard
                 !shouldIgnoreApplicationFromAppSearch(
@@ -1192,7 +1221,7 @@ struct LauncherView: View {
                     type: .application,
                     filePath: app.bundleURL?.path,
                     contactData: nil
-                ), key: app.bundleIdentifier ?? app.bundleURL?.path)
+                ), bundleIdentifier: app.bundleIdentifier)
         }
 
         for app in settings.pinnedApps where candidates.count < limit && app.type == .application {
@@ -1212,7 +1241,7 @@ struct LauncherView: View {
                     type: .application,
                     filePath: app.path,
                     contactData: nil
-                ), key: app.bundleIdentifier ?? app.path)
+                ), bundleIdentifier: app.bundleIdentifier)
         }
 
         for app in allApplications where candidates.count < limit && app.type == .application {
@@ -1223,7 +1252,7 @@ struct LauncherView: View {
                     path: app.subtitle
                 )
             else { continue }
-            add(app, key: app.filePath ?? app.subtitle)
+            add(app)
         }
 
         return
@@ -1804,7 +1833,8 @@ struct LauncherView: View {
                 totalMenuCount == 0
                 ? maxPills
                 : min(rawAppMatches.count, max(8, maxPills - min(totalMenuCount, 12)))
-            let limitedAppResults = Array(rawAppMatches.prefix(appLimit))
+            let limitedAppResults = Array(
+                dedupeGlobalApplicationResults(rawAppMatches).prefix(appLimit))
             let appResults =
                 limitedAppResults.filter { runningApplication(forGlobalResult: $0) != nil }
                 + limitedAppResults.filter { runningApplication(forGlobalResult: $0) == nil }
@@ -1950,7 +1980,8 @@ struct LauncherView: View {
             totalMenuCount == 0
             ? maxListViewDockPills
             : min(rawAppMatches.count, max(8, maxListViewDockPills - min(totalMenuCount, 12)))
-        let limitedAppResults = Array(rawAppMatches.prefix(appLimit))
+        let limitedAppResults = Array(
+            dedupeGlobalApplicationResults(rawAppMatches).prefix(appLimit))
         let appResults =
             limitedAppResults.filter { runningApplication(forGlobalResult: $0) != nil }
             + limitedAppResults.filter { runningApplication(forGlobalResult: $0) == nil }
@@ -2078,31 +2109,13 @@ struct LauncherView: View {
         return true
     }
 
-    func quitFocusedGlobalGroupedRunningApp() -> Bool {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = globalGroupedListNavigationState(for: q)
-        guard let index = currentGlobalGroupedFocusIndex(state: state),
-            index >= 0,
-            index < state.appResults.count
-        else { return false }
-
-        let result = state.appResults[index]
-        guard let app = runningApplication(forGlobalResult: result) else { return false }
-        terminateRunningAppFromDock(app)
-
-        let nextCount = max(0, state.totalCount - 1)
-        if nextCount == 0 {
-            setGlobalGroupedFocus(nil, state: state)
-        } else {
-            setGlobalGroupedFocus(min(index, nextCount - 1), state: state)
-        }
-        return true
-    }
-
     func focusedOrTopGlobalAppResult() -> SearchResult? {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let state = globalGroupedListNavigationState(for: q)
-        let matches = state.appResults
+        let matches =
+            state.appResults.isEmpty
+            ? currentOrImmediateGlobalAppMatches(for: q)
+            : state.appResults
         guard !matches.isEmpty else { return nil }
         if let focused = currentGlobalGroupedFocusIndex(state: state),
             focused >= 0,
@@ -2126,6 +2139,30 @@ struct LauncherView: View {
             AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
         }
         scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
+    }
+
+    @discardableResult
+    func enterFocusedOrTopGlobalAppScopeIfPossible() -> Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            searchInputCursorIsAtEnd(),
+            let result = focusedOrTopGlobalAppResult(),
+            let bundleId = bundleIdentifier(forApplicationResult: result)
+        else { return false }
+
+        let appName = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !appName.isEmpty else { return false }
+        let activated = activateInlineDockAppScope(
+            bundleIdentifier: bundleId,
+            appName: appName,
+            queryOverride: "",
+            preserveGlobalContext: true
+        )
+        if activated {
+            focusedAppPillIndex = nil
+            l2.focusedPillIndex = nil
+        }
+        return activated
     }
 
     func reclaimSearchInputFocus() {
@@ -3919,9 +3956,13 @@ struct LauncherView: View {
                 }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
-            // Right Arrow: accept ghost text completion (fill app name) without entering scope.
-            // Does NOT enter L2 scope — that's Tab's job.
+            // Right Arrow: enter visible Global app scope, otherwise accept ghost text.
             .onKeyPress(.rightArrow) {
+                if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    enterFocusedOrTopGlobalAppScopeIfPossible()
+                {
+                    return .handled
+                }
                 if attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
                     return .handled
                 }
@@ -4643,7 +4684,8 @@ struct LauncherView: View {
             totalMenuPillCount == 0
             ? maxListViewDockPills
             : min(rawMatches.count, max(8, maxListViewDockPills - min(totalMenuPillCount, 12)))
-        let limitedMatches = Array(rawMatches.prefix(appLimit))
+        let limitedMatches = Array(
+            dedupeGlobalApplicationResults(rawMatches).prefix(appLimit))
         let matches =
             limitedMatches.filter { runningApplication(forGlobalResult: $0) != nil }
             + limitedMatches.filter { runningApplication(forGlobalResult: $0) == nil }
@@ -23393,8 +23435,13 @@ struct LauncherView: View {
                 return nil
             }
 
-            // Right arrow: accept app ghost text (fill field with full name), no scope entry.
+            // Right arrow: enter visible Global app scope, otherwise accept app ghost text.
             if event.keyCode == 124 {
+                if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    self.enterFocusedOrTopGlobalAppScopeIfPossible()
+                {
+                    return nil
+                }
                 if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
                     return nil
                 }
@@ -23541,8 +23588,12 @@ struct LauncherView: View {
                     return event
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
-                case 51:  // Delete/Backspace — quit highlighted running app; otherwise edit query normally
-                    return self.quitFocusedGlobalGroupedRunningApp() ? nil : event
+                case 51:  // Delete/Backspace — clear row focus and edit query normally
+                    if self.currentGlobalGroupedFocusIndex(state: groupedState) != nil {
+                        self.setGlobalGroupedFocus(nil, state: groupedState)
+                        return nil
+                    }
+                    return event
                 default:
                     return event
                 }
@@ -23644,17 +23695,12 @@ struct LauncherView: View {
                         return nil
                     }
                     return event
-                case 51:  // Delete/Backspace — quit running app or unpin pinned
-                    if let idx = self.focusedAppPillIndex, idx < appPills.count {
-                        if let quit = appPills[idx].quit {
-                            quit()
-                            self.focusedAppPillIndex = min(idx, appPills.count - 2)
-                            return nil
-                        } else if let remove = appPills[idx].remove {
-                            remove()
-                            self.focusedAppPillIndex = min(idx, appPills.count - 2)
-                            return nil
-                        }
+                case 51:  // Delete/Backspace — clear app focus and return to input
+                    if self.focusedAppPillIndex != nil {
+                        self.focusedAppPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        return nil
                     }
                     return event
                 case 53:  // Escape — mirror context dock: clear focus and re-expand input
