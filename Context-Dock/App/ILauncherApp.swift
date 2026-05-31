@@ -26,6 +26,7 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
 class KeyableWindow: NSWindow {
     // Flag to anchor window at bottom when expanding
     var anchorAtBottom: Bool = false
+    var horizontalResizeAnchorX: CGFloat?
     private var bottomAnchorY: CGFloat = 10  // Distance from bottom of screen
 
     // Track initial mouse location for smooth dragging
@@ -73,6 +74,7 @@ class KeyableWindow: NSWindow {
     override func mouseUp(with event: NSEvent) {
         initialMouseLocation = nil
         initialWindowOrigin = nil
+        horizontalResizeAnchorX = frame.midX
         super.mouseUp(with: event)
     }
 

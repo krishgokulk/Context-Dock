@@ -2984,7 +2984,10 @@ struct LauncherView: View {
             .onChange(of: l2.chatMessages.count) { _, _ in
                 persistActiveL2DockSession()
             }
-            .onChange(of: isGlobalContextActive) { _, _ in
+            .onChange(of: isGlobalContextActive) { _, isActive in
+                if isActive, globalContextActivation?.autoActivated == false {
+                    suppressCurrentFinderSelectionBaseline()
+                }
                 if !isGlobalContextActive {
                     globalInlineAppScope = nil
                     suppressGlobalInlineAppScopeDetection = false
@@ -16886,10 +16889,6 @@ struct LauncherView: View {
         } label: {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(
-                            accentColor(for: row.accentColorName).opacity(
-                                row.isUnread ? 0.20 : 0.12))
                     if let image = row.image {
                         Image(nsImage: image)
                             .resizable()
@@ -18246,11 +18245,8 @@ struct LauncherView: View {
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         } label: {
             HStack(spacing: 11) {
-                // Icon badge
+                // Icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(accent.opacity(isDisabled ? 0.07 : (isActive ? 0.24 : 0.12)))
-                        .frame(width: 44, height: 44)
                     if let img = pill.menuItemImage {
                         Image(nsImage: img)
                             .resizable()
@@ -18267,6 +18263,7 @@ struct LauncherView: View {
                                     : (isActive ? accent : accent.opacity(0.80))))
                     }
                 }
+                .frame(width: 44, height: 44)
 
                 // Name + context
                 VStack(alignment: .leading, spacing: 2) {
@@ -18372,11 +18369,8 @@ struct LauncherView: View {
             (primary.menuContext?.isEmpty == false) ? primary.menuContext! : (primary.badge ?? "")
 
         HStack(spacing: 11) {
-            // Icon badge
+            // Icon
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(accent.opacity(isActive ? 0.24 : 0.12))
-                    .frame(width: 44, height: 44)
                 if let img = primary.menuItemImage {
                     Image(nsImage: img)
                         .resizable().interpolation(.medium)
@@ -18388,6 +18382,7 @@ struct LauncherView: View {
                         .foregroundStyle(isActive ? accent : accent.opacity(0.80))
                 }
             }
+            .frame(width: 44, height: 44)
 
             // Action name + parent menu
             VStack(alignment: .leading, spacing: 2) {
@@ -23198,11 +23193,16 @@ struct LauncherView: View {
         if showFolderPreview {
             if let index = searchState.selectedIndex,
                 searchState.results.indices.contains(index),
-                searchState.results[index].type == .folder,
                 let path = searchState.results[index].filePath,
                 path != folderPreviewPath
             {
-                showFolderPreviewInline(path: path)
+                if searchState.results[index].type == .folder {
+                    showFolderPreviewInline(path: path)
+                } else {
+                    showFolderPreview = false
+                    folderPreviewPath = nil
+                    _ = showQuickLookURL(URL(fileURLWithPath: path), toggleIfSame: false)
+                }
             }
             return
         }
@@ -23225,9 +23225,14 @@ struct LauncherView: View {
         }
         guard let index = searchState.selectedIndex,
             searchState.results.indices.contains(index),
-            let path = searchState.results[index].filePath,
-            searchState.results[index].type != .folder
+            let path = searchState.results[index].filePath
         else { return }
+        if searchState.results[index].type == .folder {
+            QLPreviewPanel.shared()?.orderOut(nil)
+            quickLookDataSource = nil
+            showFolderPreviewInline(path: path)
+            return
+        }
         _ = showQuickLookURL(URL(fileURLWithPath: path), toggleIfSame: false)
     }
 
@@ -24103,7 +24108,14 @@ struct LauncherView: View {
             let spaceBelow = currentFrame.minY - visibleFrame.minY
             let spaceAbove = visibleFrame.maxY - currentFrame.maxY
 
-            let newX = currentFrame.midX - (newWidth / 2)
+            let resizeAnchorX: CGFloat
+            if let keyableWindow = window as? KeyableWindow {
+                resizeAnchorX = keyableWindow.horizontalResizeAnchorX ?? currentFrame.midX
+                keyableWindow.horizontalResizeAnchorX = resizeAnchorX
+            } else {
+                resizeAnchorX = currentFrame.midX
+            }
+            let newX = resizeAnchorX - (newWidth / 2)
 
             let newY: CGFloat
             if settings.effectiveDockAtBottom {

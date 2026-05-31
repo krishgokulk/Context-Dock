@@ -1414,18 +1414,54 @@ extension LauncherView {
                                 globalRunningAppStrip
                             }
 
-                            // Trailing area: result icon OR clear OR AI controls OR dismiss OR context dock
-                            if let result = selectedResult {
+                            // Trailing area: focused context icon OR result icon OR clear OR controls
+                            if let pill = focusedDockPill {
+                                HStack(spacing: 8) {
+                                    if let image = pill.menuItemImage {
+                                        Image(nsImage: image)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 24, height: 24)
+                                    } else {
+                                        Image(systemName: pill.icon)
+                                            .font(.system(size: 17, weight: .semibold))
+                                            .foregroundStyle(
+                                                accentColor(for: pill.accentColorName))
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    if !searchState.query.isEmpty {
+                                        Button(action: clearInputQuery) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary.opacity(0.5))
+                                                .font(.system(size: 14))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Clear")
+                                    }
+                                }
+                            } else if let result = selectedResult {
                                 // Spotlight-style: show result icon on the right while a result is selected
-                                if let icon = result.icon {
-                                    Image(nsImage: icon)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 28, height: 28)
-                                        .clipShape(
-                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        )
-                                        .shadow(radius: 2)
+                                HStack(spacing: 8) {
+                                    if let icon = result.icon {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 28, height: 28)
+                                            .clipShape(
+                                                RoundedRectangle(
+                                                    cornerRadius: 6, style: .continuous)
+                                            )
+                                            .shadow(radius: 2)
+                                    }
+                                    if !searchState.query.isEmpty {
+                                        Button(action: clearInputQuery) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary.opacity(0.5))
+                                                .font(.system(size: 14))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Clear")
+                                    }
                                 }
                             } else if aiMode.isActive {
                                 aiModeControls
@@ -1438,15 +1474,7 @@ extension LauncherView {
                                     .frame(width: 26, height: 26)
                                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
                             } else if !searchState.query.isEmpty {
-                                Button(action: {
-                                    if isGlobalContextActive {
-                                        clearGlobalContextQuerySmoothly()
-                                    } else {
-                                        searchState.query = ""
-                                        searchState.results = []
-                                        searchState.selectedIndex = nil
-                                    }
-                                }) {
+                                Button(action: clearInputQuery) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundStyle(.secondary.opacity(0.5))
                                         .font(.system(size: 14))
@@ -2060,6 +2088,16 @@ extension LauncherView {
             Divider()
                 .padding(.horizontal, 12)
                 .transition(.opacity)
+        }
+    }
+
+    func clearInputQuery() {
+        if isGlobalContextActive {
+            clearGlobalContextQuerySmoothly()
+        } else {
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
         }
     }
 

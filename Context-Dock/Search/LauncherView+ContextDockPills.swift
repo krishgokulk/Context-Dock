@@ -150,9 +150,9 @@ extension LauncherView {
     }
 
     func suppressCurrentFinderSelectionBaseline() {
-        // Finder's selected row on window open is meaningful context for Global Context.
-        // Do not suppress it; dismissal still uses dismissedFinderSelectionSignature.
-        suppressedAutomaticFinderSelectionSignature = nil
+        let paths = canonicalExistingURLs(ContextDetector.shared.getFinderSelectedFiles()).map(\.path)
+        suppressedAutomaticFinderSelectionSignature =
+            paths.isEmpty ? nil : finderSelectionSignature(paths)
     }
 
     func updateDismissedFinderSelectionAfterSelectionChange(_ paths: [String]) {

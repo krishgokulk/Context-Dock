@@ -136,12 +136,11 @@ final class MenuExecutionCoordinator {
             }
             try? await Task.sleep(nanoseconds: 80_000_000)
 
-            if isWindowMenuAction,
-                let liveMatch = await Self.waitForExecutableMenuItem(
+            if let liveMatch = await Self.waitForExecutableMenuItem(
                     path: executablePath,
                     app: sourceApp,
                     in: request.sourcePID,
-                    attempts: 3,
+                    attempts: isWindowMenuAction ? 3 : 2,
                     pauseNanoseconds: 60_000_000
                 )
             {
@@ -156,8 +155,16 @@ final class MenuExecutionCoordinator {
 
             let preferredShortcut = executableShortcutChar?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let directWindowActionHandled =
+                isWindowMenuAction
+                && Self.shouldPreferDirectWindowManagementAction(executablePath)
+                && self.executeWindowManagementActionIfNeeded(
+                    path: executablePath,
+                    sourceApp: sourceApp
+                )
             let shortcutSent =
-                !preferredShortcut.isEmpty
+                !directWindowActionHandled
+                && !preferredShortcut.isEmpty
                 && AXMenuReader.shared.executeShortcut(
                     char: preferredShortcut,
                     modifiers: executableShortcutModifiers,
@@ -165,15 +172,16 @@ final class MenuExecutionCoordinator {
                 )
 
             let menuClicked =
-                !shortcutSent
+                !directWindowActionHandled && !shortcutSent
                 && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
-            let directWindowActionHandled =
-                !shortcutSent && !menuClicked && isWindowMenuAction
+            let fallbackWindowActionHandled =
+                !directWindowActionHandled && !shortcutSent && !menuClicked && isWindowMenuAction
                 && self.executeWindowManagementActionIfNeeded(
                     path: executablePath,
                     sourceApp: sourceApp
                 )
-            let actionSent = shortcutSent || menuClicked || directWindowActionHandled
+            let actionSent =
+                directWindowActionHandled || shortcutSent || menuClicked || fallbackWindowActionHandled
 
             if !actionSent {
                 AXActionResolver.shared.execute(menuPath: executablePath, in: sourceApp)
@@ -373,6 +381,11 @@ final class MenuExecutionCoordinator {
 
     private func frontmostWindow(pid: pid_t, appName: String) -> AXUIElement? {
         let axApp = AXUIElementCreateApplication(pid)
+        if let focused = Self.windowAttribute(kAXFocusedWindowAttribute, from: axApp)
+            ?? Self.windowAttribute(kAXMainWindowAttribute, from: axApp)
+        {
+            return unminimizedWindow(focused)
+        }
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
                 == .success,
@@ -383,6 +396,10 @@ final class MenuExecutionCoordinator {
             return nil
         }
 
+        return unminimizedWindow(window)
+    }
+
+    private func unminimizedWindow(_ window: AXUIElement) -> AXUIElement {
         var minimizedRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
             == .success,
@@ -391,6 +408,14 @@ final class MenuExecutionCoordinator {
             AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
         return window
+    }
+
+    private static func windowAttribute(_ attribute: String, from app: AXUIElement) -> AXUIElement? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, attribute as CFString, &ref) == .success,
+            let ref
+        else { return nil }
+        return unsafeBitCast(ref, to: AXUIElement.self)
     }
 
     private static func waitForExecutableMenuItem(
@@ -485,6 +510,14 @@ final class MenuExecutionCoordinator {
             || name.contains("minimize") || name.contains("minimise")
             || name == "zoom" || name.contains("slideshow")
             || root == "window"
+    }
+
+    private static func shouldPreferDirectWindowManagementAction(_ path: [String]) -> Bool {
+        let normalizedPath = path.map(normalizedMenuText)
+        guard normalizedPath.contains("window"), let title = normalizedPath.last else {
+            return false
+        }
+        return title == "centre" || title == "center" || title == "fill" || title.contains("fill")
     }
 
     private static func unminimizeWindows(pid: pid_t) {
