@@ -306,6 +306,7 @@ struct LauncherView: View {
     @State var pendingGlobalGroupedQuery: String? = nil
     @State var globalGroupedTask: Task<Void, Never>? = nil
     @State var globalInlineAppScope: GlobalInlineAppScope? = nil
+    @State var additionalGlobalInlineAppScopes: [GlobalInlineAppScope] = []
     @State var pendingGlobalLaunchContextSwitch: (bundleId: String, appName: String)? = nil
     @State var suppressGlobalInlineAppScopeDetection = false
     @State var dismissedGlobalInlineAppScopes: [String: String] = [:]
@@ -1740,7 +1741,6 @@ struct LauncherView: View {
                 appMatches: rawAppMatches,
                 isGenericAppQuery: isGenericAppQuery
             )
-            let favorMenu = intentFavorsMenu(q)
             let frontmostSnap = (
                 bundleID: frontmost.bundleID, name: frontmost.name, icon: frontmost.icon
             )
@@ -1764,7 +1764,6 @@ struct LauncherView: View {
             let snappedRunningApps: [GlobalMenuAppSnapshot] = {
                 guard !isGenericAppQuery,
                     includeCrossAppMenus,
-                    settings.enableLearnedGhostSuggestions,
                     isGlobalContextActive,
                     !hasActiveDockContextSelection,
                     globalInlineAppScope == nil
@@ -1833,7 +1832,8 @@ struct LauncherView: View {
                 ]
             }()
 
-            let groupedRunningMenuApps = frontmostMenuGroups + crossAppGroups
+            let groupedRunningMenuApps =
+                frontmostMenuGroups + crossAppGroups + cachedGlobalInlineAppScopeGroups(query: q)
             let totalMenuCount = groupedRunningMenuApps.flatMap(\.pills).count
             let appLimit =
                 totalMenuCount == 0
@@ -1857,7 +1857,7 @@ struct LauncherView: View {
                 menuPills: menuPills,
                 menuGroups: groupedRunningMenuApps.isEmpty ? menuGroups : [],
                 appMenuGroups: groupedRunningMenuApps,
-                menuFirst: favorMenu && !menuPills.isEmpty
+                menuFirst: false
             )
 
             guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
@@ -1928,7 +1928,7 @@ struct LauncherView: View {
                 menuPills: pills,
                 menuGroups: [],
                 appMenuGroups: pills.isEmpty ? [] : [group],
-                menuFirst: true
+                menuFirst: false
             )
         }
 
@@ -1984,7 +1984,8 @@ struct LauncherView: View {
                 )
             ]
         }()
-        let groupedRunningMenuApps = frontmostMenuGroups + crossAppGroups
+        let groupedRunningMenuApps =
+            frontmostMenuGroups + crossAppGroups + cachedGlobalInlineAppScopeGroups(query: q)
         let totalMenuCount = groupedRunningMenuApps.flatMap(\.pills).count
         let appLimit =
             totalMenuCount == 0
@@ -2009,7 +2010,7 @@ struct LauncherView: View {
             menuPills: menuPills,
             menuGroups: groupedRunningMenuApps.isEmpty ? menuGroups : [],
             appMenuGroups: groupedRunningMenuApps,
-            menuFirst: intentFavorsMenu(q) && !menuPills.isEmpty
+            menuFirst: false
         )
     }
 
@@ -2300,6 +2301,10 @@ struct LauncherView: View {
         return nil
     }
 
+    var allGlobalInlineAppScopes: [GlobalInlineAppScope] {
+        [globalInlineAppScope].compactMap { $0 } + additionalGlobalInlineAppScopes
+    }
+
     @discardableResult
     func applyGlobalInlineAppScopeIfNeeded(for rawQuery: String) -> Bool {
         guard shouldUsePureGlobalAppSearch,
@@ -2328,6 +2333,7 @@ struct LauncherView: View {
             matchedAlias: target.matchedAlias,
             aliasStartIndex: target.aliasStartIndex
         )
+        additionalGlobalInlineAppScopes = []
         let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if actionQuery != rawQuery {
             searchState.query = actionQuery
@@ -2344,7 +2350,6 @@ struct LauncherView: View {
             isGlobalContextActive,
             !hasActiveDockContextSelection,
             l2.targetApp == nil,
-            globalInlineAppScope == nil,
             lockedSubmenuParent == nil,
             lockedFindToken == nil,
             !suppressGlobalInlineAppScopeDetection
@@ -2353,34 +2358,37 @@ struct LauncherView: View {
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard raw.count >= 4, !isGenericApplicationListQuery(raw.lowercased()) else { return false }
         pruneDismissedGlobalInlineAppScopes(for: raw)
+        let existingScopes = allGlobalInlineAppScopes
+        let excludedBundleIds =
+            Set(dismissedGlobalInlineAppScopes.keys)
+            .union(existingScopes.map(\.bundleId))
         guard
             let target = installedAppMenuTarget(
                 for: raw,
-                runningOnly: true,
+                runningOnly: false,
                 includeAppsWithoutMenuSnapshot: true,
                 allowPrefixAlias: true,
-                excludingBundleIds: Set(dismissedGlobalInlineAppScopes.keys)
+                excludingBundleIds: excludedBundleIds
             )
         else { return false }
 
         let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actionQuery.isEmpty,
+        guard (!actionQuery.isEmpty || !existingScopes.isEmpty),
             actionQuery.lowercased() != raw.lowercased()
         else { return false }
 
-        guard
-            NSWorkspace.shared.runningApplications.contains(where: {
-                $0.bundleIdentifier == target.bundleId && !$0.isTerminated
-            })
-        else { return false }
-
-        globalInlineAppScope = GlobalInlineAppScope(
+        let newScope = GlobalInlineAppScope(
             appName: target.appName,
             bundleId: target.bundleId,
             appPath: target.appPath,
             matchedAlias: target.matchedAlias,
             aliasStartIndex: target.aliasStartIndex
         )
+        if globalInlineAppScope == nil {
+            globalInlineAppScope = newScope
+        } else {
+            additionalGlobalInlineAppScopes.append(newScope)
+        }
         searchState.query = actionQuery
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
@@ -2419,6 +2427,7 @@ struct LauncherView: View {
     ) {
         let inlineScope = globalInlineAppScope
         globalInlineAppScope = nil
+        additionalGlobalInlineAppScopes = []
         suppressGlobalInlineAppScopeDetection = false
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
@@ -2437,6 +2446,20 @@ struct LauncherView: View {
         } else if q != searchState.query {
             searchState.query = q
         }
+        scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
+        scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+    }
+
+    func removeGlobalInlineAppScope(_ scope: GlobalInlineAppScope) {
+        dismissedGlobalInlineAppScopes[scope.bundleId] = scope.matchedAlias
+        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }
+        globalInlineAppScope = remaining.first
+        additionalGlobalInlineAppScopes = Array(remaining.dropFirst())
+        focusedAppPillIndex = nil
+        l2.focusedPillIndex = nil
+        let q = queryRestoringGlobalInlineScope(scope, into: searchState.query)
+        searchState.query = q
+        pruneDismissedGlobalInlineAppScopes(for: q)
         scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
     }
@@ -2488,7 +2511,8 @@ struct LauncherView: View {
 
     func cachedGlobalAppScopeDockPills(
         query: String,
-        scope: DockScopeResolution
+        scope: DockScopeResolution,
+        appPath: String? = nil
     ) -> [DockPill] {
         guard scope.isExplicitAppScope, scope.scopedBundleId != "com.apple.finder" else {
             return []
@@ -2499,7 +2523,10 @@ struct LauncherView: View {
             cachedScopedAppMenuPills(
                 bundleIdentifier: scope.scopedBundleId,
                 appName: scope.scopedAppName,
-                appPath: globalInlineAppScope?.appPath,
+                appPath: appPath
+                    ?? allGlobalInlineAppScopes.first(where: {
+                        $0.bundleId == scope.scopedBundleId
+                    })?.appPath,
                 query: actionQuery,
                 maxResults: maxListViewDockPills,
                 allowLiveRefresh: false
@@ -2526,6 +2553,33 @@ struct LauncherView: View {
                 let contextLower = (pill.menuContext ?? "").lowercased()
                 return nameLower.contains(actionQuery) || contextLower.contains(actionQuery)
             }
+    }
+
+    func cachedGlobalInlineAppScopeGroups(query: String) -> [AppMenuGroup] {
+        allGlobalInlineAppScopes.compactMap { inlineScope in
+            guard inlineScope.bundleId != "com.apple.finder" else { return nil }
+            let scope = DockScopeResolution(
+                scopedBundleId: inlineScope.bundleId,
+                scopedAppName: inlineScope.appName,
+                scopedSearchQuery: query,
+                isExplicitAppScope: true,
+                isGlobalScope: false
+            )
+            let pills = cachedGlobalAppScopeDockPills(
+                query: query, scope: scope, appPath: inlineScope.appPath)
+            guard !pills.isEmpty else { return nil }
+            let icon =
+                FileManager.default.fileExists(atPath: inlineScope.appPath)
+                ? NSWorkspace.shared.icon(forFile: inlineScope.appPath)
+                : resolvedApplicationIcon(
+                    bundleIdentifier: inlineScope.bundleId, appName: inlineScope.appName)
+            return AppMenuGroup(
+                id: inlineScope.bundleId,
+                appName: inlineScope.appName,
+                icon: icon,
+                pills: pills
+            )
+        }
     }
 
     func cachedFrontmostGlobalMenuPills(query: String, maxResults: Int) -> [DockPill] {
@@ -3090,6 +3144,7 @@ struct LauncherView: View {
                 }
                 if !isGlobalContextActive {
                     globalInlineAppScope = nil
+                    additionalGlobalInlineAppScopes = []
                     suppressGlobalInlineAppScopeDetection = false
                     dismissedGlobalInlineAppScopes = [:]
                     pendingGlobalAppQuery = nil
@@ -5914,6 +5969,7 @@ struct LauncherView: View {
         }
         pendingGlobalLaunchContextSwitch = (bundleId: bundleId, appName: appName)
         globalInlineAppScope = nil
+        additionalGlobalInlineAppScopes = []
         dismissedGlobalInlineAppScopes = [:]
         l2.targetApp = nil
         searchState.query = ""
@@ -5944,6 +6000,7 @@ struct LauncherView: View {
         pendingGlobalLaunchContextSwitch = nil
         globalContextActivation = nil
         globalInlineAppScope = nil
+        additionalGlobalInlineAppScopes = []
         suppressGlobalInlineAppScopeDetection = false
         dismissedGlobalInlineAppScopes = [:]
         l2.targetApp = nil
@@ -8321,7 +8378,7 @@ struct LauncherView: View {
         var words = tokens
         let filler: Set<String> = [
             "app", "open", "go", "goto", "navigate", "launch", "show", "use",
-            "please", "the", "a", "an", "to", "in", "on", "for", "with", "into", "using",
+            "please", "the", "a", "an", "to", "in", "on", "for", "with", "into", "using", "and",
         ]
         while let first = words.first,
             filler.contains(normalizedDockPillText(first))
@@ -15601,8 +15658,7 @@ struct LauncherView: View {
                         scopedMenuAppName: scopedMenuListContext?.appName,
                         scopedMenuActionQuery: scopedMenuListContext?.actionQuery ?? "",
                         isLoading: globalSearchLoading,
-                        menuFirst: intentFavorsMenu(q)
-                            && (!globalMenuPills.isEmpty || !globalCrossAppGroups.isEmpty)
+                        menuFirst: false
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 } else if showPinnedRow {
@@ -15904,7 +15960,6 @@ struct LauncherView: View {
     /// Apps sorted by usage score; only matching menu items included (strict contains filter).
     func crossAppMenuGroups(for query: String, limit: Int = 12) -> [AppMenuGroup] {
         guard !query.isEmpty,
-            settings.enableLearnedGhostSuggestions,
             isGlobalContextActive,
             !hasActiveDockContextSelection,
             globalInlineAppScope == nil
@@ -24867,6 +24922,7 @@ struct LauncherView: View {
             searchState.isInSmartMode = false
             l2.targetApp = nil
             globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             dismissedGlobalInlineAppScopes = [:]
             l2.focusedPillIndex = nil
             focusedAppPillIndex = nil

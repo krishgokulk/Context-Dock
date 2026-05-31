@@ -634,81 +634,79 @@ extension LauncherView {
                                 .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                         }
 
-                        if let inlineScope = globalInlineAppScope,
-                            shouldUsePureGlobalAppSearch,
+                        if shouldUsePureGlobalAppSearch,
                             isGlobalContextActive,
                             showContextInDock,
                             isSearchBarExpanded
                         {
-                            let icon =
-                                FileManager.default.fileExists(atPath: inlineScope.appPath)
-                                ? NSWorkspace.shared.icon(forFile: inlineScope.appPath)
-                                : NSWorkspace.shared.icon(
-                                    forFile: NSWorkspace.shared.urlForApplication(
-                                        withBundleIdentifier: inlineScope.bundleId)?.path ?? "")
-                            let accent = icon.dominantSwiftUIColor
-                            let chipTextColor: SwiftUI.Color =
-                                systemColorScheme == .dark
-                                ? SwiftUI.Color.white.opacity(0.94)
-                                : SwiftUI.Color.black.opacity(0.82)
-                            HStack(spacing: 6) {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 18, height: 18)
-                                    .clipShape(
-                                        RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                Text(inlineScope.appName)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(chipTextColor)
-                                    .lineLimit(1)
-                                Button {
-                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-                                        clearGlobalInlineAppScope(
-                                            preserveQuery: true,
-                                            restoreMatchedAlias: true,
-                                            dismissScope: true
-                                        )
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .bold))
+                            ForEach(allGlobalInlineAppScopes, id: \.bundleId) { inlineScope in
+                                let icon =
+                                    FileManager.default.fileExists(atPath: inlineScope.appPath)
+                                    ? NSWorkspace.shared.icon(forFile: inlineScope.appPath)
+                                    : NSWorkspace.shared.icon(
+                                        forFile: NSWorkspace.shared.urlForApplication(
+                                            withBundleIdentifier: inlineScope.bundleId)?.path ?? "")
+                                let accent = icon.dominantSwiftUIColor
+                                let chipTextColor: SwiftUI.Color =
+                                    systemColorScheme == .dark
+                                    ? SwiftUI.Color.white.opacity(0.94)
+                                    : SwiftUI.Color.black.opacity(0.82)
+                                HStack(spacing: 6) {
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 18, height: 18)
+                                        .clipShape(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                    Text(inlineScope.appName)
+                                        .font(.system(size: 15, weight: .semibold))
                                         .foregroundStyle(chipTextColor)
-                                        .frame(width: 16, height: 16)
-                                        .background(
-                                            chipTextColor.opacity(
-                                                systemColorScheme == .dark ? 0.14 : 0.10),
-                                            in: Circle())
+                                        .lineLimit(1)
+                                    Button {
+                                        withAnimation(.spring(response: 0.2, dampingFraction: 0.82))
+                                        {
+                                            removeGlobalInlineAppScope(inlineScope)
+                                        }
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundStyle(chipTextColor)
+                                            .frame(width: 16, height: 16)
+                                            .background(
+                                                chipTextColor.opacity(
+                                                    systemColorScheme == .dark ? 0.14 : 0.10),
+                                                in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Remove app scope")
+                                    .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0)
                                 }
-                                .buttonStyle(.plain)
-                                .help("Remove app scope")
-                                .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0)
-                            }
-                            .padding(.leading, 8)
-                            .padding(.trailing, isHoveringGlobalInlineScopeChip ? 8 : 6)
-                            .padding(.vertical, 4)
-                            .background(.regularMaterial, in: Capsule(style: .continuous))
-                            .background(
-                                accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
-                                in: Capsule(style: .continuous)
-                            )
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .strokeBorder(
-                                        accent.opacity(systemColorScheme == .dark ? 0.48 : 0.34),
-                                        lineWidth: 0.8)
-                            )
-                            .shadow(
-                                color: accent.opacity(systemColorScheme == .dark ? 0.28 : 0.16),
-                                radius: 8, x: 0, y: 2
-                            )
-                            .onHover { hovering in
-                                withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
-                                    isHoveringGlobalInlineScopeChip = hovering
+                                .padding(.leading, 8)
+                                .padding(.trailing, isHoveringGlobalInlineScopeChip ? 8 : 6)
+                                .padding(.vertical, 4)
+                                .background(.regularMaterial, in: Capsule(style: .continuous))
+                                .background(
+                                    accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
+                                    in: Capsule(style: .continuous)
+                                )
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .strokeBorder(
+                                            accent.opacity(systemColorScheme == .dark ? 0.48 : 0.34),
+                                            lineWidth: 0.8)
+                                )
+                                .shadow(
+                                    color: accent.opacity(systemColorScheme == .dark ? 0.28 : 0.16),
+                                    radius: 8, x: 0, y: 2
+                                )
+                                .onHover { hovering in
+                                    withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
+                                        isHoveringGlobalInlineScopeChip = hovering
+                                    }
                                 }
+                                .transition(
+                                    .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                             }
-                            .transition(
-                                .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                         }
 
                         // Submenu parent chip — liquid glass capsule matching the dock bar style
