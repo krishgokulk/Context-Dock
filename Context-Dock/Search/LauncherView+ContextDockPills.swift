@@ -84,6 +84,7 @@ extension LauncherView {
         let appPath: String
         let actionQuery: String
         let matchedAlias: String
+        let aliasStartIndex: Int
     }
 
     struct GlobalInlineAppScope {
@@ -91,6 +92,7 @@ extension LauncherView {
         let bundleId: String
         let appPath: String
         let matchedAlias: String
+        let aliasStartIndex: Int
     }
 
     struct DockScopeResolution {

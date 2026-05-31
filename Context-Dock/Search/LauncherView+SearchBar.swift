@@ -664,10 +664,14 @@ extension LauncherView {
                                     .lineLimit(1)
                                 Button {
                                     withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-                                        clearGlobalInlineAppScope(preserveQuery: true)
+                                        clearGlobalInlineAppScope(
+                                            preserveQuery: true,
+                                            restoreMatchedAlias: true,
+                                            dismissScope: true
+                                        )
                                     }
                                 } label: {
-                                    Image(systemName: "minus")
+                                    Image(systemName: "xmark")
                                         .font(.system(size: 9, weight: .bold))
                                         .foregroundStyle(chipTextColor)
                                         .frame(width: 16, height: 16)
@@ -678,7 +682,7 @@ extension LauncherView {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Remove app scope")
-                                .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0.72)
+                                .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0)
                             }
                             .padding(.leading, 8)
                             .padding(.trailing, isHoveringGlobalInlineScopeChip ? 8 : 6)
@@ -1185,6 +1189,9 @@ extension LauncherView {
                                                 newValue
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
+                                            if q.isEmpty {
+                                                dismissedGlobalInlineAppScopes = [:]
+                                            }
                                             if shouldUsePureGlobalAppSearch {
                                                 l2.appCompletion = nil
                                                 l2.showResultsPopover = false
