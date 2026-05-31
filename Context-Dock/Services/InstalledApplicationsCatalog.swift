@@ -11,7 +11,17 @@ struct InstalledApplicationEntry: Identifiable {
 }
 
 enum InstalledApplicationsCatalog {
+    private static let cacheLock = NSLock()
+    private static var cachedApps: [InstalledApplicationEntry]?
+
     nonisolated static func discoverInstalledApps() -> [InstalledApplicationEntry] {
+        cacheLock.lock()
+        if let cachedApps {
+            cacheLock.unlock()
+            return cachedApps
+        }
+        cacheLock.unlock()
+
         let searchRoots: [URL] = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             URL(fileURLWithPath: "/Applications/Utilities", isDirectory: true),
@@ -57,12 +67,17 @@ enum InstalledApplicationsCatalog {
             }
         }
 
-        return discovered.sorted {
+        let sorted = discovered.sorted {
             let lhs = $0.name.localizedLowercase
             let rhs = $1.name.localizedLowercase
             if lhs == rhs { return $0.bundleId < $1.bundleId }
             return lhs < rhs
         }
+
+        cacheLock.lock()
+        cachedApps = sorted
+        cacheLock.unlock()
+        return sorted
     }
 
     nonisolated static func icon(for bundleId: String) -> NSImage? {

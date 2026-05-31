@@ -121,13 +121,21 @@ struct GlobalContextActivation: Equatable {
     var frozenText: String?
     var frozenIcon: String?
     var sourceBundleId: String?
+    var frozenFilePaths: [String]
 
     static let manual = GlobalContextActivation(autoActivated: false)
 
-    init(autoActivated: Bool, frozenText: String? = nil, frozenIcon: String? = nil, sourceBundleId: String? = nil) {
+    init(
+        autoActivated: Bool,
+        frozenText: String? = nil,
+        frozenIcon: String? = nil,
+        sourceBundleId: String? = nil,
+        frozenFilePaths: [String] = []
+    ) {
         self.autoActivated = autoActivated
         self.frozenText = frozenText
         self.frozenIcon = frozenIcon
         self.sourceBundleId = sourceBundleId
+        self.frozenFilePaths = frozenFilePaths
     }
 }

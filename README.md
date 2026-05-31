@@ -1,42 +1,107 @@
 # Context-Dock
 
-## Recent fixes (merged on 2026-05-08)
+Context-Dock is a native macOS launcher for fast app actions, live context actions, file workflows, and AI-assisted commands.
 
-This repository was updated by merging branch `xcode-sync-20260508-030912` into `main` (commit d67e5bcc...). The merge contains a number of updates, fixes and small refactors. Summary of what changed and what was fixed:
+## Core Modes
 
-- Updated Xcode project and workspace files
-  - `Context-Dock.xcodeproj/project.pbxproj` and workspace scheme/Package.resolved were modified to keep Xcode project in sync.
+### Global Context
 
-- Added new utilities and modules
-  - `Context-Dock/AXSearchFieldInjector.swift` (new)
-  - `Context-Dock/DebugLogger.swift` (new)
-  - `Context-Dock/DockActionFeedback.swift` (new)
-  - `Context-Dock/QueryFailureGuide.swift` (new)
-  - `Context-Dock/SystemCommands.swift` (new)
+Global Context is a cache-first universal command surface.
 
-- Removed files
-  - `Context-Dock/LayeredExtensionsSettingsView.swift` was deleted as part of the refactor.
+- Launch installed apps.
+- Search cached menus from running apps while typing.
+- Surface Apple menu commands instantly, excluding volatile Recent Items.
+- Search files, workflows, extensions, and settings.
+- Verify cached menu commands against live accessibility state before execution.
+- Use selected text, URLs, images, or dragged files as optional input.
 
-- Major refactors and large edits
-  - `Context-Dock/ContentView.swift` received a large update (many changes) — likely UI flow, state handling or view composition improvements.
-  - `Context-Dock/AutomationSettingsView.swift` and `Context-Dock/SettingsView.swift` were updated.
-  - `Context-Dock/LayeredExtensionManager.swift`, `Context-Dock/FileIndexManager.swift`, and other core files received smaller API/behavior changes.
+Global Context never scans accessibility menus while typing. App-switch and idle warmers refresh menu snapshots in background.
 
-- Functional additions and bug fixes
-  - `Context-Dock/AXMenuEnumerator.swift`, `Context-Dock/AXMenuReader.swift`, and `Context-Dock/SafariCommandBridge.swift` were updated — improvements to accessibility/menu integration and Safari bridging.
-  - `Context-Dock/DebugLogger.swift` was introduced to centralize logging and aid debugging.
-  - `Context-Dock/SystemCommands.swift` provides higher-level system command helpers.
+### Context Dock
 
-If you'd like a more detailed changelog (per-file diff or annotated notes), I can:
+Context Dock follows frontmost app and reads live context.
 
-- Generate a per-file diff and add it to this README or a separate `CHANGELOG.md`.
-- Create a short PR description with highlights for reviewers.
+- Show current app actions and enabled state.
+- Read selected text, selected files, browser URL, and window state.
+- Execute Window actions using native shortcuts first, then accessibility click fallback.
+- Attach Finder current folder for scoped file search.
+- Collapse into compact app icon after command execution.
 
-Commit & merge info
-- Merged branch: `xcode-sync-20260508-030912`
-- Merge commit: `d67e5bccceac1f00cf75513dfbf89ae1d4d0c885`
+### Media Dock
 
-If you want me to expand any of the bullets above with specific code-level details (for example, the exact changes in `ContentView.swift`), tell me which files to summarize and I will include file-level diffs and explanations.
+Media Dock provides media-specific actions for images, video, audio, and PDFs.
 
----
-Generated: 2026-05-08
+## Architecture
+
+```text
+App
+├─ AppState
+├─ AppRouter
+├─ DependencyContainer
+└─ LauncherShell
+
+Features
+├─ GlobalContext
+├─ ContextDock
+├─ MediaDock
+├─ AIChat
+└─ Automation
+
+Services
+├─ AppMenuCapabilityCache
+├─ MenuWarmCacheService
+├─ AXMenuReader
+├─ AXActionResolver
+├─ MenuExecutionCoordinator
+├─ FinderActionService
+└─ ContextDockStore
+```
+
+Main behavior rules:
+
+- Global Context typing: persistent cache only.
+- Global Context execution: activate app, live-verify, execute, refresh cache.
+- Context Dock: frontmost app only, live-first availability.
+- Extensions route AI through `ExtensionAIAdapter` and `AIProviderRouter`.
+
+## Build
+
+Requirements:
+
+- Xcode 16 or newer
+- macOS deployment target 26.1
+- Accessibility permission for menu automation
+
+```bash
+xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Debug build
+xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
+```
+
+SwiftTerm resolves through Swift Package Manager automatically.
+
+## Project Layout
+
+```text
+Context-Dock/
+├─ App/
+├─ Search/
+├─ AI/
+├─ Accessibility/
+├─ Automation/
+├─ Services/
+└─ UI/
+```
+
+`ContentView.swift` stays minimal. Launcher behavior is split across `LauncherView` extensions and feature services.
+
+## Storage
+
+Menu snapshots and Context Dock rules persist under:
+
+```text
+~/Library/Application Support/Context-Dock/
+├─ apps/
+└─ global/
+```
+
+Writes use debounce and content-hash deduplication.

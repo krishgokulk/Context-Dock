@@ -662,8 +662,43 @@ final class AXTriggerRuleEngine {
                 }
             }
         case .menuItem:
-            AXTriggerRuleEngine.shared.run(type: type, value: value, envVars: envVars)
+            var resolved = value
+            for (key, replacement) in envVars {
+                resolved = resolved.replacingOccurrences(of: "{\(key)}", with: replacement)
+            }
+            let path = resolved.split(separator: ">").map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard !path.isEmpty, let targetApp = menuTargetApp(from: envVars) else { return }
+            AXActionResolver.shared.execute(menuPath: path, in: targetApp, envVars: envVars)
         }
+    }
+
+    private func menuTargetApp(from envVars: [String: String]) -> NSRunningApplication? {
+        if let bundleID = envVars["CD_BUNDLE_ID"],
+            !bundleID.isEmpty,
+            bundleID != Bundle.main.bundleIdentifier,
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            })
+        {
+            return app
+        }
+
+        if let previous = AppDelegate.shared?.previousFrontmostApp,
+            previous.bundleIdentifier != Bundle.main.bundleIdentifier,
+            !previous.isTerminated
+        {
+            return previous
+        }
+
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+            frontmost.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            return frontmost
+        }
+
+        return nil
     }
 }
 

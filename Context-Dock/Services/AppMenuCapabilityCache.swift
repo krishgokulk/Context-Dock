@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-struct AppMenuCapabilityRecord: Codable, Hashable {
+nonisolated struct AppMenuCapabilityRecord: Codable, Hashable {
     let bundleIdentifier: String
     let appName: String
     let bundleVersion: String
@@ -13,6 +13,7 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
     let isAppleMenu: Bool
     let lastSeen: Date
     var isEnabled: Bool = true  // Added to track enabled state from store
+    var resolvedFilePath: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case bundleIdentifier
@@ -26,6 +27,7 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
         case isAppleMenu
         case lastSeen
         case isEnabled
+        case resolvedFilePath
     }
 
     init(
@@ -39,7 +41,8 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
         shortcutModifiers: Int,
         isAppleMenu: Bool,
         lastSeen: Date,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        resolvedFilePath: String? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
@@ -52,6 +55,7 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
         self.isAppleMenu = isAppleMenu
         self.lastSeen = lastSeen
         self.isEnabled = isEnabled
+        self.resolvedFilePath = resolvedFilePath
     }
 
     init(from decoder: Decoder) throws {
@@ -67,14 +71,19 @@ struct AppMenuCapabilityRecord: Codable, Hashable {
         isAppleMenu = try container.decode(Bool.self, forKey: .isAppleMenu)
         lastSeen = try container.decode(Date.self, forKey: .lastSeen)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        resolvedFilePath = try container.decodeIfPresent(String.self, forKey: .resolvedFilePath)
     }
 
     nonisolated var pathString: String { path.joined(separator: " > ") }
     nonisolated var normalizedPath: String { AppMenuCapabilityCache.normalize(pathString) }
     nonisolated var normalizedTitle: String { AppMenuCapabilityCache.normalize(title) }
+    nonisolated var resolvedURL: URL? {
+        guard let resolvedFilePath, !resolvedFilePath.isEmpty else { return nil }
+        return URL(fileURLWithPath: resolvedFilePath)
+    }
 }
 
-struct AppMenuCapabilitySummary: Identifiable, Hashable {
+nonisolated struct AppMenuCapabilitySummary: Identifiable, Hashable {
     let bundleIdentifier: String
     let appName: String
     let updatedAt: Date
@@ -84,7 +93,7 @@ struct AppMenuCapabilitySummary: Identifiable, Hashable {
     var id: String { bundleIdentifier }
 }
 
-private struct AppMenuCapabilitySnapshot: Codable {
+nonisolated private struct AppMenuCapabilitySnapshot: Codable {
     var bundleIdentifier: String
     var appName: String
     var bundleVersion: String
@@ -96,7 +105,7 @@ private struct AppMenuCapabilitySnapshot: Codable {
 final class AppMenuCapabilityCache {
     nonisolated static let shared = AppMenuCapabilityCache()
 
-    private struct MenuItemsCacheKey: Hashable {
+    nonisolated private struct MenuItemsCacheKey: Hashable {
         let bundleIdentifier: String
         let appName: String
         let processIdentifier: pid_t
@@ -133,10 +142,16 @@ final class AppMenuCapabilityCache {
 
             // Top-level menu containers are discovery nodes, not useful executable capabilities.
             if !item.children.isEmpty { return nil }
-            guard shouldPersistMenuCapability(
+            let resolvedFilePath = resolvePersistentMenuFilePath(
                 title: title,
                 path: path,
                 bundleIdentifier: bundleIdentifier
+            )
+            guard shouldPersistMenuCapability(
+                title: title,
+                path: path,
+                bundleIdentifier: bundleIdentifier,
+                resolvedFilePath: resolvedFilePath
             ) else { return nil }
 
             let key = Self.normalize(path.joined(separator: " > "))
@@ -153,7 +168,8 @@ final class AppMenuCapabilityCache {
                 shortcutModifiers: item.shortcutModifiers,
                 isAppleMenu: isAppleMenu,
                 lastSeen: now,
-                isEnabled: item.isEnabled
+                isEnabled: item.isEnabled,
+                resolvedFilePath: resolvedFilePath
             )
         }
 
@@ -163,6 +179,13 @@ final class AppMenuCapabilityCache {
         let existingRecords = snapshots[bundleIdentifier]?.records ?? []
         var mergedByPath = [String: AppMenuCapabilityRecord]()
         for record in existingRecords {
+            if isVolatileMenuPath(record.path) { continue }
+            guard shouldPersistMenuCapability(
+                title: record.title,
+                path: record.path,
+                bundleIdentifier: bundleIdentifier,
+                resolvedFilePath: record.resolvedFilePath
+            ) else { continue }
             mergedByPath[record.normalizedPath] = record
         }
         for record in records {
@@ -189,6 +212,26 @@ final class AppMenuCapabilityCache {
         lock.unlock()
 
         saveToDisk()
+    }
+
+    nonisolated private func isVolatileMenuPath(_ path: [String]) -> Bool {
+        let normalized = path.map(Self.normalize).filter { !$0.isEmpty }
+        guard !normalized.isEmpty else { return false }
+        let volatileBranches: Set<String> = [
+            "history",
+            "bookmarks",
+            "open recent",
+            "recent items",
+            "recent documents",
+            "recent projects",
+            "recent files",
+            "recent folders",
+            "recently closed",
+            "closed tabs",
+            "closed windows"
+        ]
+        if normalized.contains(where: { volatileBranches.contains($0) }) { return true }
+        return normalized.first == "window" && normalized.count > 2
     }
 
     nonisolated func updateAvailability(items: [AXMenuItem], for app: NSRunningApplication) {
@@ -261,7 +304,14 @@ final class AppMenuCapabilityCache {
             lock.unlock()
             return cached
         }
-        let records = snapshots[bundleIdentifier]?.records ?? []
+        let records = (snapshots[bundleIdentifier]?.records ?? []).filter {
+            shouldPersistMenuCapability(
+                title: $0.title,
+                path: $0.path,
+                bundleIdentifier: bundleIdentifier,
+                resolvedFilePath: $0.resolvedFilePath
+            )
+        }
         lock.unlock()
 
         guard !records.isEmpty else { return [] }
@@ -274,7 +324,7 @@ final class AppMenuCapabilityCache {
 
         let items = ranked.prefix(maxResults).map { record in
             let isAppleMenu = record.isAppleMenu || Self.normalize(record.path.first ?? "") == "apple"
-            return AXMenuItem(
+            var item = AXMenuItem(
                 title: record.title,
                 path: record.path,
                 isEnabled: record.isEnabled,
@@ -287,6 +337,8 @@ final class AppMenuCapabilityCache {
                 shortcutChar: record.shortcutChar,
                 shortcutModifiers: record.shortcutModifiers
             )
+            item.resolvedFilePath = record.resolvedFilePath
+            return item
         }
 
         lock.lock()
@@ -301,7 +353,14 @@ final class AppMenuCapabilityCache {
 
     nonisolated func record(path: [String], bundleIdentifier: String) -> AppMenuCapabilityRecord? {
         lock.lock()
-        let records = snapshots[bundleIdentifier]?.records ?? []
+        let records = (snapshots[bundleIdentifier]?.records ?? []).filter {
+            shouldPersistMenuCapability(
+                title: $0.title,
+                path: $0.path,
+                bundleIdentifier: bundleIdentifier,
+                resolvedFilePath: $0.resolvedFilePath
+            )
+        }
         lock.unlock()
         let target = Self.normalize(path.joined(separator: " > "))
         return records.first { $0.normalizedPath == target }
@@ -458,7 +517,8 @@ final class AppMenuCapabilityCache {
     nonisolated private func shouldPersistMenuCapability(
         title: String,
         path: [String],
-        bundleIdentifier: String
+        bundleIdentifier: String,
+        resolvedFilePath: String? = nil
     ) -> Bool {
         let normalizedTitle = Self.normalize(title)
         let normalizedPath = path.map(Self.normalize)
@@ -470,6 +530,13 @@ final class AppMenuCapabilityCache {
         // Keeping them in the per-app cache makes queries like "messages settings"
         // surface "Apple > System Settings..." instead of "Messages > Settings...".
         if normalizedPath.first == "apple" {
+            return false
+        }
+
+        // Window menu is live app state: open documents, tabs, restored windows, and
+        // workspace-specific entries. Persisting it creates confusing stale rows like
+        // "Window > Applications" after the real window list changed.
+        if normalizedPath.first == "window" {
             return false
         }
 
@@ -486,7 +553,7 @@ final class AppMenuCapabilityCache {
         if normalizedPath.contains(where: { privateDynamicBranches.contains($0) })
             && !isBrowserHistoryOrBookmarks
         {
-            return false
+            return resolvedFilePath.map { FileManager.default.fileExists(atPath: $0) } ?? false
         }
 
         if isBrowserHistoryOrBookmarks {
@@ -500,6 +567,95 @@ final class AppMenuCapabilityCache {
         }
 
         return true
+    }
+
+    nonisolated private func resolvePersistentMenuFilePath(
+        title: String,
+        path: [String],
+        bundleIdentifier: String
+    ) -> String? {
+        guard isDocumentLikeMenuPath(path, bundleIdentifier: bundleIdentifier) else { return nil }
+        let cleaned = cleanCachedMenuFileTitle(title)
+        guard cleaned.count >= 3 else { return nil }
+        if let literalPath = resolveLiteralMenuFilePath(cleaned) {
+            return literalPath
+        }
+        let normalizedCleaned = Self.normalize(cleaned)
+
+        for doc in RecentItemsService.shared.recentDocuments() {
+            let names = [
+                doc.url.lastPathComponent,
+                doc.url.deletingPathExtension().lastPathComponent,
+                doc.name
+            ].map(Self.normalize)
+            if names.contains(normalizedCleaned),
+               FileManager.default.fileExists(atPath: doc.url.path) {
+                return doc.url.path
+            }
+        }
+        return nil
+    }
+
+    nonisolated private func resolveLiteralMenuFilePath(_ value: String) -> String? {
+        let candidates = literalMenuPathCandidates(value)
+        for candidate in candidates {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    nonisolated private func literalMenuPathCandidates(_ value: String) -> [String] {
+        var raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (raw.hasPrefix("\"") && raw.hasSuffix("\"")) || (raw.hasPrefix("'") && raw.hasSuffix("'")) {
+            raw.removeFirst()
+            raw.removeLast()
+        }
+        guard raw.hasPrefix("/") || raw.hasPrefix("~/") else { return [] }
+
+        var candidates: [String] = []
+        let expanded = (raw as NSString).expandingTildeInPath
+        candidates.append(expanded)
+
+        // VS Code and several Electron apps append workspace/window labels after " - ".
+        if raw.contains(" - ") {
+            let prefix = raw.components(separatedBy: " - ").first ?? raw
+            candidates.append((prefix as NSString).expandingTildeInPath)
+        }
+
+        return Array(Set(candidates)).filter { !$0.isEmpty }
+    }
+
+    nonisolated private func isDocumentLikeMenuPath(_ path: [String], bundleIdentifier: String) -> Bool {
+        let normalizedPath = path.map(Self.normalize)
+        if isBrowserBundle(bundleIdentifier),
+           normalizedPath.first == "history" || normalizedPath.first == "bookmarks" {
+            return false
+        }
+        let documentBranches: Set<String> = [
+            "open recent",
+            "recent items",
+            "recent documents",
+            "recent projects",
+            "recent files",
+            "documents"
+        ]
+        return normalizedPath.contains(where: { documentBranches.contains($0) })
+    }
+
+    nonisolated private func cleanCachedMenuFileTitle(_ title: String) -> String {
+        var value = title
+            .replacingOccurrences(of: "…", with: "")
+            .replacingOccurrences(of: "...", with: "")
+            .replacingOccurrences(of: " (Edited)", with: "")
+            .replacingOccurrences(of: " — Edited", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.contains(" - ") {
+            value = value.components(separatedBy: " - ").first ?? value
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated private func isBrowserBundle(_ bundleIdentifier: String) -> Bool {
@@ -529,7 +685,8 @@ final class AppMenuCapabilityCache {
             shouldPersistMenuCapability(
                 title: $0.title,
                 path: $0.path,
-                bundleIdentifier: bundleIdentifier
+                bundleIdentifier: bundleIdentifier,
+                resolvedFilePath: $0.resolvedFilePath
             )
         }
     }
@@ -543,15 +700,7 @@ final class AppMenuCapabilityCache {
     }
 
     nonisolated private func shortcutDisplay(char: String?, modifiers: Int) -> String? {
-        guard let ch = char?.uppercased(), !ch.isEmpty else { return nil }
-        var output = ""
-        if modifiers & 4 != 0 { output += "⌃" }
-        if modifiers & 2 != 0 { output += "⌥" }
-        if modifiers & 1 != 0 { output += "⇧" }
-        if modifiers & 16 != 0 { output += "🌐" }
-        if modifiers & 8 == 0 { output += "⌘" }
-        output += ch
-        return output
+        MenuShortcutFormatter.display(char: char, modifiers: modifiers)
     }
 
     nonisolated private func loadFromDisk() {

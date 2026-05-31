@@ -7,8 +7,12 @@ struct ResultRow: View {
     let result: SearchResult
     let isSelected: Bool
     let isPinned: Bool
+    var usesDockCapsuleSelection: Bool = false
+    var selectionNamespace: Namespace.ID? = nil
+    var selectionEffectID: String = "dock-result-focus"
 
     private var typeLabel: String? {
+        guard result.showsTypeLabel else { return nil }
         switch result.type {
         case .shortcut:         return "SHORTCUT"
         case .folder:           return "FOLDER"
@@ -59,7 +63,16 @@ struct ResultRow: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    if let label = typeLabel {
+                    ForEach(result.displayBadges, id: \.self) { badge in
+                        Text(badge)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(badgeColor))
+                    }
+
+                    if result.displayBadges.isEmpty, let label = typeLabel {
                         Text(label)
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.secondary)
@@ -145,11 +158,60 @@ struct ResultRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
-                .padding(.horizontal, 6)
+            selectionBackground
+                .padding(.horizontal, usesDockCapsuleSelection ? 2 : 6)
         )
         .animation(.spring(response: 0.18, dampingFraction: 0.82), value: isSelected)
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        if usesDockCapsuleSelection, isSelected {
+            ZStack {
+                if let selectionNamespace {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .matchedGeometryEffect(
+                            id: selectionEffectID,
+                            in: selectionNamespace,
+                            properties: .frame,
+                            isSource: false
+                        )
+                } else {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.18),
+                                Color.white.opacity(0.055)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.34),
+                                Color.white.opacity(0.08)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.8
+                    )
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.38), lineWidth: 1.0)
+                    .blur(radius: 2.2)
+            }
+        } else {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
+        }
     }
 
     private var badgeColor: SwiftUI.Color {
@@ -211,7 +273,8 @@ extension ResultRow: Equatable {
     static func == (lhs: ResultRow, rhs: ResultRow) -> Bool {
         lhs.result.id == rhs.result.id &&
         lhs.isSelected == rhs.isSelected &&
-        lhs.isPinned == rhs.isPinned
+        lhs.isPinned == rhs.isPinned &&
+        lhs.usesDockCapsuleSelection == rhs.usesDockCapsuleSelection
     }
 }
 

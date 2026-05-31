@@ -16,6 +16,7 @@ extension Notification.Name {
     // MARK: - Context / scope activation
     static let activateContextDock       = Notification.Name("activateContextDock")
     static let activateGlobalContext     = Notification.Name("activateGlobalContext")
+    static let commandKeyToggleContextScope = Notification.Name("commandKeyToggleContextScope")
     static let activateClipboardScope    = Notification.Name("activateClipboardScope")
     static let switchToL1                = Notification.Name("switchToL1")
     static let toggleAIExtensions        = Notification.Name("toggleAIExtensions")

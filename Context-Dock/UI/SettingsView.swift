@@ -234,6 +234,18 @@ struct GeneralSettingsView: View {
                             caption: "Keep the dock permanently visible at the bottom of the screen, like the macOS Dock.")
                         Toggle("", isOn: $settings.persistentContextDock).labelsHidden()
                     }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Collapse After Action",
+                            caption: "After Enter runs a result, shrink back to the app/global icon instead of staying open.")
+                        Toggle("", isOn: $settings.autoCollapseToIconAfterAction).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Command Key Scope Toggle",
+                            caption: "Tap Command once to expand a collapsed dock; tap again while open to switch Global Context and Context Dock.")
+                        Toggle("", isOn: $settings.singleCommandTogglesContextScope).labelsHidden()
+                    }
                     if settings.persistentContextDock {
                         SettingsDivider()
                         SettingsRow {

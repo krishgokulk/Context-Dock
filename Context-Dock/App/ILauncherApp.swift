@@ -285,6 +285,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Track frontmost app changes to capture context BEFORE ILauncher activates
         setupFrontmostAppTracking()
+        MenuWarmCacheService.shared.startIdleWarming()
 
         // Start event-driven AX observer pipeline
         AXObserverManager.shared.startMonitoring()
@@ -362,6 +363,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleAppLaunch(_:)),
+            name: NSWorkspace.didLaunchApplicationNotification,
+            object: nil
+        )
     }
 
     @objc private func handleAppActivation(_ notification: Notification) {
@@ -369,6 +377,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         recordFrontmostApp(app)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
+    }
+
+    @objc private func handleAppLaunch(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        MenuWarmCacheService.shared.appDidLaunch(app)
     }
     
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
@@ -615,10 +629,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     func setupLauncherWindow() {
-        let contentView = LauncherView(onClose: {
+        let contentView = LauncherShell(onClose: {
             self.hideLauncher()
         })
         .environmentObject(ContextDockEnvironment.shared)
+        .environmentObject(AppState.shared)
 
         launcherWindow = KeyableWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 60),
@@ -986,10 +1001,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let m = singleOptionCancelMonitor { NSEvent.removeMonitor(m); singleOptionCancelMonitor = nil }
         if let m = singleOptionLocalCancelMonitor { NSEvent.removeMonitor(m); singleOptionLocalCancelMonitor = nil }
 
-        // Single Option — three-state toggle:
-        //   Dock hidden          → do nothing (double-press only to open)
-        //   Dock visible, key    → resign key + return focus to previous app (dock stays)
-        //   Dock visible, not key → bring dock to front and focus the search field
+        // Single Option only releases focus. Double Option remains launcher open.
+        // Command is the only modifier that expands a collapsed dock.
         let toggleDockInputFocus: () -> Void = { [weak self] in
             guard let self else { return }
             guard let window = self.launcherWindow, window.isVisible else { return }
@@ -999,19 +1012,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let app = self.previousFrontmostApp, !app.isTerminated else { return }
                     window.resignKey()
                     app.activate(options: [.activateIgnoringOtherApps])
-                } else {
-                    // Dock is visible but not focused → re-focus the search field
-                    if let currentApp = NSWorkspace.shared.frontmostApplication,
-                       currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-                        self.recordFrontmostApp(currentApp)
-                    }
-                    window.alphaValue = 1.0
-                    window.orderFrontRegardless()
-                    window.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                    }
                 }
             }
         }
@@ -1055,29 +1055,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Single Command press (alone, no other modifiers, no regular key) → Global Context.
+    // Single Command press (alone, no other modifiers, no regular key):
+    // collapsed dock → expand; expanded dock → toggle Context Dock / Global Context.
     func registerSingleCommandGlobalContextMonitor() {
         if let m = singleCommandFocusMonitor { NSEvent.removeMonitor(m); singleCommandFocusMonitor = nil }
         if let m = singleCommandLocalFocusMonitor { NSEvent.removeMonitor(m); singleCommandLocalFocusMonitor = nil }
         if let m = singleCommandCancelMonitor { NSEvent.removeMonitor(m); singleCommandCancelMonitor = nil }
         if let m = singleCommandLocalCancelMonitor { NSEvent.removeMonitor(m); singleCommandLocalCancelMonitor = nil }
 
-        let activateGlobalContext: () -> Void = { [weak self] in
+        let toggleDockScope: () -> Void = { [weak self] in
             guard let self else { return }
-            guard let window = self.launcherWindow, window.isVisible else { return }
+            guard self.settings.singleCommandTogglesContextScope else { return }
             DispatchQueue.main.async {
+                if self.launcherWindow == nil {
+                    self.setupLauncherWindow()
+                }
+                guard let window = self.launcherWindow else { return }
                 if let currentApp = NSWorkspace.shared.frontmostApplication,
                    currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
                     self.recordFrontmostApp(currentApp)
+                }
+                if !window.isVisible {
+                    self.isDockContextMode = true
+                    self.showLauncher()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        NotificationCenter.default.post(name: .activateContextDock, object: nil)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
+                    }
+                    return
                 }
                 window.alphaValue = 1.0
                 window.orderFrontRegardless()
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
-                NotificationCenter.default.post(name: .activateGlobalContext, object: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                    NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                }
+                NotificationCenter.default.post(name: .commandKeyToggleContextScope, object: nil)
             }
         }
 
@@ -1102,7 +1115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let duration = Date().timeIntervalSince1970 - self.commandAloneDownTime
                 self.commandAloneActive = false
                 guard duration > 0.05 && duration < 0.45 else { return }
-                activateGlobalContext()
+                toggleDockScope()
             } else if !commandNow {
                 self.commandAloneActive = false
             }
@@ -1112,7 +1125,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             handleFlagsChanged($0)
         }
         singleCommandLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            handleFlagsChanged(event)
             return event
         }
     }
@@ -1132,11 +1144,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let active = flags.contains(.command) || flags.contains(.option)
+            let active = flags.contains(.command)
             guard active != self.persistentDockModifierActive else { return }
 
             self.persistentDockModifierActive = active
-            guard self.settings.persistentContextDock else { return }
+            guard self.launcherWindow?.isVisible == true else { return }
             NotificationCenter.default.post(
                 name: .persistentDockModifierExpansionChanged,
                 object: nil,
@@ -1581,6 +1593,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let currentApp = NSWorkspace.shared.frontmostApplication,
            currentApp.bundleIdentifier != Bundle.main.bundleIdentifier {
             recordFrontmostApp(currentApp)
+            Task { @MainActor in
+                MenuWarmCacheService.shared.frontmostAppDidChange(currentApp)
+            }
             print("📱 [AppDelegate] Initial frontmost app: \(currentApp.localizedName ?? "Unknown")")
         }
     }
@@ -1595,6 +1610,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         recordFrontmostApp(app)
         print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
+        Task { @MainActor in
+            MenuWarmCacheService.shared.frontmostAppDidChange(app)
+        }
 
         // File / text context overlay
         let pid = app.processIdentifier
@@ -1635,15 +1653,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
-        Task.detached(priority: .background) {
-            var items = AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
-            for index in items.indices {
-                items[index].sourcePID = pid
-                items[index].sourceAppName = app.localizedName ?? ""
-            }
-            AppMenuCapabilityCache.shared.store(items: items, for: app)
-        }
-
         // Browser windows are expensive AX trees. Do not eagerly crawl page text just
         // because a browser became frontmost; the dock warms that context on demand.
         if AXWebReader.shared.isBrowser(bundleId: app.bundleIdentifier ?? "") {

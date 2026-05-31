@@ -14,11 +14,19 @@ struct SearchResult: Identifiable {
     let type: ResultType
     let filePath: String?  // For files and folders
     let contactData: ContactData?  // For contacts
+    var displayBadges: [String] = []
+    var showsTypeLabel: Bool = true
+    var dismissesLauncher: Bool = true
+    var dragProvider: (() -> NSItemProvider?)? = nil
 
     init(
         title: String, subtitle: String, icon: NSImage?,
         action: @escaping () -> Void, score: Double = 0.0,
-        type: ResultType, filePath: String?, contactData: ContactData?
+        type: ResultType, filePath: String?, contactData: ContactData?,
+        displayBadges: [String] = [],
+        showsTypeLabel: Bool = true,
+        dismissesLauncher: Bool = true,
+        dragProvider: (() -> NSItemProvider?)? = nil
     ) {
         self.title = title
         self.titleLower = title.lowercased()
@@ -29,6 +37,10 @@ struct SearchResult: Identifiable {
         self.type = type
         self.filePath = filePath
         self.contactData = contactData
+        self.displayBadges = displayBadges
+        self.showsTypeLabel = showsTypeLabel
+        self.dismissesLauncher = dismissesLauncher
+        self.dragProvider = dragProvider
     }
 
     // Unique identifier for usage tracking (e.g., app bundle ID, file path, contact ID)

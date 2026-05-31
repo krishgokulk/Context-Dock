@@ -698,6 +698,8 @@ class AppSettings: ObservableObject {
     @AppStorage("alwaysDockAtBottom") var alwaysDockAtBottom: Bool = false // Always keep dock at bottom (results above)
     @AppStorage("persistentContextDock") var persistentContextDock: Bool = false
     @AppStorage("persistentContextDockAutoHide") var persistentContextDockAutoHide: Bool = false
+    @AppStorage("autoCollapseToIconAfterAction") var autoCollapseToIconAfterAction: Bool = true
+    @AppStorage("singleCommandTogglesContextScope") var singleCommandTogglesContextScope: Bool = true
     @AppStorage("enableFileContextOverlay") var enableFileContextOverlay: Bool = true
     @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = false
 

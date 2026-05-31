@@ -29,36 +29,14 @@ struct AXMenuItem: Identifiable {
     var shortcutModifiers: Int = 0      // 0=⌘  1=⇧⌘  2=⌥⌘  4=⌃⌘  8=no-command  16=fn/globe
 
     var isChecked: Bool = false  // AXMenuItemMarkChar is non-empty (✓ state)
+    var resolvedFilePath: String? = nil  // Persistent cache inversion for document/recent-file menu rows.
 
     var isLeaf: Bool { children.isEmpty }
     var pathString: String { path.joined(separator: " › ") }
 
     /// Human-readable shortcut string shown on pill, e.g. "⌘T", "⇧⌘P", "⌘⌫"
     var shortcutDisplay: String? {
-        guard let raw = shortcutChar, !raw.isEmpty,
-              let scalar = raw.unicodeScalars.first else { return nil }
-        var s = ""
-        if shortcutModifiers & 4 != 0 { s += "⌃" }
-        if shortcutModifiers & 2 != 0 { s += "⌥" }
-        if shortcutModifiers & 1 != 0 { s += "⇧" }
-        if shortcutModifiers & 16 != 0 { s += "🌐" }
-        if shortcutModifiers & 8 == 0 { s += "⌘" }  // bit 3 set = no command key
-        // Map control characters to their visible symbol equivalents
-        switch scalar.value {
-        case 8:     s += "⌫"  // Delete / Backspace
-        case 127:   s += "⌦"  // Forward Delete
-        case 13:    s += "↩"  // Return
-        case 3:     s += "⌅"  // Enter
-        case 27:    s += "⎋"  // Escape
-        case 9:     s += "⇥"  // Tab
-        case 32:    s += "Space"
-        case 63232: s += "↑"
-        case 63233: s += "↓"
-        case 63234: s += "←"
-        case 63235: s += "→"
-        default:    s += raw.uppercased()
-        }
-        return s
+        MenuShortcutFormatter.display(char: shortcutChar, modifiers: shortcutModifiers)
     }
 }
 
@@ -581,7 +559,7 @@ final class AXMenuReader {
         if modifiers & 4 != 0 { cgMods.insert(.maskControl) }
         if modifiers & 16 != 0 { cgMods.insert(.maskSecondaryFn) }
 
-        let keyCode = virtualKeyCode(for: ch.value)
+        let keyCode = MenuShortcutFormatter.virtualKeyCode(for: ch.value)
         guard keyCode != 0xFFFF else { return false }  // unsupported key — let caller fall back
 
         if let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true),
@@ -593,55 +571,4 @@ final class AXMenuReader {
         return true
     }
 
-    // Maps characters to virtual key codes (US layout).
-    // Includes special control characters returned by kAXMenuItemCmdChar for non-printable keys
-    // (e.g. 0x08 = Delete/Backspace ⌫, 0x7F = Forward Delete ⌦).
-    private func virtualKeyCode(for scalar: UInt32) -> CGKeyCode {
-        let map: [UInt32: CGKeyCode] = [
-            // Printable letters
-            UInt32(("a" as UnicodeScalar).value): 0,  UInt32(("s" as UnicodeScalar).value): 1,
-            UInt32(("d" as UnicodeScalar).value): 2,  UInt32(("f" as UnicodeScalar).value): 3,
-            UInt32(("h" as UnicodeScalar).value): 4,  UInt32(("g" as UnicodeScalar).value): 5,
-            UInt32(("z" as UnicodeScalar).value): 6,  UInt32(("x" as UnicodeScalar).value): 7,
-            UInt32(("c" as UnicodeScalar).value): 8,  UInt32(("v" as UnicodeScalar).value): 9,
-            UInt32(("b" as UnicodeScalar).value): 11, UInt32(("q" as UnicodeScalar).value): 12,
-            UInt32(("w" as UnicodeScalar).value): 13, UInt32(("e" as UnicodeScalar).value): 14,
-            UInt32(("r" as UnicodeScalar).value): 15, UInt32(("y" as UnicodeScalar).value): 16,
-            UInt32(("t" as UnicodeScalar).value): 17, UInt32(("1" as UnicodeScalar).value): 18,
-            UInt32(("2" as UnicodeScalar).value): 19, UInt32(("3" as UnicodeScalar).value): 20,
-            UInt32(("4" as UnicodeScalar).value): 21, UInt32(("6" as UnicodeScalar).value): 22,
-            UInt32(("5" as UnicodeScalar).value): 23, UInt32(("=" as UnicodeScalar).value): 24,
-            UInt32(("9" as UnicodeScalar).value): 25, UInt32(("7" as UnicodeScalar).value): 26,
-            UInt32(("-" as UnicodeScalar).value): 27, UInt32(("8" as UnicodeScalar).value): 28,
-            UInt32(("0" as UnicodeScalar).value): 29, UInt32(("]" as UnicodeScalar).value): 30,
-            UInt32(("o" as UnicodeScalar).value): 31, UInt32(("u" as UnicodeScalar).value): 32,
-            UInt32(("[" as UnicodeScalar).value): 33, UInt32(("i" as UnicodeScalar).value): 34,
-            UInt32(("p" as UnicodeScalar).value): 35, UInt32(("l" as UnicodeScalar).value): 37,
-            UInt32(("j" as UnicodeScalar).value): 38, UInt32(("'" as UnicodeScalar).value): 39,
-            UInt32(("k" as UnicodeScalar).value): 40, UInt32((";" as UnicodeScalar).value): 41,
-            UInt32(("\\" as UnicodeScalar).value): 42,UInt32(("," as UnicodeScalar).value): 43,
-            UInt32(("/" as UnicodeScalar).value): 44, UInt32(("n" as UnicodeScalar).value): 45,
-            UInt32(("m" as UnicodeScalar).value): 46, UInt32(("." as UnicodeScalar).value): 47,
-            UInt32(("`" as UnicodeScalar).value): 50,
-            // Special / control characters reported by kAXMenuItemCmdChar
-            8:   51,   // \u{08} Backspace / Delete ⌫  (e.g. Mail "Delete")
-            127: 117,  // \u{7F} Forward Delete ⌦
-            13:  36,   // \u{0D} Return ↩
-            3:   76,   // \u{03} Enter ⌅ (numpad)
-            27:  53,   // \u{1B} Escape ⎋
-            9:   48,   // \u{09} Tab ⇥
-            32:  49,   // \u{20} Space
-            63232: 126, // NSUpArrowFunctionKey ↑
-            63233: 125, // NSDownArrowFunctionKey ↓
-            63234: 123, // NSLeftArrowFunctionKey ←
-            63235: 124, // NSRightArrowFunctionKey →
-            63272: 117, // NSDeleteFunctionKey ⌦
-            63273: 115, // NSHomeFunctionKey
-            63275: 119, // NSEndFunctionKey
-            63276: 116, // NSPageUpFunctionKey
-            63277: 121, // NSPageDownFunctionKey
-        ]
-        let lower = scalar >= 65 && scalar <= 90 ? scalar + 32 : scalar  // uppercase → lowercase
-        return map[lower] ?? 0xFFFF
-    }
 }
