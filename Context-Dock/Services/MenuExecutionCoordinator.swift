@@ -250,178 +250,7 @@ final class MenuExecutionCoordinator {
         path: [String],
         sourceApp: NSRunningApplication
     ) -> Bool {
-        let normalizedPath = path.map(Self.normalizedMenuText)
-        guard let title = normalizedPath.last else { return false }
-
-        if title.contains("full screen") || title.contains("fullscreen") {
-            return setFrontmostWindowFullScreenForApp(
-                sourceApp,
-                shouldEnter: !title.contains("exit")
-            )
-        }
-
-        guard normalizedPath.contains("window") else { return false }
-
-        if title == "fill" || title.contains("fill") {
-            return fillFrontmostWindowForApp(
-                pid: sourceApp.processIdentifier,
-                appName: sourceApp.localizedName ?? "App"
-            )
-        }
-
-        if title == "centre" || title == "center" {
-            return centerFrontmostWindowForApp(
-                pid: sourceApp.processIdentifier,
-                appName: sourceApp.localizedName ?? "App",
-                screenCoverage: 0.85
-            )
-        }
-
-        return false
-    }
-
-    private func setFrontmostWindowFullScreenForApp(
-        _ app: NSRunningApplication,
-        shouldEnter: Bool
-    ) -> Bool {
-        let pid = app.processIdentifier
-        if app.isHidden { app.unhide() }
-        app.activate(options: [.activateIgnoringOtherApps])
-
-        let axApp = AXUIElementCreateApplication(pid)
-        var windowsRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-            == .success,
-            let windows = windowsRef as? [AXUIElement],
-            let window = windows.first
-        {
-            let desired: CFBoolean = shouldEnter ? true as CFBoolean : false as CFBoolean
-            let result = AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, desired)
-            if result == .success {
-                AppToast.show(
-                    shouldEnter ? "Entering full screen" : "Exiting full screen",
-                    icon: "arrow.up.left.and.arrow.down.right",
-                    tint: .blue.opacity(0.9)
-                )
-                return true
-            }
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-            if shouldEnter {
-                _ = AXMenuReader.shared.executeShortcut(char: "f", modifiers: 4, in: pid)
-            } else {
-                _ = AXMenuReader.shared.executeShortcut(char: "\u{1b}", modifiers: 8, in: pid)
-            }
-        }
-        return true
-    }
-
-    private func fillFrontmostWindowForApp(
-        pid: pid_t,
-        appName: String
-    ) -> Bool {
-        guard let screen = NSScreen.main else { return false }
-        let visibleFrame = screen.visibleFrame
-        let screenHeight = screen.frame.height
-        let targetX = visibleFrame.minX
-        let targetY = screenHeight - visibleFrame.maxY
-
-        guard let window = frontmostWindow(pid: pid, appName: appName) else { return true }
-
-        var targetSize = CGSize(width: visibleFrame.width, height: visibleFrame.height)
-        var targetPoint = CGPoint(x: targetX, y: targetY)
-        guard let sizeValue = AXValueCreate(.cgSize, &targetSize),
-              let pointValue = AXValueCreate(.cgPoint, &targetPoint)
-        else { return true }
-
-        let positionResult = AXUIElementSetAttributeValue(
-            window, kAXPositionAttribute as CFString, pointValue)
-        let sizeResult = AXUIElementSetAttributeValue(
-            window, kAXSizeAttribute as CFString, sizeValue)
-        if sizeResult == .success || positionResult == .success {
-            AppToast.show(
-                "Filled \(appName)", icon: "rectangle.inset.filled", tint: .blue.opacity(0.9))
-        } else {
-            AppToast.show(
-                "Could not fill \(appName)", icon: "exclamationmark.triangle", tint: .orange)
-        }
-        return true
-    }
-
-    private func centerFrontmostWindowForApp(
-        pid: pid_t,
-        appName: String,
-        screenCoverage: CGFloat
-    ) -> Bool {
-        guard let screen = NSScreen.main else { return false }
-        let visibleFrame = screen.visibleFrame
-        let screenHeight = screen.frame.height
-        let targetWidth = visibleFrame.width * screenCoverage
-        let targetHeight = visibleFrame.height * screenCoverage
-        let targetX = visibleFrame.minX + (visibleFrame.width - targetWidth) / 2
-        let targetYFromBottom = visibleFrame.minY + (visibleFrame.height - targetHeight) / 2
-        let targetY = screenHeight - targetYFromBottom - targetHeight
-
-        guard let window = frontmostWindow(pid: pid, appName: appName) else { return true }
-
-        var targetSize = CGSize(width: targetWidth, height: targetHeight)
-        var targetPoint = CGPoint(x: targetX, y: targetY)
-        guard let sizeValue = AXValueCreate(.cgSize, &targetSize),
-              let pointValue = AXValueCreate(.cgPoint, &targetPoint)
-        else { return true }
-
-        let sizeResult = AXUIElementSetAttributeValue(
-            window, kAXSizeAttribute as CFString, sizeValue)
-        let positionResult = AXUIElementSetAttributeValue(
-            window, kAXPositionAttribute as CFString, pointValue)
-        if sizeResult == .success || positionResult == .success {
-            AppToast.show(
-                "Centered \(appName)", icon: "rectangle.inset.filled", tint: .blue.opacity(0.9))
-        } else {
-            AppToast.show(
-                "Could not center \(appName)", icon: "exclamationmark.triangle", tint: .orange)
-        }
-        return true
-    }
-
-    private func frontmostWindow(pid: pid_t, appName: String) -> AXUIElement? {
-        let axApp = AXUIElementCreateApplication(pid)
-        if let focused = Self.windowAttribute(kAXFocusedWindowAttribute, from: axApp)
-            ?? Self.windowAttribute(kAXMainWindowAttribute, from: axApp)
-        {
-            return unminimizedWindow(focused)
-        }
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-                == .success,
-              let windows = windowsRef as? [AXUIElement],
-              let window = windows.first
-        else {
-            AppToast.show("No \(appName) window found", icon: "macwindow", tint: .orange)
-            return nil
-        }
-
-        return unminimizedWindow(window)
-    }
-
-    private func unminimizedWindow(_ window: AXUIElement) -> AXUIElement {
-        var minimizedRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
-            == .success,
-            (minimizedRef as? Bool) == true
-        {
-            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        }
-        return window
-    }
-
-    private static func windowAttribute(_ attribute: String, from app: AXUIElement) -> AXUIElement? {
-        var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, attribute as CFString, &ref) == .success,
-            let ref
-        else { return nil }
-        return unsafeBitCast(ref, to: AXUIElement.self)
+        WindowManagementService.shared.executeIfSupported(path: path, sourceApp: sourceApp)
     }
 
     private static func waitForExecutableMenuItem(
@@ -524,10 +353,18 @@ final class MenuExecutionCoordinator {
 
     private static func shouldPreferDirectWindowManagementAction(_ path: [String]) -> Bool {
         let normalizedPath = path.map(normalizedMenuText)
-        guard normalizedPath.contains("window"), let title = normalizedPath.last else {
-            return false
-        }
-        return title == "centre" || title == "center" || title == "fill" || title.contains("fill")
+        guard let title = normalizedPath.last else { return false }
+        if title.contains("full screen") || title.contains("fullscreen") { return true }
+        guard normalizedPath.contains("window") else { return false }
+        return title == "minimize" || title == "minimise" || title == "zoom"
+            || title == "centre" || title == "center" || title == "fill" || title.contains("fill")
+            || title == "left" || title == "right" || title == "top" || title == "bottom"
+            || title == "top left" || title == "top right"
+            || title == "bottom left" || title == "bottom right"
+            || title == "left right" || title == "right left"
+            || title == "top bottom" || title == "bottom top"
+            || title == "quarters" || title.contains("previous size")
+            || title == "bring all to front" || title.hasPrefix("switch window")
     }
 
     private static func unminimizeWindows(pid: pid_t) {

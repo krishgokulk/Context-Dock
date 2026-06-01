@@ -2533,7 +2533,13 @@ struct LauncherView: View {
         let actionQuery = (scope.scopedSearchQuery.isEmpty ? query : scope.scopedSearchQuery)
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pills =
-            cachedScopedAppMenuPills(
+            makeNativeWindowManagementPills(
+                rawScopedQuery: actionQuery,
+                scopedBundleId: scope.scopedBundleId,
+                scopedAppName: scope.scopedAppName,
+                isGlobalScope: false
+            )
+            + cachedScopedAppMenuPills(
                 bundleIdentifier: scope.scopedBundleId,
                 appName: scope.scopedAppName,
                 appPath: appPath
@@ -10323,52 +10329,52 @@ struct LauncherView: View {
         return pill
     }
 
-    func makeAppWindowSemanticPill(
+    func makeNativeWindowManagementPills(
         rawScopedQuery: String,
         scopedBundleId: String,
         scopedAppName: String,
         isGlobalScope: Bool
-    ) -> DockPill? {
+    ) -> [DockPill] {
         guard !isGlobalScope,
             !scopedBundleId.isEmpty,
             !scopedBundleId.hasPrefix("cli://"),
             !scopedBundleId.hasPrefix("scope://"),
             !scopedAppName.isEmpty
-        else { return nil }
+        else { return [] }
 
-        let normalized =
-            rawScopedQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !normalized.isEmpty else { return nil }
-
-        let minimizeTerms = [
-            "minimize", "minimise", "miniaturize", "miniaturise",
-            "minimize window", "minimise window", "hide window",
-        ]
-        guard minimizeTerms.contains(where: normalized.contains) else { return nil }
-
-        var pill = DockPill(
-            id: "window-minimize-\(scopedBundleId)",
-            name: "Minimize \(scopedAppName)",
-            icon: "minus.square",
-            accentColorName: "blue",
-            badge: "Window",
-            execute: {
-                self.minimizeAppWindowsWithoutActivation(
-                    bundleIdentifier: scopedBundleId,
-                    appName: scopedAppName
-                )
-            }
-        )
-        pill.sourceBundleId = scopedBundleId
-        pill.sourceAppName = scopedAppName
-        pill.rankingKind = "semanticIntent"
-        pill.trackingIdentifier = "window-minimize:\(scopedBundleId)"
-        pill.searchTerms = [
-            scopedAppName, "minimize", "minimise", "miniaturize", "window", "hide window",
-        ]
-        return pill
+        return WindowManagementService.shared.matchingCommands(query: rawScopedQuery).map {
+            command in
+            var pill = DockPill(
+                id: "native-window-\(scopedBundleId)-\(command.id)",
+                name: command.title,
+                icon: command.icon,
+                accentColorName: "blue",
+                badge: "Window",
+                execute: {
+                    guard
+                        let app = NSWorkspace.shared.runningApplications.first(where: {
+                            $0.bundleIdentifier == scopedBundleId && !$0.isTerminated
+                        })
+                    else {
+                        AppToast.show(
+                            "\(scopedAppName) is not running",
+                            icon: "exclamationmark.triangle",
+                            tint: .orange
+                        )
+                        return
+                    }
+                    _ = WindowManagementService.shared.execute(command, sourceApp: app)
+                    self.resetDockStateAfterAppAction()
+                }
+            )
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = scopedAppName
+            pill.rankingKind = "nativeWindow"
+            pill.rankingScore = 1_400
+            pill.trackingIdentifier = "native-window:\(scopedBundleId):\(command.id)"
+            pill.searchTerms = command.searchTerms + [scopedAppName]
+            return pill
+        }
     }
 
     func makeChatGPTNewChatPill(
@@ -10442,76 +10448,6 @@ struct LauncherView: View {
                 shortcutModifiers: 0
             )
         }
-    }
-
-    func minimizeAppWindowsWithoutActivation(
-        bundleIdentifier: String,
-        appName: String
-    ) {
-        guard
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
-            })
-        else {
-            AppToast.show(
-                "\(appName) is not running", icon: "exclamationmark.triangle", tint: .orange)
-            return
-        }
-
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var windowsRef: CFTypeRef?
-        var minimizedCount = 0
-
-        if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-            == .success,
-            let windows = windowsRef as? [AXUIElement]
-        {
-            for window in windows {
-                var currentValue: CFTypeRef?
-                if AXUIElementCopyAttributeValue(
-                    window, kAXMinimizedAttribute as CFString, &currentValue) == .success,
-                    (currentValue as? Bool) == true
-                {
-                    continue
-                }
-
-                if AXUIElementSetAttributeValue(
-                    window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
-                {
-                    minimizedCount += 1
-                    continue
-                }
-
-                var minimizeButtonRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(
-                    window, kAXMinimizeButtonAttribute as CFString, &minimizeButtonRef) == .success,
-                    let minimizeButton = minimizeButtonRef
-                {
-                    let button = unsafeBitCast(minimizeButton, to: AXUIElement.self)
-                    if AXUIElementPerformAction(button, kAXPressAction as CFString) == .success {
-                        minimizedCount += 1
-                    }
-                }
-            }
-        }
-
-        if minimizedCount > 0 {
-            AppToast.show(
-                minimizedCount == 1
-                    ? "Minimized \(appName)" : "Minimized \(minimizedCount) \(appName) windows",
-                icon: "minus.square",
-                tint: .blue.opacity(0.9)
-            )
-        } else {
-            AppToast.show(
-                "No visible \(appName) window to minimize",
-                icon: "minus.square",
-                tint: .secondary
-            )
-        }
-
-        resetDockStateAfterAppAction()
-        isSearchFieldFocused = true
     }
 
     func buildPayloadActionPills(query: String) -> [DockPill] {
@@ -14089,7 +14025,7 @@ struct LauncherView: View {
                 scopedAppName: scopedAppName
             )
             : nil
-        let appWindowSemanticPill = makeAppWindowSemanticPill(
+        let nativeWindowManagementPills = makeNativeWindowManagementPills(
             rawScopedQuery: rawScopedSearchQuery,
             scopedBundleId: scopedBundleId,
             scopedAppName: scopedAppName,
@@ -14323,9 +14259,7 @@ struct LauncherView: View {
             pills.append(mailSemanticSearchPill)
         }
 
-        if let appWindowSemanticPill {
-            pills.append(appWindowSemanticPill)
-        }
+        pills.append(contentsOf: nativeWindowManagementPills)
 
         if let chatGPTNewChatPill {
             pills.append(chatGPTNewChatPill)
