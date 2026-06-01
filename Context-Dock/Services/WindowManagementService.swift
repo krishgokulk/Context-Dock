@@ -76,7 +76,16 @@ final class WindowManagementService {
         }
 
         var searchTerms: [String] {
-            [title, rawValue, "window", "window manager", "move resize", "arrange"]
+            var terms = [title, rawValue, "window", "window manager"]
+            switch self {
+            case .left, .right, .top, .bottom, .topLeft, .topRight, .bottomLeft, .bottomRight:
+                terms.append("move resize")
+            case .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop, .quarters:
+                terms.append("arrange")
+            default:
+                break
+            }
+            return terms
         }
     }
 
@@ -113,6 +122,11 @@ final class WindowManagementService {
         }
         if sourceApp.isHidden { sourceApp.unhide() }
         sourceApp.activate(options: [.activateIgnoringOtherApps])
+        if let path = nativeMenuPath(for: command),
+            AXMenuReader.shared.clickMenuItem(path: path, in: pid)
+        {
+            return true
+        }
 
         switch command {
         case .minimize:
@@ -140,17 +154,15 @@ final class WindowManagementService {
         case .bottomRight:
             return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: bottomRightFrame)
         case .leftAndRight:
-            return arrange(pid: pid, appName: appName, frames: [leftFrame, rightFrame])
+            return showNativeActionUnavailable(command, appName: appName)
         case .rightAndLeft:
-            return arrange(pid: pid, appName: appName, frames: [rightFrame, leftFrame])
+            return showNativeActionUnavailable(command, appName: appName)
         case .topAndBottom:
-            return arrange(pid: pid, appName: appName, frames: [topFrame, bottomFrame])
+            return showNativeActionUnavailable(command, appName: appName)
         case .bottomAndTop:
-            return arrange(pid: pid, appName: appName, frames: [bottomFrame, topFrame])
+            return showNativeActionUnavailable(command, appName: appName)
         case .quarters:
-            return arrange(
-                pid: pid, appName: appName,
-                frames: [topLeftFrame, topRightFrame, bottomLeftFrame, bottomRightFrame])
+            return showNativeActionUnavailable(command, appName: appName)
         case .restorePreviousSize:
             return restorePreviousFrame(pid: pid, appName: appName)
         case .fullScreen:
@@ -187,6 +199,51 @@ final class WindowManagementService {
         return nil
     }
 
+    private func nativeMenuPath(for command: Command) -> [String]? {
+        switch command {
+        case .zoom:
+            return ["Window", "Zoom"]
+        case .fill:
+            return ["Window", "Fill"]
+        case .center:
+            return ["Window", "Centre"]
+        case .left:
+            return ["Window", "Move & Resize", "Left"]
+        case .right:
+            return ["Window", "Move & Resize", "Right"]
+        case .top:
+            return ["Window", "Move & Resize", "Top"]
+        case .bottom:
+            return ["Window", "Move & Resize", "Bottom"]
+        case .topLeft:
+            return ["Window", "Move & Resize", "Top Left"]
+        case .topRight:
+            return ["Window", "Move & Resize", "Top Right"]
+        case .bottomLeft:
+            return ["Window", "Move & Resize", "Bottom Left"]
+        case .bottomRight:
+            return ["Window", "Move & Resize", "Bottom Right"]
+        case .leftAndRight:
+            return ["Window", "Move & Resize", "Left & Right"]
+        case .rightAndLeft:
+            return ["Window", "Move & Resize", "Right & Left"]
+        case .topAndBottom:
+            return ["Window", "Move & Resize", "Top & Bottom"]
+        case .bottomAndTop:
+            return ["Window", "Move & Resize", "Bottom & Top"]
+        case .quarters:
+            return ["Window", "Move & Resize", "Quarters"]
+        case .restorePreviousSize:
+            return ["Window", "Move & Resize", "Return to Previous Size"]
+        case .bringAllToFront:
+            return ["Window", "Bring All to Front"]
+        case .switchWindow:
+            return ["Window", "Switch Window..."]
+        case .minimize, .fullScreen:
+            return nil
+        }
+    }
+
     private func resizeFrontmostWindow(
         pid: pid_t,
         appName: String,
@@ -197,22 +254,6 @@ final class WindowManagementService {
         }
         rememberFrame(window, pid: pid)
         return apply(normalizedFrame(screen.visibleFrame), to: window)
-    }
-
-    private func arrange(
-        pid: pid_t,
-        appName: String,
-        frames: [(CGRect) -> CGRect]
-    ) -> Bool {
-        let windows = windows(pid: pid)
-        guard let firstWindow = windows.first, let screen = screen(for: firstWindow) else {
-            return showNoWindow(appName)
-        }
-        for (window, frameBuilder) in zip(windows, frames) {
-            rememberFrame(window, pid: pid)
-            _ = apply(frameBuilder(screen.visibleFrame), to: window)
-        }
-        return true
     }
 
     private func minimizeWindows(pid: pid_t, appName: String) -> Bool {
@@ -364,10 +405,19 @@ final class WindowManagementService {
         return false
     }
 
+    private func showNativeActionUnavailable(_ command: Command, appName: String) -> Bool {
+        AppToast.show(
+            "\(command.title) unavailable for \(appName)",
+            icon: "rectangle.split.2x1",
+            tint: .orange
+        )
+        return false
+    }
+
     private func normalize(_ value: String) -> String {
         value.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
+            .filter { !$0.isEmpty && $0 != "and" }
             .joined(separator: " ")
     }
 
