@@ -634,79 +634,6 @@ extension LauncherView {
                                 .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                         }
 
-                        if let inlineScope = globalInlineAppScope,
-                            shouldUsePureGlobalAppSearch,
-                            isGlobalContextActive,
-                            showContextInDock,
-                            isSearchBarExpanded
-                        {
-                            let icon =
-                                FileManager.default.fileExists(atPath: inlineScope.appPath)
-                                ? NSWorkspace.shared.icon(forFile: inlineScope.appPath)
-                                : NSWorkspace.shared.icon(
-                                    forFile: NSWorkspace.shared.urlForApplication(
-                                        withBundleIdentifier: inlineScope.bundleId)?.path ?? "")
-                            let accent = icon.dominantSwiftUIColor
-                            let chipTextColor: SwiftUI.Color =
-                                systemColorScheme == .dark
-                                ? SwiftUI.Color.white.opacity(0.94)
-                                : SwiftUI.Color.black.opacity(0.82)
-                            HStack(spacing: 6) {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 18, height: 18)
-                                    .clipShape(
-                                        RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                Text(inlineScope.appName)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(chipTextColor)
-                                    .lineLimit(1)
-                                Button {
-                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-                                        clearGlobalInlineAppScope(preserveQuery: true)
-                                    }
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(chipTextColor)
-                                        .frame(width: 16, height: 16)
-                                        .background(
-                                            chipTextColor.opacity(
-                                                systemColorScheme == .dark ? 0.14 : 0.10),
-                                            in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove app scope")
-                                .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0.72)
-                            }
-                            .padding(.leading, 8)
-                            .padding(.trailing, isHoveringGlobalInlineScopeChip ? 8 : 6)
-                            .padding(.vertical, 4)
-                            .background(.regularMaterial, in: Capsule(style: .continuous))
-                            .background(
-                                accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
-                                in: Capsule(style: .continuous)
-                            )
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .strokeBorder(
-                                        accent.opacity(systemColorScheme == .dark ? 0.48 : 0.34),
-                                        lineWidth: 0.8)
-                            )
-                            .shadow(
-                                color: accent.opacity(systemColorScheme == .dark ? 0.28 : 0.16),
-                                radius: 8, x: 0, y: 2
-                            )
-                            .onHover { hovering in
-                                withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
-                                    isHoveringGlobalInlineScopeChip = hovering
-                                }
-                            }
-                            .transition(
-                                .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
-                        }
-
                         // Submenu parent chip — liquid glass capsule matching the dock bar style
                         if let locked = lockedSubmenuParent, showContextInDock {
                             HStack(spacing: 0) {
@@ -775,20 +702,30 @@ extension LauncherView {
                                 guard let idx = searchState.selectedIndex,
                                     idx < searchState.results.count,
                                     !aiMode.isActive, !isL2ContextActive,
+                                    allGlobalInlineAppScopes.isEmpty,
                                     searchState.activeSmartQueryKey == nil,
                                     searchState.contextApp == nil
                                 else { return nil }
                                 return searchState.results[idx]
                             }()
-                            let focusedDockPill = focusedDockPillForInputPreview()
-                            let focusedGlobalAppResult = focusedGlobalAppResultForInputPreview()
-                            let topGlobalAppResult = topGlobalAppResultForInputPreview()
+                            let focusedDockPill =
+                                allGlobalInlineAppScopes.isEmpty
+                                ? focusedDockPillForInputPreview() : nil
+                            let focusedGlobalAppResult =
+                                allGlobalInlineAppScopes.isEmpty
+                                ? focusedGlobalAppResultForInputPreview() : nil
+                            let topGlobalAppResult =
+                                allGlobalInlineAppScopes.isEmpty
+                                ? topGlobalAppResultForInputPreview() : nil
                             // Spotlight-style: show result name in bar whenever a result is selected (even while typing)
                             let showingResultPreview =
                                 focusedDockPill != nil || focusedGlobalAppResult != nil
                                 || topGlobalAppResult != nil || selectedResult != nil
 
                             ZStack(alignment: .leading) {
+                                if !allGlobalInlineAppScopes.isEmpty {
+                                    globalInlineScopeQueryOverlay
+                                }
                                 // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
                                 if let pill = focusedDockPill {
                                     let title = pill.name
@@ -1147,7 +1084,7 @@ extension LauncherView {
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 0
                                             }
-                                            return 1
+                                            return allGlobalInlineAppScopes.isEmpty ? 1 : 0
                                         }()
                                     )
                                     .onChange(of: searchState.query) { oldValue, newValue in
@@ -1185,6 +1122,9 @@ extension LauncherView {
                                                 newValue
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
+                                            if q.isEmpty {
+                                                dismissedGlobalInlineAppScopes = [:]
+                                            }
                                             if shouldUsePureGlobalAppSearch {
                                                 l2.appCompletion = nil
                                                 l2.showResultsPopover = false
@@ -1414,18 +1354,54 @@ extension LauncherView {
                                 globalRunningAppStrip
                             }
 
-                            // Trailing area: result icon OR clear OR AI controls OR dismiss OR context dock
-                            if let result = selectedResult {
+                            // Trailing area: focused context icon OR result icon OR clear OR controls
+                            if let pill = focusedDockPill {
+                                HStack(spacing: 8) {
+                                    if let image = pill.menuItemImage {
+                                        Image(nsImage: image)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 24, height: 24)
+                                    } else {
+                                        Image(systemName: pill.icon)
+                                            .font(.system(size: 17, weight: .semibold))
+                                            .foregroundStyle(
+                                                accentColor(for: pill.accentColorName))
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    if !searchState.query.isEmpty {
+                                        Button(action: clearInputQuery) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary.opacity(0.5))
+                                                .font(.system(size: 14))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Clear")
+                                    }
+                                }
+                            } else if let result = selectedResult {
                                 // Spotlight-style: show result icon on the right while a result is selected
-                                if let icon = result.icon {
-                                    Image(nsImage: icon)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 28, height: 28)
-                                        .clipShape(
-                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        )
-                                        .shadow(radius: 2)
+                                HStack(spacing: 8) {
+                                    if let icon = result.icon {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 28, height: 28)
+                                            .clipShape(
+                                                RoundedRectangle(
+                                                    cornerRadius: 6, style: .continuous)
+                                            )
+                                            .shadow(radius: 2)
+                                    }
+                                    if !searchState.query.isEmpty {
+                                        Button(action: clearInputQuery) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary.opacity(0.5))
+                                                .font(.system(size: 14))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Clear")
+                                    }
                                 }
                             } else if aiMode.isActive {
                                 aiModeControls
@@ -1438,15 +1414,7 @@ extension LauncherView {
                                     .frame(width: 26, height: 26)
                                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
                             } else if !searchState.query.isEmpty {
-                                Button(action: {
-                                    if isGlobalContextActive {
-                                        clearGlobalContextQuerySmoothly()
-                                    } else {
-                                        searchState.query = ""
-                                        searchState.results = []
-                                        searchState.selectedIndex = nil
-                                    }
-                                }) {
+                                Button(action: clearInputQuery) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundStyle(.secondary.opacity(0.5))
                                         .font(.system(size: 14))
@@ -2041,6 +2009,100 @@ extension LauncherView {
         }
     }
 
+    var globalInlineScopeQueryOverlay: some View {
+        HStack(spacing: 6) {
+            ForEach(globalInlineQueryPieces) { piece in
+                switch piece {
+                case .text(let value, _):
+                    Text(value)
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.primary)
+                case .scope(let scope):
+                    globalInlineScopeChip(scope)
+                }
+            }
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: 2, height: 20)
+                .opacity(isSearchFieldFocused ? 1 : 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            reclaimSearchInputFocus()
+        }
+        .zIndex(2)
+    }
+
+    func globalInlineScopeChip(_ scope: GlobalInlineAppScope) -> some View {
+        let isHovered = hoveredGlobalInlineScopeBundleId == scope.bundleId
+        let icon =
+            FileManager.default.fileExists(atPath: scope.appPath)
+            ? NSWorkspace.shared.icon(forFile: scope.appPath)
+            : NSWorkspace.shared.icon(
+                forFile: NSWorkspace.shared.urlForApplication(
+                    withBundleIdentifier: scope.bundleId)?.path ?? "")
+        let accent = icon.dominantSwiftUIColor
+        let chipTextColor: SwiftUI.Color =
+            systemColorScheme == .dark
+            ? SwiftUI.Color.white.opacity(0.94)
+            : SwiftUI.Color.black.opacity(0.82)
+
+        return HStack(spacing: 6) {
+            Image(nsImage: icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(scope.matchedAlias)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(chipTextColor)
+                .lineLimit(1)
+            Button {
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                    removeGlobalInlineAppScope(scope)
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(chipTextColor)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        chipTextColor.opacity(systemColorScheme == .dark ? 0.14 : 0.10),
+                        in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove app scope")
+            .opacity(isHovered ? 1 : 0)
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, isHovered ? 8 : 6)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .background(
+            accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
+            in: Capsule(style: .continuous)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    accent.opacity(systemColorScheme == .dark ? 0.48 : 0.34),
+                    lineWidth: 0.8)
+        )
+        .shadow(
+            color: accent.opacity(systemColorScheme == .dark ? 0.28 : 0.16),
+            radius: 8, x: 0, y: 2
+        )
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
+                if hovering {
+                    hoveredGlobalInlineScopeBundleId = scope.bundleId
+                } else if hoveredGlobalInlineScopeBundleId == scope.bundleId {
+                    hoveredGlobalInlineScopeBundleId = nil
+                }
+            }
+        }
+    }
+
     // MARK: - Separator (for smart positioning)
     @ViewBuilder
     var separatorView: some View {
@@ -2060,6 +2122,16 @@ extension LauncherView {
             Divider()
                 .padding(.horizontal, 12)
                 .transition(.opacity)
+        }
+    }
+
+    func clearInputQuery() {
+        if isGlobalContextActive {
+            clearGlobalContextQuerySmoothly()
+        } else {
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
         }
     }
 

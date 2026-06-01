@@ -36,9 +36,6 @@ struct ResultRow: View {
         HStack(spacing: 12) {
             // Icon
             ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(iconTint.opacity(0.13))
-                    .frame(width: 34, height: 34)
                 if let icon = result.icon {
                     Image(nsImage: icon)
                         .resizable()

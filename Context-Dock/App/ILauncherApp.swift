@@ -26,6 +26,7 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
 class KeyableWindow: NSWindow {
     // Flag to anchor window at bottom when expanding
     var anchorAtBottom: Bool = false
+    var horizontalResizeAnchorX: CGFloat?
     private var bottomAnchorY: CGFloat = 10  // Distance from bottom of screen
 
     // Track initial mouse location for smooth dragging
@@ -73,6 +74,7 @@ class KeyableWindow: NSWindow {
     override func mouseUp(with event: NSEvent) {
         initialMouseLocation = nil
         initialWindowOrigin = nil
+        horizontalResizeAnchorX = frame.midX
         super.mouseUp(with: event)
     }
 
@@ -214,7 +216,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Replaces recentApps with the authoritative list from the Apple menu "Recent Items".
     /// Called after liveMenuItems loads so the NL cross-app handler uses accurate data.
     func setRecentAppsFromMenu(_ apps: [NSRunningApplication]) {
-        recentApps = apps
+        recentApps = apps.filter { !$0.isTerminated }
+    }
+
+    func removeRecentApp(_ app: NSRunningApplication) {
+        let bundleID = app.bundleIdentifier
+        recentApps.removeAll {
+            $0.isTerminated
+                || $0.processIdentifier == app.processIdentifier
+                || (!(bundleID ?? "").isEmpty && $0.bundleIdentifier == bundleID)
+        }
     }
 
     func recordFrontmostApp(_ app: NSRunningApplication) {

@@ -84,13 +84,15 @@ extension LauncherView {
         let appPath: String
         let actionQuery: String
         let matchedAlias: String
+        let aliasStartIndex: Int
     }
 
     struct GlobalInlineAppScope {
         let appName: String
         let bundleId: String
         let appPath: String
-        let matchedAlias: String
+        var matchedAlias: String
+        var aliasStartIndex: Int
     }
 
     struct DockScopeResolution {
@@ -150,9 +152,9 @@ extension LauncherView {
     }
 
     func suppressCurrentFinderSelectionBaseline() {
-        // Finder's selected row on window open is meaningful context for Global Context.
-        // Do not suppress it; dismissal still uses dismissedFinderSelectionSignature.
-        suppressedAutomaticFinderSelectionSignature = nil
+        let paths = canonicalExistingURLs(ContextDetector.shared.getFinderSelectedFiles()).map(\.path)
+        suppressedAutomaticFinderSelectionSignature =
+            paths.isEmpty ? nil : finderSelectionSignature(paths)
     }
 
     func updateDismissedFinderSelectionAfterSelectionChange(_ paths: [String]) {
