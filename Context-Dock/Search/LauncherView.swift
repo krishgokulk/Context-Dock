@@ -2562,6 +2562,18 @@ struct LauncherView: View {
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
     }
 
+    func trailingGlobalInlineAppScopeForBackspace() -> GlobalInlineAppScope? {
+        guard searchInputCursorIsAtEnd(),
+            let lastCharacter = searchState.query.last,
+            !lastCharacter.isWhitespace,
+            let piece = globalInlineQueryPieces.last,
+            case .scope(let scope) = piece
+        else {
+            return nil
+        }
+        return scope
+    }
+
     func appMenuGroups(from descriptorGroups: [GlobalMenuDescriptorGroup]) -> [AppMenuGroup]
     {
         descriptorGroups.compactMap { group -> AppMenuGroup? in
@@ -23622,10 +23634,7 @@ struct LauncherView: View {
             }
 
             if event.keyCode == 51, self.isGlobalContextActive,
-                let scope = self.globalInlineQueryPieces.compactMap({ piece in
-                    if case .scope(let scope) = piece { return scope }
-                    return nil
-                }).last
+                let scope = self.trailingGlobalInlineAppScopeForBackspace()
             {
                 self.removeGlobalInlineAppScope(scope)
                 return nil
