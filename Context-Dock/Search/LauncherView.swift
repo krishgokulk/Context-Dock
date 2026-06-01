@@ -2419,7 +2419,7 @@ struct LauncherView: View {
                 for: raw,
                 runningOnly: false,
                 includeAppsWithoutMenuSnapshot: true,
-                allowPrefixAlias: true,
+                allowPrefixAlias: false,
                 preserveRemainingQueryTokens: true,
                 excludingBundleIds: excludedBundleIds
             )
@@ -3340,6 +3340,9 @@ struct LauncherView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .launcherBackspacePressed)) { _ in
+                guard allGlobalInlineAppScopes.isEmpty else {
+                    return
+                }
                 guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else {
                     return
@@ -23560,6 +23563,15 @@ struct LauncherView: View {
             // Only context/global dock modes can consume dock navigation keys.
             guard routingMode == .contextDock || routingMode == .globalContext else {
                 return event
+            }
+
+            if event.keyCode == 51, self.isGlobalContextActive,
+                let scope = self.allGlobalInlineAppScopes.max(by: {
+                    $0.aliasStartIndex < $1.aliasStartIndex
+                })
+            {
+                self.removeGlobalInlineAppScope(scope)
+                return nil
             }
 
             if event.keyCode == 48, self.isL2ContextActive, !self.isGlobalContextActive {
