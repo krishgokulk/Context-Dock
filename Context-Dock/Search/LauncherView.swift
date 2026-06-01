@@ -2655,7 +2655,12 @@ struct LauncherView: View {
                 // whose pill name is the tab title, not the submenu label.
                 let nameLower = pill.name.lowercased()
                 let contextLower = (pill.menuContext ?? "").lowercased()
-                return nameLower.contains(actionQuery) || contextLower.contains(actionQuery)
+                if nameLower.contains(actionQuery) || contextLower.contains(actionQuery) {
+                    return true
+                }
+                let actionTokens = Set(dockPillTokens(actionQuery))
+                let pillTokens = Set(dockPillTokens(nameLower + " " + contextLower))
+                return !actionTokens.intersection(pillTokens).isEmpty
             }
     }
 
@@ -23614,9 +23619,10 @@ struct LauncherView: View {
             }
 
             if event.keyCode == 51, self.isGlobalContextActive,
-                let scope = self.allGlobalInlineAppScopes.max(by: {
-                    $0.aliasStartIndex < $1.aliasStartIndex
-                })
+                let scope = self.globalInlineQueryPieces.compactMap({ piece in
+                    if case .scope(let scope) = piece { return scope }
+                    return nil
+                }).last
             {
                 self.removeGlobalInlineAppScope(scope)
                 return nil
