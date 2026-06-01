@@ -106,7 +106,11 @@ final class WindowManagementService {
         let normalized = path.map(normalize)
         guard let title = normalized.last else { return false }
         if title.contains("full screen") || title.contains("fullscreen") {
-            return execute(.fullScreen, sourceApp: sourceApp)
+            return executeFullScreen(
+                preferredPath: path,
+                pid: sourceApp.processIdentifier,
+                appName: sourceApp.localizedName ?? "App"
+            )
         }
         guard normalized.contains("window") else { return false }
         guard let command = command(for: title, path: normalized) else { return false }
@@ -166,7 +170,7 @@ final class WindowManagementService {
         case .restorePreviousSize:
             return restorePreviousFrame(pid: pid, appName: appName)
         case .fullScreen:
-            return toggleFullScreen(pid: pid, appName: appName)
+            return executeFullScreen(preferredPath: nil, pid: pid, appName: appName)
         case .bringAllToFront:
             return bringAllToFront(pid: pid, appName: appName)
         case .switchWindow:
@@ -289,6 +293,35 @@ final class WindowManagementService {
         return AXUIElementSetAttributeValue(
             window, "AXFullScreen" as CFString,
             (isFullScreen ? kCFBooleanFalse : kCFBooleanTrue)) == .success
+    }
+
+    private func executeFullScreen(
+        preferredPath: [String]?,
+        pid: pid_t,
+        appName: String
+    ) -> Bool {
+        let fallbackPaths = [
+            ["View", "Exit Full Screen"],
+            ["Window", "Exit Full Screen"],
+            ["View", "Enter Full Screen"],
+            ["Window", "Enter Full Screen"],
+            ["Window", "Toggle Full Screen"],
+        ]
+        var candidates: [[String]] = []
+        if let preferredPath, !preferredPath.isEmpty {
+            candidates.append(preferredPath)
+        }
+        candidates.append(contentsOf: fallbackPaths)
+
+        var seen = Set<String>()
+        for path in candidates {
+            let key = path.map(normalize).joined(separator: ">")
+            guard seen.insert(key).inserted else { continue }
+            if AXMenuReader.shared.clickMenuItem(path: path, in: pid) {
+                return true
+            }
+        }
+        return toggleFullScreen(pid: pid, appName: appName)
     }
 
     private func bringAllToFront(pid: pid_t, appName: String) -> Bool {

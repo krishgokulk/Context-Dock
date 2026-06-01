@@ -116,7 +116,10 @@ extension LauncherView {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
-                            colors: [.white.opacity(0.42), .white.opacity(0.08)],
+                            colors: [
+                                .white.opacity(isEffectiveDark ? 0.16 : 0.42),
+                                .white.opacity(isEffectiveDark ? 0.035 : 0.08),
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),

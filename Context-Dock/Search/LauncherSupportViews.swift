@@ -3898,7 +3898,7 @@ struct GlassBackground: NSViewRepresentable {
         base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         base.backgroundColor =
             dark
-            ? CGColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.52)  // thin dark tint
+            ? CGColor(red: 0.035, green: 0.04, blue: 0.055, alpha: 0.76)  // dark glass tint
             : CGColor(red: 0.97, green: 0.97, blue: 0.99, alpha: 0.65)  // light warm fill
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
@@ -3913,8 +3913,8 @@ struct GlassBackground: NSViewRepresentable {
         grad.frame = ve.bounds
         grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         grad.colors = [
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.10 : 0.42),
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.01 : 0.04),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.045 : 0.42),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.005 : 0.04),
         ]
         grad.startPoint = CGPoint(x: 0.5, y: 0)  // top
         grad.endPoint = CGPoint(x: 0.5, y: 1)  // bottom
@@ -3931,7 +3931,7 @@ struct GlassBackground: NSViewRepresentable {
         border.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         border.borderColor =
             dark
-            ? CGColor(red: 1, green: 1, blue: 1, alpha: 0.20)
+            ? CGColor(red: 1, green: 1, blue: 1, alpha: 0.14)
             : CGColor(red: 0, green: 0, blue: 0, alpha: 0.08)
         border.borderWidth = 1.0
     }
