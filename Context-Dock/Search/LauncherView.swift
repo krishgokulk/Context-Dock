@@ -2286,6 +2286,9 @@ struct LauncherView: View {
             l2.pillNavViaKeyboard = false
             l2.appCompletion = nil
             l2.showResultsPopover = false
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            suppressGlobalInlineAppScopeDetection = false
             dismissedGlobalInlineAppScopes = [:]
             searchState.query = ""
             searchState.results = []
@@ -2300,7 +2303,7 @@ struct LauncherView: View {
             l2.targetApp == nil
         else { return nil }
 
-        let actionQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let actionQuery = effectiveGlobalInlineActionQuery(query).lowercased()
         if let inlineScope = globalInlineAppScope {
             return DockScopeResolution(
                 scopedBundleId: inlineScope.bundleId,
@@ -2316,6 +2319,41 @@ struct LauncherView: View {
 
     var allGlobalInlineAppScopes: [GlobalInlineAppScope] {
         [globalInlineAppScope].compactMap { $0 } + additionalGlobalInlineAppScopes
+    }
+
+    enum GlobalInlineQueryPiece: Identifiable {
+        case text(String, Int)
+        case scope(GlobalInlineAppScope)
+
+        var id: String {
+            switch self {
+            case .text(let value, let index):
+                return "text-\(index)-\(value)"
+            case .scope(let scope):
+                return "scope-\(scope.bundleId)"
+            }
+        }
+    }
+
+    var globalInlineQueryPieces: [GlobalInlineQueryPiece] {
+        var pieces = searchState.query
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .map(String.init)
+            .enumerated()
+            .map { GlobalInlineQueryPiece.text($0.element, $0.offset) }
+        for scope in allGlobalInlineAppScopes.reversed() {
+            let insertionIndex = min(max(scope.aliasStartIndex, 0), pieces.count)
+            pieces.insert(.scope(scope), at: insertionIndex)
+        }
+        return pieces
+    }
+
+    func effectiveGlobalInlineActionQuery(_ query: String) -> String {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard allGlobalInlineAppScopes.count > 1 else { return trimmed }
+        let relationalTokens = Set(["in", "on", "with", "from", "using"])
+        let tokens = trimmed.lowercased().split(separator: " ").map(String.init)
+        return !tokens.isEmpty && tokens.allSatisfy(relationalTokens.contains) ? "" : trimmed
     }
 
     @discardableResult
@@ -2465,7 +2503,15 @@ struct LauncherView: View {
 
     func removeGlobalInlineAppScope(_ scope: GlobalInlineAppScope) {
         dismissedGlobalInlineAppScopes[scope.bundleId] = scope.matchedAlias
-        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }
+        let removedTokenCount = max(1, scope.matchedAlias.split(separator: " ").count)
+        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }.map {
+            remainingScope -> GlobalInlineAppScope in
+            var adjusted = remainingScope
+            if adjusted.aliasStartIndex >= scope.aliasStartIndex {
+                adjusted.aliasStartIndex += removedTokenCount
+            }
+            return adjusted
+        }
         globalInlineAppScope = remaining.first
         additionalGlobalInlineAppScopes = Array(remaining.dropFirst())
         focusedAppPillIndex = nil
@@ -2575,12 +2621,13 @@ struct LauncherView: View {
     }
 
     func cachedGlobalInlineAppScopeGroups(query: String) -> [AppMenuGroup] {
-        allGlobalInlineAppScopes.compactMap { inlineScope in
+        let actionQuery = effectiveGlobalInlineActionQuery(query)
+        return allGlobalInlineAppScopes.compactMap { inlineScope in
             guard inlineScope.bundleId != "com.apple.finder" else { return nil }
             let scope = DockScopeResolution(
                 scopedBundleId: inlineScope.bundleId,
                 scopedAppName: inlineScope.appName,
-                scopedSearchQuery: query,
+                scopedSearchQuery: actionQuery,
                 isExplicitAppScope: true,
                 isGlobalScope: false
             )
@@ -11550,6 +11597,10 @@ struct LauncherView: View {
             showMediaLayer = false
             aiMode.isActive = false
             globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            suppressGlobalInlineAppScopeDetection = false
+            dismissedGlobalInlineAppScopes = [:]
             searchState.isInSmartMode = false
             searchState.results = []
             searchState.grouped = GroupedResults()
@@ -11569,6 +11620,11 @@ struct LauncherView: View {
         let q = queryOverride.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
         updateWindowSize()
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                self.reclaimSearchInputFocus()
+            }
+        }
     }
 
     func activateNotificationScope(queryOverride: String = "") {

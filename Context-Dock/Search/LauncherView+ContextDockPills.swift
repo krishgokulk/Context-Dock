@@ -92,7 +92,7 @@ extension LauncherView {
         let bundleId: String
         let appPath: String
         let matchedAlias: String
-        let aliasStartIndex: Int
+        var aliasStartIndex: Int
     }
 
     struct DockScopeResolution {
