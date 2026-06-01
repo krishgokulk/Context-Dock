@@ -310,7 +310,7 @@ struct LauncherView: View {
     @State var pendingGlobalLaunchContextSwitch: (bundleId: String, appName: String)? = nil
     @State var suppressGlobalInlineAppScopeDetection = false
     @State var dismissedGlobalInlineAppScopes: [String: String] = [:]
-    @State var isHoveringGlobalInlineScopeChip = false
+    @State var hoveredGlobalInlineScopeBundleId: String? = nil
     @State var isHoveringL2ScopeChip = false
     @State var isHoveringFrontmostContextChip = false
     // Dock magnification: tracks which pill the mouse is near
@@ -2373,6 +2373,7 @@ struct LauncherView: View {
                 for: raw,
                 includeAppsWithoutMenuSnapshot: true,
                 allowPrefixAlias: true,
+                preserveRemainingQueryTokens: true,
                 excludingBundleIds: Set(dismissedGlobalInlineAppScopes.keys)
             )
         else { return false }
@@ -2419,6 +2420,7 @@ struct LauncherView: View {
                 runningOnly: false,
                 includeAppsWithoutMenuSnapshot: true,
                 allowPrefixAlias: true,
+                preserveRemainingQueryTokens: true,
                 excludingBundleIds: excludedBundleIds
             )
         else { return false }
@@ -10786,6 +10788,7 @@ struct LauncherView: View {
         runningOnly: Bool = false,
         includeAppsWithoutMenuSnapshot: Bool = false,
         allowPrefixAlias: Bool = false,
+        preserveRemainingQueryTokens: Bool = false,
         excludingBundleIds: Set<String> = []
     ) -> InstalledAppMenuTarget? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -10817,7 +10820,8 @@ struct LauncherView: View {
                     let extraction = installedAppActionExtraction(
                         query: q,
                         alias: alias,
-                        allowPrefixAlias: runningOnly || allowPrefixAlias
+                        allowPrefixAlias: runningOnly || allowPrefixAlias,
+                        preserveRemainingQueryTokens: preserveRemainingQueryTokens
                     )
                 else {
                     continue
@@ -11202,7 +11206,8 @@ struct LauncherView: View {
     func installedAppActionExtraction(
         query q: String,
         alias: String,
-        allowPrefixAlias: Bool = false
+        allowPrefixAlias: Bool = false,
+        preserveRemainingQueryTokens: Bool = false
     )
         -> (
             actionQuery: String, aliasAtStart: Bool, aliasTokenCount: Int, usedPrefixAlias: Bool,
@@ -11224,7 +11229,10 @@ struct LauncherView: View {
 
         var remaining = queryTokens
         remaining.removeSubrange(range)
-        let actionQuery = trimScopedAppFillerWords(remaining)
+        let actionQuery =
+            preserveRemainingQueryTokens
+            ? remaining.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            : trimScopedAppFillerWords(remaining)
         return (
             actionQuery,
             range.lowerBound == 0,

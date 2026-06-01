@@ -2034,6 +2034,7 @@ extension LauncherView {
     }
 
     func globalInlineScopeChip(_ scope: GlobalInlineAppScope) -> some View {
+        let isHovered = hoveredGlobalInlineScopeBundleId == scope.bundleId
         let icon =
             FileManager.default.fileExists(atPath: scope.appPath)
             ? NSWorkspace.shared.icon(forFile: scope.appPath)
@@ -2071,10 +2072,10 @@ extension LauncherView {
             }
             .buttonStyle(.plain)
             .help("Remove app scope")
-            .opacity(isHoveringGlobalInlineScopeChip ? 1 : 0)
+            .opacity(isHovered ? 1 : 0)
         }
         .padding(.leading, 8)
-        .padding(.trailing, isHoveringGlobalInlineScopeChip ? 8 : 6)
+        .padding(.trailing, isHovered ? 8 : 6)
         .padding(.vertical, 4)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .background(
@@ -2093,7 +2094,11 @@ extension LauncherView {
         )
         .onHover { hovering in
             withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
-                isHoveringGlobalInlineScopeChip = hovering
+                if hovering {
+                    hoveredGlobalInlineScopeBundleId = scope.bundleId
+                } else if hoveredGlobalInlineScopeBundleId == scope.bundleId {
+                    hoveredGlobalInlineScopeBundleId = nil
+                }
             }
         }
     }
