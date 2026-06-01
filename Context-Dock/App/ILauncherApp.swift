@@ -216,7 +216,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Replaces recentApps with the authoritative list from the Apple menu "Recent Items".
     /// Called after liveMenuItems loads so the NL cross-app handler uses accurate data.
     func setRecentAppsFromMenu(_ apps: [NSRunningApplication]) {
-        recentApps = apps
+        recentApps = apps.filter { !$0.isTerminated }
+    }
+
+    func removeRecentApp(_ app: NSRunningApplication) {
+        let bundleID = app.bundleIdentifier
+        recentApps.removeAll {
+            $0.isTerminated
+                || $0.processIdentifier == app.processIdentifier
+                || (!(bundleID ?? "").isEmpty && $0.bundleIdentifier == bundleID)
+        }
     }
 
     func recordFrontmostApp(_ app: NSRunningApplication) {

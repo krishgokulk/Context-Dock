@@ -2336,24 +2336,47 @@ struct LauncherView: View {
     }
 
     var globalInlineQueryPieces: [GlobalInlineQueryPiece] {
-        var pieces = searchState.query
+        let tokens = searchState.query
             .split(separator: " ", omittingEmptySubsequences: true)
             .map(String.init)
-            .enumerated()
-            .map { GlobalInlineQueryPiece.text($0.element, $0.offset) }
-        for scope in allGlobalInlineAppScopes.reversed() {
-            let insertionIndex = min(max(scope.aliasStartIndex, 0), pieces.count)
-            pieces.insert(.scope(scope), at: insertionIndex)
+        let scopesByStartIndex = allGlobalInlineAppScopes.reduce(
+            into: [Int: GlobalInlineAppScope]()
+        ) { scopes, scope in
+            if scopes[scope.aliasStartIndex] == nil {
+                scopes[scope.aliasStartIndex] = scope
+            }
+        }
+        var pieces: [GlobalInlineQueryPiece] = []
+        var index = 0
+        while index < tokens.count {
+            if let scope = scopesByStartIndex[index] {
+                pieces.append(.scope(scope))
+                index += max(1, scope.matchedAlias.split(separator: " ").count)
+            } else {
+                pieces.append(.text(tokens[index], index))
+                index += 1
+            }
         }
         return pieces
     }
 
     func effectiveGlobalInlineActionQuery(_ query: String) -> String {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = query.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        var scopedTokenIndexes = Set<Int>()
+        for scope in allGlobalInlineAppScopes {
+            let count = max(1, scope.matchedAlias.split(separator: " ").count)
+            scopedTokenIndexes.formUnion(scope.aliasStartIndex..<(scope.aliasStartIndex + count))
+        }
+        let trimmed = tokens.enumerated()
+            .filter { !scopedTokenIndexes.contains($0.offset) }
+            .map(\.element)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard allGlobalInlineAppScopes.count > 1 else { return trimmed }
         let relationalTokens = Set(["in", "on", "with", "from", "using"])
-        let tokens = trimmed.lowercased().split(separator: " ").map(String.init)
-        return !tokens.isEmpty && tokens.allSatisfy(relationalTokens.contains) ? "" : trimmed
+        let normalizedTokens = trimmed.lowercased().split(separator: " ").map(String.init)
+        return !normalizedTokens.isEmpty && normalizedTokens.allSatisfy(relationalTokens.contains)
+            ? "" : trimmed
     }
 
     @discardableResult
@@ -2386,13 +2409,7 @@ struct LauncherView: View {
             aliasStartIndex: target.aliasStartIndex
         )
         additionalGlobalInlineAppScopes = []
-        let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if actionQuery != rawQuery {
-            searchState.query = actionQuery
-        } else {
-            scheduleGlobalAppMatchRebuild(query: actionQuery, delayNanoseconds: 0)
-            scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 0)
-        }
+        scheduleGlobalGroupedListRebuild(query: raw, delayNanoseconds: 0)
         return true
     }
 
@@ -2408,44 +2425,48 @@ struct LauncherView: View {
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        reconcileGlobalInlineAppScopePositions(for: raw)
         guard raw.count >= 4, !isGenericApplicationListQuery(raw.lowercased()) else { return false }
         pruneDismissedGlobalInlineAppScopes(for: raw)
-        let existingScopes = allGlobalInlineAppScopes
-        let excludedBundleIds =
-            Set(dismissedGlobalInlineAppScopes.keys)
-            .union(existingScopes.map(\.bundleId))
-        guard
-            let target = installedAppMenuTarget(
-                for: raw,
-                runningOnly: false,
-                includeAppsWithoutMenuSnapshot: true,
-                allowPrefixAlias: false,
-                preserveRemainingQueryTokens: true,
-                excludingBundleIds: excludedBundleIds
-            )
-        else { return false }
-
-        let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!actionQuery.isEmpty || !existingScopes.isEmpty),
-            actionQuery.lowercased() != raw.lowercased()
-        else { return false }
-
-        let newScope = GlobalInlineAppScope(
-            appName: target.appName,
-            bundleId: target.bundleId,
-            appPath: target.appPath,
-            matchedAlias: target.matchedAlias,
-            aliasStartIndex: target.aliasStartIndex
-        )
-        if globalInlineAppScope == nil {
-            globalInlineAppScope = newScope
-        } else {
-            additionalGlobalInlineAppScopes.append(newScope)
+        var excludedBundleIds = Set(dismissedGlobalInlineAppScopes.keys)
+            .union(allGlobalInlineAppScopes.map(\.bundleId))
+        var occupiedTokenIndexes = Set(
+            allGlobalInlineAppScopes.flatMap { scope -> [Int] in
+                let count = max(1, scope.matchedAlias.split(separator: " ").count)
+                return Array(scope.aliasStartIndex..<(scope.aliasStartIndex + count))
+            })
+        var addedScopes: [GlobalInlineAppScope] = []
+        while let target = installedAppMenuTarget(
+            for: raw,
+            runningOnly: false,
+            includeAppsWithoutMenuSnapshot: true,
+            allowPrefixAlias: false,
+            preserveRemainingQueryTokens: true,
+            excludingBundleIds: excludedBundleIds
+        ) {
+            excludedBundleIds.insert(target.bundleId)
+            let count = max(1, target.matchedAlias.split(separator: " ").count)
+            let targetIndexes = Set(target.aliasStartIndex..<(target.aliasStartIndex + count))
+            guard occupiedTokenIndexes.isDisjoint(with: targetIndexes) else { continue }
+            addedScopes.append(
+                GlobalInlineAppScope(
+                    appName: target.appName,
+                    bundleId: target.bundleId,
+                    appPath: target.appPath,
+                    matchedAlias: target.matchedAlias,
+                    aliasStartIndex: target.aliasStartIndex
+                ))
+            occupiedTokenIndexes.formUnion(targetIndexes)
         }
-        searchState.query = actionQuery
+        guard !addedScopes.isEmpty else { return false }
+
+        if globalInlineAppScope == nil {
+            globalInlineAppScope = addedScopes.removeFirst()
+        }
+        additionalGlobalInlineAppScopes.append(contentsOf: addedScopes)
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
-        scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 0)
+        scheduleGlobalGroupedListRebuild(query: raw, delayNanoseconds: 0)
         DispatchQueue.main.async {
             DispatchQueue.main.async {
                 self.reclaimSearchInputFocus()
@@ -2466,16 +2487,45 @@ struct LauncherView: View {
         }
     }
 
-    func queryRestoringGlobalInlineScope(_ scope: GlobalInlineAppScope, into query: String) -> String {
-        var tokens = query.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        let insertionIndex = min(max(scope.aliasStartIndex, 0), tokens.count)
-        tokens.insert(scope.matchedAlias, at: insertionIndex)
-        return tokens.joined(separator: " ")
+    func reconcileGlobalInlineAppScopePositions(for query: String) {
+        let queryTokens = query.split(separator: " ", omittingEmptySubsequences: true)
+            .map(String.init)
+        let normalizedTokens = queryTokens.map(normalizedDockPillText)
+        var occupiedIndexes = Set<Int>()
+        var reconciledScopes: [GlobalInlineAppScope] = []
+
+        for var scope in allGlobalInlineAppScopes.sorted(by: {
+            $0.aliasStartIndex < $1.aliasStartIndex
+        }) {
+            let aliasTokens = scope.matchedAlias.split(separator: " ").map {
+                normalizedDockPillText(String($0))
+            }
+            guard !aliasTokens.isEmpty, normalizedTokens.count >= aliasTokens.count else {
+                continue
+            }
+
+            let maxStart = normalizedTokens.count - aliasTokens.count
+            guard let start = (0...maxStart).first(where: { candidateStart in
+                let range = candidateStart..<(candidateStart + aliasTokens.count)
+                return occupiedIndexes.isDisjoint(with: Set(range))
+                    && Array(normalizedTokens[range]) == aliasTokens
+            }) else {
+                continue
+            }
+
+            let range = start..<(start + aliasTokens.count)
+            scope.aliasStartIndex = start
+            scope.matchedAlias = queryTokens[range].joined(separator: " ")
+            reconciledScopes.append(scope)
+            occupiedIndexes.formUnion(range)
+        }
+
+        globalInlineAppScope = reconciledScopes.first
+        additionalGlobalInlineAppScopes = Array(reconciledScopes.dropFirst())
     }
 
     func clearGlobalInlineAppScope(
         preserveQuery: Bool = true,
-        restoreMatchedAlias: Bool = false,
         dismissScope: Bool = false
     ) {
         let inlineScope = globalInlineAppScope
@@ -2488,11 +2538,7 @@ struct LauncherView: View {
             dismissedGlobalInlineAppScopes[inlineScope.bundleId] = inlineScope.matchedAlias
         }
         let q: String
-        if preserveQuery, restoreMatchedAlias, let inlineScope {
-            q = queryRestoringGlobalInlineScope(inlineScope, into: searchState.query)
-        } else {
-            q = preserveQuery ? searchState.query : ""
-        }
+        q = preserveQuery ? searchState.query : ""
         pruneDismissedGlobalInlineAppScopes(for: q)
         if !preserveQuery {
             searchState.query = ""
@@ -2505,21 +2551,12 @@ struct LauncherView: View {
 
     func removeGlobalInlineAppScope(_ scope: GlobalInlineAppScope) {
         dismissedGlobalInlineAppScopes[scope.bundleId] = scope.matchedAlias
-        let removedTokenCount = max(1, scope.matchedAlias.split(separator: " ").count)
-        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }.map {
-            remainingScope -> GlobalInlineAppScope in
-            var adjusted = remainingScope
-            if adjusted.aliasStartIndex >= scope.aliasStartIndex {
-                adjusted.aliasStartIndex += removedTokenCount
-            }
-            return adjusted
-        }
+        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }
         globalInlineAppScope = remaining.first
         additionalGlobalInlineAppScopes = Array(remaining.dropFirst())
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
-        let q = queryRestoringGlobalInlineScope(scope, into: searchState.query)
-        searchState.query = q
+        let q = searchState.query
         pruneDismissedGlobalInlineAppScopes(for: q)
         scheduleGlobalAppMatchRebuild(query: q, delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
@@ -6260,6 +6297,7 @@ struct LauncherView: View {
 
     func reconcileDockAfterTermination(of app: NSRunningApplication) {
         runningRegularApps = currentRegularRunningApps()
+        AppDelegate.shared?.removeRecentApp(app)
 
         if let delegate = AppDelegate.shared,
             delegate.previousFrontmostApp?.processIdentifier == app.processIdentifier
@@ -6294,6 +6332,11 @@ struct LauncherView: View {
     func scheduleDockRefreshAfterTerminationAttempt(for app: NSRunningApplication) {
         let targetPID = app.processIdentifier
         let targetBundleId = app.bundleIdentifier
+        runningRegularApps.removeAll { running in
+            running.processIdentifier == targetPID
+                || (!(targetBundleId ?? "").isEmpty && running.bundleIdentifier == targetBundleId)
+        }
+        AppDelegate.shared?.removeRecentApp(app)
 
         Task {
             for _ in 0..<18 {
@@ -6395,6 +6438,7 @@ struct LauncherView: View {
         let scopedBundle = currentGlobalScopedBundleID
         return (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
             .filter { app in
+                guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier else { return true }
                 return bundleID != frontmostBundle && bundleID != scopedBundle
             }
@@ -6417,6 +6461,7 @@ struct LauncherView: View {
         var seen = Set<String>()
         return (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
             .filter { app in
+                guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return false }
                 guard seen.insert(bundleID).inserted else { return false }
                 if bundleID == Bundle.main.bundleIdentifier { return false }
@@ -10794,7 +10839,8 @@ struct LauncherView: View {
         preserveRemainingQueryTokens: Bool = false,
         excludingBundleIds: Set<String> = []
     ) -> InstalledAppMenuTarget? {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rawQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = rawQuery.lowercased()
         guard q.count >= (runningOnly ? 3 : 2) else { return nil }
 
         let runningBundleIds: Set<String>? =
@@ -10821,7 +10867,7 @@ struct LauncherView: View {
             for alias in aliases where alias.count >= 2 {
                 guard
                     let extraction = installedAppActionExtraction(
-                        query: q,
+                        query: rawQuery,
                         alias: alias,
                         allowPrefixAlias: runningOnly || allowPrefixAlias,
                         preserveRemainingQueryTokens: preserveRemainingQueryTokens
@@ -10852,7 +10898,8 @@ struct LauncherView: View {
                     bundleId: bundleId,
                     appPath: appPath,
                     actionQuery: actionQuery,
-                    matchedAlias: alias,
+                    matchedAlias: preserveRemainingQueryTokens
+                        ? extraction.matchedQueryAlias : alias,
                     aliasStartIndex: extraction.aliasStartIndex
                 )
                 if best == nil || score > best!.score {
@@ -11214,7 +11261,7 @@ struct LauncherView: View {
     )
         -> (
             actionQuery: String, aliasAtStart: Bool, aliasTokenCount: Int, usedPrefixAlias: Bool,
-            aliasStartIndex: Int
+            aliasStartIndex: Int, matchedQueryAlias: String
         )?
     {
         let aliasTokens = alias.split(separator: " ").map(String.init)
@@ -11241,7 +11288,8 @@ struct LauncherView: View {
             range.lowerBound == 0,
             aliasTokens.count,
             exactRange == nil,
-            range.lowerBound
+            range.lowerBound,
+            queryTokens[range].joined(separator: " ")
         )
     }
 

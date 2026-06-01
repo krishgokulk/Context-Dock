@@ -91,7 +91,7 @@ extension LauncherView {
         let appName: String
         let bundleId: String
         let appPath: String
-        let matchedAlias: String
+        var matchedAlias: String
         var aliasStartIndex: Int
     }
 
