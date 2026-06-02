@@ -87,11 +87,6 @@ final class AppContentSearchRouter {
         let normalized = normalize(rawQuery)
         guard !normalized.isEmpty else { return nil }
 
-        let targets = searchableTargets()
-        if let explicit = explicitIntent(in: normalized, targets: targets) {
-            return explicit
-        }
-
         guard bundleId != "com.apple.finder",
             let content = contentAfterSearchVerb(in: normalized),
             !content.isEmpty
