@@ -1637,11 +1637,13 @@ struct LauncherView: View {
         let appResults = instantGlobalApplicationMatches(
             for: q, limit: min(maxListViewDockPills, 12))
         let appleMenuPills = buildGlobalAppleMenuFallbackPills(query: q)
+        let contentSearchGroups = globalAppContentSearchGroups(for: q)
+        let contentSearchPills = contentSearchGroups.flatMap(\.pills)
         return GlobalGroupedListNavigationState(
             appResults: appResults,
-            menuPills: appleMenuPills,
+            menuPills: appleMenuPills + contentSearchPills,
             menuGroups: groupMenuPillsByTitle(appleMenuPills),
-            appMenuGroups: [],
+            appMenuGroups: contentSearchGroups,
             menuFirst: false
         )
     }
@@ -1814,6 +1816,7 @@ struct LauncherView: View {
 
             // ── Phase 3: convert descriptors → DockPills + build final state on MainActor ─
             let crossAppGroups = appMenuGroups(from: crossDescriptorGroups)
+            let contentSearchGroups = globalAppContentSearchGroups(for: q)
 
             let frontmostMenuGroups: [AppMenuGroup] = {
                 guard frontmostSnap.bundleID != "com.apple.finder",
@@ -1833,7 +1836,8 @@ struct LauncherView: View {
             }()
 
             let groupedRunningMenuApps =
-                frontmostMenuGroups + crossAppGroups + cachedGlobalInlineAppScopeGroups(query: q)
+                contentSearchGroups + frontmostMenuGroups + crossAppGroups
+                + cachedGlobalInlineAppScopeGroups(query: q)
             let totalMenuCount = groupedRunningMenuApps.flatMap(\.pills).count
             let appLimit =
                 totalMenuCount == 0
@@ -1923,11 +1927,13 @@ struct LauncherView: View {
                 icon: icon,
                 pills: pills
             )
+            let contentSearchGroups = globalAppContentSearchGroups(for: q)
+            let contentSearchPills = contentSearchGroups.flatMap(\.pills)
             return GlobalGroupedListNavigationState(
                 appResults: [],
-                menuPills: pills,
+                menuPills: contentSearchPills + pills,
                 menuGroups: [],
-                appMenuGroups: pills.isEmpty ? [] : [group],
+                appMenuGroups: contentSearchGroups + (pills.isEmpty ? [] : [group]),
                 menuFirst: false
             )
         }
@@ -1985,7 +1991,8 @@ struct LauncherView: View {
             ]
         }()
         let groupedRunningMenuApps =
-            frontmostMenuGroups + crossAppGroups + cachedGlobalInlineAppScopeGroups(query: q)
+            globalAppContentSearchGroups(for: q) + frontmostMenuGroups + crossAppGroups
+            + cachedGlobalInlineAppScopeGroups(query: q)
         let totalMenuCount = groupedRunningMenuApps.flatMap(\.pills).count
         let appLimit =
             totalMenuCount == 0
@@ -2585,6 +2592,57 @@ struct LauncherView: View {
                 appName: group.appName,
                 icon: group.icon,
                 pills: group.descriptors.map(makeCrossAppMenuDockPill)
+            )
+        }
+    }
+
+    func globalAppContentSearchGroups(for query: String) -> [AppMenuGroup] {
+        AppContentSearchRouter.shared.intents(for: query).map { intent in
+            let icon = resolvedApplicationIcon(
+                bundleIdentifier: intent.bundleId,
+                appName: intent.appName
+            )
+            var pill = DockPill(
+                id: "content-search:\(intent.id)",
+                name: "Search \(intent.appName) for \"\(intent.query)\"",
+                icon: "magnifyingglass",
+                accentColorName: "blue",
+                badge: "Search",
+                execute: {
+                    let actionId = DockActionFeedback.start(
+                        "Searching", subject: intent.appName,
+                        icon: "magnifyingglass", tint: .blue.opacity(0.85)
+                    )
+                    Task {
+                        let output = await AppContentSearchRouter.shared.execute(intent)
+                        await MainActor.run {
+                            let clean = output
+                                .replacingOccurrences(of: "✅ ", with: "")
+                                .replacingOccurrences(of: "❌ ", with: "")
+                            if output.hasPrefix("❌") {
+                                DockActionFeedback.fail(actionId, label: clean)
+                            } else {
+                                DockActionFeedback.complete(actionId, label: clean)
+                            }
+                            searchState.query = ""
+                            focusedAppPillIndex = nil
+                            l2.focusedPillIndex = nil
+                        }
+                    }
+                }
+            )
+            pill.sourceBundleId = intent.bundleId
+            pill.sourceAppName = intent.appName
+            pill.rankingKind = "contentSearch"
+            pill.trackingIdentifier = "content-search:\(intent.bundleId):\(intent.query.lowercased())"
+            pill.searchTerms = [intent.query, intent.appName, "search", "find"]
+            pill.rankingScore = 10_000
+            pill.menuItemImage = icon
+            return AppMenuGroup(
+                id: "content-search:\(intent.bundleId)",
+                appName: "Search \(intent.appName)",
+                icon: icon,
+                pills: [pill]
             )
         }
     }

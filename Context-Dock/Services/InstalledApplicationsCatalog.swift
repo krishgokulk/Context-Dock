@@ -14,6 +14,18 @@ enum InstalledApplicationsCatalog {
     private static let cacheLock = NSLock()
     private static var cachedApps: [InstalledApplicationEntry]?
 
+    nonisolated static func warmUp() {
+        Task.detached(priority: .utility) {
+            _ = discoverInstalledApps()
+        }
+    }
+
+    nonisolated static func cachedInstalledApps() -> [InstalledApplicationEntry] {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cachedApps ?? []
+    }
+
     nonisolated static func discoverInstalledApps() -> [InstalledApplicationEntry] {
         cacheLock.lock()
         if let cachedApps {

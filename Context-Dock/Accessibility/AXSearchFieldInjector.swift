@@ -41,7 +41,12 @@ final class AXSearchFieldInjector {
             )
         }
 
-        injectQuery(query, into: field, pid: pid)
+        injectQuery(
+            query,
+            into: field,
+            pid: pid,
+            submitAfterInjection: submitsSearchAfterInjection(bundleId: bundleId)
+        )
         return "✅ Searching for \"\(query)\" in \(appName)"
     }
 
@@ -56,6 +61,12 @@ final class AXSearchFieldInjector {
         case "com.apple.Photos":
             // Photos toolbar search is always visible; Cmd+F focuses it
             sendKey(fKey, modifiers: .maskCommand, pid: pid)
+        case "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox":
+            // Browser content search means web search, not in-page Find.
+            sendKey(37, modifiers: .maskCommand, pid: pid) // Cmd+L
+        case "com.microsoft.VSCode":
+            // Workspace search. Cmd+F only searches current editor.
+            sendKey(fKey, modifiers: [.maskCommand, .maskShift], pid: pid)
         default:
             sendKey(fKey, modifiers: .maskCommand, pid: pid)
         }
@@ -130,7 +141,12 @@ final class AXSearchFieldInjector {
 
     // MARK: - Stage 3: Inject (Hybrid)
 
-    private func injectQuery(_ query: String, into field: AXUIElement, pid: pid_t) {
+    private func injectQuery(
+        _ query: String,
+        into field: AXUIElement,
+        pid: pid_t,
+        submitAfterInjection: Bool
+    ) {
         AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, true as CFTypeRef)
 
         let axResult = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, query as CFTypeRef)
@@ -143,19 +159,22 @@ final class AXSearchFieldInjector {
         if axResult == .success {
             // Nudge the app to refresh results — some AppKit search fields only
             // re-query on an input event even when AXValue is set programmatically
-            sendKey(125, modifiers: [], pid: pid) // Down arrow
+            sendKey(submitAfterInjection ? 36 : 125, modifiers: [], pid: pid) // Return / Down arrow
         } else {
-            pasteQuery(query, pid: pid)
+            pasteQuery(query, pid: pid, submitAfterInjection: submitAfterInjection)
         }
     }
 
-    private func pasteQuery(_ query: String, pid: pid_t) {
+    private func pasteQuery(_ query: String, pid: pid_t, submitAfterInjection: Bool) {
         let board = NSPasteboard.general
         let saved = board.string(forType: .string)
         board.clearContents()
         board.setString(query, forType: .string)
         sendKey(0, modifiers: .maskCommand, pid: pid) // Cmd+A
         sendKey(9, modifiers: .maskCommand, pid: pid) // Cmd+V
+        if submitAfterInjection {
+            sendKey(36, modifiers: [], pid: pid) // Return
+        }
         Task.detached {
             try? await Task.sleep(nanoseconds: 600_000_000)
             await MainActor.run {
@@ -165,6 +184,10 @@ final class AXSearchFieldInjector {
                 }
             }
         }
+    }
+
+    private func submitsSearchAfterInjection(bundleId: String) -> Bool {
+        ["com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox"].contains(bundleId)
     }
 
     // MARK: - Key event helper
