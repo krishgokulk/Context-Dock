@@ -452,11 +452,14 @@ final class AppMenuCapabilityCache {
     }
 
     nonisolated static func normalize(_ value: String) -> String {
-        value
+        let normalized = value
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .lowercased()
             .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized == "minimise" { return "minimize" }
+        if normalized == "minimise all" { return "minimize all" }
+        return normalized
     }
 
     nonisolated private func rankedRecords(

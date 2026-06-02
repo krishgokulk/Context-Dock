@@ -218,7 +218,7 @@ final class GlobalContextEngine {
         includeCachedNonRunning: Bool = true,
         limit: Int = 12
     ) -> [GlobalMenuDescriptorGroup] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = normalizedGlobalMenuQuery(query)
         guard !q.isEmpty else { return [] }
 
         let perAppCap = q.count == 1 ? 3 : (q.count == 2 ? 4 : 6)
@@ -240,12 +240,16 @@ final class GlobalContextEngine {
             candidateApps.append(contentsOf: nonRunning)
         }
 
+        let scopedQuery = scopedGlobalMenuQuery(query: q, candidateApps: candidateApps)
         var groups: [GlobalMenuDescriptorGroup] = []
-        var total = 0
         for app in candidateApps {
-            guard total < limit else { break }
-            let remaining = min(perAppCap, limit - total)
-            let descriptors = menuDescriptors(for: app, query: q, limit: remaining)
+            if let appFilter = scopedQuery.appFilter,
+                !globalMenuAppNameMatches(appFilter, app: app)
+            {
+                continue
+            }
+            let descriptors = menuDescriptors(
+                for: app, query: scopedQuery.actionQuery, limit: perAppCap)
             guard !descriptors.isEmpty else { continue }
             groups.append(GlobalMenuDescriptorGroup(
                 bundleID: app.bundleID,
@@ -253,9 +257,69 @@ final class GlobalContextEngine {
                 icon: app.icon,
                 descriptors: descriptors
             ))
-            total += descriptors.count
         }
+
+        var remaining = max(0, limit)
         return groups
+            .sorted {
+                let lhs = $0.descriptors.first?.rankingScore ?? 0
+                let rhs = $1.descriptors.first?.rankingScore ?? 0
+                if lhs != rhs { return lhs > rhs }
+                return $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+            }
+            .compactMap { group in
+                guard remaining > 0 else { return nil }
+                let descriptors = Array(group.descriptors.prefix(remaining))
+                remaining -= descriptors.count
+                guard !descriptors.isEmpty else { return nil }
+                return GlobalMenuDescriptorGroup(
+                    bundleID: group.bundleID,
+                    appName: group.appName,
+                    icon: group.icon,
+                    descriptors: descriptors
+                )
+            }
+    }
+
+    nonisolated private func scopedGlobalMenuQuery(
+        query: String,
+        candidateApps: [GlobalMenuAppSnapshot]
+    ) -> (actionQuery: String, appFilter: String?) {
+        let tokens = query.split(separator: " ").map(String.init)
+        guard tokens.count > 1, globalMenuActionPrefixes.contains(tokens[0]) else {
+            return (query, nil)
+        }
+
+        let appFilter = tokens.dropFirst().joined(separator: " ")
+        guard candidateApps.contains(where: { globalMenuAppNameMatches(appFilter, app: $0) }) else {
+            return (query, nil)
+        }
+        return (tokens[0], appFilter)
+    }
+
+    nonisolated private func globalMenuAppNameMatches(
+        _ appFilter: String,
+        app: GlobalMenuAppSnapshot
+    ) -> Bool {
+        ([app.name] + app.name.split(separator: " ").map(String.init))
+            .map(normalizedGlobalMenuQuery)
+            .contains(where: { $0.hasPrefix(appFilter) || $0.contains(appFilter) })
+    }
+
+    nonisolated private var globalMenuActionPrefixes: Set<String> {
+        [
+            "close", "copy", "cut", "find", "hide", "minimize", "open", "paste",
+            "print", "quit", "redo", "save", "select", "undo", "zoom",
+        ]
+    }
+
+    nonisolated private func normalizedGlobalMenuQuery(_ query: String) -> String {
+        let normalized = AppMenuCapabilityCache.normalize(query)
+        if normalized == "minimise" { return "minimize" }
+        if normalized.hasPrefix("minimise ") {
+            return "minimize " + normalized.dropFirst("minimise ".count)
+        }
+        return normalized
     }
 
     nonisolated private func menuDescriptors(
