@@ -177,6 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var doubleOptionLocalMonitor: Any?
     var lastOptionPressTime: TimeInterval = 0
     var optionKeyDown = false
+    var optionTapContaminated = false
     // Single Option-press focus: bring our search field to front without a hotkey
     var singleOptionFocusMonitor: Any?
     var singleOptionLocalFocusMonitor: Any?
@@ -286,10 +287,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
-        registerSingleOptionFocusMonitor()
-        registerSingleCommandGlobalContextMonitor()
-        registerPersistentDockModifierExpansionMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
@@ -477,9 +476,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
-        registerSingleCommandGlobalContextMonitor()
-        registerPersistentDockModifierExpansionMonitor()
     }
     
     func setupMenuBar() {
@@ -972,37 +970,106 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func registerDoubleOptionMonitor() {
         if let m = doubleOptionMonitor { NSEvent.removeMonitor(m); doubleOptionMonitor = nil }
         if let m = doubleOptionLocalMonitor { NSEvent.removeMonitor(m); doubleOptionLocalMonitor = nil }
+        if let m = singleOptionCancelMonitor { NSEvent.removeMonitor(m); singleOptionCancelMonitor = nil }
+        if let m = singleOptionLocalCancelMonitor {
+            NSEvent.removeMonitor(m)
+            singleOptionLocalCancelMonitor = nil
+        }
         guard settings.useDoubleOptionLaunch else { return }
+
+        let cancelOptionTap: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.optionTapContaminated = true
+            self.lastOptionPressTime = 0
+        }
 
         let handle: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
-            let flags = event.modifierFlags
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let optionNow = flags.contains(.option)
-            // Ignore presses that combine Option with Cmd / Ctrl / Shift
             let extraModifiers = flags.intersection([.command, .control, .shift])
+
             if !extraModifiers.isEmpty {
-                self.optionKeyDown = false
+                self.optionTapContaminated = true
+                self.lastOptionPressTime = 0
                 return
             }
+
             if optionNow && !self.optionKeyDown {
-                let now = Date().timeIntervalSince1970
+                self.optionKeyDown = true
+                self.optionTapContaminated = false
+                return
+            }
+
+            if !optionNow && self.optionKeyDown {
+                self.optionKeyDown = false
+                guard !self.optionTapContaminated else {
+                    self.optionTapContaminated = false
+                    return
+                }
+
+                let now = Date().timeIntervalSinceReferenceDate
                 let gap = now - self.lastOptionPressTime
                 if gap > 0.04 && gap < 0.40 {
+                    self.lastOptionPressTime = 0
                     DispatchQueue.main.async { self.toggleLauncher() }
+                } else {
+                    self.lastOptionPressTime = now
                 }
-                self.lastOptionPressTime = now
-                self.optionKeyDown = true
             } else if !optionNow {
-                self.optionKeyDown = false
+                self.lastOptionPressTime = 0
             }
         }
 
-        // Global: fires when another app is frontmost
         doubleOptionMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { handle($0) }
-        // Local: fires when our own window is frontmost (launcher is visible)
         doubleOptionLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             handle(event); return event
         }
+        singleOptionCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { _ in
+            cancelOptionTap()
+        }
+        singleOptionLocalCancelMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            event in
+            cancelOptionTap()
+            return event
+        }
+    }
+
+    func unregisterModifierSideEffectMonitors() {
+        if let m = singleOptionFocusMonitor {
+            NSEvent.removeMonitor(m)
+            singleOptionFocusMonitor = nil
+        }
+        if let m = singleOptionLocalFocusMonitor {
+            NSEvent.removeMonitor(m)
+            singleOptionLocalFocusMonitor = nil
+        }
+        if let m = singleCommandFocusMonitor {
+            NSEvent.removeMonitor(m)
+            singleCommandFocusMonitor = nil
+        }
+        if let m = singleCommandLocalFocusMonitor {
+            NSEvent.removeMonitor(m)
+            singleCommandLocalFocusMonitor = nil
+        }
+        if let m = singleCommandCancelMonitor {
+            NSEvent.removeMonitor(m)
+            singleCommandCancelMonitor = nil
+        }
+        if let m = singleCommandLocalCancelMonitor {
+            NSEvent.removeMonitor(m)
+            singleCommandLocalCancelMonitor = nil
+        }
+        if let m = persistentDockModifierMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockModifierMonitor = nil
+        }
+        if let m = persistentDockModifierLocalMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockModifierLocalMonitor = nil
+        }
+        commandAloneActive = false
+        persistentDockModifierActive = false
     }
 
     // Single Option press (alone, no other modifiers, from another app) → focus our search field.

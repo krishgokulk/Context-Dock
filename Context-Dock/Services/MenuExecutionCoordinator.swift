@@ -6,6 +6,8 @@ import SwiftUI
 final class MenuExecutionCoordinator {
     static let shared = MenuExecutionCoordinator()
 
+    private var executionTask: Task<Void, Never>?
+
     private init() {}
 
     struct DockMenuActionRequest {
@@ -33,6 +35,10 @@ final class MenuExecutionCoordinator {
         callbacks: DockMenuActionCallbacks
     ) {
         guard request.sourcePID != 0 else { return }
+        guard executionTask == nil else {
+            AppToast.show("Action already running", icon: "clock", tint: .secondary)
+            return
+        }
         let isQuitAction = Self.isQuitMenuPath(request.path)
         let normalizedPath = request.path.map(Self.normalizedMenuText)
         let isWindowMenuAction = normalizedPath.first == "window"
@@ -66,7 +72,8 @@ final class MenuExecutionCoordinator {
             || needsLiveSelectionValidation
             || (request.isGlobalContextActive && request.hasActiveDockContextSelection)
 
-        Task {
+        executionTask = Task { [self] in
+            defer { executionTask = nil }
             guard
                 let sourceApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.processIdentifier == request.sourcePID && !$0.isTerminated
@@ -130,6 +137,12 @@ final class MenuExecutionCoordinator {
                 } else {
                     AppDelegate.shared?.launcherWindow?.resignKey()
                 }
+            }
+            // Let dock collapse commit before target activation sends AX or keyboard events.
+            // Running both paths in one render turn caused icon-mode layout races.
+            try? await Task.sleep(
+                nanoseconds: shouldCollapseBeforeExecution ? 180_000_000 : 40_000_000)
+            await MainActor.run {
                 if sourceApp.isHidden { sourceApp.unhide() }
                 sourceApp.activate(options: [.activateIgnoringOtherApps])
                 Self.unminimizeWindows(pid: pid)
