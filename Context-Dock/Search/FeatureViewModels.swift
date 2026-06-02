@@ -18,6 +18,7 @@ final class ContextDockViewModel: ObservableObject {
     @Published var cachedPills: [DockPill] = []
     @Published var pendingAIProposal: AIMenuProposal?
     @Published var pendingPillQuery: String?
+    @Published var pendingPreviewPills: [DockPill] = []
     @Published var lastPillQuery = ""
     @Published var menuDebugText = "menu debug unavailable"
     @Published var contextMenuPills: [AXMenuItem] = []
@@ -25,6 +26,7 @@ final class ContextDockViewModel: ObservableObject {
     @Published var lastFinderSelectionRefresh: Date = .distantPast
 
     var pillBuildTask: Task<Void, Never>?
+    var pillBuildGeneration = 0
 }
 
 @MainActor

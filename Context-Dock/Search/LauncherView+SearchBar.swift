@@ -1162,9 +1162,6 @@ extension LauncherView {
                                                 l2.showResultsPopover = false
                                             } else {
                                                 l2.showResultsPopover = false
-                                                if !isGlobalContextActive {
-                                                    triggerCrossAppMenuLoadIfNeeded(for: newValue)
-                                                }
                                             }
                                             scheduleFinderSemanticSearchIfNeeded(for: newValue)
                                             updateFinderGoToPills(for: newValue)

@@ -107,6 +107,16 @@ extension LauncherView {
         nonmutating set { contextDockViewModel.pendingPillQuery = newValue }
     }
 
+    var pendingDockPreviewPills: [DockPill] {
+        get { contextDockViewModel.pendingPreviewPills }
+        nonmutating set { contextDockViewModel.pendingPreviewPills = newValue }
+    }
+
+    var dockPillBuildGeneration: Int {
+        get { contextDockViewModel.pillBuildGeneration }
+        nonmutating set { contextDockViewModel.pillBuildGeneration = newValue }
+    }
+
     var lastFinderSelectionRefresh: Date {
         get { contextDockViewModel.lastFinderSelectionRefresh }
         nonmutating set { contextDockViewModel.lastFinderSelectionRefresh = newValue }

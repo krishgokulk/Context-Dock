@@ -759,7 +759,7 @@ struct LauncherView: View {
             return buildClipboardHistoryPills(query: query)
         }
         if pendingDockPillQuery == query {
-            return contextDockPreviewPills(for: query)
+            return pendingDockPreviewPills
         }
         return []
     }
@@ -13784,28 +13784,6 @@ struct LauncherView: View {
         }
     }
 
-    /// Detect whether the current query targets a cross-app and trigger menu loading if needed.
-    /// Safe to call from `.onChange` handlers (outside view body evaluation).
-    func triggerCrossAppMenuLoadIfNeeded(for query: String) {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return }
-        if let target = L2AppActionRouter.shared.appScopeTarget(for: q),
-            !target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == target.bundleId
-            })
-        {
-            loadCrossAppMenu(for: app)
-            return
-        }
-        if settings.crossAppPills,
-            let (app, actionQuery) = detectCrossAppQuery(q),
-            !actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            loadCrossAppMenu(for: app)
-        }
-    }
-
     func seedCrossAppMenuCache(for app: NSRunningApplication) {
         let pid = app.processIdentifier
         let appName = app.localizedName ?? ""
@@ -13921,36 +13899,38 @@ struct LauncherView: View {
         delayNanoseconds: UInt64 = 55_000_000,
         refreshContext: Bool = true
     ) {
+        dockPillBuildGeneration &+= 1
+        let generation = dockPillBuildGeneration
         dockPillBuildTask?.cancel()
         if isQuestionStyleDockQuery(query) {
             cachedDockPills = []
             lastPillQuery = query
             pendingDockPillQuery = nil
+            pendingDockPreviewPills = []
+            dockPillBuildTask = nil
             return
         }
+        pendingDockPreviewPills = contextDockPreviewPills(for: query)
         pendingDockPillQuery = query
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled else {
-                if pendingDockPillQuery == query { pendingDockPillQuery = nil }
-                return
-            }
+            guard !Task.isCancelled, dockPillBuildGeneration == generation else { return }
             // Skip the AX IPC call when the user is typing — selection context doesn't
             // change while typing, and the call blocks the main thread causing hitches.
             let shouldRefresh = refreshContext && query.isEmpty
             if shouldRefresh {
                 refreshFinderSelectionContextFromFinder()
-                guard !Task.isCancelled else {
-                    if pendingDockPillQuery == query { pendingDockPillQuery = nil }
-                    return
-                }
+                guard !Task.isCancelled, dockPillBuildGeneration == generation else { return }
             }
-            guard pendingDockPillQuery == query else { return }
+            guard dockPillBuildGeneration == generation, pendingDockPillQuery == query else {
+                return
+            }
             let started = Date()
             replaceCachedDockPills(buildDockPills(query: query), preserveFocus: true)
             logDockPerformance("deferred pill rebuild", started: started, query: query)
             lastPillQuery = query
-            if pendingDockPillQuery == query { pendingDockPillQuery = nil }
+            pendingDockPillQuery = nil
+            pendingDockPreviewPills = []
             dockPillBuildTask = nil
         }
     }
