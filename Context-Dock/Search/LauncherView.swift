@@ -3322,6 +3322,9 @@ struct LauncherView: View {
                 if isActive, globalContextActivation?.autoActivated == false {
                     suppressCurrentFinderSelectionBaseline()
                 }
+                if isActive, lockedFindToken != nil {
+                    clearFindToken(preserveQuery: true)
+                }
                 if !isGlobalContextActive {
                     globalInlineAppScope = nil
                     additionalGlobalInlineAppScopes = []
@@ -10085,7 +10088,9 @@ struct LauncherView: View {
 
     @discardableResult
     func activateFindTokenIfNeeded(from rawQuery: String) -> Bool {
-        guard showContextInDock, !aiMode.isActive, lockedFindToken == nil else { return false }
+        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive,
+            lockedFindToken == nil
+        else { return false }
 
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
