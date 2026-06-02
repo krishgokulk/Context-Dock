@@ -1103,11 +1103,7 @@ extension LauncherView {
                                         if !newValue.isEmpty, pendingAIMenuProposal != nil {
                                             pendingAIMenuProposal = nil
                                         }
-                                        if lockedFindToken == nil {
-                                            if activateFindTokenIfNeeded(from: newValue) {
-                                                return
-                                            }
-                                        } else {
+                                        if lockedFindToken != nil {
                                             l2.appCompletion = nil
                                             l2.showResultsPopover = false
                                         }

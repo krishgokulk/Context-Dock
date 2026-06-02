@@ -2602,41 +2602,7 @@ struct LauncherView: View {
                 bundleIdentifier: intent.bundleId,
                 appName: intent.appName
             )
-            var pill = DockPill(
-                id: "content-search:\(intent.id)",
-                name: "Search \(intent.appName) for \"\(intent.query)\"",
-                icon: "magnifyingglass",
-                accentColorName: "blue",
-                badge: "Search",
-                execute: {
-                    let actionId = DockActionFeedback.start(
-                        "Searching", subject: intent.appName,
-                        icon: "magnifyingglass", tint: .blue.opacity(0.85)
-                    )
-                    Task {
-                        let output = await AppContentSearchRouter.shared.execute(intent)
-                        await MainActor.run {
-                            let clean = output
-                                .replacingOccurrences(of: "✅ ", with: "")
-                                .replacingOccurrences(of: "❌ ", with: "")
-                            if output.hasPrefix("❌") {
-                                DockActionFeedback.fail(actionId, label: clean)
-                            } else {
-                                DockActionFeedback.complete(actionId, label: clean)
-                            }
-                            searchState.query = ""
-                            focusedAppPillIndex = nil
-                            l2.focusedPillIndex = nil
-                        }
-                    }
-                }
-            )
-            pill.sourceBundleId = intent.bundleId
-            pill.sourceAppName = intent.appName
-            pill.rankingKind = "contentSearch"
-            pill.trackingIdentifier = "content-search:\(intent.bundleId):\(intent.query.lowercased())"
-            pill.searchTerms = [intent.query, intent.appName, "search", "find"]
-            pill.rankingScore = 10_000
+            var pill = appContentSearchDockPill(intent)
             pill.menuItemImage = icon
             return AppMenuGroup(
                 id: "content-search:\(intent.bundleId)",
@@ -2645,6 +2611,45 @@ struct LauncherView: View {
                 pills: [pill]
             )
         }
+    }
+
+    func appContentSearchDockPill(_ intent: AppContentSearchIntent) -> DockPill {
+        var pill = DockPill(
+            id: "content-search:\(intent.id)",
+            name: "Search \(intent.appName) for \"\(intent.query)\"",
+            icon: "magnifyingglass",
+            accentColorName: "blue",
+            badge: "Search",
+            execute: {
+                let actionId = DockActionFeedback.start(
+                    "Searching", subject: intent.appName,
+                    icon: "magnifyingglass", tint: .blue.opacity(0.85)
+                )
+                Task {
+                    let output = await AppContentSearchRouter.shared.execute(intent)
+                    await MainActor.run {
+                        let clean = output
+                            .replacingOccurrences(of: "✅ ", with: "")
+                            .replacingOccurrences(of: "❌ ", with: "")
+                        if output.hasPrefix("❌") {
+                            DockActionFeedback.fail(actionId, label: clean)
+                        } else {
+                            DockActionFeedback.complete(actionId, label: clean)
+                        }
+                        searchState.query = ""
+                        focusedAppPillIndex = nil
+                        l2.focusedPillIndex = nil
+                    }
+                }
+            }
+        )
+        pill.sourceBundleId = intent.bundleId
+        pill.sourceAppName = intent.appName
+        pill.rankingKind = "contentSearch"
+        pill.trackingIdentifier = "content-search:\(intent.bundleId):\(intent.query.lowercased())"
+        pill.searchTerms = [intent.query, intent.appName, "search", "find"]
+        pill.rankingScore = 10_000
+        return pill
     }
 
     func makeCrossAppMenuDockPill(from descriptor: GlobalMenuDescriptor) -> DockPill {
@@ -14100,6 +14105,17 @@ struct LauncherView: View {
         let scopedBundleId = scope.scopedBundleId
         let scopedAppName = scope.scopedAppName
         let scopedSearchQuery = scope.scopedSearchQuery
+        let appContentSearchPill: DockPill? = {
+            guard !isGlobalContextActive, !isGlobalScope,
+                !scopedBundleId.isEmpty, !scopedAppName.isEmpty,
+                let intent = AppContentSearchRouter.shared.scopedIntent(
+                    for: q,
+                    bundleId: scopedBundleId,
+                    appName: scopedAppName
+                )
+            else { return nil }
+            return appContentSearchDockPill(intent)
+        }()
         let isFinderScopedDock =
             !isGlobalScope
             && (!isExplicitAppScope || scopedBundleId == "com.apple.finder")
@@ -14444,6 +14460,10 @@ struct LauncherView: View {
 
         if let scopedAppLaunchPill {
             pills.append(scopedAppLaunchPill)
+        }
+
+        if let appContentSearchPill {
+            pills.append(appContentSearchPill)
         }
 
         if let messagesSemanticIntentPill {

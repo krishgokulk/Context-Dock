@@ -79,6 +79,26 @@ final class AppContentSearchRouter {
             .map { intent(target: $0, query: content) }
     }
 
+    func scopedIntent(
+        for rawQuery: String,
+        bundleId: String,
+        appName: String
+    ) -> AppContentSearchIntent? {
+        let normalized = normalize(rawQuery)
+        guard !normalized.isEmpty else { return nil }
+
+        let targets = searchableTargets()
+        if let explicit = explicitIntent(in: normalized, targets: targets) {
+            return explicit
+        }
+
+        guard bundleId != "com.apple.finder",
+            let content = contentAfterSearchVerb(in: normalized),
+            !content.isEmpty
+        else { return nil }
+        return AppContentSearchIntent(bundleId: bundleId, appName: appName, query: content)
+    }
+
     func execute(_ intent: AppContentSearchIntent) async -> String {
         if intent.bundleId == "com.apple.MobileSMS" {
             return await MessagesAutomation.openSearch(query: intent.query)
