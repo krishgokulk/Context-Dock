@@ -2006,7 +2006,7 @@ extension LauncherView {
     }
 
     var globalInlineScopeQueryOverlay: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(globalInlineQueryPieces) { piece in
                 switch piece {
                 case .text(let value, _):

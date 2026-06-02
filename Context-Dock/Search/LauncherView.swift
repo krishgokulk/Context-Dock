@@ -301,10 +301,12 @@ struct LauncherView: View {
     @State var cachedGlobalAppMatches: [SearchResult] = []
     @State var pendingGlobalAppQuery: String? = nil
     @State var globalAppMatchTask: Task<Void, Never>? = nil
+    @State var globalAppMatchGeneration = 0
     @State var cachedGlobalGroupedQuery: String = ""
     @State var cachedGlobalGroupedState: GlobalGroupedListNavigationState? = nil
     @State var pendingGlobalGroupedQuery: String? = nil
     @State var globalGroupedTask: Task<Void, Never>? = nil
+    @State var globalGroupedGeneration = 0
     @State var globalInlineAppScope: GlobalInlineAppScope? = nil
     @State var additionalGlobalInlineAppScopes: [GlobalInlineAppScope] = []
     @State var pendingGlobalLaunchContextSwitch: (bundleId: String, appName: String)? = nil
@@ -1665,6 +1667,8 @@ struct LauncherView: View {
         query: String, delayNanoseconds: UInt64 = 18_000_000
     ) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        globalGroupedGeneration &+= 1
+        let generation = globalGroupedGeneration
         globalGroupedTask?.cancel()
         guard !q.isEmpty || globalInlineAppScope != nil, !isQuestionStyleDockQuery(q) else {
             cachedGlobalGroupedQuery = ""
@@ -1686,11 +1690,9 @@ struct LauncherView: View {
             if delayNanoseconds > 0 {
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
             }
-            guard !Task.isCancelled else {
-                if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
-                return
-            }
-            guard pendingGlobalGroupedQuery == q else { return }
+            guard !Task.isCancelled, globalGroupedGeneration == generation,
+                pendingGlobalGroupedQuery == q
+            else { return }
 
             // ── Phase 1: snapshot @State + compute @State-dependent parts on MainActor ──
             // (fast — all reads from in-memory caches or simple property lookups)
@@ -1700,7 +1702,7 @@ struct LauncherView: View {
                     state: emptyGlobalGroupedListNavigationState(),
                     animated: false
                 )
-                if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
+                pendingGlobalGroupedQuery = nil
                 globalGroupedTask = nil
                 return
             }
@@ -1716,7 +1718,7 @@ struct LauncherView: View {
             {
                 let state = buildGlobalGroupedListNavigationState(for: q)
                 setCachedGlobalGroupedState(query: q, state: state, animated: false)
-                if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
+                pendingGlobalGroupedQuery = nil
                 globalGroupedTask = nil
                 return
             }
@@ -1788,7 +1790,9 @@ struct LauncherView: View {
                     }
             }()
 
-            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
+            guard !Task.isCancelled, globalGroupedGeneration == generation,
+                pendingGlobalGroupedQuery == q
+            else { return }
 
             // ── Phase 2: cross-app cache reads off MainActor ─────────────────────────
             // AppMenuCapabilityCache uses NSLock — thread-safe for concurrent reads.
@@ -1805,7 +1809,9 @@ struct LauncherView: View {
                 )
             }.value
 
-            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
+            guard !Task.isCancelled, globalGroupedGeneration == generation,
+                pendingGlobalGroupedQuery == q
+            else { return }
 
             // ── Phase 3: convert descriptors → DockPills + build final state on MainActor ─
             let crossAppGroups = appMenuGroups(from: crossDescriptorGroups)
@@ -1857,9 +1863,11 @@ struct LauncherView: View {
                 menuFirst: false
             )
 
-            guard !Task.isCancelled, pendingGlobalGroupedQuery == q else { return }
+            guard !Task.isCancelled, globalGroupedGeneration == generation,
+                pendingGlobalGroupedQuery == q
+            else { return }
             setCachedGlobalGroupedState(query: q, state: state, animated: false)
-            if pendingGlobalGroupedQuery == q { pendingGlobalGroupedQuery = nil }
+            pendingGlobalGroupedQuery = nil
             globalGroupedTask = nil
         }
     }
@@ -2187,6 +2195,24 @@ struct LauncherView: View {
     }
 
     @discardableResult
+    func acceptTopGlobalAppGhostCompletionIfPossible() -> Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            searchInputCursorIsAtEnd()
+        else { return false }
+
+        let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty,
+            let result = topGlobalAppResultForInputPreview(),
+            result.title.count > typed.count,
+            result.title.lowercased().hasPrefix(typed.lowercased())
+        else { return false }
+
+        searchState.query = result.title
+        return true
+    }
+
+    @discardableResult
     func executeScopedRunningAppIfIdle() -> Bool {
         guard isGlobalContextActive,
             searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -2231,6 +2257,8 @@ struct LauncherView: View {
     func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000)
     {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        globalAppMatchGeneration &+= 1
+        let generation = globalAppMatchGeneration
         globalAppMatchTask?.cancel()
         guard !q.isEmpty, !isQuestionStyleDockQuery(q) else {
             cachedGlobalAppQuery = ""
@@ -2248,20 +2276,17 @@ struct LauncherView: View {
         let matchLimit = maxListViewDockPills
         globalAppMatchTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled else {
-                await MainActor.run {
-                    if self.pendingGlobalAppQuery == q { self.pendingGlobalAppQuery = nil }
-                }
-                return
-            }
+            guard !Task.isCancelled else { return }
             let matches = await MainActor.run {
                 self.globalApplicationMatches(for: q, limit: matchLimit)
             }
             await MainActor.run {
-                guard self.pendingGlobalAppQuery == q else { return }
+                guard !Task.isCancelled, self.globalAppMatchGeneration == generation,
+                    self.pendingGlobalAppQuery == q
+                else { return }
                 self.cachedGlobalAppMatches = matches
                 self.cachedGlobalAppQuery = q
-                if self.pendingGlobalAppQuery == q { self.pendingGlobalAppQuery = nil }
+                self.pendingGlobalAppQuery = nil
                 self.globalAppMatchTask = nil
                 self.scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
             }
@@ -4264,6 +4289,9 @@ struct LauncherView: View {
             }
             // Right Arrow: focus visible Global app result, otherwise accept ghost text.
             .onKeyPress(.rightArrow) {
+                if acceptTopGlobalAppGhostCompletionIfPossible() {
+                    return .handled
+                }
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     focusTopGlobalAppResultIfPossible()
                 {
@@ -23727,6 +23755,9 @@ struct LauncherView: View {
 
             // Right arrow: focus visible Global app result, otherwise accept app ghost text.
             if event.keyCode == 124 {
+                if self.acceptTopGlobalAppGhostCompletionIfPossible() {
+                    return nil
+                }
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     self.focusTopGlobalAppResultIfPossible()
                 {

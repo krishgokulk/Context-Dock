@@ -273,12 +273,15 @@ final class GlobalContextEngine {
 
         let descriptors = rawItems.compactMap { item -> GlobalMenuDescriptor? in
             let nameLower = item.title.lowercased()
-            guard nameLower.hasPrefix(query) || nameLower.contains(query),
-                  item.title.count >= query.count
+            let contextLower = (item.path.dropLast().last ?? "").lowercased()
+            let pathLower = item.path.joined(separator: " ").lowercased()
+            guard nameLower.hasPrefix(query) || nameLower.contains(query)
+                    || contextLower.hasPrefix(query) || contextLower.contains(query)
+                    || pathLower.contains(query)
             else { return nil }
 
             return GlobalMenuDescriptor(
-                id: "xapp-\(app.bundleID)-\(item.title)",
+                id: "xapp-\(app.bundleID)-\(item.path.joined(separator: ">"))",
                 name: item.title,
                 badge: shortcutDisplay(char: item.shortcutChar, modifiers: item.shortcutModifiers),
                 statusBadge: app.isRunning ? "Cached" : "Needs launch",
