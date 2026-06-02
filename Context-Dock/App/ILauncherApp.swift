@@ -173,6 +173,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var contextDockHotKeyRef: EventHotKeyRef?
     var clipboardScopeHotKeyRef: EventHotKeyRef?
     var lastHotkeyFiredAt: TimeInterval = 0
+    private var smartScopeActivationGeneration = 0
     var doubleOptionMonitor: Any?
     var doubleOptionLocalMonitor: Any?
     var lastOptionPressTime: TimeInterval = 0
@@ -1275,17 +1276,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
+        presentSmartScope(.activateClipboardScope)
+    }
+
+    private func presentSmartScope(_ notificationName: Notification.Name) {
+        smartScopeActivationGeneration &+= 1
+        let generation = smartScopeActivationGeneration
         DispatchQueue.main.async {
+            guard generation == self.smartScopeActivationGeneration else { return }
+            if self.launcherWindow == nil {
+                self.setupLauncherWindow()
+            }
+            self.isDockContextMode = true
             if let window = self.launcherWindow, window.isVisible {
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
-                NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
             } else {
-                self.isDockContextMode = true
                 self.showLauncher()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
-                }
+            }
+            DispatchQueue.main.async {
+                guard generation == self.smartScopeActivationGeneration else { return }
+                NotificationCenter.default.post(name: notificationName, object: nil)
             }
         }
     }

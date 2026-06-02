@@ -42,31 +42,9 @@ final class MenuExecutionCoordinator {
         let isQuitAction = Self.isQuitMenuPath(request.path)
         let normalizedPath = request.path.map(Self.normalizedMenuText)
         let isWindowMenuAction = normalizedPath.first == "window"
-        let isCloseWindowAction = Self.isCloseWindowMenuPath(request.path)
-        let cachedShortcut = request.shortcutChar?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if !cachedShortcut.isEmpty {
-            let knownMatches = request.knownMenuItems.filter { item in
-                (item.sourcePID == 0 || item.sourcePID == request.sourcePID)
-                    && Self.menuPathMatches(item, targetPath: request.path)
-            }
-            if !isWindowMenuAction,
-               !isCloseWindowAction,
-               !knownMatches.isEmpty,
-               !knownMatches.contains(where: \.isEnabled)
-            {
-                AppToast.show(
-                    "Action unavailable right now",
-                    icon: "exclamationmark.triangle",
-                    tint: .orange.opacity(0.9)
-                )
-                return
-            }
-        }
 
         let needsLiveSelectionValidation =
-            cachedShortcut.isEmpty && Self.isVolatileSelectionMenuPath(request.path)
+            Self.isVolatileSelectionMenuPath(request.path)
         let shouldKeepLauncherHiddenAfterExecution =
             normalizedPath.contains("open with")
             || needsLiveSelectionValidation

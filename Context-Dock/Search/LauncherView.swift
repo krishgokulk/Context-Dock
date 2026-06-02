@@ -11808,11 +11808,7 @@ struct LauncherView: View {
         let q = queryOverride.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
         updateWindowSize()
-        DispatchQueue.main.async {
-            DispatchQueue.main.async {
-                self.reclaimSearchInputFocus()
-            }
-        }
+        reclaimCompactScopeInputFocus()
     }
 
     func activateNotificationScope(queryOverride: String = "") {
@@ -11830,6 +11826,10 @@ struct LauncherView: View {
             showMediaLayer = false
             aiMode.isActive = false
             globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            suppressGlobalInlineAppScopeDetection = false
+            dismissedGlobalInlineAppScopes = [:]
             searchState.isInSmartMode = false
             searchState.results = []
             searchState.grouped = GroupedResults()
@@ -11846,6 +11846,15 @@ struct LauncherView: View {
         refreshCompactScopeResults()
         scheduleDockPillRebuild(query: queryOverride, delayNanoseconds: 0, refreshContext: false)
         updateWindowSize()
+        reclaimCompactScopeInputFocus()
+    }
+
+    func reclaimCompactScopeInputFocus() {
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                self.reclaimSearchInputFocus()
+            }
+        }
     }
 
     func scopedWorkspaceIdentity() -> (

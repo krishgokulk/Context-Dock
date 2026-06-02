@@ -104,6 +104,11 @@ final class WindowManagementService {
         let frame: CGRect
     }
 
+    private struct WorkspaceLayoutWindow {
+        let pid: pid_t
+        let window: AXUIElement
+    }
+
     private var previousFrames: [pid_t: [WindowFrameSnapshot]] = [:]
 
     private init() {}
@@ -279,23 +284,65 @@ final class WindowManagementService {
     }
 
     private func arrangeWindows(_ command: Command, pid: pid_t, appName: String) -> Bool {
-        let windows = eligibleWindows(pid: pid)
+        let windows = workspaceEligibleWindows(preferredPID: pid)
         guard !windows.isEmpty else { return showNoWindow(appName) }
-        guard let screen = screen(for: windows[0]) ?? NSScreen.main else {
-            return showNoWindow(appName)
-        }
-        rememberFrames(windows, pid: pid)
-        let frames = arrangementFrames(
-            for: command,
-            windowCount: windows.count,
-            in: screen.visibleFrame
-        )
+        rememberWorkspaceFrames(windows)
+
         var changed = false
-        for (window, frame) in zip(windows, frames) {
-            changed = apply(frame, to: window) || changed
-            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        for screenWindows in workspaceWindowsGroupedByScreen(windows) {
+            guard let first = screenWindows.first,
+                let targetScreen = screen(for: first.window) ?? NSScreen.main
+            else { continue }
+            let frames = arrangementFrames(
+                for: command,
+                windowCount: screenWindows.count,
+                in: targetScreen.visibleFrame
+            )
+            for (item, frame) in zip(screenWindows, frames) {
+                changed = apply(frame, to: item.window) || changed
+                AXUIElementPerformAction(item.window, kAXRaiseAction as CFString)
+            }
         }
         return changed
+    }
+
+    private func workspaceEligibleWindows(preferredPID: pid_t) -> [WorkspaceLayoutWindow] {
+        let ownBundleID = Bundle.main.bundleIdentifier
+        let applications = NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && !$0.isHidden
+                    && $0.bundleIdentifier != ownBundleID
+            }
+            .sorted {
+                if $0.processIdentifier == preferredPID { return true }
+                if $1.processIdentifier == preferredPID { return false }
+                return ($0.localizedName ?? "") < ($1.localizedName ?? "")
+            }
+
+        return applications.flatMap { app in
+            eligibleWindows(pid: app.processIdentifier).map {
+                WorkspaceLayoutWindow(pid: app.processIdentifier, window: $0)
+            }
+        }
+    }
+
+    private func workspaceWindowsGroupedByScreen(
+        _ windows: [WorkspaceLayoutWindow]
+    ) -> [[WorkspaceLayoutWindow]] {
+        Dictionary(grouping: windows) { item -> String in
+            let frame = screen(for: item.window)?.frame ?? NSScreen.main?.frame ?? .zero
+            return "\(frame.minX):\(frame.minY):\(frame.width):\(frame.height)"
+        }
+        .values
+        .map(Array.init)
+    }
+
+    private func rememberWorkspaceFrames(_ windows: [WorkspaceLayoutWindow]) {
+        for (pid, items) in Dictionary(grouping: windows, by: \.pid) {
+            rememberFrames(items.map(\.window), pid: pid)
+        }
     }
 
     private func arrangementFrames(
