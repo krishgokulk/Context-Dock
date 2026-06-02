@@ -758,11 +758,6 @@ struct LauncherView: View {
         if searchState.activeSmartQueryKey == "clipboard" {
             return buildClipboardHistoryPills(query: query)
         }
-        if isL2ContextActive, !shouldUsePureGlobalAppSearch,
-            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return buildDockPills(query: query)
-        }
         if pendingDockPillQuery == query {
             return contextDockPreviewPills(for: query)
         }
@@ -1678,13 +1673,11 @@ struct LauncherView: View {
             return
         }
 
-        // First paint must not wait for the debounced background pass. This keeps Global
-        // Context rows visible while typing and gives arrow-key navigation a current model.
-        if shouldUsePureGlobalAppSearch || globalInlineAppScope != nil {
-            let state =
-                globalInlineAppScope == nil
-                ? instantGlobalGroupedListNavigationState(for: q)
-                : buildGlobalGroupedListNavigationState(for: q)
+        // Keep unscoped app matching immediate: that path only filters in-memory app rows.
+        // Scoped menu state is intentionally deferred. Building it during TextField updates
+        // blocks typing and then duplicates the same work inside the debounced task.
+        if shouldUsePureGlobalAppSearch, globalInlineAppScope == nil {
+            let state = instantGlobalGroupedListNavigationState(for: q)
             setCachedGlobalGroupedState(query: q, state: state, animated: false)
         }
 
@@ -1751,9 +1744,9 @@ struct LauncherView: View {
             // Frontmost / inline-scope menu pills: cache-only in Global Context.
             // Live AX scanning belongs to Context Dock/app-switch warmers, not typing.
             let frontmostMenuPills: [DockPill] = {
-                if let scope = inlineScope, scope.isExplicitAppScope {
-                    return cachedGlobalAppScopeDockPills(query: q, scope: scope)
-                }
+                // Inline scopes are appended below by cachedGlobalInlineAppScopeGroups.
+                // Building them here too doubles scoped cache filtering on every query.
+                if inlineScope?.isExplicitAppScope == true { return [] }
                 guard includeFrontmostMenus else {
                     return buildGlobalAppleMenuFallbackPills(query: q)
                 }
@@ -1957,9 +1950,9 @@ struct LauncherView: View {
         )
         // Frontmost app menus — cache-only so global typing never touches AX.
         let frontmostMenuPills: [DockPill] = {
-            if let scope = activeGlobalInlineDockScope(for: q), scope.isExplicitAppScope {
-                return cachedGlobalAppScopeDockPills(query: q, scope: scope)
-            }
+            // Inline scopes are appended below by cachedGlobalInlineAppScopeGroups.
+            // Building them here too doubles scoped cache filtering on every query.
+            if activeGlobalInlineDockScope(for: q)?.isExplicitAppScope == true { return [] }
             guard includeFrontmostMenus else {
                 return buildGlobalAppleMenuFallbackPills(query: q)
             }
@@ -11092,7 +11085,6 @@ struct LauncherView: View {
     ) -> [DockPill] {
         guard !bundleIdentifier.isEmpty else { return [] }
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectiveMaxResults = trimmedQuery.isEmpty ? maxResults : max(maxResults, 2_000)
         let runningApp = NSWorkspace.shared.runningApplications.first {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
         }
@@ -11108,13 +11100,37 @@ struct LauncherView: View {
             AppMenuCapabilityCache.shared.store(items: live, for: runningApp)
             return live
         }()
-        let persistentMatches = GlobalContextEngine.shared.cachedMenuItems(
-            bundleIdentifier: bundleIdentifier,
-            appName: runningApp?.localizedName ?? appName,
-            processIdentifier: runningApp?.processIdentifier ?? 0,
-            query: "",
-            maxResults: effectiveMaxResults
-        )
+        let cachedAppName = runningApp?.localizedName ?? appName
+        let cachedPID = runningApp?.processIdentifier ?? 0
+        let persistentMatches: [AXMenuItem] = {
+            guard !trimmedQuery.isEmpty else {
+                return GlobalContextEngine.shared.cachedMenuItems(
+                    bundleIdentifier: bundleIdentifier,
+                    appName: cachedAppName,
+                    processIdentifier: cachedPID,
+                    query: "",
+                    maxResults: maxResults
+                )
+            }
+
+            let ranked = GlobalContextEngine.shared.cachedMenuItems(
+                bundleIdentifier: bundleIdentifier,
+                appName: cachedAppName,
+                processIdentifier: cachedPID,
+                query: trimmedQuery,
+                maxResults: max(120, maxResults * 6)
+            )
+            if !ranked.isEmpty { return ranked }
+
+            // Preserve typo tolerance without scanning up to 2,000 browser rows per keypress.
+            return GlobalContextEngine.shared.cachedMenuItems(
+                bundleIdentifier: bundleIdentifier,
+                appName: cachedAppName,
+                processIdentifier: cachedPID,
+                query: "",
+                maxResults: min(350, max(160, maxResults * 8))
+            )
+        }()
         let items = {
             var seen = Set<String>()
             var merged: [AXMenuItem] = []
@@ -13913,12 +13929,6 @@ struct LauncherView: View {
             return
         }
         pendingDockPillQuery = query
-        if !refreshContext || !query.isEmpty {
-            let started = Date()
-            replaceCachedDockPills(buildDockPills(query: query), preserveFocus: true)
-            logDockPerformance("sync pill rebuild", started: started, query: query)
-            lastPillQuery = query
-        }
         dockPillBuildTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else {
