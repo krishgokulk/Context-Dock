@@ -107,6 +107,13 @@ final class WindowManagementService {
     private struct WorkspaceLayoutWindow {
         let pid: pid_t
         let window: AXUIElement
+        let order: Int
+    }
+
+    private struct OnScreenWindowSignature {
+        let pid: pid_t
+        let bounds: CGRect
+        let order: Int
     }
 
     private var previousFrames: [pid_t: [WindowFrameSnapshot]] = [:]
@@ -308,24 +315,107 @@ final class WindowManagementService {
 
     private func workspaceEligibleWindows(preferredPID: pid_t) -> [WorkspaceLayoutWindow] {
         let ownBundleID = Bundle.main.bundleIdentifier
-        let applications = NSWorkspace.shared.runningApplications
-            .filter {
-                $0.activationPolicy == .regular
-                    && !$0.isTerminated
-                    && !$0.isHidden
-                    && $0.bundleIdentifier != ownBundleID
-            }
-            .sorted {
-                if $0.processIdentifier == preferredPID { return true }
-                if $1.processIdentifier == preferredPID { return false }
-                return ($0.localizedName ?? "") < ($1.localizedName ?? "")
-            }
-
-        return applications.flatMap { app in
-            eligibleWindows(pid: app.processIdentifier).map {
-                WorkspaceLayoutWindow(pid: app.processIdentifier, window: $0)
-            }
+        let currentDesktopWindows = currentDesktopWindowSignatures()
+        let signaturesByPID = Dictionary(grouping: currentDesktopWindows, by: \.pid)
+        var seenPIDs = Set<pid_t>()
+        let orderedPIDs = currentDesktopWindows.compactMap { signature -> pid_t? in
+            guard seenPIDs.insert(signature.pid).inserted else { return nil }
+            return signature.pid
         }
+
+        return orderedPIDs.flatMap { pid -> [WorkspaceLayoutWindow] in
+            guard
+                let app = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.processIdentifier == pid && !$0.isTerminated
+                }),
+                app.bundleIdentifier != ownBundleID,
+                let appSignatures = signaturesByPID[pid],
+                !appSignatures.isEmpty
+            else { return [] }
+
+            return eligibleWindows(pid: pid)
+                .compactMap { window -> WorkspaceLayoutWindow? in
+                    guard
+                        let order = matchingCurrentDesktopWindowOrder(
+                            window,
+                            signatures: appSignatures
+                        )
+                    else { return nil }
+                    return WorkspaceLayoutWindow(pid: pid, window: window, order: order)
+                }
+                .sorted {
+                    if $0.pid == preferredPID, $1.pid != preferredPID { return true }
+                    if $1.pid == preferredPID, $0.pid != preferredPID { return false }
+                    return $0.order < $1.order
+                }
+        }
+    }
+
+    private func currentDesktopWindowSignatures() -> [OnScreenWindowSignature] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard
+            let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
+        else { return [] }
+
+        return infoList.enumerated().compactMap { index, info -> OnScreenWindowSignature? in
+            guard
+                let ownerPIDValue = info[kCGWindowOwnerPID as String] as? NSNumber,
+                let layerValue = info[kCGWindowLayer as String] as? NSNumber,
+                layerValue.intValue == 0,
+                let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                bounds.width >= 120,
+                bounds.height >= 80
+            else { return nil }
+
+            if let alphaValue = info[kCGWindowAlpha as String] as? NSNumber,
+                alphaValue.doubleValue <= 0
+            {
+                return nil
+            }
+            return OnScreenWindowSignature(
+                pid: ownerPIDValue.int32Value,
+                bounds: bounds,
+                order: index
+            )
+        }
+    }
+
+    private func matchesCurrentDesktopWindow(
+        _ window: AXUIElement,
+        signatures: [OnScreenWindowSignature]
+    ) -> Bool {
+        matchingCurrentDesktopWindowOrder(window, signatures: signatures) != nil
+    }
+
+    private func matchingCurrentDesktopWindowOrder(
+        _ window: AXUIElement,
+        signatures: [OnScreenWindowSignature]
+    ) -> Int? {
+        guard let frame = frame(of: window) else { return nil }
+        let nativeFrame = nativeFrame(of: window)
+        return signatures.first { signature in
+            framesMatch(frame, signature.bounds)
+                || nativeFrame.map { framesMatch($0, signature.bounds) } == true
+        }?.order
+    }
+
+    private func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        let tolerance: CGFloat = 8
+        if abs(lhs.minX - rhs.minX) <= tolerance,
+            abs(lhs.minY - rhs.minY) <= tolerance,
+            abs(lhs.width - rhs.width) <= tolerance,
+            abs(lhs.height - rhs.height) <= tolerance
+        {
+            return true
+        }
+
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else { return false }
+        let lhsArea = lhs.width * lhs.height
+        let rhsArea = rhs.width * rhs.height
+        let smallerArea = max(1, min(lhsArea, rhsArea))
+        return (intersection.width * intersection.height) / smallerArea > 0.9
     }
 
     private func workspaceWindowsGroupedByScreen(
@@ -336,7 +426,7 @@ final class WindowManagementService {
             return "\(frame.minX):\(frame.minY):\(frame.width):\(frame.height)"
         }
         .values
-        .map(Array.init)
+        .map { $0.sorted { $0.order < $1.order } }
     }
 
     private func rememberWorkspaceFrames(_ windows: [WorkspaceLayoutWindow]) {
@@ -365,9 +455,34 @@ final class WindowManagementService {
             return tiledFrames(
                 count: count, rows: min(2, count), in: visibleFrame, reverseRows: true)
         case .quarters:
-            return tiledFrames(count: count, columns: min(2, count), in: visibleFrame)
+            return quarterArrangementFrames(count: count, in: visibleFrame)
         default:
             return []
+        }
+    }
+
+    private func quarterArrangementFrames(count: Int, in visibleFrame: CGRect) -> [CGRect] {
+        if count > 4 {
+            return tiledFrames(count: count, columns: 2, in: visibleFrame)
+        }
+        switch max(1, count) {
+        case 1:
+            return [fullFrame(visibleFrame)]
+        case 2:
+            return [leftFrame(visibleFrame), rightFrame(visibleFrame)]
+        case 3:
+            return [
+                leftFrame(visibleFrame),
+                topRightFrame(visibleFrame),
+                bottomRightFrame(visibleFrame),
+            ]
+        default:
+            return [
+                topLeftFrame(visibleFrame),
+                topRightFrame(visibleFrame),
+                bottomLeftFrame(visibleFrame),
+                bottomRightFrame(visibleFrame),
+            ]
         }
     }
 

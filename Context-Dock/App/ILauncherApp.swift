@@ -1081,7 +1081,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let m = singleOptionLocalCancelMonitor { NSEvent.removeMonitor(m); singleOptionLocalCancelMonitor = nil }
 
         // Single Option only releases focus. Double Option remains launcher open.
-        // Command is the only modifier that expands a collapsed dock.
+        // Bare Command or bare Control expands a collapsed dock.
         let toggleDockInputFocus: () -> Void = { [weak self] in
             guard let self else { return }
             guard let window = self.launcherWindow, window.isVisible else { return }
@@ -1223,7 +1223,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let active = flags.contains(.command)
+            let singleModifier = flags.intersection([.command, .control, .option, .shift])
+            let active = singleModifier == .command || singleModifier == .control
             guard active != self.persistentDockModifierActive else { return }
 
             self.persistentDockModifierActive = active
