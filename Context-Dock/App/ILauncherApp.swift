@@ -195,7 +195,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var commandAloneDownTime: TimeInterval = 0
     var persistentDockModifierMonitor: Any?
     var persistentDockModifierLocalMonitor: Any?
+    var persistentDockControlCancelMonitor: Any?
+    var persistentDockControlLocalCancelMonitor: Any?
     var persistentDockModifierActive: Bool = false
+    var persistentDockControlTapArmed = false
+    var persistentDockControlTapContaminated = false
+    var persistentDockControlDownTime: TimeInterval = 0
     /// True when the launcher was opened / switched via the context-dock shortcut.
     /// ContentView reads this on `launcherWindowOpened` to keep the app in L2.
     var isDockContextMode: Bool = false
@@ -290,6 +295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerClipboardScopeHotkey()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
+        registerPersistentDockModifierExpansionMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
@@ -479,6 +485,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerClipboardScopeHotkey()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
+        registerPersistentDockModifierExpansionMonitor()
     }
     
     func setupMenuBar() {
@@ -930,6 +937,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(monitor)
             persistentDockModifierLocalMonitor = nil
         }
+        if let monitor = persistentDockControlCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            persistentDockControlCancelMonitor = nil
+        }
+        if let monitor = persistentDockControlLocalCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            persistentDockControlLocalCancelMonitor = nil
+        }
     }
 
     func registerContextDockHotkey() {
@@ -1069,8 +1084,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(m)
             persistentDockModifierLocalMonitor = nil
         }
+        if let m = persistentDockControlCancelMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockControlCancelMonitor = nil
+        }
+        if let m = persistentDockControlLocalCancelMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockControlLocalCancelMonitor = nil
+        }
         commandAloneActive = false
         persistentDockModifierActive = false
+        persistentDockControlTapArmed = false
+        persistentDockControlTapContaminated = false
     }
 
     // Single Option press (alone, no other modifiers, from another app) → focus our search field.
@@ -1217,14 +1242,73 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(m)
             persistentDockModifierLocalMonitor = nil
         }
+        if let m = persistentDockControlCancelMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockControlCancelMonitor = nil
+        }
+        if let m = persistentDockControlLocalCancelMonitor {
+            NSEvent.removeMonitor(m)
+            persistentDockControlLocalCancelMonitor = nil
+        }
 
         persistentDockModifierActive = false
+        persistentDockControlTapArmed = false
+        persistentDockControlTapContaminated = false
+
+        let cancelControlTap: () -> Void = { [weak self] in
+            self?.persistentDockControlTapContaminated = true
+        }
+        persistentDockControlCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
+            _ in cancelControlTap()
+        }
+        persistentDockControlLocalCancelMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            event in
+            cancelControlTap()
+            return event
+        }
 
         let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let singleModifier = flags.intersection([.command, .control, .option, .shift])
-            let active = singleModifier == .command || singleModifier == .control
+            let controlDown = flags.contains(.control)
+
+            if singleModifier == .control, !self.persistentDockControlTapArmed {
+                self.persistentDockControlTapArmed = true
+                self.persistentDockControlTapContaminated = false
+                self.persistentDockControlDownTime = Date().timeIntervalSinceReferenceDate
+                return
+            }
+            if controlDown, singleModifier != .control {
+                self.persistentDockControlTapContaminated = true
+            }
+            if !controlDown, self.persistentDockControlTapArmed {
+                let duration =
+                    Date().timeIntervalSinceReferenceDate - self.persistentDockControlDownTime
+                let shouldExpand =
+                    !self.persistentDockControlTapContaminated
+                    && duration >= 0.03
+                    && duration <= 0.6
+                self.persistentDockControlTapArmed = false
+                self.persistentDockControlTapContaminated = false
+                if shouldExpand, self.launcherWindow?.isVisible == true {
+                    self.focusAndCenterPersistentDock()
+                    NotificationCenter.default.post(
+                        name: .persistentDockModifierExpansionChanged,
+                        object: nil,
+                        userInfo: ["isDown": true]
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        NotificationCenter.default.post(
+                            name: .persistentDockModifierExpansionChanged,
+                            object: nil,
+                            userInfo: ["isDown": false]
+                        )
+                    }
+                }
+            }
+
+            let active = singleModifier == .command
             guard active != self.persistentDockModifierActive else { return }
 
             self.persistentDockModifierActive = active
@@ -1243,6 +1327,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             handleFlagsChanged(event)
             return event
         }
+    }
+
+    private func focusAndCenterPersistentDock() {
+        guard let window = launcherWindow, window.isVisible else { return }
+        let screen = window.screen ?? NSScreen.main
+        if let visibleFrame = screen?.visibleFrame {
+            var frame = window.frame
+            frame.origin.x = visibleFrame.midX - frame.width / 2
+            window.setFrame(frame, display: false)
+            (window as? KeyableWindow)?.horizontalResizeAnchorX = visibleFrame.midX
+        }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func activateContextDock() {
@@ -1700,6 +1799,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         recordFrontmostApp(app)
         print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
+        ContextDockEnvironment.shared.frontmostAppDidChange(
+            name: app.localizedName ?? "",
+            bundleID: app.bundleIdentifier ?? ""
+        )
         Task { @MainActor in
             MenuWarmCacheService.shared.frontmostAppDidChange(app)
         }
@@ -1752,13 +1855,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AXWebReader.shared.invalidate(pid: pid)
         }
 
-        // Notify LauncherView immediately so it can reload menu items for the new app
-        DispatchQueue.main.async {
-            ContextDockEnvironment.shared.frontmostAppDidChange(
-                name: app.localizedName ?? "",
-                bundleID: app.bundleIdentifier ?? ""
-            )
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
