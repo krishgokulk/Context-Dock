@@ -16,6 +16,7 @@ struct SearchState {
     var grouped: GroupedResults = GroupedResults()
     var selectedIndex: Int? = nil
     var revision: Int = 0
+    var resultFingerprint: String = ""
     var pinnedResults: [SearchResult] = []
     var pinnedTitle: String? = nil
     var pinnedTypesToExclude: Set<SearchResult.ResultType> = []
@@ -49,6 +50,10 @@ struct L2State {
     var pillNavViaKeyboard: Bool = false
     var chatContextKey: String = ""
     var showResultsPopover: Bool = false
+    var showChatPopover: Bool = false
+    var chatArmed: Bool = false
+    var chatDraftAppName: String = ""
+    var chatDraftBundleId: String = ""
 }
 
 // MARK: - AI Mode

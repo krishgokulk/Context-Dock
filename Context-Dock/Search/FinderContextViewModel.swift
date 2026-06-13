@@ -24,6 +24,8 @@ final class FinderContextViewModel: ObservableObject {
     @Published var semanticPills: [DockPill] = []
     @Published var isSemanticLoading = false
     @Published var goToPills: [DockPill] = []
+    @Published var followUpTargetPaths: [String] = []
+    @Published var followUpSourceQuery = ""
 
     var snapshotTask: Task<Void, Never>?
     var snapshotWatcher: FinderFolderSnapshotWatcher?

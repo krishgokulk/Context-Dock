@@ -71,6 +71,47 @@ class AppleAppsAPI {
         }
     }
 
+    func getEvents(from startDate: Date, to endDate: Date) -> [[String: Any]] {
+        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
+        return eventStore.events(matching: predicate).map { ev in
+            var d: [String: Any] = [
+                "title": ev.title ?? "",
+                "startDate": ISO8601DateFormatter().string(from: ev.startDate),
+                "endDate": ISO8601DateFormatter().string(from: ev.endDate),
+                "isAllDay": ev.isAllDay,
+            ]
+            if let loc = ev.location, !loc.isEmpty { d["location"] = loc }
+            if let notes = ev.notes, !notes.isEmpty { d["notes"] = notes }
+            return d
+        }
+    }
+
+    func searchEvents(query: String, limit: Int = 50) -> [[String: Any]] {
+        let now = Date()
+        let start = Calendar.current.date(byAdding: .month, value: -1, to: now) ?? now
+        let end = Calendar.current.date(byAdding: .month, value: 6, to: now) ?? now
+        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
+        let q = query.lowercased()
+        return eventStore.events(matching: predicate)
+            .filter { ev in
+                q.isEmpty ||
+                (ev.title?.lowercased().contains(q) ?? false) ||
+                (ev.location?.lowercased().contains(q) ?? false) ||
+                (ev.notes?.lowercased().contains(q) ?? false)
+            }
+            .prefix(limit)
+            .map { ev in
+                var d: [String: Any] = [
+                    "title": ev.title ?? "",
+                    "startDate": ISO8601DateFormatter().string(from: ev.startDate),
+                    "endDate": ISO8601DateFormatter().string(from: ev.endDate),
+                    "isAllDay": ev.isAllDay,
+                ]
+                if let loc = ev.location, !loc.isEmpty { d["location"] = loc }
+                return d
+            }
+    }
+
     /// Create a new calendar event
     func createEvent(
         title: String, startDate: Date, endDate: Date? = nil, notes: String? = nil,

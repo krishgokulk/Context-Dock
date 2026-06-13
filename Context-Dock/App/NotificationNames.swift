@@ -11,7 +11,6 @@ extension Notification.Name {
     static let launcherBackspacePressed  = Notification.Name("launcherBackspacePressed")
     static let focusSearchField          = Notification.Name("focusSearchField")
     static let folderPreviewShouldClose  = Notification.Name("folderPreviewShouldClose")
-    static let persistentDockModifierExpansionChanged = Notification.Name("persistentDockModifierExpansionChanged")
 
     // MARK: - Context / scope activation
     static let activateContextDock       = Notification.Name("activateContextDock")

@@ -11,7 +11,7 @@ import AppKit
 import ApplicationServices
 
 /// User context - what the user currently has selected or focused
-enum UserContext {
+enum UserContext: Equatable {
     case filesSelected([URL])
     case textSelected(String)
     case url(String)
@@ -66,36 +66,24 @@ final class UserContextDetector {
     /// Detect current user context when AI Mode opens
     /// Pass in the previously frontmost app to detect context from it instead of ILauncher
     func detectCurrentContext(from app: NSRunningApplication? = nil) -> UserContext {
-        print("🔍 [UserContextDetector] Starting context detection...")
-
         // Use provided app or fallback to current frontmost (which might be ILauncher)
         let frontmostApp: NSRunningApplication
         if let providedApp = app {
-            print("🎯 [UserContextDetector] Using provided app: \(providedApp.localizedName ?? "Unknown")")
             frontmostApp = providedApp
         } else {
             guard let currentApp = NSWorkspace.shared.frontmostApplication else {
-                print("⚠️ [UserContextDetector] No frontmost application. Falling back to clipboard.")
                 return clipboardFallback()
             }
-
-            // Skip ILauncher itself
             if currentApp.bundleIdentifier?.contains("ILauncher") == true {
-                print("⚠️ [UserContextDetector] Frontmost app is ILauncher (should provide previous app!). Falling back to clipboard.")
                 return clipboardFallback()
             }
-
             frontmostApp = currentApp
-            print("🔍 [UserContextDetector] Using current frontmost app: \(currentApp.localizedName ?? "Unknown")")
         }
 
         // Use the shared detector (AX-based) to avoid AppleScript Automation prompts.
         guard let detected = ContextDetector.shared.detectContext(frontmostApp: frontmostApp) else {
-            print("⚠️ [UserContextDetector] ContextDetector returned nil for \(frontmostApp.localizedName ?? "Unknown"). Falling back to clipboard.")
             return clipboardFallback()
         }
-
-        print("✅ [UserContextDetector] Detected: \(detected.description)")
 
         let appName   = frontmostApp.localizedName ?? ""
         let bundleID  = frontmostApp.bundleIdentifier ?? ""

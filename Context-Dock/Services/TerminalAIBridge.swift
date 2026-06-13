@@ -5,6 +5,23 @@ import SwiftTerm
 
 // MARK: - Terminal AI Bridge
 
+private final class TerminalOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func output() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines.joined(separator: "\n")
+    }
+}
+
 /// Manages communication between AI and Terminal for command execution
 @MainActor
 class TerminalAIBridge: ObservableObject {
@@ -18,6 +35,7 @@ class TerminalAIBridge: ObservableObject {
     @Published var lastExitCode: Int32 = 0
     @Published var executionHistory: [CommandExecution] = []
     @Published var pendingApproval: PendingCommand?
+    private var approvalExpiryTask: Task<Void, Never>?
 
     /// Optional per-line streaming callback set by the active panel.
     /// Called on a background thread — callers must dispatch to MainActor themselves.
@@ -150,18 +168,26 @@ class TerminalAIBridge: ObservableObject {
         classification: TerminalCommandClassifier.CommandClassification
     ) async -> CommandResult {
         await withCheckedContinuation { continuation in
+            approvalExpiryTask?.cancel()
             pendingApproval = PendingCommand(
                 command: command,
                 purpose: purpose,
                 classification: classification,
                 continuation: continuation
             )
+            approvalExpiryTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.denyCommand()
+            }
         }
     }
 
     /// Called when user approves the command
     func approveCommand(_ command: String) {
         guard let pending = pendingApproval else { return }
+        approvalExpiryTask?.cancel()
+        approvalExpiryTask = nil
         pending.continuation.resume(returning: .approved(command: command))
         pendingApproval = nil
     }
@@ -169,6 +195,8 @@ class TerminalAIBridge: ObservableObject {
     /// Called when user denies the command
     func denyCommand() {
         guard let pending = pendingApproval else { return }
+        approvalExpiryTask?.cancel()
+        approvalExpiryTask = nil
         pending.continuation.resume(returning: .denied)
         pendingApproval = nil
     }
@@ -394,7 +422,13 @@ class TerminalAIBridge: ObservableObject {
             process.standardOutput = outputPipe
             process.standardError  = errorPipe
 
-            var collectedLines: [String] = []
+            let outputCollector = TerminalOutputCollector()
+            @Sendable func appendCollectedLine(_ line: String) {
+                outputCollector.append(line)
+            }
+            @Sendable func collectedOutput() -> String {
+                outputCollector.output()
+            }
 
             // Stream stdout line-by-line
             if let onLine {
@@ -404,7 +438,7 @@ class TerminalAIBridge: ObservableObject {
                     for line in chunk.components(separatedBy: "\n") {
                         let trimmed = line.trimmingCharacters(in: .controlCharacters)
                         guard !trimmed.isEmpty else { continue }
-                        collectedLines.append(trimmed)
+                        appendCollectedLine(trimmed)
                         onLine(trimmed)
                     }
                 }
@@ -414,7 +448,7 @@ class TerminalAIBridge: ObservableObject {
                     for line in chunk.components(separatedBy: "\n") {
                         let trimmed = line.trimmingCharacters(in: .controlCharacters)
                         guard !trimmed.isEmpty else { continue }
-                        collectedLines.append(trimmed)
+                        appendCollectedLine(trimmed)
                         onLine(trimmed)
                     }
                 }
@@ -433,7 +467,7 @@ class TerminalAIBridge: ObservableObject {
                 } else {
                     outputPipe.fileHandleForReading.readabilityHandler = nil
                     errorPipe.fileHandleForReading.readabilityHandler  = nil
-                    continuation.resume(returning: (collectedLines.joined(separator: "\n"), proc.terminationStatus))
+                    continuation.resume(returning: (collectedOutput(), proc.terminationStatus))
                 }
             }
 

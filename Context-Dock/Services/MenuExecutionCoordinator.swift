@@ -21,9 +21,7 @@ final class MenuExecutionCoordinator {
     }
 
     struct DockMenuActionCallbacks {
-        let collapseBeforeExecution: @MainActor () -> Void
-        let collapseFinderToIcon: @MainActor () -> Void
-        let focusLauncher: @MainActor () -> Void
+        let hideBeforeExecution: @MainActor () -> Void
         let refreshRunningApps: @MainActor () -> Void
         let scheduleTerminationRefresh: @MainActor (NSRunningApplication) -> Void
         let reloadMenu: @MainActor (NSRunningApplication) -> Void
@@ -45,11 +43,6 @@ final class MenuExecutionCoordinator {
 
         let needsLiveSelectionValidation =
             Self.isVolatileSelectionMenuPath(request.path)
-        let shouldKeepLauncherHiddenAfterExecution =
-            normalizedPath.contains("open with")
-            || needsLiveSelectionValidation
-            || (request.isGlobalContextActive && request.hasActiveDockContextSelection)
-
         executionTask = Task { [self] in
             defer { executionTask = nil }
             guard
@@ -58,11 +51,18 @@ final class MenuExecutionCoordinator {
                 })
             else { return }
 
-            let shouldCollapseBeforeExecution =
-                shouldKeepLauncherHiddenAfterExecution
-                || sourceApp.bundleIdentifier == "com.apple.finder"
-
             let pid = sourceApp.processIdentifier
+
+            if isQuitAction {
+                await MainActor.run {
+                    callbacks.hideBeforeExecution()
+                    _ = sourceApp.terminate()
+                    callbacks.scheduleTerminationRefresh(sourceApp)
+                    callbacks.refreshRunningApps()
+                    callbacks.clearLiveDockMenuState()
+                }
+                return
+            }
 
             if sourceApp.bundleIdentifier == "com.apple.finder" {
                 let directResult = await FinderActionService.shared.executeDirectActionIfNeeded(
@@ -72,7 +72,7 @@ final class MenuExecutionCoordinator {
                     await MainActor.run {
                         AppToast.show(message, icon: icon, tint: tint)
                         MenuWarmCacheService.shared.frontmostAppDidChange(sourceApp)
-                        if success { callbacks.collapseFinderToIcon() }
+                        if success { callbacks.hideBeforeExecution() }
                     }
                     return
                 }
@@ -107,28 +107,57 @@ final class MenuExecutionCoordinator {
                 }
             }
 
-            let isWindowStateAction = Self.isWindowStateAction(executablePath)
-
             await MainActor.run {
-                if shouldCollapseBeforeExecution {
-                    callbacks.collapseBeforeExecution()
-                } else {
-                    AppDelegate.shared?.launcherWindow?.resignKey()
-                }
+                callbacks.hideBeforeExecution()
             }
-            // Let dock collapse commit before target activation sends AX or keyboard events.
-            // Running both paths in one render turn caused icon-mode layout races.
-            try? await Task.sleep(
-                nanoseconds: shouldCollapseBeforeExecution ? 180_000_000 : 40_000_000)
+            // Let window dismissal commit before target activation sends AX or keyboard events.
+            try? await Task.sleep(nanoseconds: 40_000_000)
             await MainActor.run {
                 if sourceApp.isHidden { sourceApp.unhide() }
                 sourceApp.activate(options: [.activateIgnoringOtherApps])
                 Self.unminimizeWindows(pid: pid)
             }
             await AXActionResolver.waitForActivation(of: sourceApp)
+            await Self.restoreWindowIfAllMinimized(sourceApp)
             try? await Task.sleep(nanoseconds: 80_000_000)
 
-            if let liveMatch = await Self.waitForExecutableMenuItem(
+            if Self.isPasswordsApp(sourceApp),
+                await Self.executePasswordsActionAfterUnlock(
+                    path: executablePath,
+                    shortcutChar: executableShortcutChar,
+                    shortcutModifiers: executableShortcutModifiers,
+                    app: sourceApp,
+                    in: request.sourcePID
+                )
+            {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                await MainActor.run {
+                    callbacks.refreshRunningApps()
+                    MenuWarmCacheService.shared.frontmostAppDidChange(sourceApp)
+                }
+                return
+            }
+
+            let cachedShortcut = executableShortcutChar?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let directWindowActionHandled =
+                isWindowMenuAction
+                && Self.shouldPreferDirectWindowManagementAction(executablePath)
+                && self.executeWindowManagementActionIfNeeded(
+                    path: executablePath,
+                    sourceApp: sourceApp
+                )
+            let cachedShortcutSent =
+                !directWindowActionHandled
+                && !cachedShortcut.isEmpty
+                && AXMenuReader.shared.executeShortcut(
+                    char: cachedShortcut,
+                    modifiers: executableShortcutModifiers,
+                    in: request.sourcePID
+                )
+
+            if !directWindowActionHandled, !cachedShortcutSent,
+                let liveMatch = await Self.waitForExecutableMenuItem(
                     path: executablePath,
                     app: sourceApp,
                     in: request.sourcePID,
@@ -147,25 +176,19 @@ final class MenuExecutionCoordinator {
 
             let preferredShortcut = executableShortcutChar?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let directWindowActionHandled =
-                isWindowMenuAction
-                && Self.shouldPreferDirectWindowManagementAction(executablePath)
-                && self.executeWindowManagementActionIfNeeded(
-                    path: executablePath,
-                    sourceApp: sourceApp
-                )
             let pasteMenuClicked =
-                !directWindowActionHandled
+                !directWindowActionHandled && !cachedShortcutSent
                 && Self.isPasteMenuPath(executablePath)
                 && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
             let shortcutSent =
-                !directWindowActionHandled && !pasteMenuClicked
-                && !preferredShortcut.isEmpty
-                && AXMenuReader.shared.executeShortcut(
-                    char: preferredShortcut,
-                    modifiers: executableShortcutModifiers,
-                    in: request.sourcePID
-                )
+                cachedShortcutSent
+                || (!directWindowActionHandled && !pasteMenuClicked
+                    && !preferredShortcut.isEmpty
+                    && AXMenuReader.shared.executeShortcut(
+                        char: preferredShortcut,
+                        modifiers: executableShortcutModifiers,
+                        in: request.sourcePID
+                    ))
 
             let menuClicked =
                 !directWindowActionHandled && !pasteMenuClicked && !shortcutSent
@@ -188,14 +211,8 @@ final class MenuExecutionCoordinator {
 
             if actionSent && !isQuitAction {
                 await MainActor.run {
-                    if !isWindowStateAction && !shouldCollapseBeforeExecution {
-                        callbacks.focusLauncher()
-                    }
                     callbacks.refreshRunningApps()
                     MenuWarmCacheService.shared.frontmostAppDidChange(sourceApp)
-                    if sourceApp.bundleIdentifier == "com.apple.finder" {
-                        callbacks.collapseFinderToIcon()
-                    }
                 }
                 return
             }
@@ -208,9 +225,6 @@ final class MenuExecutionCoordinator {
                     return
                 }
 
-                if !isWindowStateAction && !shouldCollapseBeforeExecution {
-                    callbacks.focusLauncher()
-                }
                 callbacks.refreshRunningApps()
                 if let liveApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.processIdentifier == request.sourcePID && !$0.isTerminated
@@ -218,9 +232,6 @@ final class MenuExecutionCoordinator {
                     callbacks.reloadMenu(liveApp)
                 } else {
                     callbacks.clearLiveDockMenuState()
-                }
-                if sourceApp.bundleIdentifier == "com.apple.finder" {
-                    callbacks.collapseFinderToIcon()
                 }
             }
 
@@ -272,6 +283,92 @@ final class MenuExecutionCoordinator {
         return nil
     }
 
+    private static func executePasswordsActionAfterUnlock(
+        path: [String],
+        shortcutChar: String?,
+        shortcutModifiers: Int,
+        app: NSRunningApplication,
+        in pid: pid_t
+    ) async -> Bool {
+        guard !path.isEmpty else { return false }
+        let trimmedShortcut = shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        for attempt in 0..<90 {
+            if Task.isCancelled || app.isTerminated { return false }
+
+            if attempt > 0, attempt.isMultiple(of: 8) {
+                await MainActor.run {
+                    if app.isHidden { app.unhide() }
+                    app.activate(options: [.activateIgnoringOtherApps])
+                }
+            }
+
+            let liveMatch = await waitForExecutableMenuItem(
+                path: path,
+                app: app,
+                in: pid,
+                attempts: 1,
+                pauseNanoseconds: 0
+            )
+
+            if let liveMatch, liveMatch.isEnabled {
+                let liveShortcut = liveMatch.shortcutChar?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let preferredShortcut = trimmedShortcut.isEmpty ? liveShortcut : trimmedShortcut
+                let preferredModifiers =
+                    shortcutModifiers == 0 ? liveMatch.shortcutModifiers : shortcutModifiers
+
+                let sentByShortcut =
+                    !preferredShortcut.isEmpty
+                    && AXMenuReader.shared.executeShortcut(
+                        char: preferredShortcut,
+                        modifiers: preferredModifiers,
+                        in: pid
+                    )
+
+                let sentByMenu =
+                    !sentByShortcut
+                    && AXMenuReader.shared.clickMenuItem(path: liveMatch.path, in: pid)
+
+                if sentByShortcut || sentByMenu {
+                    if attempt > 0 {
+                        return true
+                    }
+                    await MainActor.run {
+                        AppToast.show(
+                            "Unlock Passwords to continue",
+                            icon: "lock.open",
+                            tint: .secondary
+                        )
+                    }
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    continue
+                }
+            }
+
+            if attempt == 0 {
+                await MainActor.run {
+                    AppToast.show(
+                        "Unlock Passwords to continue",
+                        icon: "lock.open",
+                        tint: .secondary
+                    )
+                }
+            }
+
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        await MainActor.run {
+            AppToast.show(
+                "Passwords action timed out",
+                icon: "exclamationmark.triangle",
+                tint: .orange.opacity(0.9)
+            )
+        }
+        return true
+    }
+
     private static func menuPathMatches(_ item: AXMenuItem, targetPath: [String]) -> Bool {
         let normalizedTarget = normalizedMenuPathForMatching(targetPath)
         let normalizedItem = normalizedMenuPathForMatching(item.path)
@@ -293,11 +390,18 @@ final class MenuExecutionCoordinator {
     private static func isQuitMenuPath(_ path: [String]) -> Bool {
         guard let last = path.last else { return false }
         let normalized = normalizedMenuText(last)
-        return normalized == "quit" || normalized.hasPrefix("quit ")
+        return (normalized == "quit" || normalized.hasPrefix("quit "))
+            && !normalized.contains("keep")
     }
 
     private static func isPasteMenuPath(_ path: [String]) -> Bool {
         normalizedMenuText(path.last ?? "") == "paste"
+    }
+
+    private static func isPasswordsApp(_ app: NSRunningApplication) -> Bool {
+        let bundle = app.bundleIdentifier?.lowercased() ?? ""
+        let name = app.localizedName?.lowercased() ?? ""
+        return bundle.contains("password") || name == "passwords"
     }
 
     private static func isCloseWindowMenuPath(_ path: [String]) -> Bool {
@@ -333,15 +437,6 @@ final class MenuExecutionCoordinator {
             || joined.contains("extract")
     }
 
-    private static func isWindowStateAction(_ path: [String]) -> Bool {
-        let name = path.last?.lowercased() ?? ""
-        let root = path.first?.lowercased() ?? ""
-        return name.contains("full screen") || name.contains("fullscreen")
-            || name.contains("minimize") || name.contains("minimise")
-            || name == "zoom" || name.contains("slideshow")
-            || root == "window"
-    }
-
     private static func shouldPreferDirectWindowManagementAction(_ path: [String]) -> Bool {
         let normalizedPath = path.map(normalizedMenuText)
         guard let title = normalizedPath.last else { return false }
@@ -356,6 +451,31 @@ final class MenuExecutionCoordinator {
             || title == "top bottom" || title == "bottom top"
             || title == "quarters" || title.contains("previous size")
             || title == "bring all to front" || title.hasPrefix("switch window")
+    }
+
+    /// Minimized windows are often missing from kAXWindows, so the AX
+    /// unminimize pass can silently no-op. When the app ends up frontmost with
+    /// no on-screen window, send a Dock-style reopen — macOS then restores the
+    /// last minimized window, exactly like clicking the Dock icon.
+    nonisolated static func restoreWindowIfAllMinimized(_ app: NSRunningApplication) async {
+        let pid = app.processIdentifier
+        let hasVisibleWindow: Bool = {
+            guard
+                let info = CGWindowListCopyWindowInfo(
+                    [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+                ) as? [[String: Any]]
+            else { return true }
+            return info.contains { entry in
+                (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid
+                    && (entry[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
+            }
+        }()
+        guard !hasVisibleWindow, let bundleURL = app.bundleURL else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        _ = try? await NSWorkspace.shared.openApplication(
+            at: bundleURL, configuration: configuration)
+        try? await Task.sleep(nanoseconds: 250_000_000)
     }
 
     private static func unminimizeWindows(pid: pid_t) {

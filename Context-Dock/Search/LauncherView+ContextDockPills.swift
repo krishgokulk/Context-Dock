@@ -599,6 +599,12 @@ extension LauncherView {
         for item in items {
             let normalizedTitle = normalizedDockPillText(item.title)
             guard !excludingTitles.contains(normalizedTitle) else { continue }
+            let isOpenWithMenu =
+                normalizedTitle == "open with"
+                || item.path.contains { normalizedDockPillText($0) == "open with" }
+            if openWithFilter != nil, isOpenWithMenu, normalizedTitle != "open with" {
+                continue
+            }
 
             let path = item.path
             let sourcePID = item.sourcePID
@@ -636,16 +642,13 @@ extension LauncherView {
             pill.sourceAppName = "Finder"
             pill.menuContext = menuContextLabel(from: item.path)
             pill.rankingKind = "finderMenu"
-            pill.isEnabled = item.isEnabled
-            pill.hasLiveAvailability = false
+            pill.isEnabled = isOpenWithMenu && normalizedTitle != "open with" ? true : item.isEnabled
+            pill.hasLiveAvailability = isOpenWithMenu && normalizedTitle != "open with"
             pill.trackingIdentifier =
                 "finder-menu:\(path.joined(separator: " > ").lowercased())"
             pill.searchTerms = item.path + ["finder", "files", "selection"]
             pills.append(pill)
 
-            let isOpenWithMenu =
-                normalizedTitle == "open with"
-                || item.path.contains { normalizedDockPillText($0) == "open with" }
             if false, let openWithFilter, isOpenWithMenu, !item.children.isEmpty {
                 let children = leafOpenWithChildren(for: item, filter: openWithFilter)
                 for child in children {
@@ -748,7 +751,7 @@ extension LauncherView {
             return
         }
 
-        collapseDockAfterResultExecution()
+        hideLauncherAfterResultExecution()
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -843,10 +846,10 @@ extension LauncherView {
 
     // MARK: - Cross-app / clipboard / session pill helpers
 
-    /// Native share sheet entry for active global selections. This is intentionally
+    /// Native share sheet entry for active selections in either scope. This is intentionally
     /// cache/context based only; it must not trigger live menu or AX reads while typing.
     func buildGlobalSelectionSharePills(query q: String) -> [DockPill] {
-        guard isGlobalContextActive, hasActiveDockContextSelection else { return [] }
+        guard hasActiveDockContextSelection else { return [] }
         let normalizedQuery = normalizedDockPillText(q)
         if !normalizedQuery.isEmpty {
             let shareTerms = ["share", "send", "airdrop", "export", "message", "mail"]
@@ -858,7 +861,7 @@ extension LauncherView {
         }
 
         let context = effectiveAXContextForConversation()
-        guard !ShareIntentRouter.shared.shareItems(for: context).isEmpty else { return [] }
+        guard !ShareIntentRouter.shared.shareableItems(for: context).isEmpty else { return [] }
 
         let badge: String = {
             switch activeSelection {
@@ -873,7 +876,7 @@ extension LauncherView {
             }
         }()
         var pill = DockPill(
-            id: "global-selection-share",
+            id: "selection-share",
             name: "Share Selection",
             icon: "square.and.arrow.up",
             accentColorName: "blue",
@@ -881,11 +884,48 @@ extension LauncherView {
             execute: { showShareSheetForContext() }
         )
         pill.rankingKind = "payload"
-        pill.trackingIdentifier = "global-selection-share"
+        pill.trackingIdentifier = "selection-share"
         pill.searchTerms = [
             "share", "send", "airdrop", "export", "selection", "files", "text", "url",
         ]
         return [pill]
+    }
+
+    /// Selection is additive in Context Dock: these AI actions sit beside normal app menus.
+    func buildContextDockSelectionAIPills(query q: String) -> [DockPill] {
+        guard !isGlobalContextActive, !aiMode.isActive else { return [] }
+        guard case .text(let selectedText) = activeSelection, !selectedText.isEmpty else { return [] }
+
+        let normalizedQuery = normalizedDockPillText(q)
+        let actions: [(name: String, icon: String, prompt: String)] = [
+            ("Explain", "text.magnifyingglass", "Explain the selected text"),
+            ("Summarize", "text.alignleft", "Summarize the selected text"),
+            ("Rewrite", "pencil.line", "Rewrite the selected text clearly"),
+            ("Translate", "character.book.closed", "Translate the selected text"),
+        ]
+
+        return actions.compactMap { action in
+            let searchable = normalizedDockPillText("\(action.name) \(action.prompt)")
+            guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+            var pill = DockPill(
+                id: "context-selection-ai-\(action.name.lowercased())",
+                name: action.name,
+                icon: action.icon,
+                accentColorName: "purple",
+                badge: "Selected text · \(selectedText.count) chars",
+                execute: {
+                    aiMode.isActive = true
+                    searchState.query = action.prompt
+                    DispatchQueue.main.async { submitAIQuery() }
+                }
+            )
+            pill.rankingKind = "selectionAI"
+            pill.sourceBundleId = axContext.bundleId
+            pill.sourceAppName = axContext.appName
+            pill.trackingIdentifier = "context-selection-ai:\(action.name.lowercased())"
+            pill.searchTerms = [action.name, action.prompt, "selected text", "ai"]
+            return pill
+        }
     }
 
     /// Pills for apps that can receive the current context (URL, text, file).
@@ -1142,7 +1182,7 @@ extension LauncherView {
         }
     }
 
-    func normalizedDockPillText(_ text: String) -> String {
+    nonisolated func normalizedDockPillText(_ text: String) -> String {
         let lowered = text.lowercased()
         let mapped = lowered.unicodeScalars.map { scalar -> Character in
             if CharacterSet.alphanumerics.contains(scalar)
@@ -1188,6 +1228,23 @@ extension LauncherView {
         item.isAppleMenu
             || menuContextLabel(from: item.path) == "Apple Menu"
             || item.path.first == "Apple"
+    }
+
+    nonisolated func isApplicationMenuItem(_ item: AXMenuItem, appName: String) -> Bool {
+        let normalizedAppName = normalizedDockPillText(appName)
+        guard !normalizedAppName.isEmpty,
+            let root = item.path.first.map(normalizedDockPillText),
+            !root.isEmpty
+        else { return false }
+        return root == normalizedAppName
+    }
+
+    nonisolated func isRejectedTopMenuItem(_ item: AXMenuItem, appName: String) -> Bool {
+        isAppleMenuItem(item)
+    }
+
+    func menuItemsVisibleInActiveDockMode(_ items: [AXMenuItem]) -> [AXMenuItem] {
+        items.filter { !isAppleMenuItem($0) }
     }
 
     /// macOS-style dock magnification scale for a pill at `index`.
@@ -1260,6 +1317,8 @@ extension LauncherView {
     func dockPillKindBaseScore(_ pill: DockPill) -> Double {
         switch pill.rankingKind {
         case "appLaunch": return 136
+        case "appSwitch": return 134
+        case "nativeWindow": return 132
         case "semanticIntent": return 128
         case "finderCurrent": return 114
         case "finderSearch": return 104

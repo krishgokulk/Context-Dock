@@ -5,12 +5,21 @@
 // Completely isolated per app — Safari menus never mix with Xcode menus.
 //
 // Tier 1: Keyword score ≥ threshold → click instantly, zero AI
-// Tier 2: Low confidence → on-device AI picks from top candidates (tiny prompt)
+// Tier 2: Low confidence → on-device AI picks from top candidates (structured output)
 // Tier 3: Not a menu action → returns nil, caller falls through to normal AI
+//
+// Tier 2 uses FoundationModels @Generable so the model is constrained to emit
+// { index: Int?, noMatch: Bool } — no text parsing, no hallucinated numbers.
 
 import AppKit
 import Foundation
 import SwiftUI
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
+
+// MARK: - Router
 
 @MainActor
 final class MenuIntentRouter {
@@ -32,7 +41,7 @@ final class MenuIntentRouter {
         }
         guard !candidates.isEmpty else { return nil }
         let shortList = candidates.prefix(10).map { $0.item }
-        return await askOnDeviceAI(query: query, candidates: shortList)
+        return await disambiguate(query: query, candidates: shortList)
     }
 
     /// Try to resolve `query` as a menu action for `app`.
@@ -50,7 +59,6 @@ final class MenuIntentRouter {
     }
 
     private func scoredCandidates(query: String, bundleID: String, pid: pid_t) -> [ScoredItem] {
-        // Pull from persistent cache first (works even if app is closed)
         let cached = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID,
             appName: "",
@@ -59,13 +67,11 @@ final class MenuIntentRouter {
             maxResults: 20
         )
 
-        // If app is live, also do a quick live AX search and merge
         var liveItems: [AXMenuItem] = []
         if pid > 0 {
             liveItems = AXMenuReader.shared.searchMenuItems(query: query, in: pid, maxResults: 10)
         }
 
-        // Merge: prefer live items (they have real AX elements for clicking)
         var seen = Set<String>()
         var merged: [AXMenuItem] = []
         for item in liveItems + cached {
@@ -77,7 +83,6 @@ final class MenuIntentRouter {
         let tokens = q.split(separator: " ").map(String.init).filter { $0.count > 2 }
 
         return merged.compactMap { item -> ScoredItem? in
-            // Skip submenu containers (non-leaf) and currently-disabled items
             guard item.children.isEmpty else { return nil }
             guard item.isEnabled else { return nil }
 
@@ -85,13 +90,11 @@ final class MenuIntentRouter {
             let path  = AppMenuCapabilityCache.normalize(item.pathString)
             var score = 0
 
-            // Exact / prefix / contains on title
             if title == q            { score += 100 }
             else if title.hasPrefix(q) { score += 75  }
             else if title.contains(q)  { score += 55  }
             else if path.contains(q)   { score += 35  }
 
-            // Per-token scoring
             for token in tokens {
                 if title == token            { score += 40 }
                 else if title.hasPrefix(token) { score += 28 }
@@ -104,9 +107,57 @@ final class MenuIntentRouter {
         }.sorted { $0.score > $1.score }
     }
 
-    // MARK: - On-device AI disambiguation (tiny prompt)
+    // MARK: - Disambiguation
 
-    private func askOnDeviceAI(query: String, candidates: [AXMenuItem]) async -> AXMenuItem? {
+    /// Routes to FoundationModels structured output on macOS 26+,
+    /// falls back to cloud sendPureChat on earlier OS or unavailable model.
+    private func disambiguate(query: String, candidates: [AXMenuItem]) async -> AXMenuItem? {
+#if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            return await askOnDeviceStructured(query: query, candidates: candidates)
+        }
+#endif
+        return await askCloudAI(query: query, candidates: candidates)
+    }
+
+    // MARK: - FoundationModels structured picker (macOS 26+)
+
+#if canImport(FoundationModels)
+    @available(macOS 26.0, *)
+    private func askOnDeviceStructured(query: String, candidates: [AXMenuItem]) async -> AXMenuItem? {
+        let list = candidates.enumerated()
+            .map { "\($0.offset + 1). \($0.element.pathString)" }
+            .joined(separator: "\n")
+
+        // Instructions force the model to emit ONLY a number or the word "none".
+        // Using generating: String.self constrains the output to a short string —
+        // the model cannot produce multi-sentence explanations.
+        let instructions = """
+        You select the best matching macOS menu item for the user's request.
+        Reply with ONLY a single integer (the 1-based index) or the word none.
+        No punctuation, no explanation, no other text.
+        """
+
+        let prompt = "User said: \"\(query)\"\n\nMenu items:\n\(list)"
+
+        do {
+            let session = LanguageModelSession(instructions: instructions)
+            let response = try await session.respond(to: prompt, generating: String.self)
+            let choice = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard choice.lowercased() != "none",
+                  let idx = Int(choice),
+                  idx >= 1, idx <= candidates.count
+            else { return nil }
+            return candidates[idx - 1]
+        } catch {
+            return await askCloudAI(query: query, candidates: candidates)
+        }
+    }
+#endif
+
+    // MARK: - Cloud AI fallback (text parse)
+
+    private func askCloudAI(query: String, candidates: [AXMenuItem]) async -> AXMenuItem? {
         let list = candidates.enumerated()
             .map { "\($0.offset + 1). \($0.element.pathString)" }
             .joined(separator: "\n")
@@ -127,7 +178,6 @@ final class MenuIntentRouter {
                         cont.resume(returning: nil)
                         return
                     }
-                    // Parse the number
                     if let n = Int(trimmed.components(separatedBy: .whitespaces).first ?? ""),
                        n >= 1, n <= candidates.count {
                         cont.resume(returning: candidates[n - 1])
@@ -144,7 +194,6 @@ final class MenuIntentRouter {
 
     private func click(item: AXMenuItem, app: NSRunningApplication) -> String {
         if item.isChecked {
-            // Item is already toggled on — inform instead of executing silently
             AppToast.show("Already on: \(item.pathString)", icon: "checkmark.circle.fill",
                           tint: .green, centered: true)
             return item.pathString

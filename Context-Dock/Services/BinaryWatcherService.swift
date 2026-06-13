@@ -131,10 +131,10 @@ class BinaryWatcherService: ObservableObject {
             process.standardError  = Pipe()  // suppress errors silently
             guard (try? process.run()) != nil else { return "" }
             // 3-second timeout so a broken shell profile doesn't hang startup
-            let deadline = DispatchTime.now() + .seconds(3)
-            let sema = DispatchSemaphore(value: 0)
-            process.terminationHandler = { _ in sema.signal() }
-            _ = sema.wait(timeout: deadline)
+            let deadline = Date().addingTimeInterval(3)
+            while process.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
             if process.isRunning { process.terminate() }
             let data = outPipe.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)?

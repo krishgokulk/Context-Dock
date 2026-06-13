@@ -79,8 +79,8 @@ final class ExtensionRegistry {
 
     private let manager: LayeredExtensionManager
 
-    init(manager: LayeredExtensionManager = .shared) {
-        self.manager = manager
+    init(manager: LayeredExtensionManager? = nil) {
+        self.manager = manager ?? .shared
     }
 
     var manifests: [ExtensionManifest] {
@@ -94,8 +94,8 @@ final class ExtensionMatcher {
 
     private let registry: ExtensionRegistry
 
-    init(registry: ExtensionRegistry = .shared) {
-        self.registry = registry
+    init(registry: ExtensionRegistry? = nil) {
+        self.registry = registry ?? .shared
     }
 
     func matching(_ context: ExtensionContext) -> [ExtensionManifest] {
@@ -120,16 +120,17 @@ final class ExtensionAIAdapter {
     private let planner: AIActionPlanner
     private let router: AIProviderRouter
 
-    init(planner: AIActionPlanner = .shared, router: AIProviderRouter = .shared) {
-        self.planner = planner
-        self.router = router
+    init(planner: AIActionPlanner? = nil, router: AIProviderRouter? = nil) {
+        self.planner = planner ?? .shared
+        self.router = router ?? .shared
     }
 
     func execute(_ manifest: ExtensionManifest, context: ExtensionContext) async throws -> String {
         try await router.send(
-            AIProviderRequest(
-                message: planner.prompt(for: manifest, context: context),
-                context: context.userContext
+            AIRequest(
+                text: planner.prompt(for: manifest, context: context),
+                context: context.userContext,
+                source: .extensionSystem
             )
         )
     }
@@ -143,11 +144,11 @@ final class ExtensionRunner {
     private let aiAdapter: ExtensionAIAdapter
 
     init(
-        manager: LayeredExtensionManager = .shared,
-        aiAdapter: ExtensionAIAdapter = .shared
+        manager: LayeredExtensionManager? = nil,
+        aiAdapter: ExtensionAIAdapter? = nil
     ) {
-        self.manager = manager
-        self.aiAdapter = aiAdapter
+        self.manager = manager ?? .shared
+        self.aiAdapter = aiAdapter ?? .shared
     }
 
     func execute(_ manifest: ExtensionManifest, context: ExtensionContext) async throws -> String {

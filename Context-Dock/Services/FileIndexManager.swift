@@ -161,9 +161,8 @@ final class FileIndexManager: ObservableObject {
         scored.sort { $0.1 > $1.1 }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         return scored.prefix(limit).map { (file, _) in
-            let icon = (NSWorkspace.shared.icon(forFile: file.path).copy() as? NSImage)
+            let icon = ThumbnailGenerator.shared.getThumbnailSync(for: file.path)
                 ?? NSWorkspace.shared.icon(forFile: file.path)
-            icon.size = NSSize(width: 32, height: 32)
             let displayPath = file.path.replacingOccurrences(of: homeDir, with: "~")
             let resultType: SearchResult.ResultType = file.isDirectory ? .folder :
                 (file.fileExtension.isEmpty ? .file : .document)
@@ -274,13 +273,19 @@ final class FileIndexManager: ObservableObject {
 
         let center = NotificationCenter.default
         observers.append(
-            center.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: q, queue: .main) { [weak self] _ in
-                self?.ingestResults(from: q)
+            center.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: q, queue: .main) { [weak self] notification in
+                guard let query = notification.object as? NSMetadataQuery else { return }
+                MainActor.assumeIsolated {
+                    self?.ingestResults(from: query)
+                }
             }
         )
         observers.append(
-            center.addObserver(forName: .NSMetadataQueryDidUpdate, object: q, queue: .main) { [weak self] _ in
-                self?.ingestResults(from: q)
+            center.addObserver(forName: .NSMetadataQueryDidUpdate, object: q, queue: .main) { [weak self] notification in
+                guard let query = notification.object as? NSMetadataQuery else { return }
+                MainActor.assumeIsolated {
+                    self?.ingestResults(from: query)
+                }
             }
         )
 

@@ -15,9 +15,10 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
     case aiPrompts       = "AI Prompts"
     case cliTools        = "CLI Tools"
     case contextTriggers = "Context Triggers"
-    case appActions      = "App Actions"
+    case appActions      = "FrontmostApp Actions"
+    case clipboardActions = "Clipboard Actions"
     case menuCache       = "Menu Cache"
-    case systemCommands  = "System Commands"
+    case systemCommands  = "Global Actions"
 
     var id: String { rawValue }
 
@@ -28,6 +29,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return "terminal.fill"
         case .contextTriggers: return "scope"
         case .appActions:      return "app.connected.to.app.below.fill"
+        case .clipboardActions: return "doc.on.clipboard.fill"
         case .menuCache:       return "menubar.rectangle"
         case .systemCommands:  return "slider.horizontal.3"
         }
@@ -40,6 +42,7 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .cliTools:        return .green
         case .contextTriggers: return .red
         case .appActions:      return .teal
+        case .clipboardActions: return .blue
         case .menuCache:       return .cyan
         case .systemCommands:  return .indigo
         }
@@ -51,9 +54,10 @@ enum AutomationCategory: String, CaseIterable, Identifiable {
         case .aiPrompts:       return "AI prompt templates with context variables"
         case .cliTools:        return "CLI binaries callable by the AI terminal"
         case .contextTriggers: return "Rules that fire based on screen context"
-        case .appActions:      return "User-owned actions bound to installed apps"
+        case .appActions:      return "Actions bound to the current frontmost app"
+        case .clipboardActions: return "Paste, transform, share, and route clipboard content"
         case .menuCache:       return "Cached app menu snapshots for Global Context"
-        case .systemCommands:  return "Global device controls: volume, appearance, display…"
+        case .systemCommands:  return "CLI tool scopes and global commands"
         }
     }
 }
@@ -73,6 +77,7 @@ private struct AppMenuCacheRowModel: Identifiable {
 // MARK: - Main View
 
 struct AutomationSettingsView: View {
+    private let settingsPage: SettingsPage?
     @ObservedObject private var settings        = AppSettings.shared
     @ObservedObject private var pkgMgr          = TerminalPackageManager.shared
     @ObservedObject private var l2Mgr           = L2ExtensionManager.shared
@@ -96,15 +101,25 @@ struct AutomationSettingsView: View {
     @State private var showPackageSheet = false
     @State private var showRuleSheet = false
     @State private var showAdapterSheet = false
+    @State private var showGlobalCLIPicker = false
+    @State private var showSystemCommandSheet = false
     @State private var showAIImportSheet = false
     @State private var extensionSheetMode: AddAppExtensionSheet.Mode = .script
     @State private var showingImportPanel = false
 
+    init(settingsPage: SettingsPage? = nil) {
+        self.settingsPage = settingsPage
+        let initialCategory = settingsPage?.automationCategory ?? .appActions
+        _selectedCategory = State(initialValue: initialCategory)
+    }
+
     var body: some View {
         HSplitView {
-            // ── Column 1: Category sidebar ───────────────────────────
-            sidebar
-                .frame(minWidth: 200, idealWidth: 220, maxWidth: 240)
+            if settingsPage == nil {
+                // ── Column 1: Category sidebar ───────────────────────────
+                sidebar
+                    .frame(minWidth: 200, idealWidth: 220, maxWidth: 240)
+            }
 
             if showingImportPanel {
                 // ── Import panel (full width, replaces col 2+3) ──────
@@ -151,6 +166,22 @@ struct AutomationSettingsView: View {
                 }
             }
         }
+        .sheet(isPresented: $showGlobalCLIPicker) {
+            GlobalCLIToolPickerSheet { package in
+                settings.pinCLITool(package.command)
+                focusOnGlobalCLIScope(package.id)
+                showGlobalCLIPicker = false
+            }
+        }
+        .sheet(isPresented: $showSystemCommandSheet) {
+            SystemCommandCreateSheet { command in
+                sysRegistry.add(command)
+                clearSelection()
+                selectedCategory = .systemCommands
+                selectedSystemCommandID = command.id
+                showSystemCommandSheet = false
+            }
+        }
         .sheet(isPresented: $showAIImportSheet) {
             AIExtensionImportSheet { importedExtension in
                 LayeredExtensionManager.shared.addExtension(importedExtension.makeILExtension())
@@ -164,12 +195,52 @@ struct AutomationSettingsView: View {
             }
         }
         .onAppear {
+            applySettingsPage(settingsPage)
             pkgMgr.loadPackages()
             Task { await l2Mgr.loadExtensions() }
         }
+        .onChange(of: settingsPage) { _, newValue in
+            applySettingsPage(newValue)
+        }
         .task {
+            guard shouldLoadAppCatalog else { return }
             await loadInstalledAppsCatalogIfNeeded()
             reloadMenuCacheSummaries()
+        }
+        .onChange(of: selectedExtensionID) { _, newValue in
+            guard newValue != nil else { return }
+            selectedPackageID = nil
+            selectedSystemCommandID = nil
+            selectedAdapterID = nil
+            selectedAdapterActionID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
+        }
+        .onChange(of: selectedPackageID) { _, newValue in
+            guard newValue != nil else { return }
+            selectedExtensionID = nil
+            selectedSystemCommandID = nil
+            selectedAdapterID = nil
+            selectedAdapterActionID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
+        }
+        .onChange(of: selectedSystemCommandID) { _, newValue in
+            guard newValue != nil else { return }
+            selectedPackageID = nil
+            selectedExtensionID = nil
+            selectedAdapterID = nil
+            selectedAdapterActionID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
+        }
+        .onChange(of: selectedAdapterID) { _, newValue in
+            guard newValue != nil else { return }
+            selectedPackageID = nil
+            selectedSystemCommandID = nil
+            selectedExtensionID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
         }
     }
 
@@ -255,7 +326,7 @@ struct AutomationSettingsView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.tertiary)
                     .font(.system(size: 11))
-                TextField("Search \(selectedCategory.rawValue.lowercased())…", text: $searchText)
+                TextField("Search \(searchPlaceholder)…", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                 if !searchText.isEmpty {
@@ -278,6 +349,7 @@ struct AutomationSettingsView: View {
             case .cliTools:        cliList
             case .contextTriggers: triggerList
             case .appActions:      adapterList
+            case .clipboardActions: clipboardActionsList
             case .menuCache:       menuCacheList
             case .systemCommands:  systemCommandList
             }
@@ -330,6 +402,9 @@ struct AutomationSettingsView: View {
                 appActionsEmptyDetail
             }
 
+        case .clipboardActions:
+            clipboardActionsEmptyDetail
+
         case .menuCache:
             if let bundleID = selectedMenuCacheBundleID,
                let row = menuCacheRows.first(where: { $0.bundleId == bundleID }) {
@@ -345,7 +420,29 @@ struct AutomationSettingsView: View {
             }
 
         case .systemCommands:
-            SystemCommandDetailView(selectedID: $selectedSystemCommandID)
+            if settingsPage == .extensionsCLIToolScope,
+               let id = selectedPackageID,
+               let pkg = pkgMgr.packages.first(where: { $0.id == id }) {
+                GlobalCLIScopeDetailView(package: pkg) {
+                    settings.unpinCLITool(pkg.command)
+                    selectedPackageID = filteredGlobalCLIToolScopes.first?.id
+                    selectedSystemCommandID = nil
+                }
+            } else if settingsPage == .extensionsCLIToolScope {
+                emptyDetail(icon: "terminal.fill", label: "Select a CLI tool")
+            } else if settingsPage == .extensionsGlobalWithoutSelection {
+                SystemCommandDetailView(selectedID: $selectedSystemCommandID)
+            } else if let id = selectedPackageID,
+                let pkg = pkgMgr.packages.first(where: { $0.id == id })
+            {
+                GlobalCLIScopeDetailView(package: pkg) {
+                    settings.unpinCLITool(pkg.command)
+                    selectedPackageID = filteredGlobalCLIToolScopes.first?.id
+                    selectedSystemCommandID = nil
+                }
+            } else {
+                SystemCommandDetailView(selectedID: $selectedSystemCommandID)
+            }
         }
     }
 
@@ -442,16 +539,13 @@ struct AutomationSettingsView: View {
     // Adapters with at least one non-cliTool action → shown under "Apps"
     private var filteredAppAdapters: [AppAdapter] {
         filteredAdapters.filter { adapter in
-            adapter.actions.isEmpty || adapter.actions.contains { $0.type != .cliTool }
+            !adapter.bundleId.lowercased().hasPrefix("cli://")
+                && (adapter.actions.isEmpty || adapter.actions.contains { $0.type != .cliTool })
         }
     }
 
     // Adapters where every action is a cliTool → shown under "CLI Tools"
-    private var filteredCLIAdapters: [AppAdapter] {
-        filteredAdapters.filter { adapter in
-            !adapter.actions.isEmpty && adapter.actions.allSatisfy { $0.type == .cliTool }
-        }
-    }
+    private var filteredCLIAdapters: [AppAdapter] { [] }
 
     private var adapterList: some View {
         Group {
@@ -481,6 +575,10 @@ struct AutomationSettingsView: View {
         }
     }
 
+    private var clipboardActionsList: some View {
+        listEmpty(icon: "doc.on.clipboard.fill", label: "Clipboard actions coming next", action: nil)
+    }
+
     private var menuCacheList: some View {
         Group {
             if filteredMenuCacheRows.isEmpty {
@@ -507,29 +605,122 @@ struct AutomationSettingsView: View {
 
     private var systemCommandList: some View {
         Group {
-            if sysRegistry.commands.isEmpty {
-                listEmpty(icon: "slider.horizontal.3", label: "No system commands", action: {})
-            } else {
-                let cmds: [SystemCommand] = searchText.isEmpty
-                    ? sysRegistry.commands
-                    : sysRegistry.commands.filter { $0.name.localizedCaseInsensitiveContains(searchText) || $0.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) } }
-                List(selection: $selectedSystemCommandID) {
-                    ForEach(cmds) { cmd in
-                        AutomationRow(
-                            icon: cmd.icon,
-                            color: AutomationCategory.systemCommands.color,
-                            title: cmd.name,
-                            subtitle: cmd.description,
-                            isEnabled: cmd.isEnabled
-                        )
-                        .tag(cmd.id)
+            let cliScopes = filteredGlobalCLIToolScopes
+            let cmds = filteredSystemCommands
+            switch settingsPage {
+            case .extensionsCLIToolScope:
+                if cliScopes.isEmpty {
+                    listEmpty(icon: "terminal.fill", label: "No pinned CLI tools", action: { showGlobalCLIPicker = true })
+                } else {
+                    List(selection: $selectedPackageID) {
+                        Section("CLI Tool Scopes") {
+                            ForEach(cliScopes) { pkg in
+                                AutomationRow(
+                                    icon: "terminal.fill",
+                                    color: .green,
+                                    title: pkg.command,
+                                    subtitle: cliSubtitle(for: pkg),
+                                    isEnabled: pkg.isEnabled
+                                )
+                                .tag(pkg.id)
+                            }
+                            .onDelete { idx in
+                                let toRemove = idx.map { cliScopes[$0] }
+                                toRemove.forEach { settings.unpinCLITool($0.command) }
+                                if let selectedPackageID,
+                                    toRemove.contains(where: { $0.id == selectedPackageID })
+                                {
+                                    self.selectedPackageID = filteredGlobalCLIToolScopes.first?.id
+                                }
+                            }
+                        }
                     }
-                    .onDelete { idx in
-                        let toRemove = idx.map { cmds[$0] }
-                        toRemove.forEach { sysRegistry.remove($0) }
-                    }
+                    .listStyle(.inset)
                 }
-                .listStyle(.inset)
+
+            case .extensionsGlobalWithoutSelection:
+                if cmds.isEmpty {
+                    listEmpty(icon: "globe", label: "No global commands", action: { showSystemCommandSheet = true })
+                } else {
+                    List(selection: $selectedSystemCommandID) {
+                        globalCommandSection(cmds)
+                    }
+                    .listStyle(.inset)
+                }
+
+            default:
+                if sysRegistry.commands.isEmpty && cliScopes.isEmpty {
+                    listEmpty(icon: "slider.horizontal.3", label: "No global actions", action: { presentCreateFlow() })
+                } else {
+                    List(selection: $selectedSystemCommandID) {
+                        if !cliScopes.isEmpty {
+                            Section("CLI Tool Scopes") {
+                                ForEach(cliScopes) { pkg in
+                                    Button {
+                                        selectedPackageID = pkg.id
+                                        selectedSystemCommandID = nil
+                                    } label: {
+                                        AutomationRow(
+                                            icon: "terminal.fill",
+                                            color: .green,
+                                            title: pkg.command,
+                                            subtitle: "Global CLI scope",
+                                            isEnabled: pkg.isEnabled
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .onDelete { idx in
+                                    let toRemove = idx.map { cliScopes[$0] }
+                                    toRemove.forEach { settings.unpinCLITool($0.command) }
+                                    if let selectedPackageID,
+                                        toRemove.contains(where: { $0.id == selectedPackageID })
+                                    {
+                                        self.selectedPackageID = filteredGlobalCLIToolScopes.first?.id
+                                    }
+                                }
+                            }
+                        }
+                        globalCommandSection(cmds)
+                    }
+                    .listStyle(.inset)
+                }
+            }
+        }
+    }
+
+    private var filteredSystemCommands: [SystemCommand] {
+        guard !searchText.isEmpty else { return sysRegistry.commands }
+        return sysRegistry.commands.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText)
+                || $0.description.localizedCaseInsensitiveContains(searchText)
+                || $0.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+
+    private func globalCommandSection(_ cmds: [SystemCommand]) -> some View {
+        Section("Global Commands") {
+            ForEach(cmds) { cmd in
+                AutomationRow(
+                    icon: cmd.icon,
+                    color: AutomationCategory.systemCommands.color,
+                    title: cmd.name,
+                    subtitle: cmd.description,
+                    isEnabled: cmd.isEnabled
+                )
+                .tag(cmd.id)
+                .onTapGesture {
+                    selectedPackageID = nil
+                }
+            }
+            .onDelete { idx in
+                let toRemove = idx.map { cmds[$0] }
+                toRemove.forEach { sysRegistry.remove($0) }
+                if let selectedSystemCommandID,
+                    toRemove.contains(where: { $0.id == selectedSystemCommandID })
+                {
+                    self.selectedSystemCommandID = sysRegistry.commands.first?.id
+                }
             }
         }
     }
@@ -563,6 +754,33 @@ struct AutomationSettingsView: View {
         return pkgMgr.packages.filter {
             $0.name.localizedCaseInsensitiveContains(searchText) ||
             $0.command.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var filteredGlobalCLIToolScopes: [TerminalPackage] {
+        let scopes = pkgMgr.packages.filter(isUserAddedGlobalCLITool)
+        guard !searchText.isEmpty else { return scopes }
+        return scopes.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText)
+                || $0.command.localizedCaseInsensitiveContains(searchText)
+                || $0.description.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private func isUserAddedGlobalCLITool(_ package: TerminalPackage) -> Bool {
+        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return false }
+        if settings.isCLIToolPinned(command) { return true }
+        let commandKey = command.lowercased()
+        return adapterMgr.adapters.contains { adapter in
+            if adapter.bundleId.lowercased().hasPrefix("cli://") {
+                return adapter.bundleId.lowercased().contains(commandKey)
+                    || adapter.appName.lowercased() == commandKey
+            }
+            return adapter.actions.contains {
+                $0.type == .cliTool
+                    && ($0.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
+            }
         }
     }
 
@@ -627,9 +845,10 @@ struct AutomationSettingsView: View {
         case .aiPrompts:       return promptExtensions.count
         case .cliTools:        return pkgMgr.packages.count
         case .contextTriggers: return settings.axTriggerRules.count
-        case .appActions:      return appActionAdapters.count
+        case .appActions:      return appActionAdapters.filter { !$0.bundleId.lowercased().hasPrefix("cli://") }.count
+        case .clipboardActions: return 0
         case .menuCache:       return menuCacheSummaries.count
-        case .systemCommands:  return sysRegistry.commands.count
+        case .systemCommands:  return sysRegistry.commands.count + filteredGlobalCLIToolScopes.count
         }
     }
 
@@ -660,7 +879,7 @@ struct AutomationSettingsView: View {
             pkgMgr.packages
                 .filter { $0.isEnabled }
                 .flatMap(\.contextAppBundleIds)
-                .filter { !$0.isEmpty }
+                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("cli://") }
         )
 
         let linkedOnlyAdapters = linkedBundleIds.compactMap { bundleId -> AppAdapter? in
@@ -668,7 +887,9 @@ struct AutomationSettingsView: View {
             return syntheticAppActionAdapter(for: bundleId)
         }
 
-        return (customAdapters + linkedOnlyAdapters).sorted { lhs, rhs in
+        return (customAdapters + linkedOnlyAdapters)
+            .filter { !$0.bundleId.lowercased().hasPrefix("cli://") }
+            .sorted { lhs, rhs in
             let appNameOrder = lhs.appName.localizedCaseInsensitiveCompare(rhs.appName)
             if appNameOrder == .orderedSame {
                 return lhs.bundleId.localizedCaseInsensitiveCompare(rhs.bundleId) == .orderedAscending
@@ -696,7 +917,20 @@ struct AutomationSettingsView: View {
     }
 
     private var createButtonTitle: String {
-        selectedCategory == .appActions ? "Choose App or CLI Tool" : "New"
+        if settingsPage == .extensionsCLIToolScope { return "Pin CLI" }
+        if selectedCategory == .appActions { return "Choose App" }
+        return "New"
+    }
+
+    private var shouldLoadAppCatalog: Bool {
+        settingsPage == nil || settingsPage == .frontmostAppAdapters || settingsPage == .advanced
+    }
+
+    private func applySettingsPage(_ page: SettingsPage?) {
+        guard let category = page?.automationCategory else { return }
+        selectedCategory = category
+        showingImportPanel = false
+        clearSelection()
     }
 
     // MARK: Helpers
@@ -704,9 +938,9 @@ struct AutomationSettingsView: View {
     private var itemListHeader: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(selectedCategory.rawValue)
+                Text(itemListTitle)
                     .font(.system(size: 14, weight: .semibold))
-                Text(selectedCategory.subtitle)
+                Text(itemListSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -721,12 +955,20 @@ struct AutomationSettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-            } else {
-                Button(action: { showAIImportSheet = true }) {
-                    Label("Paste AI", systemImage: "doc.on.clipboard")
+            } else if settingsPage == .extensionsGlobalWithoutSelection {
+                Button(action: { showSystemCommandSheet = true }) {
+                    Label("Add Command", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+            } else {
+                if settingsPage != .extensionsGlobalWithoutSelection && settingsPage != .extensionsCLIToolScope {
+                    Button(action: { showAIImportSheet = true }) {
+                        Label("Paste AI", systemImage: "doc.on.clipboard")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
                 Button(action: presentCreateFlow) {
                     Label(createButtonTitle, systemImage: "plus")
                 }
@@ -739,13 +981,68 @@ struct AutomationSettingsView: View {
         .background(Color(NSColor.controlBackgroundColor))
     }
 
+    private var itemListTitle: String {
+        switch settingsPage {
+        case .extensionsGlobalWithSelection: return "Global Actions / With Selection"
+        case .extensionsGlobalWithoutSelection: return "Global Actions / Commands"
+        case .extensionsCLIToolScope: return "CLI Tool Scope"
+        case .frontmostAppAdapters: return "Frontmost App Actions / App Adapters"
+        case .workflows: return "Automation / Workflows"
+        case .shortcutSheetWorkflows: return "Shortcut Sheet Actions"
+        case .advanced: return "Menu Cache"
+        default: return selectedCategory.rawValue
+        }
+    }
+
+    private var itemListSubtitle: String {
+        switch settingsPage {
+        case .extensionsGlobalWithSelection:
+            return "Actions that require selected text, files, URLs, images, or media."
+        case .extensionsGlobalWithoutSelection:
+            return "Always-available system and global commands."
+        case .extensionsCLIToolScope:
+            return "Pinned command-line tools available everywhere."
+        case .frontmostAppAdapters:
+            return "App-specific adapters shown for the frontmost app."
+        case .workflows:
+            return "Context rules and multi-step automation."
+        case .shortcutSheetWorkflows:
+            return "Selection-aware actions for the long-press Command shortcut sheet."
+        case .advanced:
+            return "Developer-facing cache and diagnostics."
+        default:
+            return selectedCategory.subtitle
+        }
+    }
+
+    private var searchPlaceholder: String {
+        switch settingsPage {
+        case .extensionsGlobalWithSelection:
+            return "with-selection actions"
+        case .extensionsGlobalWithoutSelection:
+            return "global commands"
+        case .extensionsCLIToolScope:
+            return "CLI tools"
+        case .frontmostAppAdapters:
+            return "app adapters"
+        case .workflows:
+            return "workflows"
+        case .shortcutSheetWorkflows:
+            return "shortcut sheet actions"
+        case .advanced:
+            return "menu cache"
+        default:
+            return selectedCategory.rawValue.lowercased()
+        }
+    }
+
     private var appActionsEmptyDetail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("App Actions", systemImage: "app.connected.to.app.below.fill")
+                    Label("FrontmostApp Actions", systemImage: "app.connected.to.app.below.fill")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Add custom actions, scripts, and CLI tools for any app. They appear as dock pills when that app is active.")
+                    Text("Add custom actions, scripts, and shortcuts for specific apps. They appear when that app is frontmost.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -759,8 +1056,8 @@ struct AutomationSettingsView: View {
                         .foregroundStyle(.secondary)
 
                     onboardingStep(number: "1", title: "Select an app", detail: "Choose any installed app from the list on the left.")
-                    onboardingStep(number: "2", title: "Add an action", detail: "Click + to add a script, CLI command, or shortcut.")
-                    onboardingStep(number: "3", title: "Use it in the dock", detail: "Switch to that app — your action appears as a pill instantly.")
+                    onboardingStep(number: "2", title: "Add an action", detail: "Click + to add a script, deep link, shortcut, or app automation.")
+                    onboardingStep(number: "3", title: "Use it in the dock", detail: "Switch to that app; the action appears as a pill instantly.")
                 }
 
                 Divider()
@@ -888,6 +1185,45 @@ struct AutomationSettingsView: View {
         }
     }
 
+    private var clipboardActionsEmptyDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Clipboard Actions", systemImage: "doc.on.clipboard.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Build actions that transform, paste, share, summarize, or route copied text, images, files, and URLs.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Planned action types")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    onboardingStep(number: "1", title: "Paste or share", detail: "Send selected clipboard items to the previous frontmost app or native share sheet.")
+                    onboardingStep(number: "2", title: "Transform", detail: "Rewrite, summarize, translate, OCR, or format clipboard content through AI.")
+                    onboardingStep(number: "3", title: "Route", detail: "Open URLs, reveal files, run app actions, or trigger workflows from clipboard matches.")
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Available variables")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    variableRow("{{clipboard}}", "Current clipboard text, OCR text, file paths, or URL")
+                    variableRow("{{clipboard_type}}", "text, image, file, url, or mixed")
+                    variableRow("{{source_app}}", "App that copied the item")
+                    variableRow("{{query}}", "User text typed after choosing clipboard scope")
+                }
+            }
+            .padding(24)
+        }
+    }
+
     private func variableRow(_ variable: String, _ description: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(variable)
@@ -976,10 +1312,16 @@ struct AutomationSettingsView: View {
             showRuleSheet = true
         case .appActions:
             showAdapterSheet = true
+        case .clipboardActions:
+            break
         case .menuCache:
             break
         case .systemCommands:
-            break // system commands are edited inline
+            if settingsPage == .extensionsGlobalWithoutSelection {
+                showSystemCommandSheet = true
+            } else {
+                showGlobalCLIPicker = true
+            }
         }
     }
 
@@ -995,6 +1337,12 @@ struct AutomationSettingsView: View {
         selectedPackageID = id
     }
 
+    private func focusOnGlobalCLIScope(_ id: UUID) {
+        clearSelection()
+        selectedCategory = .systemCommands
+        selectedPackageID = id
+    }
+
     private func focusOnRule(_ id: UUID) {
         clearSelection()
         selectedCategory = .contextTriggers
@@ -1005,6 +1353,37 @@ struct AutomationSettingsView: View {
         clearSelection()
         selectedCategory = .appActions
         selectedAdapterID = id
+    }
+
+    private func removeAppActionAdapter(_ bundleId: String) async {
+        await adapterMgr.deleteAdapter(bundleId: bundleId)
+        await MainActor.run {
+            settings.customAppEntries.removeAll {
+                $0.key == bundleId || $0.appPath == bundleId
+            }
+            settings.appToolExtensions.removeAll { $0.appKey == bundleId }
+            for package in pkgMgr.packages where package.contextAppBundleIds.contains(bundleId) {
+                var updated = package
+                updated.contextAppBundleIds.removeAll { $0 == bundleId }
+                pkgMgr.updatePackage(updated)
+            }
+            if bundleId.hasPrefix("cli://") {
+                let command = String(bundleId.dropFirst("cli://".count))
+                settings.unpinCLITool(command)
+                settings.customAppEntries.removeAll {
+                    $0.key == "cli_\(command)" || $0.appPath == "cli://\(command)"
+                }
+                if let package = pkgMgr.packages.first(where: { $0.command == command }) {
+                    var updated = package
+                    updated.contextAppBundleIds.removeAll {
+                        $0 == bundleId || $0 == "cli_\(command)"
+                    }
+                    pkgMgr.updatePackage(updated)
+                }
+            }
+            selectedAdapterID = nil
+            selectedAdapterActionID = nil
+        }
     }
 
     private func reloadMenuCacheSummaries() {
@@ -2017,6 +2396,206 @@ struct AppCLIToolPickerSheet: View {
     }
 }
 
+struct GlobalCLIToolPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+
+    let onPick: (TerminalPackage) -> Void
+    @State private var searchText = ""
+
+    private var availableTools: [TerminalPackage] {
+        let tools = pkgMgr.packages.filter { package in
+            package.isEnabled && !settings.isCLIToolPinned(package.command)
+        }
+        guard !searchText.isEmpty else { return tools }
+        let q = searchText.localizedLowercase
+        return tools.filter {
+            $0.name.localizedLowercase.contains(q)
+                || $0.command.localizedLowercase.contains(q)
+                || $0.description.localizedLowercase.contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Select CLI Tool")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Add a CLI tool scope to Global Actions.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(16)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search CLI tools...", text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color(NSColor.textBackgroundColor))
+
+            Divider()
+
+            if availableTools.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.tertiary)
+                    Text(pkgMgr.packages.isEmpty ? "No CLI tools yet. Add tools in the CLI Tools section." : "All CLI tools are already in Global Actions.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 280)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
+            } else {
+                List {
+                    ForEach(availableTools, id: \.id) { pkg in
+                        Button {
+                            onPick(pkg)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(Color.green.opacity(0.12))
+                                        .frame(width: 28, height: 28)
+                                    Image(systemName: "terminal.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.green)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(pkg.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    Text(pkg.command)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                                    .foregroundStyle(Color.accentColor)
+                                    .font(.system(size: 14))
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .frame(width: 430, height: 500)
+    }
+}
+
+struct GlobalCLIScopeDetailView: View {
+    @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    let package: TerminalPackage
+    let onRemove: () -> Void
+    @State private var scanning = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.green.opacity(0.12))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.green)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(package.name)
+                            .font(.system(size: 16, weight: .bold))
+                        Text("Global Actions · CLI tool scope")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        onRemove()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                }
+
+                Divider()
+
+                AutomationDetailSection(title: "COMMAND") {
+                    AutomationDetailRow(label: "Command", value: package.command, mono: true)
+                    if let path = package.installedPath, !path.isEmpty {
+                        AutomationDetailRow(label: "Path", value: path, mono: true)
+                    }
+                    if !package.description.isEmpty {
+                        AutomationDetailRow(label: "Description", value: package.description)
+                    }
+                }
+
+                AutomationDetailSection(title: "HELP SCAN") {
+                    HStack(spacing: 10) {
+                        Text((package.helpText?.isEmpty == false)
+                             ? "\(package.subcommands.count) subcommand\(package.subcommands.count == 1 ? "" : "s") scanned"
+                             : "Help not scanned")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            scanning = true
+                            Task {
+                                await pkgMgr.refreshHelpText(for: package.id)
+                                await MainActor.run { scanning = false }
+                            }
+                        } label: {
+                            Label(scanning ? "Scanning..." : "Scan --help", systemImage: "doc.text.magnifyingglass")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(scanning)
+                    }
+
+                    if !package.subcommands.isEmpty {
+                        Text(package.subcommands.prefix(20).joined(separator: "  "))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(4)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
 struct AutomationAdapterDetailView: View {
     let adapter: AppAdapter
     @Binding var selectedActionID: String?
@@ -2167,13 +2746,41 @@ struct AutomationAdapterDetailView: View {
         .alert("Remove \(currentAdapter.appName)?", isPresented: $showDeleteConfirm) {
             Button("Remove", role: .destructive) {
                 Task {
-                    await adapterManager.deleteAdapter(bundleId: currentAdapter.bundleId)
+                    await removeCurrentAdapterEverywhere()
                     await MainActor.run { selectedActionID = nil }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove \(currentAdapter.appName) from App Actions.")
+            Text("This will remove \(currentAdapter.appName) from FrontmostApp Actions.")
+        }
+    }
+
+    private func removeCurrentAdapterEverywhere() async {
+        await adapterManager.deleteAdapter(bundleId: currentAdapter.bundleId)
+        await MainActor.run {
+            AppSettings.shared.customAppEntries.removeAll {
+                $0.key == currentAdapter.bundleId || $0.appPath == currentAdapter.bundleId
+            }
+            AppSettings.shared.appToolExtensions.removeAll { $0.appKey == currentAdapter.bundleId }
+            for package in pkgMgr.packages where package.contextAppBundleIds.contains(currentAdapter.bundleId) {
+                var updated = package
+                updated.contextAppBundleIds.removeAll { $0 == currentAdapter.bundleId }
+                pkgMgr.updatePackage(updated)
+            }
+            if let command = cliCommandForAdapter {
+                AppSettings.shared.unpinCLITool(command)
+                AppSettings.shared.customAppEntries.removeAll {
+                    $0.key == "cli_\(command)" || $0.appPath == "cli://\(command)"
+                }
+                if let package = pkgMgr.packages.first(where: { $0.command == command }) {
+                    var updated = package
+                    updated.contextAppBundleIds.removeAll {
+                        $0 == currentAdapter.bundleId || $0 == "cli_\(command)"
+                    }
+                    pkgMgr.updatePackage(updated)
+                }
+            }
         }
     }
 
@@ -2217,9 +2824,9 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
-                // MARK: App Actions section (non-pageJS)
+                // MARK: FrontmostApp Actions section (non-pageJS)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("App Actions")
+                    Text("FrontmostApp Actions")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
 
@@ -2227,7 +2834,7 @@ struct AutomationAdapterDetailView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(linkedCLITools.isEmpty && browserExtensionActions.isEmpty ? "No actions yet" : "No app actions yet")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Add actions using Open URL / Deep Link, Open File / App, CLI Tool, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
+                            Text("Add actions using Open URL / Deep Link, Open File / App, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                             Button("Add First Action") {
@@ -2460,7 +3067,7 @@ struct AutomationAdapterDetailView: View {
         .alert("Remove \(currentAdapter.appName)?", isPresented: $showDeleteConfirm) {
             Button("Remove", role: .destructive) {
                 Task {
-                    await adapterManager.deleteAdapter(bundleId: currentAdapter.bundleId)
+                    await removeCurrentAdapterEverywhere()
                     await MainActor.run { selectedActionID = nil }
                 }
             }
@@ -2681,6 +3288,7 @@ struct NewAutomationSheet: View {
                     case .cliTools:        cliForm
                     case .contextTriggers: triggerForm
                     case .appActions:      appActionsInfo
+                    case .clipboardActions: appActionsInfo
                     case .menuCache:       appActionsInfo
                     case .systemCommands:  appActionsInfo
                     }
@@ -2801,10 +3409,10 @@ struct NewAutomationSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: "info.circle.fill")
                     .foregroundStyle(.teal)
-                Text("Create app-specific actions from the App Actions section.")
+                Text("Create app-specific actions from the FrontmostApp Actions section.")
                     .font(.system(size: 13))
             }
-            Text("Use App Actions to bind your own scripts, deep links, file openers, shell commands, AppleScript, and JXA actions to any installed app.")
+            Text("Use FrontmostApp Actions to bind your own scripts, deep links, file openers, shell commands, AppleScript, and JXA actions to any installed app.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .padding(10)
@@ -2822,6 +3430,7 @@ struct NewAutomationSheet: View {
         case .cliTools:        return !cliName.isEmpty && !cliCommand.isEmpty
         case .contextTriggers: return !ruleName.isEmpty
         case .appActions:      return false
+        case .clipboardActions: return false
         case .menuCache:       return false
         case .systemCommands:  return false
         }
@@ -2859,6 +3468,8 @@ struct NewAutomationSheet: View {
             settings.addAXRule(rule)
 
         case .appActions:
+            break
+        case .clipboardActions:
             break
         case .menuCache:
             break
@@ -3381,11 +3992,13 @@ private struct AppActionSamplesSection: View {
 enum ImportDestination: String, CaseIterable {
     case globalContext = "Global Context"
     case contextDock   = "Context Dock"
+    case shortcutSheet = "Shortcut Sheet"
 
     var icon: String {
         switch self {
         case .globalContext: return "globe"
         case .contextDock:   return "dock.rectangle"
+        case .shortcutSheet: return "command.square"
         }
     }
 
@@ -3393,13 +4006,15 @@ enum ImportDestination: String, CaseIterable {
         switch self {
         case .globalContext: return .purple
         case .contextDock:   return .blue
+        case .shortcutSheet: return .red
         }
     }
 
     var subtitle: String {
         switch self {
-        case .globalContext: return "Runs on selected text or content in any app"
+        case .globalContext: return "Always-available command from global search"
         case .contextDock:   return "Auto-shows dock pill when URL, app, or file matches"
+        case .shortcutSheet: return "Appears on long-press Command selection sheet"
         }
     }
 
@@ -3407,6 +4022,7 @@ enum ImportDestination: String, CaseIterable {
         switch self {
         case .globalContext: return "→ saved as Script"
         case .contextDock:   return "→ saved as Context Trigger"
+        case .shortcutSheet: return "→ saved as Shortcut Sheet Action"
         }
     }
 }
@@ -3459,11 +4075,14 @@ struct AutomationImportPanel: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var jsonText = ""
     @State private var parsed: SimpleAIExtensionImport? = nil
+    @State private var parsedSystemCommands: [SystemCommand] = []
+    @State private var parsedAppAdapter: AppAdapter? = nil
     @State private var parseError: String? = nil
     @State private var destination: ImportDestination = .contextDock
     @State private var didImport = false
     @State private var importedName = ""
     @State private var importedDest: ImportDestination = .contextDock
+    @State private var showCreateExtensionSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -3482,7 +4101,7 @@ struct AutomationImportPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Import Extension")
                         .font(.system(size: 14, weight: .bold))
-                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context or Context Dock")
+                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context, Context Dock, or Shortcut Sheet")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -3490,6 +4109,12 @@ struct AutomationImportPanel: View {
                     Button("Clear") { resetPanel() }
                         .buttonStyle(.bordered).controlSize(.small).tint(.red)
                 }
+                Button(action: { showCreateExtensionSheet = true }) {
+                    Label("Create Extension", systemImage: "plus")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 Button(action: pasteFromClipboard) {
                     Label("Paste", systemImage: "doc.on.clipboard").font(.system(size: 11))
                 }
@@ -3518,7 +4143,7 @@ struct AutomationImportPanel: View {
                                 }
                             }
 
-                            if parsed != nil {
+                            if parsed != nil || !parsedSystemCommands.isEmpty || parsedAppAdapter != nil {
                                 HStack(spacing: 4) {
                                     Image(systemName: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
                                     Text("Auto-detected from triggers")
@@ -3533,7 +4158,7 @@ struct AutomationImportPanel: View {
                                 Text("JSON PAYLOAD")
                                     .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
                                 Spacer()
-                                if parsed != nil {
+                                if parsed != nil || !parsedSystemCommands.isEmpty || parsedAppAdapter != nil {
                                     Label("Valid", systemImage: "checkmark.circle.fill")
                                         .font(.caption).foregroundStyle(.green)
                                 } else if parseError != nil && !jsonText.isEmpty {
@@ -3558,13 +4183,30 @@ struct AutomationImportPanel: View {
                             .background(Color(NSColor.textBackgroundColor),
                                         in: RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-                                parsed != nil ? .green.opacity(0.5) :
+                                (parsed != nil || !parsedSystemCommands.isEmpty || parsedAppAdapter != nil) ? .green.opacity(0.5) :
                                 (parseError != nil && !jsonText.isEmpty) ? .orange.opacity(0.4) :
                                     .secondary.opacity(0.18), lineWidth: 1))
                         }
 
                         // Preview cards
-                        if let payload = parsed {
+                        if let adapter = parsedAppAdapter {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("App adapter ready",
+                                      systemImage: "checkmark.seal.fill")
+                                    .font(.caption.bold()).foregroundStyle(.green)
+                                appAdapterImportPreviewCard(adapter)
+                            }
+                        } else if !parsedSystemCommands.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("\(parsedSystemCommands.count) system command\(parsedSystemCommands.count == 1 ? "" : "s") ready",
+                                      systemImage: "checkmark.seal.fill")
+                                    .font(.caption.bold()).foregroundStyle(.green)
+
+                                ForEach(parsedSystemCommands) { command in
+                                    systemCommandImportPreviewCard(command)
+                                }
+                            }
+                        } else if let payload = parsed {
                             let exts = payload.toILExtensions()
                             VStack(alignment: .leading, spacing: 10) {
                                 Label("\(exts.count) extension\(exts.count == 1 ? "" : "s") ready",
@@ -3583,13 +4225,19 @@ struct AutomationImportPanel: View {
                                 Image(systemName: "lightbulb.fill").foregroundStyle(.orange).font(.caption)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("How to get extensions").font(.caption.bold())
-                                    Text("Ask any AI (Claude, ChatGPT, Gemini) using the Context Dock extension prompt. Paste the JSON here — it's imported and live immediately.")
+                                    Text("Pick a template below, copy it, and paste it into any AI (Claude, ChatGPT, Gemini). Paste the JSON it returns above — it's imported and live immediately.")
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
                             .padding(12)
                             .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                         }
+
+                        Divider()
+
+                        // Prompt templates — copy one, paste into an AI to author
+                        // a Global Context / Context Dock / Shortcut Sheet extension.
+                        PromptTemplatesSection()
                     }
                     .padding(20)
                 }
@@ -3607,7 +4255,7 @@ struct AutomationImportPanel: View {
                         .buttonStyle(.borderedProminent)
                         .tint(LinearGradient(colors: [.purple, .blue],
                                              startPoint: .leading, endPoint: .trailing))
-                        .disabled(parsed == nil)
+                        .disabled(parsed == nil && parsedSystemCommands.isEmpty && parsedAppAdapter == nil)
                         .keyboardShortcut(.defaultAction)
                 }
                 .padding(.horizontal, 20).padding(.vertical, 12)
@@ -3616,6 +4264,12 @@ struct AutomationImportPanel: View {
         }
         .background(Color(NSColor.windowBackgroundColor))
         .onAppear { pasteFromClipboard() }
+        .sheet(isPresented: $showCreateExtensionSheet) {
+            CreateExtensionSheet(defaultDestination: destination) { draft in
+                commitCreatedExtension(draft)
+                showCreateExtensionSheet = false
+            }
+        }
     }
 
     // MARK: Sub-views
@@ -3662,6 +4316,7 @@ struct AutomationImportPanel: View {
                     .frame(width: 38, height: 38)
                 Image(systemName: ext.icon)
                     .font(.system(size: 15, weight: .medium))
+                    .symbolRenderingMode(.multicolor)
                     .foregroundStyle(destination.color)
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -3690,6 +4345,83 @@ struct AutomationImportPanel: View {
         .padding(12)
         .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.green.opacity(0.2), lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func systemCommandImportPreviewCard(_ command: SystemCommand) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.indigo.opacity(0.1))
+                    .frame(width: 38, height: 38)
+                Image(systemName: command.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .symbolRenderingMode(.multicolor)
+                    .foregroundStyle(Color.indigo)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(command.name).font(.system(size: 13, weight: .semibold))
+                    Text(command.actionTypeLabel.uppercased())
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(.secondary.opacity(0.1), in: Capsule())
+                }
+                Text(command.description)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                if let preset = command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") }) {
+                    Text(preset)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Image(systemName: "slider.horizontal.3").foregroundStyle(.indigo)
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.indigo.opacity(0.2), lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func appAdapterImportPreviewCard(_ adapter: AppAdapter) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.1))
+                    .frame(width: 38, height: 38)
+                Image(systemName: adapter.icon.isEmpty ? "app.connected.to.app.below.fill" : adapter.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.blue)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(adapter.appName).font(.system(size: 13, weight: .semibold))
+                    Text("\(adapter.actions.count) ACTION\(adapter.actions.count == 1 ? "" : "S")")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(.secondary.opacity(0.1), in: Capsule())
+                }
+                Text(adapter.bundleId)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 4) {
+                    ForEach(adapter.actions.prefix(3)) { action in
+                        Text(action.name)
+                            .font(.system(size: 10)).foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.secondary.opacity(0.08), in: Capsule())
+                    }
+                }
+            }
+            Spacer()
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.blue.opacity(0.2), lineWidth: 1))
     }
 
     private var successView: some View {
@@ -3726,10 +4458,34 @@ struct AutomationImportPanel: View {
 
     private func parseAndDetect(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { parsed = nil; parseError = nil; return }
+        guard !t.isEmpty else {
+            parsed = nil
+            parsedSystemCommands = []
+            parsedAppAdapter = nil
+            parseError = nil
+            return
+        }
+        if let commandPayload = try? SystemCommandAIImport.decode(from: t) {
+            parsed = nil
+            parsedSystemCommands = commandPayload.toSystemCommands()
+            parsedAppAdapter = nil
+            destination = .globalContext
+            parseError = parsedSystemCommands.isEmpty ? "No system commands found in the payload." : nil
+            return
+        }
+        if let adapter = try? AppAdapterAIImport.decode(from: t) {
+            parsed = nil
+            parsedSystemCommands = []
+            parsedAppAdapter = adapter
+            destination = .contextDock
+            parseError = adapter.actions.isEmpty ? "No adapter actions found in the payload." : nil
+            return
+        }
         do {
             let payload = try SimpleAIExtensionImport.decode(from: t)
             parsed = payload
+            parsedSystemCommands = []
+            parsedAppAdapter = nil
             parseError = nil
             // Auto-detect destination from first extension's triggers
             if let spec = payload.extensions.first {
@@ -3737,11 +4493,18 @@ struct AutomationImportPanel: View {
             }
         } catch {
             parsed = nil
+            parsedSystemCommands = []
+            parsedAppAdapter = nil
             parseError = error.localizedDescription
         }
     }
 
     private func autoDetect(_ spec: SimpleAIExtensionImport.ExtensionSpec) -> ImportDestination {
+        let hasSelectionTrigger = spec.triggers.contains { $0.type == "selection" }
+        if hasSelectionTrigger {
+            return .shortcutSheet
+        }
+
         let hasContextTrigger = spec.triggers.contains {
             ["urlPattern", "appContext", "fileType"].contains($0.type)
         }
@@ -3757,9 +4520,38 @@ struct AutomationImportPanel: View {
     }
 
     private func commitImport() {
+        if let adapter = parsedAppAdapter {
+            Task {
+                await AppAdapterManager.shared.importAdapter(adapter)
+                let mirroredCommandCount = await AppAdapterManager.shared
+                    .mirrorVirtualScopeAdapterIntoGlobalCommands(adapter)
+                await MainActor.run {
+                    importedName = adapter.appName
+                    importedDest = mirroredCommandCount > 0 ? .globalContext : .contextDock
+                    withAnimation(.spring(duration: 0.35)) { didImport = true }
+                }
+            }
+            return
+        }
+
+        if !parsedSystemCommands.isEmpty {
+            for command in parsedSystemCommands {
+                SystemCommandsRegistry.shared.add(command)
+            }
+            SystemCommandsRegistryObservable.shared.reload()
+            importedName = parsedSystemCommands.first?.name ?? "System Command"
+            importedDest = .globalContext
+            withAnimation(.spring(duration: 0.35)) { didImport = true }
+            return
+        }
+
         guard let payload = parsed else { return }
         let exts = payload.toILExtensions()
         guard let first = exts.first, let spec = payload.extensions.first else { return }
+
+        for ext in exts {
+            LayeredExtensionManager.shared.addExtension(normalizedLayeredExtension(ext, for: destination))
+        }
 
         switch destination {
         case .globalContext:
@@ -3777,7 +4569,8 @@ struct AutomationImportPanel: View {
                                         fileTypes: [], isDestructive: false),
                 kind: .script,
                 scriptLanguage: lang,
-                scriptCode: spec.script
+                scriptCode: spec.script,
+                iconName: first.icon
             )
             settings.addToolExtension(toolExt)
 
@@ -3807,6 +4600,14 @@ struct AutomationImportPanel: View {
                 bundleId: appBundleId
             )
             settings.addAXRule(rule)
+
+        case .shortcutSheet:
+            _ = settings.saveScript(
+                appKey: "shortcut-sheet",
+                name: first.name,
+                language: mapScriptLanguage(spec.scriptType),
+                code: spec.script
+            )
         }
 
         importedName = exts.first?.name ?? "Extension"
@@ -3814,8 +4615,114 @@ struct AutomationImportPanel: View {
         withAnimation(.spring(duration: 0.35)) { didImport = true }
     }
 
+    private func commitCreatedExtension(_ draft: CreatedExtensionDraft) {
+        let ext = draft.makeILExtension()
+        LayeredExtensionManager.shared.addExtension(ext)
+
+        switch draft.destination {
+        case .globalContext:
+            let lang = draft.appScriptLanguage
+            let savedPath = settings.saveScript(
+                appKey: "global",
+                name: draft.name,
+                language: lang,
+                code: draft.script
+            ) ?? ""
+            let toolExt = AppToolExtension(
+                appKey: "global",
+                toolName: draft.name,
+                toolPath: savedPath,
+                aiHint: draft.description,
+                profile: AppToolProfile(
+                    capabilities: draft.keywords,
+                    exampleCommands: [],
+                    fileTypes: [],
+                    isDestructive: false
+                ),
+                kind: .script,
+                scriptLanguage: lang,
+                scriptCode: draft.script,
+                iconName: draft.icon
+            )
+            settings.addToolExtension(toolExt)
+
+        case .contextDock:
+            let lang = draft.appScriptLanguage
+            let savedPath = settings.saveScript(
+                appKey: "context-dock",
+                name: draft.name,
+                language: lang,
+                code: draft.script
+            ) ?? ""
+            let conditions = draft.axConditions
+            let pill = AXRulePill(
+                label: draft.name,
+                icon: draft.icon,
+                accentColor: "blue",
+                actionType: .scriptFile,
+                actionValue: savedPath
+            )
+            let rule = AXTriggerRule(
+                name: draft.name,
+                isEnabled: true,
+                conditions: conditions,
+                conditionLogic: conditions.count == 1 ? .all : .any,
+                pills: [pill],
+                priority: 10,
+                bundleId: draft.appContext.isEmpty ? nil : draft.appContext
+            )
+            settings.addAXRule(rule)
+
+        case .shortcutSheet:
+            _ = settings.saveScript(
+                appKey: "shortcut-sheet",
+                name: draft.name,
+                language: draft.appScriptLanguage,
+                code: draft.script
+            )
+        }
+
+        importedName = draft.name
+        importedDest = draft.destination
+        destination = draft.destination
+        withAnimation(.spring(duration: 0.35)) { didImport = true }
+    }
+
+    private func normalizedLayeredExtension(_ ext: ILExtension, for destination: ImportDestination) -> ILExtension {
+        var normalized = ext
+        switch destination {
+        case .globalContext:
+            normalized.layer = .l1_search
+            normalized.category = normalized.category.isEmpty ? "custom" : normalized.category
+            if normalized.triggers.isEmpty {
+                normalized.triggers = [.keyword(keywords(from: normalized.name))]
+            }
+        case .contextDock:
+            normalized.layer = .l2_context
+            normalized.category = normalized.category.isEmpty || normalized.category == "custom" ? "context" : normalized.category
+            if normalized.triggers.isEmpty {
+                normalized.triggers = [.selection]
+            }
+        case .shortcutSheet:
+            normalized.layer = .l2_context
+            normalized.category = "shortcutSheet"
+            if !normalized.triggers.contains(where: { trigger in
+                if case .selection = trigger { return true }
+                return false
+            }) {
+                normalized.triggers.append(.selection)
+            }
+        }
+        return normalized
+    }
+
     private func resetPanel() {
-        jsonText = ""; parsed = nil; parseError = nil; didImport = false
+        jsonText = ""
+        parsed = nil
+        parsedSystemCommands = []
+        parsedAppAdapter = nil
+        parseError = nil
+        didImport = false
     }
 
     private func mapScriptLanguage(_ s: String) -> AppScriptLanguage {
@@ -3844,6 +4751,14 @@ struct AutomationImportPanel: View {
         }
     }
 
+    private func keywords(from name: String) -> [String] {
+        let words = name
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 1 }
+        return words.isEmpty ? [name.lowercased()] : Array(Set(words)).sorted()
+    }
+
     private func triggerLabel(_ trigger: ExtensionTrigger) -> String {
         switch trigger {
         case .keyword(let kws):    return "keyword: \(kws.first ?? "")"
@@ -3852,6 +4767,358 @@ struct AutomationImportPanel: View {
         case .urlPattern(let p):   return "url: \(p)"
         case .selection:           return "on select"
         case .always:              return "always"
+        }
+    }
+}
+
+// MARK: - Manual Extension Creator
+
+private struct CreatedExtensionDraft {
+    var destination: ImportDestination
+    var name: String
+    var description: String
+    var icon: String
+    var scriptType: ILExtension.ScriptType
+    var script: String
+    var keywords: [String]
+    var appContext: String
+    var fileType: String
+    var urlPattern: String
+    var requiresSelection: Bool
+
+    var appScriptLanguage: AppScriptLanguage {
+        switch scriptType {
+        case .python: return .python
+        case .applescript: return .applescript
+        case .javascript: return .jxa
+        case .bash, .swift: return .bash
+        }
+    }
+
+    var axConditions: [AXTriggerCondition] {
+        var conditions: [AXTriggerCondition] = []
+        if !appContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            conditions.append(AXTriggerCondition(field: .appName, op: .contains, value: appContext))
+        }
+        if !fileType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let suffix = fileType.hasPrefix(".") ? fileType : ".\(fileType)"
+            conditions.append(AXTriggerCondition(field: .filePath, op: .endsWith, value: suffix))
+        }
+        if !urlPattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            conditions.append(AXTriggerCondition(field: .currentURL, op: .contains, value: urlPattern))
+        }
+        if requiresSelection {
+            conditions.append(AXTriggerCondition(field: .selectedText, op: .isNotEmpty, value: ""))
+        }
+        return conditions
+    }
+
+    func makeILExtension() -> ILExtension {
+        var triggers: [ExtensionTrigger] = []
+        if !keywords.isEmpty {
+            triggers.append(.keyword(keywords))
+        }
+        if !appContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            triggers.append(.appContext(appContext))
+        }
+        if !fileType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            triggers.append(.fileType([fileType.replacingOccurrences(of: ".", with: "")]))
+        }
+        if !urlPattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            triggers.append(.urlPattern(urlPattern))
+        }
+        if requiresSelection {
+            triggers.append(.selection)
+        }
+        if triggers.isEmpty {
+            triggers.append(destination == .globalContext ? .keyword(keywordsFromName(name)) : .selection)
+        }
+
+        return ILExtension(
+            name: name,
+            description: description.isEmpty ? "User-created extension" : description,
+            icon: SFSymbolResolver.validSymbol(icon, fallback: "sparkles"),
+            layer: destination == .globalContext ? .l1_search : .l2_context,
+            tags: [.automation],
+            category: destination == .shortcutSheet ? "shortcutSheet" : (destination == .globalContext ? "custom" : "context"),
+            triggers: triggers,
+            enabled: true,
+            scriptPath: "script.\(scriptType.fileExtension)",
+            scriptContent: script,
+            scriptType: scriptType,
+            requiresPermissions: scriptType == .applescript ? ["automation"] : [],
+            author: NSUserName().isEmpty ? "User" : NSUserName(),
+            version: "1.0",
+            isBuiltIn: false
+        )
+    }
+
+    private func keywordsFromName(_ value: String) -> [String] {
+        let words = value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 1 }
+        return words.isEmpty ? [value.lowercased()] : Array(Set(words)).sorted()
+    }
+}
+
+private struct CreateExtensionSheet: View {
+    let defaultDestination: ImportDestination
+    let onCreate: (CreatedExtensionDraft) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var destination: ImportDestination
+    @State private var name = ""
+    @State private var description = ""
+    @State private var icon = "sparkles"
+    @State private var scriptType: ILExtension.ScriptType = .bash
+    @State private var script = "echo \"Hello from Context Dock\""
+    @State private var keywordsText = ""
+    @State private var appContext = ""
+    @State private var fileType = ""
+    @State private var urlPattern = ""
+    @State private var requiresSelection = true
+
+    init(defaultDestination: ImportDestination, onCreate: @escaping (CreatedExtensionDraft) -> Void) {
+        self.defaultDestination = defaultDestination
+        self.onCreate = onCreate
+        _destination = State(initialValue: defaultDestination)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "plus.app.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 36, height: 36)
+                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Create Extension")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Create a live Global Context action or Context Dock trigger.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Picker("Save To", selection: $destination) {
+                        ForEach(ImportDestination.allCases, id: \.self) { dest in
+                            Label(dest.rawValue, systemImage: dest.icon).tag(dest)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack(spacing: 10) {
+                        TextField("Extension name", text: $name)
+                        SFSymbolPickerButton(selected: $icon)
+                            .frame(width: 200)
+                    }
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField("Description", text: $description)
+                        .textFieldStyle(.roundedBorder)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Triggers")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("Keywords, comma separated", text: $keywordsText)
+                            .textFieldStyle(.roundedBorder)
+                        if destination != .globalContext {
+                            HStack(spacing: 10) {
+                                TextField("App name or bundle id", text: $appContext)
+                                TextField("File type, e.g. pdf", text: $fileType)
+                                TextField("URL contains", text: $urlPattern)
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            Toggle("Requires selected text or file", isOn: $requiresSelection)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Runner", selection: $scriptType) {
+                            Text("Bash").tag(ILExtension.ScriptType.bash)
+                            Text("Python").tag(ILExtension.ScriptType.python)
+                            Text("AppleScript").tag(ILExtension.ScriptType.applescript)
+                            Text("JXA").tag(ILExtension.ScriptType.javascript)
+                        }
+                        .pickerStyle(.segmented)
+
+                        ZStack(alignment: .topLeading) {
+                            if script.isEmpty {
+                                Text("Script body")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.quaternary)
+                                    .padding(10)
+                                    .allowsHitTesting(false)
+                            }
+                            TextEditor(text: $script)
+                                .font(.system(size: 12, design: .monospaced))
+                                .scrollContentBackground(.hidden)
+                                .padding(6)
+                                .frame(minHeight: 170)
+                        }
+                        .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.18)))
+                    }
+                }
+                .padding(20)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Create") {
+                    onCreate(makeDraft())
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canCreate)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 640, height: 620)
+    }
+
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func makeDraft() -> CreatedExtensionDraft {
+        CreatedExtensionDraft(
+            destination: destination,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            icon: SFSymbolResolver.validSymbol(icon, fallback: "sparkles"),
+            scriptType: scriptType,
+            script: script,
+            keywords: keywordsText
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty },
+            appContext: appContext.trimmingCharacters(in: .whitespacesAndNewlines),
+            fileType: fileType.trimmingCharacters(in: .whitespacesAndNewlines),
+            urlPattern: urlPattern.trimmingCharacters(in: .whitespacesAndNewlines),
+            requiresSelection: destination != .globalContext && requiresSelection
+        )
+    }
+}
+
+// MARK: - App Adapter AI Import
+
+struct AppAdapterAIImport {
+    static func decode(from text: String) throws -> AppAdapter {
+        var json = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if json.hasPrefix("```") {
+            let lines = json.components(separatedBy: .newlines)
+            json = lines.dropFirst().dropLast().joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let data = json.data(using: .utf8) else { throw SimpleAIImportError.emptyPayload }
+
+        let camelDecoder = JSONDecoder()
+        let snakeDecoder = JSONDecoder()
+        snakeDecoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        let adapter: AppAdapter
+        if let decoded = try? camelDecoder.decode(AppAdapter.self, from: data) {
+            adapter = decoded
+        } else {
+            adapter = try snakeDecoder.decode(AppAdapter.self, from: data)
+        }
+
+        let hasIdentity =
+            !adapter.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !adapter.bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !adapter.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasIdentity, !adapter.actions.isEmpty else {
+            throw SimpleAIImportError.invalidJSON("Expected app adapter with actions")
+        }
+        return adapter
+    }
+}
+
+// MARK: - System Command AI Import
+
+struct SystemCommandAIImport: Codable {
+    struct CommandSpec: Codable {
+        var name: String
+        var description: String?
+        var icon: String?
+        var keywords: [String]?
+        var presets: [String]?
+        var provider: String?
+        var scriptType: String
+        var script: String
+    }
+
+    var version: String?
+    var type: String
+    var systemCommands: [CommandSpec]
+
+    static func decode(from text: String) throws -> SystemCommandAIImport {
+        var json = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if json.hasPrefix("```") {
+            let lines = json.components(separatedBy: .newlines)
+            json = lines.dropFirst().dropLast().joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let data = json.data(using: .utf8) else { throw SimpleAIImportError.emptyPayload }
+        let payload = try JSONDecoder().decode(SystemCommandAIImport.self, from: data)
+        guard payload.type.lowercased() == "system_commands" else {
+            throw SimpleAIImportError.invalidJSON("Expected type system_commands")
+        }
+        return payload
+    }
+
+    func toSystemCommands() -> [SystemCommand] {
+        systemCommands.compactMap { spec in
+            let name = spec.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let script = spec.script.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !script.isEmpty else { return nil }
+
+            var keywords = (spec.keywords ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if let presets = spec.presets?
+                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .filter({ !$0.isEmpty }),
+                !presets.isEmpty,
+                !keywords.contains(where: { $0.lowercased().hasPrefix("presets:") })
+            {
+                keywords.append("presets:\(presets.joined(separator: "|"))")
+            }
+            if !keywords.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+                keywords.insert(name, at: 0)
+            }
+            if let provider = spec.provider?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !provider.isEmpty,
+                !keywords.contains(where: { $0.lowercased() == "provider:\(provider.lowercased())" })
+            {
+                keywords.append("provider:\(provider.lowercased())")
+            }
+
+            let icon = SFSymbolResolver.validSymbol(spec.icon, fallback: "command")
+            return SystemCommand(
+                name: name,
+                icon: icon,
+                keywords: keywords,
+                scriptType: spec.scriptType.trimmingCharacters(in: .whitespacesAndNewlines),
+                script: script,
+                description: spec.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+            )
         }
     }
 }
@@ -3880,6 +5147,194 @@ final class SystemCommandsRegistryObservable: ObservableObject {
 
 // MARK: - System Command Detail View
 
+struct SystemCommandCreateSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onCreate: (SystemCommand) -> Void
+
+    @State private var name = "Empty Bin"
+    @State private var description = "Empty Bin"
+    @State private var icon = "trash"
+    @State private var keywords = "empty bin, empty trash, trash, bin, clear trash"
+    @State private var scriptType = "applescript"
+    @State private var successTitle = "Empty Bin done"
+    @State private var successMessage = ""
+    @State private var undoTitle = "Undo"
+    @State private var undoScriptType = "applescript"
+    @State private var undoScript = ""
+    @State private var script = """
+tell application "Finder"
+    empty trash
+end tell
+"""
+
+    private var actionType: SystemCommandActionType {
+        SystemCommandActionType.normalize(scriptType)
+    }
+
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: icon.isEmpty ? "command" : icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.indigo)
+                    .frame(width: 38, height: 38)
+                    .background(Color.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add Global Command")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("Always available without selection.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(18)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    labeledField("Name") {
+                        TextField("Empty Bin", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("Description") {
+                        TextField("Empty Bin", text: $description)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("SF Symbol") {
+                        SFSymbolPickerButton(selected: $icon)
+                    }
+                    labeledField("Keywords") {
+                        TextField("empty bin, empty trash, trash", text: $keywords)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("Type") {
+                        Picker("", selection: $scriptType) {
+                            ForEach(SystemCommandActionType.allCases) { type in
+                                Text(type.label).tag(type.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 240, alignment: .leading)
+                    }
+                    labeledField(actionType.valueLabel) {
+                        if actionType == .url || actionType == .file || actionType == .scriptFile {
+                            TextField(actionType.placeholder, text: $script)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            TextEditor(text: $script)
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(minHeight: actionType == .aiPrompt ? 120 : 180)
+                                .scrollContentBackground(.hidden)
+                                .background(Color(NSColor.textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
+                                )
+                        }
+                        Text("Variables: $CD_QUERY, $CD_URL, $CD_TEXT, $CD_APP or {CD_QUERY}.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    labeledField("Dock Completion") {
+                        TextField("Empty Bin done", text: $successTitle)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Optional message shown after success", text: $successMessage)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    labeledField("Undo") {
+                        HStack(spacing: 10) {
+                            TextField("Undo", text: $undoTitle)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 120)
+                            Picker("", selection: $undoScriptType) {
+                                ForEach(SystemCommandActionType.allCases) { type in
+                                    Text(type.label).tag(type.rawValue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 220, alignment: .leading)
+                        }
+                        TextEditor(text: $undoScript)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 90)
+                            .scrollContentBackground(.hidden)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
+                            )
+                        Text("Leave blank for no Undo button. Only add undo for reversible actions.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(18)
+            }
+
+            Divider()
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                Spacer()
+                Button("Add Command") {
+                    let command = SystemCommand(
+                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                        icon: icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "command"
+                            : icon.trimmingCharacters(in: .whitespacesAndNewlines),
+                        keywords: keywords.components(separatedBy: ",")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty },
+                        scriptType: scriptType,
+                        script: script,
+                        description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                        successTitle: successTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                        successMessage: successMessage.trimmingCharacters(in: .whitespacesAndNewlines),
+                        undoTitle: undoTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                        undoScriptType: undoScriptType,
+                        undoScript: undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                    onCreate(command)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canCreate)
+            }
+            .padding(18)
+        }
+        .frame(width: 560, height: 760)
+        .onChange(of: scriptType) { oldValue, newValue in
+            let oldPlaceholder = SystemCommandActionType.normalize(oldValue).placeholder
+            let newPlaceholder = SystemCommandActionType.normalize(newValue).placeholder
+            if script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || script.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == oldPlaceholder.trimmingCharacters(in: .whitespacesAndNewlines)
+            {
+                script = newPlaceholder
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+}
+
 struct SystemCommandDetailView: View {
     @Binding var selectedID: UUID?
     @StateObject private var registry = SystemCommandsRegistryObservable.shared
@@ -3891,7 +5346,11 @@ struct SystemCommandDetailView: View {
 
     var body: some View {
         if let cmd = selected {
-            SystemCommandEditorView(command: cmd, registry: registry)
+            SystemCommandEditorView(command: cmd, registry: registry) {
+                registry.remove(cmd)
+                selectedID = registry.commands.first?.id
+            }
+                .id(cmd.id)
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "slider.horizontal.3")
@@ -3900,7 +5359,7 @@ struct SystemCommandDetailView: View {
                 Text("Select a command")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-                Text("System Commands are always available globally.\nType their name in the dock to run them instantly.")
+                Text("Global Actions are always available globally.\nType their name in the dock to run them instantly.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -3914,6 +5373,7 @@ struct SystemCommandDetailView: View {
 struct SystemCommandEditorView: View {
     let command: SystemCommand
     @ObservedObject var registry: SystemCommandsRegistryObservable
+    let onDelete: () -> Void
 
     @State private var name: String
     @State private var description: String
@@ -3921,25 +5381,58 @@ struct SystemCommandEditorView: View {
     @State private var keywords: String
     @State private var scriptType: String
     @State private var script: String
+    @State private var successTitle: String
+    @State private var successMessage: String
+    @State private var undoTitle: String
+    @State private var undoScriptType: String
+    @State private var undoScript: String
     @State private var isEnabled: Bool
+    @State private var interaction: String
+    @State private var sliderMin: String
+    @State private var sliderMax: String
+    @State private var sliderStep: String
+    @State private var valueScript: String
 
-    init(command: SystemCommand, registry: SystemCommandsRegistryObservable) {
+    init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
         self.command  = command
         self.registry = registry
+        self.onDelete = onDelete
         _name        = State(initialValue: command.name)
         _description = State(initialValue: command.description)
         _icon        = State(initialValue: command.icon)
         _keywords    = State(initialValue: command.keywords.joined(separator: ", "))
         _scriptType  = State(initialValue: command.scriptType)
         _script      = State(initialValue: command.script)
+        _successTitle = State(initialValue: command.successTitle)
+        _successMessage = State(initialValue: command.successMessage)
+        _undoTitle = State(initialValue: command.undoTitle)
+        _undoScriptType = State(initialValue: command.undoScriptType)
+        _undoScript = State(initialValue: command.undoScript)
         _isEnabled   = State(initialValue: command.isEnabled)
+        _interaction = State(initialValue: command.interaction)
+        _sliderMin   = State(initialValue: String(Int(command.sliderMin)))
+        _sliderMax   = State(initialValue: String(Int(command.sliderMax)))
+        _sliderStep  = State(initialValue: String(Int(command.sliderStep)))
+        _valueScript = State(initialValue: command.valueScript)
     }
 
     private var hasChanges: Bool {
         name != command.name || description != command.description
             || icon != command.icon || keywords != command.keywords.joined(separator: ", ")
             || scriptType != command.scriptType || script != command.script
+            || successTitle != command.successTitle || successMessage != command.successMessage
+            || undoTitle != command.undoTitle || undoScriptType != command.undoScriptType
+            || undoScript != command.undoScript
             || isEnabled != command.isEnabled
+            || interaction != command.interaction
+            || sliderMin != String(Int(command.sliderMin))
+            || sliderMax != String(Int(command.sliderMax))
+            || sliderStep != String(Int(command.sliderStep))
+            || valueScript != command.valueScript
+    }
+
+    private var actionType: SystemCommandActionType {
+        SystemCommandActionType.normalize(scriptType)
     }
 
     var body: some View {
@@ -3955,11 +5448,19 @@ struct SystemCommandEditorView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(name.isEmpty ? "System Command" : name)
                             .font(.system(size: 16, weight: .semibold))
-                        Text("Global · Always available · Natural language")
+                        Text("Global · \(actionType.label) · Natural language")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
                     Toggle("", isOn: $isEnabled)
                         .labelsHidden()
                         .toggleStyle(.switch)
@@ -3979,8 +5480,7 @@ struct SystemCommandEditorView: View {
                             .textFieldStyle(.roundedBorder)
                     }
                     labeledField("SF Symbol") {
-                        TextField("e.g. speaker.wave.3.fill", text: $icon)
-                            .textFieldStyle(.roundedBorder)
+                        SFSymbolPickerButton(selected: $icon)
                     }
                     labeledField("Keywords") {
                         TextField("mute, audio, sound (comma-separated)", text: $keywords)
@@ -3989,20 +5489,107 @@ struct SystemCommandEditorView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
-                    labeledField("Script Type") {
+                    labeledField("Type") {
                         Picker("", selection: $scriptType) {
-                            Text("AppleScript").tag("applescript")
-                            Text("bash").tag("bash")
+                            ForEach(SystemCommandActionType.allCases) { type in
+                                Text(type.label).tag(type.rawValue)
+                            }
                         }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 200)
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 240, alignment: .leading)
                     }
                 }
 
-                labeledField("Script") {
-                    TextEditor(text: $script)
+                labeledField(actionType.valueLabel) {
+                    if actionType == .url || actionType == .file || actionType == .scriptFile {
+                        TextField(actionType.placeholder, text: $script)
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        TextEditor(text: $script)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: actionType == .aiPrompt ? 120 : 180)
+                            .scrollContentBackground(.hidden)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
+                            )
+                    }
+                    Text("Variables: $CD_QUERY, $CD_URL, $CD_TEXT, $CD_APP or {CD_QUERY}.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+
+                labeledField("Interaction") {
+                    Picker("", selection: $interaction) {
+                        ForEach(SystemCommandInteraction.allCases) { kind in
+                            Text(kind.label).tag(kind.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 240, alignment: .leading)
+                    Text("Slider/Toggle render a live control on the result row. The control's value runs the script as CD_QUERY (slider → number, toggle → on/off).")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+
+                    if interaction == SystemCommandInteraction.slider.rawValue {
+                        HStack(spacing: 10) {
+                            TextField("Min", text: $sliderMin)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 70)
+                            TextField("Max", text: $sliderMax)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 70)
+                            TextField("Step", text: $sliderStep)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 70)
+                            Text("Min · Max · Step")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    if interaction != SystemCommandInteraction.none.rawValue {
+                        TextEditor(text: $valueScript)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 70)
+                            .scrollContentBackground(.hidden)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
+                            )
+                        Text("Value script (same type as above): prints the current value — a number for sliders, on/off for toggles — so the control opens at the real system state.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                labeledField("Dock Completion") {
+                    TextField("Shown after success", text: $successTitle)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Optional success message", text: $successMessage)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                labeledField("Undo") {
+                    HStack(spacing: 10) {
+                        TextField("Undo", text: $undoTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 120)
+                        Picker("", selection: $undoScriptType) {
+                            ForEach(SystemCommandActionType.allCases) { type in
+                                Text(type.label).tag(type.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 240, alignment: .leading)
+                    }
+                    TextEditor(text: $undoScript)
                         .font(.system(size: 12, design: .monospaced))
-                        .frame(minHeight: 180)
+                        .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)
                         .background(Color(NSColor.textBackgroundColor))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -4010,6 +5597,9 @@ struct SystemCommandEditorView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.75)
                         )
+                    Text("Leave blank for no Undo button. Only add undo for reversible actions.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                 }
 
                 // Save button
@@ -4024,7 +5614,17 @@ struct SystemCommandEditorView: View {
                             updated.keywords    = keywords.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                             updated.scriptType  = scriptType
                             updated.script      = script
+                            updated.successTitle = successTitle.trimmingCharacters(in: .whitespaces)
+                            updated.successMessage = successMessage.trimmingCharacters(in: .whitespaces)
+                            updated.undoTitle = undoTitle.trimmingCharacters(in: .whitespaces)
+                            updated.undoScriptType = undoScriptType
+                            updated.undoScript = undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
                             updated.isEnabled   = isEnabled
+                            updated.interaction = interaction
+                            updated.sliderMin   = Double(sliderMin.trimmingCharacters(in: .whitespaces)) ?? 0
+                            updated.sliderMax   = Double(sliderMax.trimmingCharacters(in: .whitespaces)) ?? 100
+                            updated.sliderStep  = max(Double(sliderStep.trimmingCharacters(in: .whitespaces)) ?? 1, 0.0001)
+                            updated.valueScript = valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
                             registry.update(updated)
                         }
                         .buttonStyle(.borderedProminent)

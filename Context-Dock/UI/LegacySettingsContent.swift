@@ -11,7 +11,7 @@ import Carbon
 import UniformTypeIdentifiers
 import WebKit
 
-struct SettingsView: View {
+struct LegacySettingsView: View {
     @ObservedObject var settings = AppSettings.shared
     @State private var selectedTab = 0
 
@@ -229,28 +229,6 @@ struct GeneralSettingsView: View {
 
             CardSection(title: "Dock Position", systemImage: "dock.rectangle") {
                 VStack(spacing: 0) {
-                    SettingsRow {
-                        GeneralToggleLabel("Persistent Dock Mode",
-                            caption: "Keep the dock permanently visible at the bottom of the screen, like the macOS Dock.")
-                        Toggle("", isOn: $settings.persistentContextDock).labelsHidden()
-                    }
-                    SettingsDivider()
-                    SettingsRow {
-                        GeneralToggleLabel("Collapse After Action",
-                            caption: "After Enter runs a result, shrink back to the app/global icon instead of staying open.")
-                        Toggle("", isOn: $settings.autoCollapseToIconAfterAction).labelsHidden()
-                    }
-                    if settings.persistentContextDock {
-                        SettingsDivider()
-                        SettingsRow {
-                            GeneralToggleLabel("Auto-Hide",
-                                caption: "Slide the dock out of view when the mouse moves away.",
-                                isSubItem: true)
-                            Toggle("", isOn: $settings.persistentContextDockAutoHide).labelsHidden()
-                        }
-                        .padding(.leading, 20)
-                    }
-                    SettingsDivider()
                     SettingsRow {
                         GeneralToggleLabel("File Context Pill",
                             caption: "Show a floating action pill for selected files, folders, text, URLs, and clipboard content.")
@@ -472,23 +450,16 @@ struct GeneralSettingsView: View {
     // MARK: - Appearance panel
     private var appearancePanel: some View {
         VStack(spacing: 20) {
-            CardSection(title: "Dock Icon", systemImage: "person.circle") {
+            CardSection(title: "Dock Icon", systemImage: "app") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Icon shown in the top-right corner of the dock.")
                         .font(.caption).foregroundStyle(.secondary)
                     Picker("", selection: $settings.dockLogoStyle) {
                         Text("D Logo").tag("d_logo")
                         Text("Apple Logo").tag("apple")
-                        Text("System Photo").tag("system_photo")
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    Button("Change System Photo in Settings…") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preferences.users-groups") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.caption).foregroundStyle(.blue).buttonStyle(.plain)
                 }
             }
 
@@ -717,14 +688,7 @@ struct CardSection<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(NSColor.windowBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-            )
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -899,6 +863,10 @@ struct AIProviderSettingsView: View {
     @State private var connectionTestResult: ConnectionTestResult? = nil
     @State private var isFetchingModels = false
     @State private var fetchedOllamaModels: [OllamaModel] = []
+    @State private var isDiscoveringCompatibleModels = false
+    @State private var compatibleModels: [String] = []
+    @State private var compatibleModelDiscoveryError: String?
+    @State private var isRunningProviderQA = false
     
     enum ConnectionTestResult {
         case success(String)
@@ -924,14 +892,23 @@ struct AIProviderSettingsView: View {
                     Text("Select Provider")
                         .font(.headline)
                     
-                    ForEach(AIProvider.allCases) { provider in
-                        AIProviderRow(
-                            provider: provider,
-                            isSelected: settings.selectedAIProvider == provider,
-                            isConfigured: settings.isProviderConfigured(provider)
-                        ) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                settings.selectedAIProvider = provider
+                    ForEach(AIProviderSupportTier.allCases) { tier in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(tier.rawValue)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+
+                            ForEach(AIProvider.allCases.filter { $0.supportTier == tier }) { provider in
+                                AIProviderRow(
+                                    provider: provider,
+                                    isSelected: settings.selectedAIProvider == provider,
+                                    isConfigured: settings.isProviderConfigured(provider)
+                                ) {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        settings.selectedAIProvider = provider
+                                    }
+                                }
                             }
                         }
                     }
@@ -985,12 +962,32 @@ struct AIProviderSettingsView: View {
                                 connectionResultView(result)
                             }
                         }
+                        HStack {
+                            Button("Test Text") { testProviderText() }
+                            Button("Test Vision") { testProviderVision() }
+                            Button("Test Tool Calls") { testProviderToolCalls() }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            isRunningProviderQA
+                                || !settings.isProviderConfigured(settings.selectedAIProvider)
+                        )
                     }
                 }
 
                 Divider()
 
-                PromptTemplatesSection()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Privacy")
+                        .font(.headline)
+                    Toggle(
+                        "Allow selected text to be sent to cloud AI providers",
+                        isOn: $settings.allowSelectedTextCloudSharing
+                    )
+                    Text("Local and on-device providers can always use selected text. Cloud requests still require the existing private-data approval.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer()
             }
@@ -1026,6 +1023,32 @@ struct AIProviderSettingsView: View {
             )
         case .ollama:
             ollamaConfigView
+        case .openAICompatible:
+            openAICompatibleConfigView
+        case .claudeBridge:
+            bridgeConfigView(
+                title: "Claude Pro Bridge",
+                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your Claude subscription.",
+                icon: "arrow.triangle.2.circlepath.circle.fill",
+                iconColor: .purple,
+                endpointBinding: $settings.claudeBridgeEndpoint,
+                modelBinding: $settings.claudeBridgeModelID,
+                defaultEndpoint: "http://localhost:8317/v1",
+                defaultModel: "claude-3-5-sonnet-20241022",
+                vibeProxyNote: "Claude Pro → VibeProxy :8317 → DoraX. Your existing subscription pays."
+            )
+        case .chatGPTBridge:
+            bridgeConfigView(
+                title: "ChatGPT Plus Bridge",
+                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your ChatGPT subscription.",
+                icon: "arrow.triangle.2.circlepath.circle",
+                iconColor: .green,
+                endpointBinding: $settings.chatGPTBridgeEndpoint,
+                modelBinding: $settings.chatGPTBridgeModelID,
+                defaultEndpoint: "http://localhost:8317/v1",
+                defaultModel: "gpt-4o",
+                vibeProxyNote: "ChatGPT Plus → VibeProxy :8317 → DoraX. Your existing subscription pays."
+            )
         case .shortcuts:
             shortcutsConfigView
         }
@@ -1147,7 +1170,98 @@ struct AIProviderSettingsView: View {
             }
         }
     }
+
+    private var openAICompatibleConfigView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("OpenAI-Compatible Endpoint")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text("Experimental")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            Text("Use user-managed OpenRouter, LM Studio, or compatible `/v1` gateways. Context-Dock does not support subscription login, browser cookies, or desktop-app sessions.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("OpenRouter Preset") {
+                    settings.openAICompatibleEndpoint = "https://openrouter.ai/api/v1"
+                    settings.openAICompatibleModelID = "openai/gpt-4o-mini"
+                }
+                Button("LM Studio Preset") {
+                    settings.openAICompatibleEndpoint = "http://localhost:1234/v1"
+                    settings.openAICompatibleModelID = ""
+                }
+            }
+            .buttonStyle(.bordered)
+            TextField("http://localhost:1234/v1", text: $settings.openAICompatibleEndpoint)
+                .textFieldStyle(.roundedBorder)
+            Text("Model ID")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            HStack {
+                TextField("model-name", text: $settings.openAICompatibleModelID)
+                    .textFieldStyle(.roundedBorder)
+                Button(action: discoverCompatibleModels) {
+                    if isDiscoveringCompatibleModels {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Discover Models", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(isDiscoveringCompatibleModels || settings.openAICompatibleEndpoint.isEmpty)
+            }
+            if !compatibleModels.isEmpty {
+                Picker("Discovered Model", selection: $settings.openAICompatibleModelID) {
+                    ForEach(compatibleModels, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+            if let compatibleModelDiscoveryError {
+                Text(compatibleModelDiscoveryError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            apiKeyConfigView(
+                title: "API Key (optional for local endpoints)",
+                key: $settings.openAICompatibleAPIKey,
+                placeholder: "Optional",
+                helpURL: "https://platform.openai.com/docs/api-reference"
+            )
+        }
+    }
     
+    private func bridgeConfigView(
+        title: String,
+        subtitle: String,
+        icon: String,
+        iconColor: Color,
+        endpointBinding: Binding<String>,
+        modelBinding: Binding<String>,
+        defaultEndpoint: String,
+        defaultModel: String,
+        vibeProxyNote: String
+    ) -> some View {
+        BridgeConfigView(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            iconColor: iconColor,
+            endpointBinding: endpointBinding,
+            modelBinding: modelBinding,
+            defaultEndpoint: defaultEndpoint,
+            defaultModel: defaultModel,
+            vibeProxyNote: vibeProxyNote
+        )
+    }
+
     private var ollamaConfigView: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Endpoint Configuration
@@ -1361,6 +1475,26 @@ struct AIProviderSettingsView: View {
                     } else {
                         throw NSError(domain: "API key too short", code: -1)
                     }
+
+                case .openAICompatible:
+                    guard settings.isProviderConfigured(.openAICompatible) else {
+                        throw NSError(domain: "Endpoint and model are required", code: -1)
+                    }
+                    let response = try await AIProviderRouter.shared.send(
+                        AIRequest(
+                            text: "Reply with OK.",
+                            context: .none,
+                            source: .aiChat,
+                            additionalContextPrompt: "Connection test. Return only OK."
+                        ),
+                        provider: .openAICompatible
+                    )
+                    guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        throw NSError(domain: "Compatible endpoint returned an empty response", code: -1)
+                    }
+                    await MainActor.run {
+                        connectionTestResult = .success("OpenAI-compatible endpoint responded")
+                    }
                     
                 default:
                     break
@@ -1393,6 +1527,113 @@ struct AIProviderSettingsView: View {
                     settings.selectedOllamaModel = models[0].name
                 }
             }
+        }
+    }
+
+    private func discoverCompatibleModels() {
+        isDiscoveringCompatibleModels = true
+        compatibleModelDiscoveryError = nil
+        Task {
+            do {
+                let models = try await OpenAICompatibleModelDiscovery.discover(
+                    endpoint: settings.openAICompatibleEndpoint,
+                    apiKey: settings.openAICompatibleAPIKey
+                )
+                await MainActor.run {
+                    compatibleModels = models
+                    if settings.openAICompatibleModelID.isEmpty, let first = models.first {
+                        settings.openAICompatibleModelID = first
+                    }
+                    if models.isEmpty {
+                        compatibleModelDiscoveryError = "Endpoint returned no models."
+                    }
+                    isDiscoveringCompatibleModels = false
+                }
+            } catch {
+                await MainActor.run {
+                    compatibleModelDiscoveryError = error.localizedDescription
+                    isDiscoveringCompatibleModels = false
+                }
+            }
+        }
+    }
+
+    private func testProviderText() {
+        runProviderQA {
+            let response = try await AIProviderRouter.shared.send(
+                AIRequest(text: "Reply with TEXT_OK only.", context: .none, source: .aiChat),
+                provider: settings.selectedAIProvider
+            )
+            guard response.uppercased().contains("TEXT_OK") else {
+                throw AIServiceError.emptyResponse("Text test returned unexpected response")
+            }
+            return "Text test passed"
+        }
+    }
+
+    private func testProviderVision() {
+        runProviderQA {
+            guard let data = Data(base64Encoded:
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=")
+            else { throw AIServiceError.networkError("Could not create vision test image") }
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("context-dock-vision-test.png")
+            try data.write(to: url, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let response = try await AIProviderRouter.shared.send(
+                AIRequest(
+                    text: "Describe this image in one short sentence.",
+                    context: .none,
+                    attachments: [.init(kind: .image, url: url)],
+                    source: .aiChat
+                ),
+                provider: settings.selectedAIProvider
+            )
+            guard !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw AIServiceError.emptyResponse("Vision test returned empty response")
+            }
+            return "Vision test passed"
+        }
+    }
+
+    private func testProviderToolCalls() {
+        runProviderQA {
+            let provider = settings.selectedAIProvider
+            guard provider != .onDevice, provider != .shortcuts else {
+                throw AIServiceError.unsupportedProvider("Selected provider does not support tool-call QA")
+            }
+            let key = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : nil
+            let result = try await AIProviderService.shared.sendWithTools(
+                "Call run_command once with command `echo TOOL_OK` and purpose `Provider tool-call QA`.",
+                context: .none,
+                provider: provider,
+                apiKey: key,
+                conversationHistory: [],
+                commandExecutor: { command, _ in
+                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output")
+                },
+                maxIterations: 2,
+                systemPromptOverride: "You are running provider QA. Call requested tool exactly once.",
+                simulateAllTools: true
+            )
+            guard !result.executedCommands.isEmpty else {
+                throw AIServiceError.emptyResponse("Provider did not produce a tool call")
+            }
+            return "Tool-call test passed"
+        }
+    }
+
+    private func runProviderQA(_ operation: @escaping @MainActor () async throws -> String) {
+        isRunningProviderQA = true
+        connectionTestResult = nil
+        Task {
+            do {
+                let message = try await operation()
+                connectionTestResult = .success(message)
+            } catch {
+                connectionTestResult = .failure("QA failed: \(error.localizedDescription)")
+            }
+            isRunningProviderQA = false
         }
     }
 }
@@ -2010,28 +2251,7 @@ struct NewAdapterSheet: View {
 
             Divider()
 
-            // Mode picker
-            Picker("", selection: $mode) {
-                Text("App").tag(Mode.app)
-                Text("CLI Tool").tag(Mode.cli)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .onChange(of: mode) { _ in
-                appName = ""; bundleId = ""; icon = "app.fill"
-                selectedAppID = nil; selectedCLICommand = nil
-                searchText = ""; cliSearchText = ""
-            }
-
-            Divider()
-
-            if mode == .app {
-                appPickerContent
-            } else {
-                cliPickerContent
-            }
+            appPickerContent
 
             Divider()
 
@@ -3109,6 +3329,221 @@ Example prompt to give AI:
     }
 }
 
+// MARK: - Bridge Config View
+
+private struct BridgeConfigView: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let iconColor: Color
+    let endpointBinding: Binding<String>
+    let modelBinding: Binding<String>
+    let defaultEndpoint: String
+    let defaultModel: String
+    let vibeProxyNote: String
+
+    @State private var testState: TestState = .idle
+    @State private var discoveredModels: [String] = []
+
+    enum TestState: Equatable {
+        case idle
+        case testing
+        case success(String)
+        case failure(String)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 26))
+                    .foregroundStyle(iconColor)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.headline)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            // Feature callouts
+            VStack(alignment: .leading, spacing: 6) {
+                BridgeFeatureRow(icon: "creditcard.slash.fill", color: .green,
+                                 text: "No extra billing — uses your existing subscription")
+                BridgeFeatureRow(icon: "arrow.left.arrow.right.circle.fill", color: .blue,
+                                 text: vibeProxyNote)
+                BridgeFeatureRow(icon: "app.connected.to.app.below.fill", color: .orange,
+                                 text: "AI's connected tools (GitHub, Notion, Calendar…) flow through")
+            }
+            .padding(12)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+
+            Divider()
+
+            // Endpoint
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Bridge Endpoint")
+                    .font(.subheadline).fontWeight(.medium)
+
+                HStack(spacing: 6) {
+                    Button("VibeProxy :8317") {
+                        endpointBinding.wrappedValue = "http://localhost:8317/v1"
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+
+                    Button("Port 3000") {
+                        endpointBinding.wrappedValue = "http://localhost:3000/v1"
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+
+                    Button("Port 4000") {
+                        endpointBinding.wrappedValue = "http://localhost:4000/v1"
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                }
+
+                TextField(defaultEndpoint, text: endpointBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+            }
+
+            // Model ID
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Model ID")
+                    .font(.subheadline).fontWeight(.medium)
+
+                HStack {
+                    TextField(defaultModel, text: modelBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+
+                    if !discoveredModels.isEmpty {
+                        Menu("Pick") {
+                            ForEach(discoveredModels, id: \.self) { m in
+                                Button(m) { modelBinding.wrappedValue = m }
+                            }
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    }
+                }
+
+                Text("Model name the bridge exposes. Run Test Connection to discover models.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // Test Connection
+            HStack(spacing: 10) {
+                Button {
+                    Task { await testConnection() }
+                } label: {
+                    if case .testing = testState {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.75)
+                            Text("Testing…")
+                        }
+                        .frame(minWidth: 120)
+                    } else {
+                        Label("Test Connection", systemImage: "network")
+                            .frame(minWidth: 120)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(endpointBinding.wrappedValue.isEmpty || testState == .testing)
+
+                switch testState {
+                case .idle: EmptyView()
+                case .testing: EmptyView()
+                case .success(let msg):
+                    Label(msg, systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(.green)
+                case .failure(let msg):
+                    Label(msg, systemImage: "xmark.circle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    private func testConnection() async {
+        testState = .testing
+        discoveredModels = []
+
+        let base = endpointBinding.wrappedValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        // Try GET /models first
+        if let url = URL(string: "\(base)/models") {
+            do {
+                var req = URLRequest(url: url, timeoutInterval: 5)
+                req.httpMethod = "GET"
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
+                    // Parse models if possible
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let modelArray = json["data"] as? [[String: Any]] {
+                        let ids = modelArray.compactMap { $0["id"] as? String }
+                        await MainActor.run {
+                            discoveredModels = ids
+                            if !ids.isEmpty && modelBinding.wrappedValue.isEmpty {
+                                modelBinding.wrappedValue = ids[0]
+                            }
+                        }
+                    }
+                    await MainActor.run {
+                        testState = .success(discoveredModels.isEmpty ? "Bridge reachable" : "\(discoveredModels.count) model(s) found")
+                    }
+                    return
+                }
+            } catch { }
+        }
+
+        // Fallback: probe with a minimal chat completion
+        if let url = URL(string: "\(base)/chat/completions") {
+            do {
+                var req = URLRequest(url: url, timeoutInterval: 5)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let body: [String: Any] = [
+                    "model": modelBinding.wrappedValue.isEmpty ? "default" : modelBinding.wrappedValue,
+                    "messages": [["role": "user", "content": "ping"]],
+                    "max_tokens": 1
+                ]
+                req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (_, resp) = try await URLSession.shared.data(for: req)
+                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
+                    await MainActor.run { testState = .success("Bridge reachable") }
+                    return
+                }
+            } catch { }
+        }
+
+        await MainActor.run {
+            testState = .failure("Not reachable — is VibeProxy running?")
+        }
+    }
+}
+
+private struct BridgeFeatureRow: View {
+    let icon: String
+    let color: Color
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(color)
+                .frame(width: 16)
+                .padding(.top, 1)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 // MARK: - AI Provider Row
 struct AIProviderRow: View {
     let provider: AIProvider
@@ -3186,7 +3621,10 @@ struct AIProviderRow: View {
         case .googleGemini: return .indigo
         case .openAI:       return .teal
         case .anthropic:    return .orange
+        case .claudeBridge: return .purple
+        case .chatGPTBridge: return .teal
         case .ollama:       return .green
+        case .openAICompatible: return .mint
         case .shortcuts:    return .purple
         }
     }
@@ -3970,6 +4408,23 @@ struct AppShortcutsSettingsView: View {
             ?? selectedAppKey.capitalized
     }
 
+    private func removeCLIToolFromAppActions(_ package: TerminalPackage) {
+        settings.unpinCLITool(package.command)
+        settings.customAppEntries.removeAll { entry in
+            entry.key == "cli_\(package.command)"
+                || entry.key == "cli://\(package.command)"
+                || entry.appPath == "cli://\(package.command)"
+        }
+        settings.appToolExtensions.removeAll {
+            $0.appKey == "cli_\(package.command)" || $0.appKey == "cli://\(package.command)"
+        }
+        var updated = package
+        updated.contextAppBundleIds.removeAll {
+            $0 == "cli://\(package.command)" || $0 == "cli_\(package.command)"
+        }
+        pkgMgr.updatePackage(updated)
+    }
+
     // All tool names already known to TerminalPackageManager
     private var installedToolNames: Set<String> {
         Set(pkgMgr.packages.map { $0.command })
@@ -4025,7 +4480,7 @@ struct AppShortcutsSettingsView: View {
                             .tag("cli_\(pkg.command)")
                             .contextMenu {
                                 Button(role: .destructive) {
-                                    settings.unpinCLITool(pkg.command)
+                                    removeCLIToolFromAppActions(pkg)
                                     if selectedAppKey == "cli_\(pkg.command)" { selectedAppKey = "calendar" }
                                 } label: { Label("Remove from My CLI Tools", systemImage: "minus.circle") }
                             }
@@ -4420,7 +4875,9 @@ struct AppShortcutsSettingsView: View {
     private func extensionRow(_ ext: AppToolExtension) -> some View {
         let isScript    = ext.kind == .script
         let isInstalled = isScript || AppSettings.isToolInstalled(ext)
-        let iconName    = isScript ? (ext.scriptLanguage?.systemImage ?? "doc.text") : "terminal.fill"
+        let iconName    = ext.iconName.isEmpty
+            ? (isScript ? (ext.scriptLanguage?.systemImage ?? "doc.text") : "terminal.fill")
+            : ext.iconName
         let iconColor: Color = isScript ? .purple : (isInstalled ? .green : .orange)
 
         return HStack(spacing: 12) {
@@ -6501,136 +6958,6 @@ struct PermissionsSettingsView: View {
                     .padding()
                     .background(Color.green.opacity(0.1))
                     .cornerRadius(8)
-                }
-                
-                // Automation Permission (open settings only)
-                CardSection(title: "Automation", systemImage: "gearshape.arrow.triangle.2.circlepath") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Automation access lets ILauncher run AppleScripts or interact with other apps.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Note:")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                            Text("macOS only shows apps here after they've requested automation. If ILauncher doesn't appear, try running an action that uses AppleScript once, then return and check again.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        HStack(spacing: 12) {
-                            Button("Open System Settings") {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("Test Automation") {
-                                automationTestMessage = nil
-                                triggerAutomationPrompt()
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("Learn More") {
-                                if let url = URL(string: "https://support.apple.com/guide/mac-help/allow-accessibility-apps-mh43185/mac") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                            .buttonStyle(.link)
-                        }
-
-                        if isTestingAutomation {
-                            HStack(spacing: 6) {
-                                ProgressView().scaleEffect(0.7)
-                                Text("Sending request...")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else if let msg = automationTestMessage {
-                            HStack(spacing: 6) {
-                                Image(systemName: msg.lowercased().contains("error") ? "xmark.octagon.fill" : "checkmark.seal.fill")
-                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
-                                Text(msg)
-                                    .font(.caption)
-                                    .foregroundStyle(msg.lowercased().contains("error") ? .red : .green)
-                            }
-                        }
-                    }
-                }
-                
-                CardSection(title: "Command Runner", systemImage: "terminal") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Run a shell command. Output and errors will appear below.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        HStack(alignment: .center, spacing: 8) {
-                            TextField("echo hello", text: $commandInput)
-                                .textFieldStyle(.roundedBorder)
-                                .disabled(isRunningCommand)
-
-                            Button(action: runCommand) {
-                                HStack(spacing: 6) {
-                                    if isRunningCommand { ProgressView().scaleEffect(0.7) }
-                                    Text(isRunningCommand ? "Running" : "Run")
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(commandInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRunningCommand)
-
-                            Button("Clear") {
-                                commandOutput = ""
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(commandOutput.isEmpty)
-                        }
-
-                        if !recentCommands.isEmpty {
-                            HStack(spacing: 6) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .foregroundStyle(.secondary)
-                                Text("Recent:")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack(spacing: 6) {
-                                        ForEach(recentCommands.suffix(5), id: \.self) { cmd in
-                                            Button(cmd) {
-                                                commandInput = cmd
-                                            }
-                                            .buttonStyle(.bordered)
-                                            .font(.caption2)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Output")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            ScrollView {
-                                Text(commandOutput.isEmpty ? "(no output)" : commandOutput)
-                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                            }
-                            .frame(minHeight: 80, maxHeight: 180)
-                            .background(Color.black.opacity(0.06))
-                            .cornerRadius(6)
-                        }
-
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.shield")
-                                .foregroundStyle(.orange)
-                            Text("Be careful: commands run with your user privileges. Avoid destructive operations.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 }
                 
                 // System data search permissions section (Calendars, Reminders, Photos, Contacts, Automation)

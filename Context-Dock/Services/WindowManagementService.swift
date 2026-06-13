@@ -31,25 +31,29 @@ final class WindowManagementService {
 
         var id: String { rawValue }
 
+        static let defaultVisibleCommands: [Command] = [
+            .left, .right, .fill, .center, .minimize, .fullScreen,
+        ]
+
         var title: String {
             switch self {
             case .minimize: return "Minimize"
             case .zoom: return "Zoom"
             case .fill: return "Fill"
             case .center: return "Centre"
-            case .left: return "Move & Resize: Left"
-            case .right: return "Move & Resize: Right"
-            case .top: return "Move & Resize: Top"
-            case .bottom: return "Move & Resize: Bottom"
-            case .topLeft: return "Move & Resize: Top Left"
-            case .topRight: return "Move & Resize: Top Right"
-            case .bottomLeft: return "Move & Resize: Bottom Left"
-            case .bottomRight: return "Move & Resize: Bottom Right"
-            case .leftAndRight: return "Arrange: Left & Right"
-            case .rightAndLeft: return "Arrange: Right & Left"
-            case .topAndBottom: return "Arrange: Top & Bottom"
-            case .bottomAndTop: return "Arrange: Bottom & Top"
-            case .quarters: return "Arrange: Quarters"
+            case .left: return "Left"
+            case .right: return "Right"
+            case .top: return "Top"
+            case .bottom: return "Bottom"
+            case .topLeft: return "Top Left"
+            case .topRight: return "Top Right"
+            case .bottomLeft: return "Bottom Left"
+            case .bottomRight: return "Bottom Right"
+            case .leftAndRight: return "Left & Right"
+            case .rightAndLeft: return "Right & Left"
+            case .topAndBottom: return "Top & Bottom"
+            case .bottomAndTop: return "Bottom & Top"
+            case .quarters: return "Quarters"
             case .restorePreviousSize: return "Return to Previous Size"
             case .fullScreen: return "Full Screen"
             case .bringAllToFront: return "Bring All to Front"
@@ -87,16 +91,6 @@ final class WindowManagementService {
             }
             return terms
         }
-
-        var isDirectGeometryLayout: Bool {
-            switch self {
-            case .fill, .center, .left, .right, .top, .bottom, .topLeft, .topRight, .bottomLeft,
-                .bottomRight, .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop, .quarters:
-                return true
-            default:
-                return false
-            }
-        }
     }
 
     private struct WindowFrameSnapshot {
@@ -122,19 +116,27 @@ final class WindowManagementService {
 
     func matchingCommands(query: String) -> [Command] {
         let normalized = normalize(query)
-        guard !normalized.isEmpty else { return [] }
+        guard !normalized.isEmpty else { return Command.defaultVisibleCommands }
         return Command.allCases.filter { command in
             command.searchTerms.contains { normalize($0).contains(normalized) }
                 || normalized.contains(normalize(command.title))
         }
     }
 
+    func handlesMenuPath(_ path: [String]) -> Bool {
+        let normalized = path.map(normalize)
+        guard normalized.contains("window"), let title = normalized.last else { return false }
+        if title.contains("full screen") || title.contains("fullscreen") {
+            return true
+        }
+        return command(for: title, path: normalized) != nil
+    }
+
     func executeIfSupported(path: [String], sourceApp: NSRunningApplication) -> Bool {
         let normalized = path.map(normalize)
         guard let title = normalized.last else { return false }
         if title.contains("full screen") || title.contains("fullscreen") {
-            return executeFullScreen(
-                preferredPath: path,
+            return toggleFullScreen(
                 pid: sourceApp.processIdentifier,
                 appName: sourceApp.localizedName ?? "App"
             )
@@ -153,57 +155,22 @@ final class WindowManagementService {
         }
         if sourceApp.isHidden { sourceApp.unhide() }
         sourceApp.activate(options: [.activateIgnoringOtherApps])
-        if command.isDirectGeometryLayout {
-            return executeDirectGeometryLayout(command, pid: pid, appName: appName)
-        }
-        if command == .restorePreviousSize {
-            return restorePreviousFrames(pid: pid, appName: appName)
-        }
-        if let path = nativeMenuPath(for: command),
-            AXMenuReader.shared.clickMenuItem(path: path, in: pid)
-        {
-            return true
-        }
-
         switch command {
         case .minimize:
             return true
         case .zoom:
             return toggleZoom(pid: pid, appName: appName)
-        case .fill:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: fullFrame)
         case .center:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: centerFrame)
-        case .left:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: leftFrame)
-        case .right:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: rightFrame)
-        case .top:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: topFrame)
-        case .bottom:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: bottomFrame)
-        case .topLeft:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: topLeftFrame)
-        case .topRight:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: topRightFrame)
-        case .bottomLeft:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: bottomLeftFrame)
-        case .bottomRight:
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: bottomRightFrame)
-        case .leftAndRight:
-            return false
-        case .rightAndLeft:
-            return false
-        case .topAndBottom:
-            return false
-        case .bottomAndTop:
-            return false
-        case .quarters:
-            return false
+            return centerFrontmostWindow(pid: pid, appName: appName)
+        case .fill, .left, .right, .top, .bottom, .topLeft, .topRight, .bottomLeft, .bottomRight:
+            guard let transform = singleWindowFrame(for: command) else { return false }
+            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: transform)
+        case .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop, .quarters:
+            return arrangeWindows(command, pid: pid, appName: appName)
         case .restorePreviousSize:
-            return false
+            return restorePreviousFrames(pid: pid, appName: appName)
         case .fullScreen:
-            return executeFullScreen(preferredPath: nil, pid: pid, appName: appName)
+            return toggleFullScreen(pid: pid, appName: appName)
         case .bringAllToFront:
             return bringAllToFront(pid: pid, appName: appName)
         case .switchWindow:
@@ -236,36 +203,9 @@ final class WindowManagementService {
         return nil
     }
 
-    private func nativeMenuPath(for command: Command) -> [String]? {
-        switch command {
-        case .zoom:
-            return ["Window", "Zoom"]
-        case .bringAllToFront:
-            return ["Window", "Bring All to Front"]
-        case .switchWindow:
-            return ["Window", "Switch Window..."]
-        case .minimize, .fill, .center, .left, .right, .top, .bottom, .topLeft, .topRight,
-            .bottomLeft, .bottomRight, .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop,
-            .quarters, .restorePreviousSize, .fullScreen:
-            return nil
-        }
-    }
-
-    private func executeDirectGeometryLayout(
-        _ command: Command,
-        pid: pid_t,
-        appName: String
-    ) -> Bool {
-        if let transform = singleWindowFrame(for: command) {
-            return resizeFrontmostWindow(pid: pid, appName: appName, normalizedFrame: transform)
-        }
-        return arrangeWindows(command, pid: pid, appName: appName)
-    }
-
     private func singleWindowFrame(for command: Command) -> ((CGRect) -> CGRect)? {
         switch command {
         case .fill: return fullFrame
-        case .center: return centerFrame
         case .left: return leftFrame
         case .right: return rightFrame
         case .top: return topFrame
@@ -290,12 +230,41 @@ final class WindowManagementService {
         return apply(normalizedFrame(screen.visibleFrame), to: window)
     }
 
+    private func centerFrontmostWindow(pid: pid_t, appName: String) -> Bool {
+        guard let window = frontmostEligibleWindow(pid: pid),
+            let screen = screen(for: window)
+        else { return showNoWindow(appName) }
+        rememberFrame(window, pid: pid)
+        let visible = screen.visibleFrame
+        let centered = visible.insetBy(dx: visible.width * 0.10, dy: visible.height * 0.10)
+        return apply(centered, to: window)
+    }
+
     private func arrangeWindows(_ command: Command, pid: pid_t, appName: String) -> Bool {
-        let windows = workspaceEligibleWindows(preferredPID: pid)
+        var windows = workspaceEligibleWindows(preferredPID: pid)
+        if isPairArrangement(command) {
+            windows = preferredPairArrangementWindows(windows, preferredPID: pid)
+        }
         guard !windows.isEmpty else { return showNoWindow(appName) }
         rememberWorkspaceFrames(windows)
 
         var changed = false
+        if isPairArrangement(command) {
+            guard let first = windows.first,
+                let targetScreen = screen(for: first.window) ?? NSScreen.main
+            else { return false }
+            let frames = arrangementFrames(
+                for: command,
+                windowCount: windows.count,
+                in: targetScreen.visibleFrame
+            )
+            for (item, frame) in zip(windows, frames) {
+                changed = apply(frame, to: item.window) || changed
+                AXUIElementPerformAction(item.window, kAXRaiseAction as CFString)
+            }
+            return changed
+        }
+
         for screenWindows in workspaceWindowsGroupedByScreen(windows) {
             guard let first = screenWindows.first,
                 let targetScreen = screen(for: first.window) ?? NSScreen.main
@@ -311,6 +280,40 @@ final class WindowManagementService {
             }
         }
         return changed
+    }
+
+    private func isPairArrangement(_ command: Command) -> Bool {
+        switch command {
+        case .leftAndRight, .rightAndLeft, .topAndBottom, .bottomAndTop:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func preferredPairArrangementWindows(
+        _ windows: [WorkspaceLayoutWindow],
+        preferredPID: pid_t
+    ) -> [WorkspaceLayoutWindow] {
+        guard let primary = windows.first(where: { $0.pid == preferredPID }) ?? windows.first else {
+            return []
+        }
+        guard windows.count > 1 else { return [primary] }
+
+        let primaryScreenKey = screenKey(for: primary.window)
+        let sameScreen = windows.filter {
+            !sameWindow($0.window, primary.window) && screenKey(for: $0.window) == primaryScreenKey
+        }
+        let anyScreen = windows.filter { !sameWindow($0.window, primary.window) }
+
+        let companion =
+            sameScreen.first(where: { $0.pid != primary.pid })
+            ?? sameScreen.first
+            ?? anyScreen.first(where: { $0.pid != primary.pid })
+            ?? anyScreen.first
+
+        guard let companion else { return [primary] }
+        return [primary, companion]
     }
 
     private func workspaceEligibleWindows(preferredPID: pid_t) -> [WorkspaceLayoutWindow] {
@@ -381,13 +384,6 @@ final class WindowManagementService {
         }
     }
 
-    private func matchesCurrentDesktopWindow(
-        _ window: AXUIElement,
-        signatures: [OnScreenWindowSignature]
-    ) -> Bool {
-        matchingCurrentDesktopWindowOrder(window, signatures: signatures) != nil
-    }
-
     private func matchingCurrentDesktopWindowOrder(
         _ window: AXUIElement,
         signatures: [OnScreenWindowSignature]
@@ -401,14 +397,7 @@ final class WindowManagementService {
     }
 
     private func framesMatch(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-        let tolerance: CGFloat = 8
-        if abs(lhs.minX - rhs.minX) <= tolerance,
-            abs(lhs.minY - rhs.minY) <= tolerance,
-            abs(lhs.width - rhs.width) <= tolerance,
-            abs(lhs.height - rhs.height) <= tolerance
-        {
-            return true
-        }
+        if framesEqual(lhs, rhs) { return true }
 
         let intersection = lhs.intersection(rhs)
         guard !intersection.isNull else { return false }
@@ -418,15 +407,31 @@ final class WindowManagementService {
         return (intersection.width * intersection.height) / smallerArea > 0.9
     }
 
+    private func framesEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+        let tolerance: CGFloat = 8
+        return abs(lhs.minX - rhs.minX) <= tolerance
+            && abs(lhs.minY - rhs.minY) <= tolerance
+            && abs(lhs.width - rhs.width) <= tolerance
+            && abs(lhs.height - rhs.height) <= tolerance
+    }
+
     private func workspaceWindowsGroupedByScreen(
         _ windows: [WorkspaceLayoutWindow]
     ) -> [[WorkspaceLayoutWindow]] {
         Dictionary(grouping: windows) { item -> String in
-            let frame = screen(for: item.window)?.frame ?? NSScreen.main?.frame ?? .zero
-            return "\(frame.minX):\(frame.minY):\(frame.width):\(frame.height)"
+            screenKey(for: item.window)
         }
         .values
         .map { $0.sorted { $0.order < $1.order } }
+    }
+
+    private func screenKey(for window: AXUIElement) -> String {
+        let frame = screen(for: window)?.frame ?? NSScreen.main?.frame ?? .zero
+        return "\(frame.minX):\(frame.minY):\(frame.width):\(frame.height)"
+    }
+
+    private func sameWindow(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
+        CFEqual(lhs, rhs)
     }
 
     private func rememberWorkspaceFrames(_ windows: [WorkspaceLayoutWindow]) {
@@ -444,16 +449,16 @@ final class WindowManagementService {
         switch command {
         case .leftAndRight:
             return tiledFrames(
-                count: count, columns: min(2, count), in: visibleFrame, reverseColumns: false)
+                count: count, columns: 2, in: visibleFrame, reverseColumns: false)
         case .rightAndLeft:
             return tiledFrames(
-                count: count, columns: min(2, count), in: visibleFrame, reverseColumns: true)
+                count: count, columns: 2, in: visibleFrame, reverseColumns: true)
         case .topAndBottom:
             return tiledFrames(
-                count: count, rows: min(2, count), in: visibleFrame, reverseRows: false)
+                count: count, rows: 2, in: visibleFrame, reverseRows: false)
         case .bottomAndTop:
             return tiledFrames(
-                count: count, rows: min(2, count), in: visibleFrame, reverseRows: true)
+                count: count, rows: 2, in: visibleFrame, reverseRows: true)
         case .quarters:
             return quarterArrangementFrames(count: count, in: visibleFrame)
         default:
@@ -550,35 +555,6 @@ final class WindowManagementService {
             (isFullScreen ? kCFBooleanFalse : kCFBooleanTrue)) == .success
     }
 
-    private func executeFullScreen(
-        preferredPath: [String]?,
-        pid: pid_t,
-        appName: String
-    ) -> Bool {
-        let fallbackPaths = [
-            ["View", "Exit Full Screen"],
-            ["Window", "Exit Full Screen"],
-            ["View", "Enter Full Screen"],
-            ["Window", "Enter Full Screen"],
-            ["Window", "Toggle Full Screen"],
-        ]
-        var candidates: [[String]] = []
-        if let preferredPath, !preferredPath.isEmpty {
-            candidates.append(preferredPath)
-        }
-        candidates.append(contentsOf: fallbackPaths)
-
-        var seen = Set<String>()
-        for path in candidates {
-            let key = path.map(normalize).joined(separator: ">")
-            guard seen.insert(key).inserted else { continue }
-            if AXMenuReader.shared.clickMenuItem(path: path, in: pid) {
-                return true
-            }
-        }
-        return toggleFullScreen(pid: pid, appName: appName)
-    }
-
     private func bringAllToFront(pid: pid_t, appName: String) -> Bool {
         let windows = windows(pid: pid)
         guard !windows.isEmpty else { return showNoWindow(appName) }
@@ -593,8 +569,14 @@ final class WindowManagementService {
     private func switchWindow(pid: pid_t, appName: String) -> Bool {
         let windows = windows(pid: pid)
         guard windows.count > 1 else { return showNoWindow(appName) }
-        AXUIElementPerformAction(windows[1], kAXRaiseAction as CFString)
-        return true
+        let focused = focusedWindow(pid: pid)
+        let currentIndex =
+            focused.flatMap { focused in
+                windows.firstIndex(where: { CFEqual($0, focused) })
+            } ?? 0
+        let next = unminimize(windows[(currentIndex + 1) % windows.count])
+        AXUIElementSetAttributeValue(next, kAXMainAttribute as CFString, kCFBooleanTrue)
+        return AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success
     }
 
     private func restorePreviousFrames(pid: pid_t, appName: String) -> Bool {
@@ -752,29 +734,97 @@ final class WindowManagementService {
     }
 
     private func apply(_ frame: CGRect, to window: AXUIElement) -> Bool {
-        var point = CGPoint(x: frame.minX, y: desktopTop - frame.maxY)
-        var size = frame.size
+        let target = snapped(frame)
+        var point = CGPoint(x: target.minX, y: desktopTop - target.maxY)
+        var size = target.size
         guard let pointValue = AXValueCreate(.cgPoint, &point),
             let sizeValue = AXValueCreate(.cgSize, &size)
         else { return false }
-        let positionResult = AXUIElementSetAttributeValue(
-            window, kAXPositionAttribute as CFString, pointValue)
-        let sizeResult = AXUIElementSetAttributeValue(
-            window, kAXSizeAttribute as CFString, sizeValue)
-        return positionResult == .success || sizeResult == .success
+
+        // With AXEnhancedUserInterface enabled (Electron and friends turn it on
+        // when an AX client connects), macOS animates frame writes and applies
+        // them against stale geometry — disable it while setting the frame.
+        let appElement = applicationElement(for: window)
+        let hadEnhancedUI = appElement.map(disableEnhancedUserInterface) ?? false
+        defer {
+            if hadEnhancedUI, let appElement {
+                AXUIElementSetAttributeValue(
+                    appElement, Self.enhancedUserInterfaceAttribute as CFString, kCFBooleanTrue)
+            }
+        }
+
+        // Apps clamp a grow when the new size would overflow from the window's
+        // current origin, and clamp a move while the old size still overflows
+        // the destination — so always set size -> position -> size, then verify
+        // strictly and retry until the frame settles.
+        var succeeded = false
+        for attempt in 0..<3 {
+            let sizeResult = AXUIElementSetAttributeValue(
+                window, kAXSizeAttribute as CFString, sizeValue)
+            let positionResult = AXUIElementSetAttributeValue(
+                window, kAXPositionAttribute as CFString, pointValue)
+            let settleResult = AXUIElementSetAttributeValue(
+                window, kAXSizeAttribute as CFString, sizeValue)
+            succeeded = succeeded || positionResult == .success || sizeResult == .success
+                || settleResult == .success
+            if let actual = nativeFrame(of: window), framesEqual(actual, target) {
+                break
+            }
+            if attempt < 2 { usleep(25_000) }
+        }
+        // Some apps apply AX size changes asynchronously and still report the
+        // old frame above; push the target once more after they have settled.
+        if succeeded, let actual = nativeFrame(of: window), !framesEqual(actual, target) {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard let self else { return }
+                let hadEnhancedUI = appElement.map(self.disableEnhancedUserInterface) ?? false
+                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+                AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, pointValue)
+                AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+                if hadEnhancedUI, let appElement {
+                    AXUIElementSetAttributeValue(
+                        appElement, Self.enhancedUserInterfaceAttribute as CFString, kCFBooleanTrue)
+                }
+            }
+        }
+        if succeeded {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
+        return succeeded
+    }
+
+    private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
+
+    private func applicationElement(for window: AXUIElement) -> AXUIElement? {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success, pid > 0 else { return nil }
+        return AXUIElementCreateApplication(pid)
+    }
+
+    private func disableEnhancedUserInterface(_ appElement: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(
+                appElement, Self.enhancedUserInterfaceAttribute as CFString, &value) == .success,
+            (value as? Bool) == true
+        else { return false }
+        AXUIElementSetAttributeValue(
+            appElement, Self.enhancedUserInterfaceAttribute as CFString, kCFBooleanFalse)
+        return true
+    }
+
+    private func snapped(_ frame: CGRect) -> CGRect {
+        CGRect(
+            x: frame.minX.rounded(.toNearestOrAwayFromZero),
+            y: frame.minY.rounded(.toNearestOrAwayFromZero),
+            width: max(120, frame.width.rounded(.toNearestOrAwayFromZero)),
+            height: max(80, frame.height.rounded(.toNearestOrAwayFromZero))
+        )
     }
 
     private func showNoWindow(_ appName: String) -> Bool {
         AppToast.show("No \(appName) window found", icon: "macwindow", tint: .orange)
-        return false
-    }
-
-    private func showNativeActionUnavailable(_ command: Command, appName: String) -> Bool {
-        AppToast.show(
-            "\(command.title) unavailable for \(appName)",
-            icon: "rectangle.split.2x1",
-            tint: .orange
-        )
         return false
     }
 
@@ -785,14 +835,13 @@ final class WindowManagementService {
             .joined(separator: " ")
     }
 
+    // AX coordinates have their origin at the top-left of the primary screen (screens[0]),
+    // not at the top of the tallest screen in the arrangement.
     private var desktopTop: CGFloat {
-        NSScreen.screens.map(\.frame.maxY).max() ?? 0
+        NSScreen.screens.first?.frame.maxY ?? 0
     }
 
     private var fullFrame: (CGRect) -> CGRect { { $0 } }
-    private var centerFrame: (CGRect) -> CGRect {
-        { visible in visible.insetBy(dx: visible.width * 0.075, dy: visible.height * 0.075) }
-    }
     private var leftFrame: (CGRect) -> CGRect {
         { CGRect(x: $0.minX, y: $0.minY, width: $0.width / 2, height: $0.height) }
     }

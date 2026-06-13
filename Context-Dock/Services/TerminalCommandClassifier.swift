@@ -291,6 +291,10 @@ class TerminalCommandClassifier {
          "Changing file ownership can break system files",
          nil),
 
+        ("^chmod\\s+.*-[rR]|^chmod\\s+-[rR]",
+         "Recursive permission changes can make files inaccessible",
+         "Review affected files and change permissions individually"),
+
         ("^chgrp\\s",
          "Changing file group can affect permissions",
          nil),
@@ -409,19 +413,6 @@ class TerminalCommandClassifier {
                     suggestedAlternative: alternative
                 )
             }
-        }
-
-        // Auto-approve Homebrew commands
-        if matches(trimmedCommand, pattern: "^brew\\s") {
-            return CommandClassification(
-                command: trimmedCommand,
-                category: .packageManagement,
-                riskLevel: .low,
-                explanation: "Homebrew command",
-                requiresApproval: false,
-                blockedReason: nil,
-                suggestedAlternative: nil
-            )
         }
 
         // Check safe patterns

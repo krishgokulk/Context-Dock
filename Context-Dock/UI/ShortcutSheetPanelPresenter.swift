@@ -62,6 +62,19 @@ final class ShortcutSheetPanelPresenter {
         panel?.contentView = NSHostingView(rootView: AnyView(rootView))
     }
 
+    func resize(width: CGFloat? = nil, height: CGFloat, keepTopEdge: Bool = true) {
+        guard let panel else { return }
+        let current = panel.frame
+        let newWidth = width ?? current.width
+        let newX = current.midX - newWidth / 2
+        let newY = keepTopEdge ? current.maxY - height : current.minY
+        panel.setFrame(
+            NSRect(x: newX, y: newY, width: newWidth, height: height),
+            display: true,
+            animate: true
+        )
+    }
+
     func close() {
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)

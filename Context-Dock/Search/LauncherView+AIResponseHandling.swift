@@ -1,0 +1,1107 @@
+import AddressBook
+import AppIntents
+import AppKit
+import Combine
+import Contacts
+import Darwin
+import FoundationModels
+import PDFKit
+import Quartz
+import SwiftTerm
+import SwiftUI
+import UniformTypeIdentifiers
+import Vision
+
+extension LauncherView {
+    // MARK: - AI Response Parsing & Execution
+
+    enum L2Action {
+        case useExtension(String)
+        case executeCommand(String)
+        case terminalCommand(command: String, purpose: String)  // AI terminal automation
+        case suggestExtension(code: String, explanation: String)
+        case createAndExecuteExtension(name: String, description: String, app: String, code: String)
+        case safariCommand(SafariCommand)
+        case directAnswer(String)
+    }
+
+    func parseL2AIResponse(_ response: String) -> L2Action {
+        print("🔍 [L2] Parsing AI response...")
+
+        // Check for Safari browser control tags
+        if let safariCmd = SafariCommandBridge.shared.parseTag(from: response) {
+            print("🌐 [L2] Safari command tag detected")
+            return .safariCommand(safariCmd)
+        }
+
+        // Check if AI wants to use an extension
+        if let range = response.range(
+            of: #"\[USE_EXTENSION:\s*([^\]]+)\]"#, options: .regularExpression)
+        {
+            let matched = String(response[range])
+            // Extract extension name between brackets
+            let extensionName =
+                matched
+                .replacingOccurrences(of: "[USE_EXTENSION:", with: "")
+                .replacingOccurrences(of: "]", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            print("✅ [L2] AI wants to use extension: \(extensionName)")
+            return .useExtension(extensionName)
+        }
+
+        // Check if AI is suggesting extension creation (explicit tag)
+        if response.contains("[SUGGEST_EXTENSION]") {
+            print("💡 [L2] AI is suggesting an extension (explicit tag)")
+
+            // Try to parse JSON format first
+            if let jsonStart = response.range(of: "\\{[\\s\\S]*?\\}", options: .regularExpression) {
+                let jsonString = String(response[jsonStart])
+                if let jsonData = jsonString.data(using: .utf8),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData)
+                        as? [String: String],
+                    let name = json["name"],
+                    let description = json["description"],
+                    let app = json["app"],
+                    let code = json["code"]
+                {
+                    print("✅ [L2] Parsed JSON extension suggestion")
+                    return .createAndExecuteExtension(
+                        name: name, description: description, app: app, code: code)
+                }
+            }
+
+            // Fallback to old code block parsing
+            let codePattern = "```(?:bash|python|javascript|applescript)?\\n([\\s\\S]*?)```"
+            if let codeRange = response.range(of: codePattern, options: .regularExpression) {
+                let codeBlock = String(response[codeRange])
+                // Remove markdown code fence
+                let code =
+                    codeBlock
+                    .replacingOccurrences(of: "```bash\n", with: "")
+                    .replacingOccurrences(of: "```python\n", with: "")
+                    .replacingOccurrences(of: "```javascript\n", with: "")
+                    .replacingOccurrences(of: "```applescript\n", with: "")
+                    .replacingOccurrences(of: "```sh\n", with: "")
+                    .replacingOccurrences(of: "```\n", with: "")
+                    .replacingOccurrences(of: "\n```", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Extract explanation (everything before code block)
+                let explanation = response.components(separatedBy: "```").first ?? response
+
+                return .suggestExtension(code: code, explanation: explanation)
+            }
+        }
+
+        // Check if AI wants to run a terminal command (new format with purpose)
+        if let commandRange = response.range(
+            of: #"\[TERMINAL_COMMAND:\s*([^\]]+)\]"#, options: .regularExpression)
+        {
+            let commandMatched = String(response[commandRange])
+            let command =
+                commandMatched
+                .replacingOccurrences(of: "[TERMINAL_COMMAND:", with: "")
+                .replacingOccurrences(of: "]", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Extract purpose if available
+            var purpose = "Execute terminal command"
+            if let purposeRange = response.range(
+                of: #"\[COMMAND_PURPOSE:\s*([^\]]+)\]"#, options: .regularExpression)
+            {
+                let purposeMatched = String(response[purposeRange])
+                purpose =
+                    purposeMatched
+                    .replacingOccurrences(of: "[COMMAND_PURPOSE:", with: "")
+                    .replacingOccurrences(of: "]", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            print("✅ [L2] AI wants to run terminal command: \(command)")
+            print("   Purpose: \(purpose)")
+            return .terminalCommand(command: command, purpose: purpose)
+        }
+
+        // Check if AI wants to execute a command (legacy format)
+        if let range = response.range(
+            of: #"\[EXECUTE_COMMAND:\s*([^\]]+)\]"#, options: .regularExpression)
+        {
+            let matched = String(response[range])
+            let command =
+                matched
+                .replacingOccurrences(of: "[EXECUTE_COMMAND:", with: "")
+                .replacingOccurrences(of: "]", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            print("✅ [L2] AI wants to execute command: \(command)")
+            return .executeCommand(command)
+        }
+
+        // Otherwise, it's a direct answer
+        print("💬 [L2] Direct answer from AI")
+        return .directAnswer(response)
+    }
+
+    // Store suggested extension code for easy copying
+    // Generated extension proposal state lives in AIChatViewModel.
+
+    func copySuggestedExtension() {
+        guard let code = suggestedExtensionCode else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+
+        // Show confirmation
+        let confirmMessage = AIChatMessage(
+            role: .assistant,
+            content:
+                "✅ Extension code copied to clipboard! Save it to ExtensionLibrary/ and make it executable."
+        )
+        l2.chatMessages.append(confirmMessage)
+    }
+
+    func installSuggestedExtension() {
+        guard let code = suggestedExtensionCode else { return }
+
+        Task {
+            do {
+                // Extract extension metadata from code comments
+                let extensionName = extractExtensionName(from: code)
+                let description = extractExtensionDescription(from: code)
+                let layer = extractExtensionLayer(from: code)
+                await MainActor.run {
+                    let scriptType = determineExtensionScriptType(from: code)
+                    let category = inferExtensionCategory(layer: layer, appName: frontmost.name)
+                    let triggers = buildExtensionTriggers(layer: layer, appName: frontmost.name)
+                    let ext = ILExtension(
+                        name: extensionName,
+                        description: description,
+                        icon: "sparkles",
+                        layer: layer.contains("l1")
+                            ? .l1_search : (layer.contains("l3") ? .l3_browser : .l2_context),
+                        tags: [.automation],
+                        category: category,
+                        triggers: triggers,
+                        scriptPath: "",
+                        scriptContent: code,
+                        scriptType: scriptType,
+                        isBuiltIn: false
+                    )
+
+                    LayeredExtensionManager.shared.addExtension(ext)
+                    updateL2ContextExtensions()
+
+                    let successMessage = """
+                        ✅ Extension installed successfully!
+
+                        📦 **\(extensionName)**
+                        📝 \(description)
+                        📂 Saved to: Documents/ILauncher/Extensions
+
+                        The extension has been added and is now available in your Extensions library!
+                        """
+
+                    let confirmMessage = AIChatMessage(role: .assistant, content: successMessage)
+                    l2.chatMessages.append(confirmMessage)
+                }
+
+            } catch {
+                await MainActor.run {
+                    let errorMessage = AIChatMessage(
+                        role: .assistant,
+                        content: "❌ Failed to install extension: \(error.localizedDescription)",
+                        isError: true
+                    )
+                    l2.chatMessages.append(errorMessage)
+                }
+            }
+        }
+    }
+
+    // MARK: - Extension Proposal Helpers
+
+    /// Build the system-prompt appendix that asks the AI to emit an extension proposal block
+    /// when it can automate the user's action with AppleScript or bash.
+    func extensionProposalPromptAppendix(appName: String, query: String) -> String {
+        let q = query.lowercased()
+        let isQuestion =
+            q.hasSuffix("?") || q.hasPrefix("what") || q.hasPrefix("how")
+            || q.hasPrefix("why") || q.hasPrefix("explain") || q.hasPrefix("tell")
+            || q.hasPrefix("describe") || q.hasPrefix("who") || q.hasPrefix("when")
+        guard !isQuestion else { return "" }
+        return """
+
+            ══ AUTOMATION ASSISTANT MODE ══
+            When the user's request is an ACTION you can automate with AppleScript or bash:
+            1. Answer in one plain-English sentence.
+            2. Immediately follow with a working script wrapped in these exact markers:
+
+            <<EXTENSION_PROPOSAL>>
+            {
+              "type": "extension_proposal",
+              "name": "<short verb-noun name, e.g. Save Page as PDF>",
+              "description": "<one-line description>",
+              "scriptType": "<applescript or bash>",
+              "script": "<complete, runnable script — NO placeholders, NO TODOs>",
+              "layer": "contextDock",
+              "triggers": [{"type": "appContext", "value": "\(appName)"}],
+              "icon": "<SF Symbol name>"
+            }
+            <<END_PROPOSAL>>
+
+            RULES:
+            - Prefer AppleScript for macOS app automation (\(appName), Finder, System Events, Notes).
+            - Prefer bash for file ops, network calls, or multi-step shell workflows.
+            - Use $CD_URL for the current page URL; $CD_TEXT for selected text; $CD_FILE for selected file path.
+            - For tasks needing user input, use `osascript -e 'display dialog...'` or `choose from list`.
+            - The script must be 100% complete and run as-is — no stubs, no comments asking to fill in.
+            - If you cannot write a fully working script, omit the proposal block entirely.
+            """
+    }
+
+    /// After an AI response arrives, extract any embedded proposal, strip the markers from the
+    /// displayed text, and return an updated message tagged for the extension card UI.
+    func tagMessageWithProposal(_ msg: AIChatMessage) -> AIChatMessage {
+        guard let proposal = ExtensionProposalData.parse(from: msg.content),
+            let json = proposal.asJSON()
+        else { return msg }
+        let cleaned = ExtensionProposalData.cleanResponse(msg.content)
+        return AIChatMessage(
+            id: msg.id, role: msg.role, content: cleaned,
+            structuredData: json, hasInstallButton: true
+        )
+    }
+
+    /// Execute a proposal's script immediately without saving.
+    func runOnceFromProposal(_ json: String) {
+        guard let data = json.data(using: .utf8),
+            let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
+        else { return }
+        let ctx = AXContextReader.shared.current
+        let envVars: [String: String] = [
+            "CD_URL": ctx.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
+            "CD_TEXT": ctx.selectedText ?? "",
+            "CD_FILE": ctx.selectedFilePaths.first ?? "",
+            "CD_APP": ctx.appName,
+            "CD_TITLE": ctx.windowTitle ?? "",
+        ]
+        AppToast.show(
+            "Running \(proposal.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0,
+            centered: true)
+        switch proposal.scriptType.lowercased() {
+        case "applescript":
+            AXTriggerRuleEngine.shared.run(
+                type: .appleScript, value: proposal.script, envVars: envVars)
+        default:
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("proposal_\(UUID().uuidString).sh")
+            try? proposal.script.write(to: tmp, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
+            AXTriggerRuleEngine.shared.run(type: .scriptFile, value: tmp.path, envVars: envVars)
+        }
+    }
+
+    /// Save a proposal as a persistent Context Trigger rule.
+    func installFromProposal(_ json: String) {
+        guard let data = json.data(using: .utf8),
+            let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
+        else { return }
+        let lang: AppScriptLanguage = {
+            switch proposal.scriptType.lowercased() {
+            case "applescript": return .applescript
+            case "jxa": return .jxa
+            default: return .bash
+            }
+        }()
+        let savedPath =
+            AppSettings.shared.saveScript(
+                appKey: "context-dock", name: proposal.name, language: lang, code: proposal.script
+            ) ?? ""
+        let actionType: AppShortcut.ActionType = savedPath.isEmpty ? .appleScript : .scriptFile
+        let actionValue = savedPath.isEmpty ? proposal.script : savedPath
+        let conditions: [AXTriggerCondition] = proposal.triggers.compactMap { t in
+            switch t.type {
+            case "appContext":
+                return AXTriggerCondition(field: .appName, op: .contains, value: t.value)
+            case "urlPattern":
+                return AXTriggerCondition(field: .currentURL, op: .contains, value: t.value)
+            case "fileType":
+                return AXTriggerCondition(field: .filePath, op: .endsWith, value: ".\(t.value)")
+            default: return nil
+            }
+        }
+        let pill = AXRulePill(
+            label: proposal.name,
+            icon: proposal.icon ?? "sparkles",
+            accentColor: "blue",
+            actionType: actionType,
+            actionValue: actionValue
+        )
+        // Rules with no conditions are always-on global — use a non-empty conditions list.
+        let finalConditions: [AXTriggerCondition] =
+            conditions.isEmpty
+            ? [AXTriggerCondition(field: .appName, op: .isNotEmpty, value: "")]
+            : conditions
+        let rule = AXTriggerRule(
+            name: proposal.name, isEnabled: true,
+            conditions: finalConditions, conditionLogic: .any, pills: [pill], priority: 10
+        )
+        AppSettings.shared.addAXRule(rule)
+        l2.chatMessages.append(
+            AIChatMessage(
+                role: .assistant,
+                content:
+                    "**\(proposal.name)** saved as a Context Trigger. Type \"\(proposal.name.lowercased())\" anytime to run it instantly."
+            ))
+    }
+
+    func extractExtensionName(from code: String) -> String {
+        // Look for "# Extension: Name" in comments
+        let lines = code.components(separatedBy: "\n")
+        for line in lines {
+            if line.hasPrefix("# Extension:") {
+                return line.replacingOccurrences(of: "# Extension:", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return "Custom Extension"
+    }
+
+    func extractExtensionDescription(from code: String) -> String {
+        // Look for "# Description: ..." in comments
+        let lines = code.components(separatedBy: "\n")
+        for line in lines {
+            if line.hasPrefix("# Description:") {
+                return line.replacingOccurrences(of: "# Description:", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return "No description provided"
+    }
+
+    func extractExtensionLayer(from code: String) -> String {
+        // Look for "# Layer: ..." in comments
+        let lines = code.components(separatedBy: "\n")
+        for line in lines {
+            if line.hasPrefix("# Layer:") {
+                return line.replacingOccurrences(of: "# Layer:", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return "l2_context"  // Default to L2
+    }
+
+    func determineExtensionScriptType(from code: String, language: String? = nil)
+        -> ILExtension.ScriptType
+    {
+        if code.hasPrefix("#!/bin/bash") || code.hasPrefix("#!/usr/bin/env bash")
+            || code.hasPrefix("#!/bin/sh") || language == "bash" || language == "sh"
+        {
+            return .bash
+        }
+        if code.hasPrefix("#!/usr/bin/env python") || code.hasPrefix("#!/usr/bin/python")
+            || language == "python"
+        {
+            return .python
+        }
+        if code.hasPrefix("#!/usr/bin/osascript") || language == "applescript" {
+            return .applescript
+        }
+        return .bash
+    }
+
+    func inferExtensionCategory(layer: String, appName: String) -> String {
+        let normalized = appName.lowercased()
+        if layer.contains("l2") {
+            if normalized.contains("safari") || normalized.contains("chrome")
+                || normalized.contains("arc")
+            {
+                return "browser"
+            }
+            if normalized.contains("finder") {
+                return "finder"
+            }
+            if normalized.contains("mail") {
+                return "mail"
+            }
+            if normalized.contains("notes") || normalized.contains("textedit") {
+                return "text-editor"
+            }
+            if normalized.contains("xcode") || normalized.contains("vscode") {
+                return "code-editor"
+            }
+        }
+        if layer.contains("l3") {
+            return "page-enhancers"
+        }
+        return "custom"
+    }
+
+    func buildExtensionTriggers(layer: String, appName: String) -> [ExtensionTrigger] {
+        if layer.contains("l2"), !appName.isEmpty {
+            return [.appContext(appName)]
+        }
+        return [.always]
+    }
+
+    func runAppleScript(_ script: String) -> String? {
+        var error: NSDictionary?
+        guard let scriptObject = NSAppleScript(source: script) else {
+            print("❌ Failed to create AppleScript")
+            return nil
+        }
+
+        let output = scriptObject.executeAndReturnError(&error)
+
+        if let error = error {
+            print("❌ AppleScript error: \(error)")
+            return nil
+        }
+
+        return output.stringValue
+    }
+
+    func executeShellCommandSafely(_ command: String) async -> String {
+        // Check if this is an ilauncher-api command - handle it directly
+        if command.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("ilauncher-api ") {
+            print("🔧 [Shell] Detected ilauncher-api command, routing to APICommandHandler")
+
+            // Extract args from command
+            let cleanCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+            let components = cleanCommand.components(separatedBy: .whitespaces)
+                .filter { !$0.isEmpty }
+
+            // Remove "ilauncher-api" prefix
+            let args = Array(components.dropFirst())
+
+            print("🔧 [Shell] API args: \(args)")
+
+            // Route to API handler
+            let result = APICommandHandler.shared.handleCommand(args)
+            print("✅ [Shell] API result: \(result)")
+
+            return result
+        }
+
+        // Otherwise execute as normal shell command
+        let task = Process()
+        let pipe = Pipe()
+
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.launchPath = "/bin/bash"
+        task.arguments = ["-c", command]
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+                return output.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                return "✅ Command executed successfully"
+            }
+        } catch {
+            return "❌ Error: \(error.localizedDescription)"
+        }
+    }
+
+    func parseAIAction(_ response: String) -> AIAction? {
+        // Legacy - keeping for compatibility
+        return nil
+    }
+
+    func executeAIAction(_ action: AIAction) async {
+        // Legacy - keeping for compatibility
+    }
+
+    enum AIAction {
+        case findFiles(path: String, criteria: String)
+        case listDirectory(path: String)
+        case getFileInfo(path: String)
+        case openFile(path: String)
+    }
+
+    // MARK: - Extension Catalog for AI
+
+    struct ExtensionInfo {
+        let name: String
+        let description: String
+        let keywords: [String]
+        let capabilities: String
+        let category: String
+    }
+
+    func getAvailableExtensionsForContext(frontmostApp: String?, context: UserContext)
+        -> [ExtensionInfo]
+    {
+        print("📚 [L2] Building extension catalog for AI")
+
+        // Get all context-relevant extensions
+        let selectedFiles: [URL] = {
+            if case .filesSelected(let urls) = context {
+                return urls
+            }
+            return []
+        }()
+
+        let allExtensions = LayeredExtensionManager.shared.discoverExtensions(
+            for: "",
+            selectedFiles: selectedFiles,
+            frontmostApp: frontmostApp,
+            layer: .l2_context
+        )
+
+        print("📚 [L2] Found \(allExtensions.count) total extensions")
+
+        // Filter context-relevant extensions
+        let relevantExtensions = allExtensions.filter { ext in
+            ext.ilExtension.triggers.contains { trigger in
+                switch trigger {
+                case .appContext:
+                    return true
+                case .fileType:
+                    if case .filesSelected = context {
+                        return true
+                    }
+                    return false
+                case .keyword:
+                    return true
+                default:
+                    return false
+                }
+            }
+        }
+
+        print("📚 [L2] Filtered to \(relevantExtensions.count) relevant extensions")
+
+        // Convert to simplified info for AI
+        let catalog = relevantExtensions.map { ext -> ExtensionInfo in
+            let keywords = extractKeywordsFromExtension(ext.ilExtension)
+            let capabilities = ext.ilExtension.intents.map { $0.action }.joined(separator: ", ")
+
+            return ExtensionInfo(
+                name: ext.ilExtension.name,
+                description: ext.ilExtension.description,
+                keywords: keywords,
+                capabilities: capabilities.isEmpty ? "General actions" : capabilities,
+                category: ext.ilExtension.category
+            )
+        }
+
+        // Log catalog
+        for ext in catalog.prefix(5) {
+            print("  📦 \(ext.name): \(ext.description)")
+        }
+        if catalog.count > 5 {
+            print("  ... and \(catalog.count - 5) more")
+        }
+
+        return catalog
+    }
+
+    func extractKeywordsFromExtension(_ ext: ILExtension) -> [String] {
+        var keywords: [String] = []
+
+        for trigger in ext.triggers {
+            if case .keyword(let kws) = trigger {
+                keywords.append(contentsOf: kws)
+            }
+        }
+
+        // Also extract from intents
+        keywords.append(contentsOf: ext.intents.map { $0.action })
+        if let target = ext.intents.first?.target {
+            keywords.append(target)
+        }
+
+        return Array(Set(keywords))  // Remove duplicates
+    }
+
+    func findExtension(named name: String) -> ILExtension? {
+        let allExtensions = LayeredExtensionManager.shared.discoverExtensions(
+            for: "",
+            selectedFiles: [],
+            frontmostApp: frontmost.name,
+            layer: .l2_context
+        )
+
+        return allExtensions.first { ext in
+            ext.ilExtension.name.lowercased() == name.lowercased()
+                || ext.ilExtension.name.lowercased().contains(name.lowercased())
+        }?.ilExtension
+    }
+
+    func executeShortcutWithContext(_ result: SearchResult) {
+        let shortcutName = result.title
+
+        print("🎯 [Shortcut Execution] Executing '\(shortcutName)' with context: \(currentContext)")
+
+        // Use Universal Runner v2 system
+        Task {
+            do {
+                let frontmostApp = NSWorkspace.shared.frontmostApplication
+
+                var files: [URL] = []
+                var text: String? = nil
+                var url: String? = nil
+
+                // Extract context data
+                switch currentContext {
+                case .filesSelected(let urls):
+                    files = urls
+                    print("📁 Context: \(urls.count) file(s)")
+                    for fileURL in urls {
+                        print("   📄 \(fileURL.lastPathComponent)")
+                    }
+
+                case .textSelected(let textContent):
+                    text = textContent
+                    let preview = textContent.prefix(100)
+                    print("📝 Context: Text - \"\(preview)\(textContent.count > 100 ? "..." : "")\"")
+
+                    // Check if it's a URL
+                    if let urlFromText = URL(string: textContent), urlFromText.scheme != nil {
+                        url = textContent
+                        print("🌐 Detected as URL: \(textContent)")
+                    }
+
+                case .url(let urlString):
+                    url = urlString
+                    text = urlString
+                    print("🌐 Context: URL - \(urlString)")
+
+                case .appFocused(let appName, _):
+                    print("🖥️ Context: App focused - \(appName)")
+
+                case .contactSelected:
+                    print("👤 Context: Contact selected")
+
+                case .none:
+                    print("❌ No context")
+                }
+
+                // Execute DIRECTLY with input (no Runner v2 needed!)
+                let output: String
+
+                if !files.isEmpty {
+                    // Files context - send files directly
+                    print(
+                        "🎯 [Direct Execution] Sending \(files.count) file(s) directly to '\(shortcutName)'"
+                    )
+                    output = try await ShortcutRunner.shared.runDirectly(
+                        shortcutName,
+                        with: .files(files)
+                    )
+                } else if let text = text {
+                    // Text context - send text directly
+                    print("🎯 [Direct Execution] Sending text directly to '\(shortcutName)'")
+                    output = try await ShortcutRunner.shared.runDirectly(
+                        shortcutName,
+                        with: .text(text)
+                    )
+                } else if let url = url {
+                    // URL context - send URL as text directly
+                    print("🎯 [Direct Execution] Sending URL directly to '\(shortcutName)'")
+                    output = try await ShortcutRunner.shared.runDirectly(
+                        shortcutName,
+                        with: .url(url)
+                    )
+                } else {
+                    // No context - run shortcut without input
+                    print("🎯 [Direct Execution] Running '\(shortcutName)' without input")
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+                    process.arguments = ["run", shortcutName]
+
+                    let outputPipe = Pipe()
+                    process.standardOutput = outputPipe
+
+                    try process.run()
+                    process.waitUntilExit()
+
+                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    output =
+                        String(data: data, encoding: .utf8)?.trimmingCharacters(
+                            in: .whitespacesAndNewlines) ?? ""
+                }
+
+                await MainActor.run {
+                    print("✅ [ShortcutRunner] Output: \(output)")
+
+                    // Handle output (could be file path, text, or status)
+                    if output.starts(with: "/") {
+                        // It's a file path - reveal in Finder
+                        let fileURL = URL(fileURLWithPath: output)
+                        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                    } else if !output.isEmpty && output != "OK" {
+                        // Show as notification or toast
+                        print("📋 Result: \(output)")
+                    }
+
+                    // Close launcher
+                    onClose()
+                }
+
+            } catch ShortcutRunner.RunnerError.runnerNotInstalled {
+                await MainActor.run {
+                    print("⚠️ ILauncher Runner v2 not installed - falling back to direct execution")
+                    // Fallback to old method
+                    executeShortcutLegacy(result)
+                }
+
+            } catch {
+                await MainActor.run {
+                    print("❌ Shortcut execution failed: \(error)")
+                    onClose()
+                }
+            }
+        }
+    }
+
+    // Legacy execution method (fallback)
+    func executeShortcutLegacy(_ result: SearchResult) {
+        switch currentContext {
+        case .filesSelected(let urls):
+            let filePaths = urls.map { $0.path }
+            runShortcutWithInputLegacy(name: result.title, input: filePaths)
+
+        case .textSelected(let text):
+            runShortcutWithInputLegacy(name: result.title, input: text)
+
+        case .url(let urlString):
+            runShortcutWithInputLegacy(name: result.title, input: urlString)
+
+        case .none, .appFocused, .contactSelected:
+            result.action()
+        }
+    }
+
+    func runShortcutWithInputLegacy(name: String, input: Any) {
+        Task {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+
+            // Convert input to JSON string
+            let inputString: String
+            if let textInput = input as? String {
+                inputString = textInput
+            } else if let arrayInput = input as? [String] {
+                // For file arrays, pass as newline-separated list
+                inputString = arrayInput.joined(separator: "\n")
+            } else {
+                print("⚠️ Unsupported input type")
+                return
+            }
+
+            // Run shortcut with input via stdin
+            process.arguments = ["run", name, "--input-path", "-"]
+
+            let inputPipe = Pipe()
+            let outputPipe = Pipe()
+
+            process.standardInput = inputPipe
+            process.standardOutput = outputPipe
+            process.standardError = outputPipe
+
+            do {
+                try process.run()
+
+                // Write input to stdin
+                if let inputData = inputString.data(using: .utf8) {
+                    inputPipe.fileHandleForWriting.write(inputData)
+                }
+                inputPipe.fileHandleForWriting.closeFile()
+
+                process.waitUntilExit()
+
+                if process.terminationStatus == 0 {
+                    print("✅ Shortcut '\(name)' completed successfully")
+                } else {
+                    let errorData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                    if let errorOutput = String(data: errorData, encoding: .utf8) {
+                        print("❌ Shortcut '\(name)' failed: \(errorOutput)")
+                    }
+                }
+            } catch {
+                print("❌ Failed to run shortcut '\(name)': \(error)")
+            }
+        }
+    }
+
+    func handleDirectInput() {
+        let trimmed = searchState.query.trimmingCharacters(in: .whitespaces)
+
+        // Check if it's a URL
+        if let url = URL(string: trimmed), url.scheme != nil {
+            NSWorkspace.shared.open(url)
+            searchState.query = ""
+            hideLauncherAfterResultExecution()
+        } else if trimmed.contains(".") && !trimmed.contains(" ") {
+            // Try as a URL with https://
+            if let url = URL(string: "https://\(trimmed)") {
+                NSWorkspace.shared.open(url)
+                searchState.query = ""
+                hideLauncherAfterResultExecution()
+            } else {
+                // Not a valid URL, perform web search
+                performWebSearch(query: trimmed)
+            }
+        } else {
+            // Perform inline web search
+            performWebSearch(query: trimmed)
+        }
+    }
+
+    func performWebSearch(query: String) {
+        let encodedQuery =
+            query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let urlString = "https://www.google.com/search?q=\(encodedQuery)"
+        if let url = URL(string: urlString) {
+            settings.addRecentWebSearch(query)
+            NSWorkspace.shared.open(url)
+        }
+        searchState.query = ""
+        hideLauncherAfterResultExecution()
+    }
+
+    func fetchWebSearchResults(query: String) async throws -> [SearchResult] {
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+        else {
+            print("❌ Failed to encode query")
+            return []
+        }
+
+        // Use DuckDuckGo Instant Answer API (no API key required)
+        let urlString =
+            "https://api.duckduckgo.com/?q=\(encoded)&format=json&no_html=1&skip_disambig=1"
+        print("🌐 Fetching from: \(urlString)")
+        guard let url = URL(string: urlString) else {
+            print("❌ Invalid URL")
+            return []
+        }
+
+        let (data, _) = try await URLSession.shared.data(from: url)
+        print("🌐 Received \(data.count) bytes of data")
+
+        struct DDGResponse: Codable {
+            let Abstract: String?
+            let AbstractText: String?
+            let AbstractSource: String?
+            let AbstractURL: String?
+            let Heading: String?
+            let RelatedTopics: [RelatedTopic]?
+
+            struct RelatedTopic: Codable {
+                let Text: String?
+                let FirstURL: String?
+                let Icon: IconInfo?
+
+                struct IconInfo: Codable {
+                    let URL: String?
+                }
+            }
+        }
+
+        let response = try JSONDecoder().decode(DDGResponse.self, from: data)
+        var results: [SearchResult] = []
+
+        print(
+            "🌐 DDG Response - Abstract: \(response.AbstractText ?? "none"), Topics: \(response.RelatedTopics?.count ?? 0)"
+        )
+
+        // Add main abstract result if available
+        if let abstractText = response.AbstractText, !abstractText.isEmpty,
+            let abstractURL = response.AbstractURL, let url = URL(string: abstractURL)
+        {
+            let heading = response.Heading ?? query
+            print("🌐 Adding abstract result: \(heading)")
+            results.append(
+                SearchResult(
+                    title: heading,
+                    subtitle: abstractText,
+                    icon: NSImage(
+                        systemSymbolName: "info.circle.fill", accessibilityDescription: nil),
+                    action: { NSWorkspace.shared.open(url) },
+                    score: 100.0,
+                    type: .webSearch,
+                    filePath: nil,
+                    contactData: nil
+                ))
+        }
+
+        // Add related topics as results
+        if let topics = response.RelatedTopics {
+            for topic in topics.prefix(5) {
+                guard let text = topic.Text, !text.isEmpty,
+                    let urlString = topic.FirstURL,
+                    let url = URL(string: urlString)
+                else {
+                    continue
+                }
+
+                // Split text into title and description
+                let parts = text.components(separatedBy: " - ")
+                let title = parts.first ?? text
+                let subtitle = parts.count > 1 ? parts[1...].joined(separator: " - ") : urlString
+
+                results.append(
+                    SearchResult(
+                        title: title,
+                        subtitle: subtitle,
+                        icon: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
+                        action: { NSWorkspace.shared.open(url) },
+                        score: 90.0,
+                        type: .webSearch,
+                        filePath: nil,
+                        contactData: nil
+                    ))
+            }
+        }
+
+        // Always add "Search on Google" as fallback
+        let googleQuery =
+            query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        if let googleURL = URL(string: "https://www.google.com/search?q=\(googleQuery)") {
+            print("🌐 Adding Google search fallback")
+            results.append(
+                SearchResult(
+                    title: "Search \"\(query)\" on Google",
+                    subtitle: "Open Google search in browser",
+                    icon: NSImage(
+                        systemSymbolName: "magnifyingglass", accessibilityDescription: nil),
+                    action: {
+                        NSWorkspace.shared.open(googleURL)
+                    },
+                    score: 50.0,
+                    type: .webSearch,
+                    filePath: nil,
+                    contactData: nil
+                ))
+        }
+
+        print("🌐 Returning \(results.count) total results")
+        return results
+    }
+
+    // performSearch(), SmartQueryType, detectSmartQuery(), findExactApplicationMatch()
+    // → moved to LauncherView+Search.swift
+
+    // handleSmartQueryResult() → moved to LauncherView+Search.swift
+
+    /// Converts user-defined AppShortcuts into SearchResult rows and prepends them
+    /// to the pinned results so they appear at the top of the smart-query view.
+    func injectAppShortcuts(for appKey: String) {
+        let shortcuts = settings.shortcuts(for: appKey)
+        guard !shortcuts.isEmpty else { return }
+
+        let shortcutResults: [SearchResult] = shortcuts.map { sc in
+            SearchResult(
+                title: sc.name,
+                subtitle: sc.actionValue,
+                icon: NSImage(systemSymbolName: sc.iconName, accessibilityDescription: sc.name),
+                action: { [sc] in
+                    switch sc.actionType {
+                    case .openURL:
+                        if let url = URL(string: sc.actionValue) { NSWorkspace.shared.open(url) }
+                    case .openFile:
+                        NSWorkspace.shared.openApplication(
+                            at: URL(fileURLWithPath: sc.actionValue),
+                            configuration: NSWorkspace.OpenConfiguration())
+                    case .shellCommand:
+                        let proc = Process()
+                        proc.launchPath = "/bin/zsh"
+                        proc.arguments = ["-c", sc.actionValue]
+                        try? proc.run()
+                    case .appleScript:
+                        if let script = NSAppleScript(source: sc.actionValue) {
+                            script.executeAndReturnError(nil)
+                        }
+                    case .jxa:
+                        let tmp = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("ilauncher_jxa_\(UUID().uuidString).js")
+                        try? sc.actionValue.write(to: tmp, atomically: true, encoding: .utf8)
+                        let p = Process()
+                        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                        p.arguments = ["-l", "JavaScript", tmp.path]
+                        try? p.run()
+                    case .scriptFile:
+                        AXTriggerRuleEngine.shared.run(type: .scriptFile, value: sc.actionValue)
+                    case .menuItem:
+                        AXTriggerRuleEngine.shared.run(type: .menuItem, value: sc.actionValue)
+                    }
+                },
+                type: .shortcut,
+                filePath: nil,
+                contactData: nil
+            )
+        }
+        // Prepend as pinned "Quick Actions" section; content follows below
+        setPinnedResults(shortcutResults, title: "Quick Actions", excludeTypes: [])
+    }
+
+    func loadApplicationSpecificContent(appPath: String) {
+        let expectedQuery = searchState.query.trimmingCharacters(in: .whitespaces)
+        Task {
+            await MainActor.run {
+                let currentQuery = searchState.query.trimmingCharacters(in: .whitespaces)
+                guard currentQuery == expectedQuery else { return }
+                var appResults: [SearchResult] = []
+
+                // Add the app itself as first result
+                let appName = URL(fileURLWithPath: appPath).deletingPathExtension()
+                    .lastPathComponent
+                let appIcon = NSWorkspace.shared.icon(forFile: appPath)
+
+                appResults.append(
+                    SearchResult(
+                        title: appName,
+                        subtitle: appPath,
+                        icon: appIcon,
+                        action: {
+                            NSWorkspace.shared.openApplication(
+                                at: URL(fileURLWithPath: appPath),
+                                configuration: NSWorkspace.OpenConfiguration())
+                        },
+                        type: .application,
+                        filePath: appPath,
+                        contactData: nil
+                    ))
+
+                // TODO: Add recent documents opened by this app
+                // TODO: Add app settings/preferences
+                // For now, just show the app itself
+
+                setPinnedResults(appResults, title: "Application", excludeTypes: [])
+                print("✅ Loaded app-specific content for \(appName)")
+            }
+        }
+    }
+
+    // performSearchWithoutSpotlight() → moved to LauncherView+Search.swift
+
+    // findApplications() → moved to LauncherView+Search.swift
+
+    func launchPinnedApp(_ app: PinnedApp) {
+        if app.type == .application {
+            let resolvedBundleId = bundleIdentifier(for: app)
+            _ = launchApplication(
+                bundleIdentifier: resolvedBundleId,
+                appName: app.name,
+                path: app.path
+            )
+            if isGlobalContextActive {
+                scheduleContextDockTransition(bundleId: resolvedBundleId, appName: app.name)
+            }
+            return
+        }
+
+        // For files and shortcuts - open normally
+        let url = URL(fileURLWithPath: app.path)
+        NSWorkspace.shared.open(url)
+        onClose()
+    }
+
+}

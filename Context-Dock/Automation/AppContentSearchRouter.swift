@@ -98,6 +98,9 @@ final class AppContentSearchRouter {
         if intent.bundleId == "com.apple.MobileSMS" {
             return await MessagesAutomation.openSearch(query: intent.query)
         }
+        if intent.bundleId == "com.apple.mail" {
+            return await MailAutomation.openMailboxSearch(query: intent.query)
+        }
 
         guard let app = await activateOrLaunch(bundleId: intent.bundleId) else {
             return "❌ Couldn't open \(intent.appName)."
@@ -125,20 +128,32 @@ final class AppContentSearchRouter {
 
                 let prefix = "\(alias) "
                 if stripped.hasPrefix(prefix) {
-                    let content = String(stripped.dropFirst(prefix.count))
+                    var rawContent = String(stripped.dropFirst(prefix.count))
                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if rawContent.hasPrefix("for ") {
+                        rawContent = String(rawContent.dropFirst(4))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    let content = normalizeSearchPayload(rawContent)
                     if !content.isEmpty { return intent(target: target, query: content) }
                 }
 
                 let suffix = " \(alias)"
                 if stripped.hasSuffix(suffix) {
-                    let content = String(stripped.dropLast(suffix.count))
+                    let content = normalizeSearchPayload(
+                        String(stripped.dropLast(suffix.count))
                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
                     if !content.isEmpty { return intent(target: target, query: content) }
                 }
             }
         }
         return nil
+    }
+
+    private func normalizeSearchPayload(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return contentAfterSearchVerb(in: value) ?? value
     }
 
     private func contentAfterSearchVerb(in query: String) -> String? {
@@ -210,7 +225,11 @@ final class AppContentSearchRouter {
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        return try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        let launched = try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        if launched != nil {
+            try? await Task.sleep(nanoseconds: 650_000_000)
+        }
+        return launched
     }
 
     private func normalize(_ value: String) -> String {

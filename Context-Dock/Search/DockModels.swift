@@ -92,6 +92,19 @@ struct GlobalGroupedListNavigationState {
 
     var totalCount: Int { appResults.count + menuPills.count }
 
+    var renderFingerprint: String {
+        // Icon presence is part of render identity so async favicon arrivals repaint.
+        func pillKey(_ pill: DockPill) -> String {
+            "\(pill.id)~\(pill.menuItemImage != nil ? 1 : 0)"
+        }
+        let appIDs = appResults.map(\.trackingIdentifier).joined(separator: "|")
+        let pillIDs = menuPills.map(pillKey).joined(separator: "|")
+        let groupIDs = appMenuGroups.map { group in
+            "\(group.id):" + group.pills.map(pillKey).joined(separator: ",")
+        }.joined(separator: "|")
+        return "\(menuFirst ? 1 : 0)#\(appIDs)#\(pillIDs)#\(groupIDs)"
+    }
+
     init(
         appResults: [SearchResult],
         menuPills: [DockPill],
@@ -106,5 +119,43 @@ struct GlobalGroupedListNavigationState {
         }
         self.appMenuGroups = appMenuGroups
         self.menuFirst = menuFirst
+    }
+
+    func cappedForCommit(maxRows: Int) -> GlobalGroupedListNavigationState {
+        let rowLimit = max(0, maxRows)
+        guard rowLimit > 0 else {
+            return GlobalGroupedListNavigationState(
+                appResults: [],
+                menuPills: [],
+                menuGroups: [],
+                appMenuGroups: [],
+                menuFirst: menuFirst
+            )
+        }
+
+        let appLimit = min(appResults.count, rowLimit)
+        let cappedApps = Array(appResults.prefix(appLimit))
+        let remaining = max(0, rowLimit - cappedApps.count)
+        var remainingPills = remaining
+
+        let cappedGroups: [AppMenuGroup] = appMenuGroups.compactMap { group in
+            guard remainingPills > 0 else { return nil }
+            let pills = Array(group.pills.prefix(remainingPills))
+            guard !pills.isEmpty else { return nil }
+            remainingPills -= pills.count
+            return AppMenuGroup(id: group.id, appName: group.appName, icon: group.icon, pills: pills)
+        }
+
+        let cappedMenuPills = cappedGroups.isEmpty
+            ? Array(menuPills.prefix(remaining))
+            : cappedGroups.flatMap(\.pills)
+
+        return GlobalGroupedListNavigationState(
+            appResults: cappedApps,
+            menuPills: cappedMenuPills,
+            menuGroups: cappedGroups.isEmpty ? Array(menuGroups.prefix(remaining)) : [],
+            appMenuGroups: cappedGroups,
+            menuFirst: menuFirst
+        )
     }
 }

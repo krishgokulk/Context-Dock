@@ -361,8 +361,6 @@ extension LauncherView {
                 ANSWER:There are \(visibleFiles.count) visible items in \(fallbackFolderPath).
                 """
 
-            let provider = await MainActor.run { self.settings.selectedAIProvider }
-
             do {
                 let context: [[String: String]] = [
                     ["role": "system", "content": systemPrompt],
@@ -389,12 +387,7 @@ extension LauncherView {
                     }
                 }
 
-                let response: String
-                if provider == .onDevice {
-                    response = try await self.sendToOnDeviceAI(query: query, context: context)
-                } else {
-                    response = try await self.sendToProvider(query: query, context: context)
-                }
+                let response = try await self.sendToProvider(query: query, context: context)
 
                 await MainActor.run {
                     self.l2.isLoading = false
@@ -860,13 +853,13 @@ extension LauncherView {
             Task.detached(priority: .userInitiated) {
                 var err: NSDictionary?
                 NSAppleScript(source: script)?.executeAndReturnError(&err)
-                if let e = err {
+                if let err {
+                    let message = err["NSAppleScriptErrorMessage"] as? String ?? "Script error"
                     await MainActor.run {
                         self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
-                                content:
-                                    "⚠️ \(e["NSAppleScriptErrorMessage"] as? String ?? "Script error")",
+                                content: "⚠️ \(message)",
                                 isError: true))
                     }
                 }
@@ -899,7 +892,8 @@ extension LauncherView {
                     ?? ""
                 let createdURL =
                     process.terminationStatus == 0
-                    ? self.detectCreatedFile(command: cmd, output: output) : nil
+                    ? await MainActor.run { self.detectCreatedFile(command: cmd, output: output) }
+                    : nil
                 await MainActor.run {
                     let status =
                         process.terminationStatus == 0

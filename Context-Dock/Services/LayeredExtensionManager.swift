@@ -67,10 +67,15 @@ class LayeredExtensionManager: ObservableObject {
         let libPath = libraryBasePath  // capture let-constant; safe across threads
 
         // Run all disk I/O on a background thread
-        let (discovered, scanned) = await Task.detached(priority: .userInitiated) { [libPath] in
-            let d = LayeredExtensionManager.discoverExtensions(at: libPath)
+        let metadataURLs = await Task.detached(priority: .userInitiated) { [libPath] in
+            LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
+        }.value
+        let discovered = metadataURLs.compactMap {
+            LayeredExtensionManager.loadExtensionFromMetadata($0)
+        }
+        let scanned = await Task.detached(priority: .userInitiated) {
             let s = LayeredExtensionManager.loadScanned()
-            return (d, s)
+            return s
         }.value
 
         // Merge on MainActor
@@ -97,8 +102,8 @@ class LayeredExtensionManager: ObservableObject {
 
     // MARK: - Extension Discovery (nonisolated static — safe to call from Task.detached)
 
-    private nonisolated static func discoverExtensions(at libraryBasePath: URL) -> [ILExtension] {
-        var discovered: [ILExtension] = []
+    private nonisolated static func discoverExtensionMetadataURLs(at libraryBasePath: URL) -> [URL] {
+        var discovered: [URL] = []
         let fm = FileManager.default
         let layerPaths = [
             libraryBasePath.appendingPathComponent("L1-Search"),
@@ -110,16 +115,14 @@ class LayeredExtensionManager: ObservableObject {
             guard let enumerator = fm.enumerator(at: layerPath, includingPropertiesForKeys: nil) else { continue }
             for case let fileURL as URL in enumerator {
                 if fileURL.lastPathComponent == "extension.json" {
-                    if let ext = loadExtensionFromMetadata(fileURL) {
-                        discovered.append(ext)
-                    }
+                    discovered.append(fileURL)
                 }
             }
         }
         return discovered
     }
 
-    private nonisolated static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
+    private static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
         do {
             let data = try Data(contentsOf: metadataURL)
             var ext = try JSONDecoder().decode(ILExtension.self, from: data)

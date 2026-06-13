@@ -106,7 +106,7 @@ final class AXContextReader {
         "org.chromium.Chromium",
     ]
 
-    private var eventCancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
 
     private init() {
         subscribeToEventBus()
@@ -120,6 +120,25 @@ final class AXContextReader {
         let new = buildContext(from: app)
         updateIfChanged(new)
         startAsyncMenuLoad(for: app)
+    }
+
+    /// Fast open-path snapshot. No selected text, browser URL, Finder selection, or menu read.
+    /// Use when launcher opens so first paint stays cache-only.
+    func refreshLightweight(from app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        let bundleId = app.bundleIdentifier ?? ""
+        let name = app.localizedName ?? ""
+
+        var ctx = AXContext(appName: name, bundleId: bundleId, pid: pid)
+        let axApp = AXUIElementCreateApplication(pid)
+        ctx.windowTitle = readWindowTitle(axApp)
+        ctx.focusedElementRole = readFocusedRole(axApp)
+
+        if current.bundleId == bundleId {
+            ctx.menuItems = current.menuItems
+        }
+
+        updateIfChanged(ctx)
     }
 
     /// Event-driven entry point — called by AXEventBus subscribers.
@@ -203,17 +222,12 @@ final class AXContextReader {
     // MARK: - Async menu load
 
     private func startAsyncMenuLoad(for app: NSRunningApplication) {
-        let pid      = app.processIdentifier
-        let bundleId = app.bundleIdentifier ?? ""
-        Task.detached(priority: .utility) { [weak self] in
+        let pid = app.processIdentifier
+        Task.detached(priority: .userInitiated) {
             let items = await AXMenuEnumerator.shared.getMenuAsync(for: app)
-            AXEventBus.shared.emit(.menuItemsReady(pid, items))
-            // Also update the context directly so callers reading .current get menu items
-            await MainActor.run { [weak self] in
-                guard let self, self.current.bundleId == bundleId else { return }
-                var updated = self.current
-                updated.menuItems = items
-                self.current = updated
+            await MainActor.run {
+                // menuItemsReady bypasses debounce — see subscribeToEventBus
+                AXEventBus.shared.emit(.menuItemsReady(pid, items))
             }
         }
     }
@@ -221,11 +235,29 @@ final class AXContextReader {
     // MARK: - Event bus subscription
 
     private func subscribeToEventBus() {
-        eventCancellable = AXEventBus.shared.publisher
-            .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
-            .sink { [weak self] event in
-                self?.apply(event: event)
+        // appActivated and menuItemsReady are latency-sensitive — fire immediately
+        AXEventBus.shared.publisher
+            .filter {
+                switch $0 {
+                case .appActivated, .menuItemsReady: return true
+                default: return false
+                }
             }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] event in self?.apply(event: event) }
+            .store(in: &cancellables)
+
+        // focusedElementChanged and selectedTextChanged fire rapidly — debounce to reduce churn
+        AXEventBus.shared.publisher
+            .filter {
+                switch $0 {
+                case .focusedElementChanged, .selectedTextChanged: return true
+                default: return false
+                }
+            }
+            .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
+            .sink { [weak self] event in self?.apply(event: event) }
+            .store(in: &cancellables)
     }
 
     // MARK: - Window title

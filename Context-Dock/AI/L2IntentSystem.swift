@@ -9,6 +9,18 @@ import Combine
 
 // MARK: - Intent Enum
 
+enum DoraXIntent: String, CaseIterable, Identifiable, Codable {
+    case openApp
+    case runAppAction
+    case runCLI
+    case askAI
+    case summarizeSelection
+    case explainError
+    case calendarAction
+
+    var id: String { rawValue }
+}
+
 enum L2ToolIntent: String, CaseIterable, Identifiable, Codable {
     case musicPlayer    = "MUSIC_PLAYER"
     case videoDownload  = "VIDEO_DOWNLOADER"

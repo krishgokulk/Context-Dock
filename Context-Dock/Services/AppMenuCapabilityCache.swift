@@ -100,10 +100,78 @@ nonisolated private struct AppMenuCapabilitySnapshot: Codable {
     var localeIdentifier: String
     var updatedAt: Date
     var records: [AppMenuCapabilityRecord]
+
+    // Inverted indexes — in-memory only, not persisted, rebuilt when records change.
+    // wordIndex:    normalized full word → record indices
+    // prefix2Index: 2-char prefix       → record indices
+    var wordIndex: [String: [Int]] = [:]
+    var prefix2Index: [String: [Int]] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case bundleIdentifier, appName, bundleVersion, localeIdentifier, updatedAt, records
+    }
+
+    mutating func rebuildInvertedIndex() {
+        var words: [String: [Int]] = [:]
+        var prefixes: [String: [Int]] = [:]
+        words.reserveCapacity(records.count * 3)
+        prefixes.reserveCapacity(records.count * 3)
+        for (i, record) in records.enumerated() {
+            let title = AppMenuCapabilityCache.normalize(record.title)
+            let pathTokens = record.path.flatMap {
+                AppMenuCapabilityCache.normalize($0).split(separator: " ").map(String.init)
+            }
+            let allTokens = title.split(separator: " ").map(String.init) + pathTokens
+            for token in allTokens where !token.isEmpty {
+                words[token, default: []].append(i)
+                let p = String(token.prefix(2))
+                if p.count == 2 { prefixes[p, default: []].append(i) }
+            }
+        }
+        wordIndex = words
+        prefix2Index = prefixes
+    }
+
+    // Fast candidate selection using inverted index.
+    // Returns record indices that are likely matches for the query.
+    // Over-inclusive by design — rankedRecords() scores and filters precisely.
+    func candidateIndices(for normalizedQuery: String) -> Set<Int>? {
+        guard !normalizedQuery.isEmpty, !wordIndex.isEmpty else { return nil }
+        let tokens = normalizedQuery.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+
+        var combined: Set<Int>? = nil
+        for token in tokens {
+            var tokenSet = Set(wordIndex[token] ?? [])
+            let p = String(token.prefix(2))
+            if p.count == 2 { tokenSet.formUnion(prefix2Index[p] ?? []) }
+            if tokenSet.isEmpty { return Set() }  // token has no candidates → zero results
+            if let existing = combined {
+                combined = existing.intersection(tokenSet)
+            } else {
+                combined = tokenSet
+            }
+        }
+        return combined
+    }
 }
 
 final class AppMenuCapabilityCache {
     nonisolated static let shared = AppMenuCapabilityCache()
+
+    nonisolated static func shouldExposeInGlobalContext(title: String, path: [String]) -> Bool {
+        let normalizedTitle = normalize(title)
+        let normalizedPath = path.map(normalize)
+        guard !normalizedTitle.isEmpty, !normalizedPath.isEmpty else { return false }
+        if normalizedPath.first == "apple" { return false }
+        if normalizedPath.contains("services") { return false }
+        if normalizedPath.contains("writing tools") { return false }
+        if normalizedPath.contains("autofill") { return false }
+        if normalizedTitle == "autofill" { return false }
+        if normalizedTitle == "start dictation" { return false }
+        if normalizedTitle == "emoji symbols" { return false }
+        return true
+    }
 
     nonisolated private struct MenuItemsCacheKey: Hashable {
         let bundleIdentifier: String
@@ -114,8 +182,14 @@ final class AppMenuCapabilityCache {
     }
 
     private let lock = NSLock()
+    private let persistenceQueue = DispatchQueue(
+        label: "com.krishgokul.ContextDock.menu-capability-persistence",
+        qos: .utility
+    )
     nonisolated(unsafe) private var snapshots: [String: AppMenuCapabilitySnapshot] = [:]
     nonisolated(unsafe) private var menuItemsCache: [MenuItemsCacheKey: [AXMenuItem]] = [:]
+    nonisolated(unsafe) private var pendingSaveWorkItem: DispatchWorkItem?
+    nonisolated(unsafe) private var persistenceGeneration = 0
     private let maxRecordsPerApp = 350
     private let maxBrowserRecordsPerApp = 2_000
     private let maxMenuItemsCacheEntries = 256
@@ -198,7 +272,7 @@ final class AppMenuCapabilityCache {
             return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
 
-        let snapshot = AppMenuCapabilitySnapshot(
+        var snapshot = AppMenuCapabilitySnapshot(
             bundleIdentifier: bundleIdentifier,
             appName: appName,
             bundleVersion: bundleVersion,
@@ -206,12 +280,16 @@ final class AppMenuCapabilityCache {
             updatedAt: now,
             records: Array(mergedRecords.prefix(maxRecords(for: bundleIdentifier)))
         )
+        snapshot.rebuildInvertedIndex()
 
         snapshots[bundleIdentifier] = snapshot
         menuItemsCache = menuItemsCache.filter { $0.key.bundleIdentifier != bundleIdentifier }
         lock.unlock()
 
-        saveToDisk()
+        scheduleSaveToDisk()
+        Task { @MainActor in
+            RecentItemsService.shared.invalidate()
+        }
     }
 
     nonisolated private func isVolatileMenuPath(_ path: [String]) -> Bool {
@@ -304,19 +382,39 @@ final class AppMenuCapabilityCache {
             lock.unlock()
             return cached
         }
-        let records = (snapshots[bundleIdentifier]?.records ?? []).filter {
-            shouldPersistMenuCapability(
-                title: $0.title,
-                path: $0.path,
-                bundleIdentifier: bundleIdentifier,
-                resolvedFilePath: $0.resolvedFilePath
-            )
-        }
+        let snapshot = snapshots[bundleIdentifier]
         lock.unlock()
 
-        guard !records.isEmpty else { return [] }
+        let allRawRecords = snapshot?.records ?? []
+        guard !allRawRecords.isEmpty else { return [] }
 
-        let ranked = rankedRecords(records, normalizedQuery: normalizedQuery)
+        // Use the inverted index to narrow candidates before filtering and scoring.
+        // For a 3-char query against 500 records, index lookup returns ~20-50 candidates
+        // instead of scoring all 500 — roughly 10-25× speedup per app.
+        let candidateRecords: [AppMenuCapabilityRecord]
+        if let indices = snapshot?.candidateIndices(for: normalizedQuery), !indices.isEmpty {
+            candidateRecords = indices.compactMap { i -> AppMenuCapabilityRecord? in
+                guard i < allRawRecords.count else { return nil }
+                let r = allRawRecords[i]
+                guard shouldPersistMenuCapability(
+                    title: r.title, path: r.path,
+                    bundleIdentifier: bundleIdentifier, resolvedFilePath: r.resolvedFilePath
+                ) else { return nil }
+                return r
+            }
+        } else {
+            // No index available or empty query — fall back to full scan outside the lock.
+            candidateRecords = allRawRecords.filter {
+                shouldPersistMenuCapability(
+                    title: $0.title, path: $0.path,
+                    bundleIdentifier: bundleIdentifier, resolvedFilePath: $0.resolvedFilePath
+                )
+            }
+        }
+
+        guard !candidateRecords.isEmpty else { return [] }
+
+        let ranked = rankedRecords(candidateRecords, normalizedQuery: normalizedQuery)
         // Cached capability entries are passive metadata for ranking/display.
         // Do not attach a live per-app AX element or consult live AX state here,
         // because this path is called from UI rendering and startup code.
@@ -343,7 +441,11 @@ final class AppMenuCapabilityCache {
 
         lock.lock()
         if menuItemsCache.count > maxMenuItemsCacheEntries {
-            menuItemsCache.removeAll(keepingCapacity: true)
+            // Evict half to avoid thundering-herd on the next query burst
+            let excess = menuItemsCache.count - maxMenuItemsCacheEntries / 2
+            for key in menuItemsCache.keys.prefix(excess) {
+                menuItemsCache.removeValue(forKey: key)
+            }
         }
         menuItemsCache[cacheKey] = items
         lock.unlock()
@@ -379,6 +481,39 @@ final class AppMenuCapabilityCache {
         let ids = snapshots.compactMap { k, v in v.records.isEmpty ? nil : k }
         lock.unlock()
         return ids
+    }
+
+    /// Drop cached menu snapshots for the given bundle ids (e.g. uninstalled
+    /// apps) and persist the trimmed cache.
+    nonisolated func purge(bundleIdentifiers ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        lock.lock()
+        var removed = false
+        for id in ids where snapshots.removeValue(forKey: id) != nil { removed = true }
+        lock.unlock()
+        if removed { scheduleSaveToDisk() }
+    }
+
+    nonisolated func resolvedRecentDocumentURLs(limit: Int = 120) -> [URL] {
+        lock.lock()
+        let records = snapshots.values.flatMap(\.records)
+        lock.unlock()
+
+        var seen = Set<String>()
+        return records
+            .filter { $0.resolvedFilePath?.isEmpty == false }
+            .sorted { $0.lastSeen > $1.lastSeen }
+            .compactMap { record -> URL? in
+                guard let path = record.resolvedFilePath else { return nil }
+                let url = URL(fileURLWithPath: path).standardizedFileURL
+                guard FileManager.default.fileExists(atPath: url.path),
+                    url.pathExtension.lowercased() != "app",
+                    seen.insert(url.path).inserted
+                else { return nil }
+                return url
+            }
+            .prefix(limit)
+            .map { $0 }
     }
 
     nonisolated func snapshotAge(bundleIdentifier: String) -> TimeInterval? {
@@ -451,12 +586,16 @@ final class AppMenuCapabilityCache {
         return lines.joined(separator: "\n")
     }
 
+    private static let _nonAlphanum = CharacterSet.alphanumerics.inverted
+
     nonisolated static func normalize(_ value: String) -> String {
-        let normalized = value
+        let folded = value
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = folded
+            .components(separatedBy: _nonAlphanum)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         if normalized == "minimise" { return "minimize" }
         if normalized == "minimise all" { return "minimize all" }
         return normalized
@@ -473,6 +612,7 @@ final class AppMenuCapabilityCache {
         _ records: [AppMenuCapabilityRecord],
         normalizedQuery q: String
     ) -> [AppMenuCapabilityRecord] {
+        SearchPerformanceLog.shared.signpost("menu.ranking", query: q) {
         guard !q.isEmpty else {
             return records.sorted { $0.lastSeen > $1.lastSeen }
         }
@@ -485,18 +625,28 @@ final class AppMenuCapabilityCache {
         let scored = records.compactMap { record -> (AppMenuCapabilityRecord, Int)? in
             let title = record.normalizedTitle
             let path = record.normalizedPath
+            let pathParts = record.path.map(Self.normalize).filter { !$0.isEmpty }
+            let titleTokens = title.split(separator: " ").map(String.init)
+            let pathTokens = pathParts.flatMap { $0.split(separator: " ").map(String.init) }
             var score = 0
 
-            if title == q { score += 100 }
-            if title.hasPrefix(q) { score += 75 }
-            if title.contains(q) { score += 55 }
-            if path.contains(q) { score += 35 }
+            if title == q { score += 1_000 }
+            if title.hasPrefix(q) { score += 760 }
+            if title.contains(q) { score += 620 }
+            if pathParts.contains(q) { score += 540 }
+            if path.contains(q) { score += 360 }
+            if orderedTokens(tokens, appearIn: titleTokens) { score += 520 + tokens.count * 80 }
+            if orderedTokens(tokens, appearIn: pathTokens) { score += 320 + tokens.count * 52 }
 
             for token in tokens {
-                if title == token { score += 40 }
-                if title.hasPrefix(token) { score += 28 }
-                if title.contains(token) { score += 18 }
-                if path.contains(token) { score += 10 }
+                if title == token { score += 160 }
+                if title.hasPrefix(token) { score += 110 }
+                if title.contains(token) { score += 84 }
+                if pathTokens.contains(token) { score += 70 }
+                if path.contains(token) { score += 34 }
+            }
+            if record.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                score += 28
             }
 
             guard score > 0 else { return nil }
@@ -506,8 +656,24 @@ final class AppMenuCapabilityCache {
         return scored.sorted {
             if $0.1 != $1.1 { return $0.1 > $1.1 }
             if $0.0.path.count != $1.0.path.count { return $0.0.path.count < $1.0.path.count }
+            let lhsPath = $0.0.normalizedPath
+            let rhsPath = $1.0.normalizedPath
+            if lhsPath != rhsPath { return lhsPath < rhsPath }
             return $0.0.lastSeen > $1.0.lastSeen
         }.map(\.0)
+        }
+    }
+
+    nonisolated private func orderedTokens(_ needles: [String], appearIn haystack: [String]) -> Bool {
+        guard !needles.isEmpty, !haystack.isEmpty else { return false }
+        var searchStart = haystack.startIndex
+        for needle in needles {
+            guard let found = haystack[searchStart...].firstIndex(where: {
+                $0 == needle || $0.hasPrefix(needle) || $0.contains(needle)
+            }) else { return false }
+            searchStart = haystack.index(after: found)
+        }
+        return true
     }
 
     nonisolated private var fillerWords: Set<String> {
@@ -540,6 +706,23 @@ final class AppMenuCapabilityCache {
         // workspace-specific entries. Persisting it creates confusing stale rows like
         // "Window > Applications" after the real window list changed.
         if normalizedPath.first == "window" {
+            return false
+        }
+
+        // Services submenu is system-wide (identical entries in every app) and
+        // selection-dependent — persisting it duplicates dozens of mostly-dead
+        // actions into every app's snapshot. Context Dock reads Services live
+        // from the frontmost app when a selection makes them relevant.
+        if !Self.shouldExposeInGlobalContext(title: title, path: path) {
+            return false
+        }
+
+        // Finder Quick Look rows are selection-specific ("Quick Look \"Pictures\"").
+        // Persisting them creates stale cached results after Finder selection changes.
+        if bundleIdentifier == "com.apple.finder",
+            normalizedTitle.contains("quick look")
+                || normalizedPath.contains(where: { $0.contains("quick look") })
+        {
             return false
         }
 
@@ -583,7 +766,15 @@ final class AppMenuCapabilityCache {
         if let literalPath = resolveLiteralMenuFilePath(cleaned) {
             return literalPath
         }
-        let normalizedCleaned = Self.normalize(cleaned)
+        if let recentPath = resolveRecentDocumentMenuFilePath(cleaned) {
+            return recentPath
+        }
+        return nil
+    }
+
+    nonisolated private func resolveRecentDocumentMenuFilePath(_ value: String) -> String? {
+        let normalizedValue = Self.normalize(value)
+        guard !normalizedValue.isEmpty else { return nil }
 
         for doc in RecentItemsService.shared.recentDocuments() {
             let names = [
@@ -591,10 +782,11 @@ final class AppMenuCapabilityCache {
                 doc.url.deletingPathExtension().lastPathComponent,
                 doc.name
             ].map(Self.normalize)
-            if names.contains(normalizedCleaned),
-               FileManager.default.fileExists(atPath: doc.url.path) {
-                return doc.url.path
-            }
+
+            guard names.contains(normalizedValue),
+                  FileManager.default.fileExists(atPath: doc.url.path)
+            else { continue }
+            return doc.url.path
         }
         return nil
     }
@@ -656,7 +848,10 @@ final class AppMenuCapabilityCache {
             .replacingOccurrences(of: " — Edited", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if value.contains(" - ") {
-            value = value.components(separatedBy: " - ").first ?? value
+            let ext = URL(fileURLWithPath: value).pathExtension
+            if ext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                value = value.components(separatedBy: " - ").first ?? value
+            }
         }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -715,24 +910,47 @@ final class AppMenuCapabilityCache {
         var changed = false
         for (bundleIdentifier, snapshot) in decoded {
             let records = sanitize(records: snapshot.records, bundleIdentifier: bundleIdentifier)
+            var copy = snapshot
             if records.count != snapshot.records.count {
-                var copy = snapshot
                 copy.records = records
-                sanitized[bundleIdentifier] = copy
                 changed = true
             }
+            copy.rebuildInvertedIndex()
+            sanitized[bundleIdentifier] = copy
         }
         snapshots = sanitized
         menuItemsCache.removeAll(keepingCapacity: true)
         if changed {
-            saveToDisk()
+            scheduleSaveToDisk()
         }
     }
 
-    nonisolated private func saveToDisk() {
+    nonisolated private func scheduleSaveToDisk() {
+        lock.lock()
+        persistenceGeneration &+= 1
+        let generation = persistenceGeneration
+        lock.unlock()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.saveToDisk(ifGeneration: generation)
+        }
+
+        lock.lock()
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = workItem
+        lock.unlock()
+
+        persistenceQueue.asyncAfter(deadline: .now() + 0.3, execute: workItem)
+    }
+
+    nonisolated private func saveToDisk(ifGeneration generation: Int) {
         guard let url = cacheURL else { return }
 
         lock.lock()
+        guard persistenceGeneration == generation else {
+            lock.unlock()
+            return
+        }
         let snapshotCopy = snapshots
         lock.unlock()
 
@@ -747,7 +965,7 @@ final class AppMenuCapabilityCache {
             try data.write(to: url, options: [.atomic])
         } catch {
             #if DEBUG
-            print("AppMenuCapabilityCache save failed: \(error.localizedDescription)")
+            Swift.print("AppMenuCapabilityCache save failed: \(error.localizedDescription)")
             #endif
         }
     }

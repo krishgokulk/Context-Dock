@@ -174,7 +174,7 @@ import Foundation
             // Still open launcher, but without context
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                // Trigger show via hotkey notification
+                // Trigger show via hotkey notificationd
                 NotificationCenter.default.post(name: .launcherWindowOpened, object: nil)
             }
         }

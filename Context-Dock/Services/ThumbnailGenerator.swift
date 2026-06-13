@@ -46,6 +46,10 @@ class ThumbnailGenerator {
         return icon
     }
 
+    func cachedThumbnail(for filePath: String) -> NSImage? {
+        getCachedThumbnail(for: filePath)
+    }
+
     private func getCachedThumbnail(for filePath: String) -> NSImage? {
         return cacheQueue.sync {
             return thumbnailCache[filePath]

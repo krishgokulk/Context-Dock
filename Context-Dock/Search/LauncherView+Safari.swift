@@ -2,6 +2,50 @@ import AppKit
 import SwiftUI
 
 extension LauncherView {
+    func buildSafariRecentURLPills(query rawQuery: String) -> [DockPill] {
+        let query = normalizedDockPillText(rawQuery)
+        guard !query.isEmpty else { return [] }
+
+        let scope = resolveDockScope(for: rawQuery)
+        let isSafariScope =
+            scope.scopedBundleId == "com.apple.Safari"
+            || frontmost.bundleID == "com.apple.Safari"
+            || axContext.bundleId == "com.apple.Safari"
+        let explicitlyRequestsHistory =
+            ["recent", "recents", "history", "url", "urls"].contains(query)
+        guard isGlobalContextActive || isSafariScope else { return [] }
+
+        SafariRecentURLService.shared.refreshIfNeeded {
+            scheduleDockPillRebuild(
+                query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+        }
+
+        let entries = SafariRecentURLService.shared.entries(matching: query)
+        guard explicitlyRequestsHistory || !entries.isEmpty else { return [] }
+
+        return entries.map { entry in
+            var pill = DockPill(
+                id: "safari-history:\(entry.id)",
+                name: entry.title.isEmpty ? entry.url.absoluteString : entry.title,
+                icon: "safari",
+                accentColorName: "blue",
+                badge: "Safari History",
+                execute: {
+                    NSWorkspace.shared.open(entry.url)
+                    AppDelegate.shared?.hideLauncher()
+                }
+            )
+            pill.sourceBundleId = "com.apple.Safari"
+            pill.sourceAppName = "Safari"
+            pill.rankingKind = "recentURL"
+            pill.resolvedURL = entry.url
+            pill.quickLookURL = SafariRecentURLService.shared.quickLookURL(for: entry)
+            pill.trackingIdentifier = "safari-history:\(entry.id)"
+            pill.searchTerms = [entry.title, entry.url.absoluteString, "safari", "recent", "history"]
+            return pill
+        }
+    }
+
     // MARK: - Safari Tab Switcher
     @MainActor
     func loadSafariTabs() async {

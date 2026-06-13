@@ -137,7 +137,7 @@ final class ContactSearchManager: ObservableObject {
                         }
                     }
                 } catch {
-                    print("⚠️ Failed to enumerate contacts: \(error)")
+                    Swift.print("⚠️ Failed to enumerate contacts: \(error)")
                 }
 
                 continuation.resume(returning: results)

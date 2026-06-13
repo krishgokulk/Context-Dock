@@ -22,6 +22,8 @@ struct ToastItem: Identifiable {
     var isImage: Bool = false  // use NSImage instead of SF Symbol
     var nsImage: NSImage? = nil
     var centered: Bool = false // position at screen centre instead of above dock
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 }
 
 // MARK: - Manager
@@ -44,12 +46,15 @@ final class AppToast: ObservableObject {
         duration: TimeInterval = 2.5,
         persistent: Bool = false,
         centered: Bool = false,
-        id: String = UUID().uuidString
+        id: String = UUID().uuidString,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
     ) {
         Task { @MainActor in
             shared.present(ToastItem(
                 id: id, icon: icon, message: message,
-                tint: tint, persistent: persistent, centered: centered
+                tint: tint, persistent: persistent, centered: centered,
+                actionTitle: actionTitle, action: action
             ), duration: duration)
         }
     }
@@ -65,6 +70,7 @@ final class AppToast: ObservableObject {
         toast = item
         if panel == nil { buildPanel() }
         sizePanel(for: item.message)
+        panel?.ignoresMouseEvents = item.action == nil
         position(centered: item.centered)
         if panel?.isVisible == false {
             panel?.alphaValue = 0
@@ -76,8 +82,8 @@ final class AppToast: ObservableObject {
             panel?.animator().alphaValue = 1
         }
         guard !item.persistent else { return }
-        dismissTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.dismiss(animated: true) }
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { _ in
+            Task { @MainActor in AppToast.shared.dismiss(animated: true) }
         }
     }
 
@@ -124,7 +130,8 @@ final class AppToast: ObservableObject {
 
     private func sizePanel(for message: String) {
         // Approx width: icon(44) + text + padding
-        let estimatedTextW = min(CGFloat(message.count) * 7.5 + 80, 340)
+        let actionW: CGFloat = toast?.actionTitle == nil ? 0 : 78
+        let estimatedTextW = min(CGFloat(message.count) * 7.5 + 80 + actionW, 430)
         let w = max(180, estimatedTextW)
         panel?.setContentSize(NSSize(width: w, height: 52))
     }
@@ -165,6 +172,21 @@ struct ToastPillView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .fixedSize()
+
+                    if let actionTitle = t.actionTitle, let action = t.action {
+                        Button {
+                            action()
+                        } label: {
+                            Text(actionTitle)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(t.tint)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(t.tint.opacity(0.12), in: Capsule())
+                                .overlay(Capsule().strokeBorder(t.tint.opacity(0.35), lineWidth: 0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)

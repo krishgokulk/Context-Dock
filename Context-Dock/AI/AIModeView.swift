@@ -384,7 +384,9 @@ struct AIModeView: View {
         
         Task {
             let detectedContext = await detectContext()
-            
+            // Avoid publishing through the parent binding in the same SwiftUI
+            // update transaction that presented this view.
+            await Task.yield()
             // Update context and load suggestions
             currentContext = detectedContext
             print("📊 [AIModeView] Context updated to: \(detectedContext.description)")

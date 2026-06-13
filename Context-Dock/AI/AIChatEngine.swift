@@ -10,8 +10,8 @@ final class AIChatEngine: ObservableObject {
 
     private let router: AIProviderRouter
 
-    init(router: AIProviderRouter = .shared) {
-        self.router = router
+    init(router: AIProviderRouter? = nil) {
+        self.router = router ?? .shared
     }
 
     func send(_ message: String, context: UserContext) async throws -> String {
@@ -21,7 +21,7 @@ final class AIChatEngine: ObservableObject {
         defer { isLoading = false }
 
         let response = try await router.send(
-            AIProviderRequest(message: message, context: context, conversationHistory: messages)
+            AIRequest(text: message, context: context, history: messages, source: .aiChat)
         )
         messages.append(ChatMessage(role: .assistant, content: response))
         return response

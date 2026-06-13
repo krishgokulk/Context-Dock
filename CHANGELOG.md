@@ -2,6 +2,21 @@
 
 All notable changes to Context-Dock are tracked here.
 
+## 1.1 - Beta
+
+### Changed
+
+- Improved Global Context app-scope ranking so apps, useful menus, and recent menu use surface first.
+- Stabilized Context Dock result sheet sizing and row identity while typing.
+- Polished settings navigation, AI providers, extension import, and shortcut sheet flows.
+- Added AI profiles and provider routing for beta testing.
+- Improved native menu execution for quit, stop, open-with, and frontmost-app actions.
+
+### Beta Notes
+
+- DMG build is ready for user testing.
+- App is not notarized unless built with a Developer ID signing identity.
+
 ## Unreleased
 
 ### Fixed

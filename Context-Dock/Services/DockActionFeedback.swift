@@ -28,10 +28,23 @@ final class DockActionFeedback {
         return id
     }
 
-    static func complete(_ id: String, label: String? = nil) {
+    static func complete(
+        _ id: String,
+        label: String? = nil,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
         AppToast.hide(id: id)
         if let label, !label.isEmpty {
-            AppToast.show(label, icon: "checkmark.circle.fill", tint: .green, centered: true)
+            AppToast.show(
+                label,
+                icon: "checkmark.circle.fill",
+                tint: .green,
+                duration: action == nil ? 2.5 : 7.5,
+                centered: true,
+                actionTitle: actionTitle,
+                action: action
+            )
         }
     }
 

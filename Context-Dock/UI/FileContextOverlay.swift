@@ -154,8 +154,8 @@ final class FileContextOverlayController: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(paths, forType: .string)
         AppToast.show("Path copied", icon: "link", tint: .white.opacity(0.85))
-        dismissTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.hide() }
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+            Task { @MainActor in FileContextOverlayController.shared.hide() }
         }
     }
 
@@ -459,8 +459,8 @@ final class FileContextOverlayController: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         AppToast.show("Copied", icon: "doc.on.doc", tint: .white.opacity(0.85))
-        dismissTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.hide() }
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { _ in
+            Task { @MainActor in FileContextOverlayController.shared.hide() }
         }
     }
 
@@ -496,6 +496,38 @@ final class FileContextOverlayController: ObservableObject {
             ? "Use these selected files:\n\(paths)"
             : "\(trimmedPrompt)\n\nSelected files:\n\(paths)"
         askAboutText(text)
+    }
+
+    func currentGlobalContextActivation() -> GlobalContextActivation? {
+        guard panel?.isVisible == true else { return nil }
+
+        switch context {
+        case .files(let urls):
+            guard !urls.isEmpty else { return nil }
+            let label = urls.count == 1
+                ? urls[0].lastPathComponent
+                : "\(urls.count) files selected"
+            let icon = urls.count == 1
+                ? overlayFileIcon(for: urls[0])
+                : "doc.on.doc.fill"
+            return GlobalContextActivation(
+                autoActivated: false,
+                frozenText: label,
+                frozenIcon: icon,
+                sourceBundleId: "com.apple.finder",
+                frozenFilePaths: urls.map(\.path)
+            )
+
+        case .text(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count >= 3 else { return nil }
+            return GlobalContextActivation(
+                autoActivated: false,
+                frozenText: String(trimmed.prefix(120)),
+                frozenIcon: textLooksLikeURL(trimmed) ? "link" : "text.cursor",
+                sourceBundleId: textSourceApp?.bundleIdentifier
+            )
+        }
     }
 
     func searchSelection() {
@@ -599,6 +631,27 @@ final class FileContextOverlayController: ObservableObject {
         case .text(let text):
             return "text:" + text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
+
+    private func overlayFileIcon(for url: URL) -> String {
+        if url.hasDirectoryPath { return "folder.fill" }
+        switch url.pathExtension.lowercased() {
+        case "pdf": return "doc.richtext.fill"
+        case "png", "jpg", "jpeg", "heic", "webp", "gif", "tiff": return "photo.fill"
+        case "mov", "mp4", "m4v": return "film.fill"
+        case "mp3", "m4a", "wav", "aiff": return "music.note"
+        case "zip", "dmg", "pkg": return "archivebox.fill"
+        case "swift", "js", "ts", "py", "rb", "sh", "json", "html", "css": return "curlybraces"
+        default: return "doc.fill"
+        }
+    }
+
+    private func textLooksLikeURL(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("http://")
+            || trimmed.hasPrefix("https://")
+            || trimmed.hasPrefix("www.")
+            || (trimmed.contains(".") && !trimmed.contains(" "))
     }
 
     private var pillHeight: CGFloat { 40 }

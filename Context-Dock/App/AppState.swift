@@ -15,7 +15,6 @@ struct GlobalContextState {
 struct ContextDockState {
     var isActive = true
     var frontmost = FrontmostAppState()
-    var isCollapsed = false
 }
 
 struct MediaDockState {

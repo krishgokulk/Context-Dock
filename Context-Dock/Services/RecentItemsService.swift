@@ -49,14 +49,34 @@ final class RecentItemsService {
     }
 
     func recentDocuments() -> [RecentDocument] {
-        if Date().timeIntervalSince(docsLoadedAt) < ttl { return cachedDocs }
-        cachedDocs = loadItems(listType: kLSSharedFileListRecentDocumentItems.takeRetainedValue()).compactMap { url in
-            guard url.pathExtension.lowercased() != "app" else { return nil }
-            let name = url.deletingPathExtension().lastPathComponent
-            let icon = NSWorkspace.shared.icon(forFile: url.path)
-            return RecentDocument(name: name, url: url, icon: icon)
+        if Date().timeIntervalSince(docsLoadedAt) < ttl {
+            cachedDocs.removeAll { !FileManager.default.fileExists(atPath: $0.url.path) }
+            return cachedDocs
         }
-        docsLoadedAt = Date()
+        let systemURLs = loadItems(
+            listType: kLSSharedFileListRecentDocumentItems.takeRetainedValue())
+        let spotlightURLs = FileIndexManager.shared.indexedFiles.lazy
+            .filter { !$0.isDirectory }
+            .prefix(160)
+            .map { URL(fileURLWithPath: $0.path) }
+        let cachedMenuURLs = AppMenuCapabilityCache.shared.resolvedRecentDocumentURLs()
+        var seen = Set<String>()
+        cachedDocs = (systemURLs + Array(spotlightURLs) + cachedMenuURLs).compactMap { rawURL in
+            let url = rawURL.standardizedFileURL
+            guard url.pathExtension.lowercased() != "app",
+                FileManager.default.fileExists(atPath: url.path),
+                seen.insert(url.path).inserted
+            else { return nil }
+            return RecentDocument(
+                name: url.lastPathComponent,
+                url: url,
+                icon: NSWorkspace.shared.icon(forFile: url.path)
+            )
+        }
+        docsLoadedAt =
+            FileIndexManager.shared.isReady
+            ? Date()
+            : Date().addingTimeInterval(-(ttl - 2))
         return cachedDocs
     }
 

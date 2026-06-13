@@ -631,6 +631,9 @@ class TerminalPackageManager: ObservableObject {
         if let encoded = try? JSONEncoder().encode(packages) {
             UserDefaults.standard.set(encoded, forKey: packagesKey)
         }
+        Task { @MainActor in
+            DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "cli-packages")
+        }
     }
 
     private func normalizeQuery(_ query: String) -> String {
@@ -683,6 +686,9 @@ class TerminalPackageManager: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: packagesKey),
            let decoded = try? JSONDecoder().decode([TerminalPackage].self, from: data) {
             packages = decoded
+            Task { @MainActor in
+                DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "cli-packages-loaded")
+            }
         }
     }
     

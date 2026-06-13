@@ -88,7 +88,7 @@ extension LauncherView {
         title: String,
         perTypeLimit: Int = 100,
         allowEmptyQuery: Bool = false,
-        excludeTypes: Set<SearchResult.ResultType> = []
+        excludeTypes: Set<SearchResult.ResultType>
     ) {
         let expectedQuery = searchState.query.trimmingCharacters(in: .whitespaces)
         Task {

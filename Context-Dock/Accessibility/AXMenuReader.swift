@@ -499,8 +499,7 @@ final class AXMenuReader {
 
             if rest.isEmpty {
                 // Reached the target — press it
-                AXUIElementPerformAction(child, kAXPressAction as CFString)
-                return true
+                return AXUIElementPerformAction(child, kAXPressAction as CFString) == .success
             }
 
             // Open this submenu and wait for children to appear (retry up to 150 ms)
@@ -569,6 +568,35 @@ final class AXMenuReader {
             up.postToPid(pid)
         }
         return true
+    }
+
+    /// Execute a shortcut through the normal HID event stream. Use only after
+    /// target app has been activated; some apps ignore postToPid for command
+    /// equivalents such as Xcode's Stop (⌘.).
+    @discardableResult
+    func executeShortcutToFrontmost(char: String, modifiers: Int) -> Bool {
+        guard let src = CGEventSource(stateID: .hidSystemState),
+              let ch = char.unicodeScalars.first else { return false }
+
+        var cgMods: CGEventFlags = []
+        if modifiers & 8 == 0 { cgMods.insert(.maskCommand) }
+        if modifiers & 1 != 0 { cgMods.insert(.maskShift) }
+        if modifiers & 2 != 0 { cgMods.insert(.maskAlternate) }
+        if modifiers & 4 != 0 { cgMods.insert(.maskControl) }
+        if modifiers & 16 != 0 { cgMods.insert(.maskSecondaryFn) }
+
+        let keyCode = MenuShortcutFormatter.virtualKeyCode(for: ch.value)
+        guard keyCode != 0xFFFF else { return false }
+
+        if let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true),
+           let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false) {
+            down.flags = cgMods
+            up.flags = cgMods
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            return true
+        }
+        return false
     }
 
 }
