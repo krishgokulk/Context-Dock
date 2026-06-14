@@ -800,7 +800,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.contentView = hostingView
         launcherWindow?.backgroundColor = .clear
         launcherWindow?.isOpaque = false
-        launcherWindow?.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
+        let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
+            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
+            : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
+        launcherWindow?.level = windowLevel
         launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         launcherWindow?.isMovableByWindowBackground = true
         launcherWindow?.hasShadow = false
@@ -847,7 +850,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applyPersistentDockBehavior() {
         guard let window = launcherWindow else { return }
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
+        let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
+            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
+            : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
+        window.level = windowLevel
         window.isMovableByWindowBackground = true
     }
 
@@ -1656,8 +1662,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let keyableWindow = window as? KeyableWindow {
                 keyableWindow.anchorAtBottom = true
             }
-            // Float above ALL application windows — same level as macOS status-bar extras
-            window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             print(
                 "📍 [AppDelegate] Positioning window at BOTTOM (y: \(y)) - Anchor: BOTTOM (stays fixed, results expand upward)"
@@ -1786,45 +1790,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func detectAndStoreUserContextAsync() {
-        #if DEBUG
-        print("🔍 [AppDelegate] ========================================")
-        #endif
-        #if DEBUG
-        print("🔍 [AppDelegate] DETECTING USER CONTEXT (SYNC)")
-        #endif
-        if let app = previousFrontmostApp {
-            print(
-                "🎯 [AppDelegate] Using PREVIOUS frontmost app: \(app.localizedName ?? "Unknown") (\(app.bundleIdentifier ?? "unknown"))"
-            )
-        } else {
-            #if DEBUG
-            print("⚠️ [AppDelegate] No previous frontmost app stored!")
-            #endif
-        }
-
-        // Detect context SYNCHRONOUSLY so it's ready before window shows
-        let context = UserContextDetector.shared.detectCurrentContext(from: previousFrontmostApp)
-
-        #if DEBUG
-        print("📊 [AppDelegate] Detection completed!")
-        #endif
-        #if DEBUG
-        print("📊 [AppDelegate] Detected context: \(context.description)")
-        #endif
-        #if DEBUG
-        print("📤 [AppDelegate] Delivering context to ContextDockEnvironment...")
-        #endif
-
-        ContextDockEnvironment.shared.userContextDidDetect(context)
-
-        #if DEBUG
-        print("✅ [AppDelegate] Context delivered successfully")
-        #endif
-        #if DEBUG
-        print("🔍 [AppDelegate] ========================================")
-        #endif
-    }
 
     // Detect and store frontmost app info before ILauncher activates
     // Track frontmost app changes to capture the previously active app
