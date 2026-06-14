@@ -449,12 +449,12 @@ extension LauncherView {
             }
             // Rebuild pills immediately when AX selection changes (file picked, text highlighted)
             .onChange(of: axContext.selectedFilePaths) { _, paths in
-                scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+                scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 100_000_000)
                 autoReturnFromGlobalContextIfNeeded()
                 if !paths.isEmpty { l2.appCompletion = nil }
             }
             .onChange(of: axContext.selectedText) { _, text in
-                scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+                scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 100_000_000)
                 autoReturnFromGlobalContextIfNeeded()
                 if !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     l2.appCompletion = nil
@@ -894,12 +894,14 @@ extension LauncherView {
     }
 
     func scheduleBackgroundScanRunningAppMenusAfterOpen() {
-        Task { @MainActor in
+        Task.detached(priority: .background) { [self] in
             try? await Task.sleep(nanoseconds: 900_000_000)
-            guard showContextInDock, searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return
+            await MainActor.run { [self] in
+                guard self.showContextInDock, self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return
+                }
+                self.backgroundScanRunningAppMenusIfNeeded()
             }
-            backgroundScanRunningAppMenusIfNeeded()
         }
     }
 
@@ -923,11 +925,16 @@ extension LauncherView {
             }
         }
         // Proactive warm of recent apps — uses 2-min threshold, runs in background.
-        Task { @MainActor in
-            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(currentRegularRunningApps())
+        Task.detached(priority: .background) { [self] in
+            let runningApps = await MainActor.run { [self] in
+                self.currentRegularRunningApps()
+            }
+            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps)
             MenuWarmCacheService.shared.warmRecentAppsOnLauncherOpen()
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            rebuildGlobalSearchIndex()
+            await MainActor.run { [self] in
+                self.rebuildGlobalSearchIndex()
+            }
         }
     }
 
