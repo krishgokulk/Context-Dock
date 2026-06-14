@@ -129,7 +129,7 @@ struct DockContentArea: View {
             case .globalContext:
                 GlobalContextSurface(results: results, query: query)
             case .contextDock:
-                ContextDockSurface(results: results, query: query)
+                ContextDockSurface(results: results, query: query, dockPills: dockPills)
             case .generalChat:
                 GeneralChatSurface()
             case .contextDockChat:

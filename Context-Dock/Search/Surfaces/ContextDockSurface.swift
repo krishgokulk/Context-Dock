@@ -3,11 +3,11 @@ import SwiftUI
 struct ContextDockSurface: View {
     @EnvironmentObject var contextEnv: ContextDockEnvironment
     @State var selectedResultIndex: Int? = nil
-    @State var dockPills: [DockPill] = []
 
-    // Receive data from parent (LauncherView will pass via binding/property)
+    // Receive data from parent
     var results: [SearchResult] = []
     var query: String = ""
+    var dockPills: [DockPill] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,17 +36,19 @@ struct ContextDockSurface: View {
             }
 
             // Pills/dock (frontmost app context)
-            HStack(spacing: 6) {
-                ForEach(dockPills, id: \.id) { pill in
-                    DockPillContainer(pill: pill)
-                        .onTapGesture {
-                            pill.execute()
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(dockPills, id: \.id) { pill in
+                        DockPillContainer(pill: pill)
+                            .onTapGesture {
+                                pill.execute()
+                            }
+                    }
+                    Spacer()
                 }
-                Spacer()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
         }
     }
 }

@@ -133,6 +133,18 @@ struct LauncherView: View {
     @Environment(\.openSettings) var openSettings
     @Environment(\.colorScheme) var systemColorScheme
     @State var useUnifiedShell: Bool = false  // Feature flag for new architecture
+
+    // Compute current visible pills based on mode
+    var currentDockPills: [DockPill] {
+        if showContextInDock || l2.targetApp != nil {
+            return stableVisibleDockPills(for: searchState.query)
+        } else if isGlobalContextActive {
+            return currentVisibleDockPills(for: searchState.query)
+        } else {
+            return []
+        }
+    }
+
     var onClose: () -> Void = {}
 
     /// Effective dark/light state: respects forced setting, falls back to system appearance reactively.
@@ -1101,7 +1113,7 @@ struct LauncherView: View {
                     isVisible: .constant(true),
                     results: searchState.results,
                     query: searchState.query,
-                    dockPills: []  // TODO: wire from LauncherView state
+                    dockPills: currentDockPills
                 )
             } else {
                 // Legacy LauncherView implementation
