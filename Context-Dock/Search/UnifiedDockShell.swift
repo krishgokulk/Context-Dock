@@ -6,12 +6,21 @@ struct UnifiedDockShell: View {
     @StateObject var modeObserver = dockModeObserver
     @State private var windowHeight: CGFloat = 250
 
+    var results: [SearchResult] = []
+    var query: String = ""
+    var dockPills: [DockPill] = []
+
     var body: some View {
         VStack(spacing: 0) {
             DockHeader()
             DockInputBar()
             DockContextChips()
-            DockContentArea(mode: modeObserver.activeMode)
+            DockContentArea(
+                mode: modeObserver.activeMode,
+                dockPills: dockPills,
+                results: results,
+                query: query
+            )
         }
         .frame(height: windowHeight)
         .background(DockBackground())
@@ -110,14 +119,17 @@ struct DockContextChips: View {
 
 struct DockContentArea: View {
     let mode: DockMode
+    var dockPills: [DockPill] = []
+    var results: [SearchResult] = []
+    var query: String = ""
 
     var body: some View {
         ZStack {
             switch mode {
             case .globalContext:
-                GlobalContextSurface()
+                GlobalContextSurface(results: results, query: query)
             case .contextDock:
-                ContextDockSurface()
+                ContextDockSurface(results: results, query: query)
             case .generalChat:
                 GeneralChatSurface()
             case .contextDockChat:

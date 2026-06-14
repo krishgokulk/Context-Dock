@@ -1,43 +1,78 @@
 import SwiftUI
 
 struct ContextDockSurface: View {
-    @StateObject var viewModel = ContextDockViewModel()
-    @State var selectedIndex: Int? = nil
-    @State var focusedPillID: String? = nil
-    @State var results: [SearchResult] = []
+    @EnvironmentObject var contextEnv: ContextDockEnvironment
+    @State var selectedResultIndex: Int? = nil
+    @State var dockPills: [DockPill] = []
+
+    // Receive data from parent (LauncherView will pass via binding/property)
+    var results: [SearchResult] = []
+    var query: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            // Result list
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(results.enumerated()), id: \.offset) { offset, result in
-                        ResultRow(
-                            result: result,
-                            isSelected: selectedIndex == offset,
-                            isPinned: false
-                        )
-                        .onTapGesture {
-                            selectedIndex = offset
+            // Result list (only show if not typing dock pills)
+            if !results.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(results.enumerated()), id: \.offset) { offset, result in
+                            ResultRow(
+                                result: result,
+                                isSelected: selectedResultIndex == offset,
+                                isPinned: false
+                            )
+                            .onTapGesture {
+                                selectedResultIndex = offset
+                                result.action()
+                            }
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .frame(maxHeight: 200)
+
+                Divider()
             }
-            .frame(maxHeight: 200)
 
-            Divider()
-
-            // Pills/dock
+            // Pills/dock (frontmost app context)
             HStack(spacing: 6) {
-                Text("Pills go here")
-                    .foregroundStyle(.secondary)
+                ForEach(dockPills, id: \.id) { pill in
+                    DockPillContainer(pill: pill)
+                        .onTapGesture {
+                            pill.execute()
+                        }
+                }
                 Spacer()
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         }
+    }
+}
+
+struct DockPillContainer: View {
+    let pill: DockPill
+
+    var body: some View {
+        VStack(spacing: 4) {
+            if let image = pill.menuItemImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 32)
+                    .cornerRadius(4)
+            } else {
+                Image(systemName: "app.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+            }
+            Text(pill.name)
+                .font(.system(size: 9))
+                .lineLimit(1)
+                .frame(width: 40)
+        }
+        .frame(width: 48, height: 56)
     }
 }
 
