@@ -132,6 +132,7 @@ struct LauncherView: View {
     @ObservedObject var fileIndexManager = FileIndexManager.shared
     @Environment(\.openSettings) var openSettings
     @Environment(\.colorScheme) var systemColorScheme
+    @State var useUnifiedShell: Bool = false  // Feature flag for new architecture
     var onClose: () -> Void = {}
 
     /// Effective dark/light state: respects forced setting, falls back to system appearance reactively.
@@ -1093,36 +1094,49 @@ struct LauncherView: View {
     }
 
     var body: some View {
-        ZStack {
-            contentKeyHandlersView
-
-            // Contact Preview Overlay
-            if showContactPreview, let contact = contactPreviewData {
-                ContactPreviewCard(contact: contact, isPresented: showContactPreviewBinding)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
-
-            // AI Extension Suggestions Overlay
-            if showAIExtensionSuggestions {
+        Group {
+            if useUnifiedShell {
+                // New unified shell architecture
+                UnifiedDockShell(
+                    isVisible: .constant(true),
+                    results: searchState.results,
+                    query: searchState.query,
+                    dockPills: []  // TODO: wire from LauncherView state
+                )
+            } else {
+                // Legacy LauncherView implementation
                 ZStack {
-                    // Dim background
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showAIExtensionSuggestions = false
-                            }
-                        }
+                    contentKeyHandlersView
 
-                    // AI Suggestions View
-                    AIModeView(
-                        currentContext: currentContextBinding,
-                        isVisible: showAIExtensionSuggestionsBinding
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    // Contact Preview Overlay
+                    if showContactPreview, let contact = contactPreviewData {
+                        ContactPreviewCard(contact: contact, isPresented: showContactPreviewBinding)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    }
+
+                    // AI Extension Suggestions Overlay
+                    if showAIExtensionSuggestions {
+                        ZStack {
+                            // Dim background
+                            Color.black.opacity(0.3)
+                                .ignoresSafeArea()
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        showAIExtensionSuggestions = false
+                                    }
+                                }
+
+                            // AI Suggestions View
+                            AIModeView(
+                                currentContext: currentContextBinding,
+                                isVisible: showAIExtensionSuggestionsBinding
+                            )
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        }
+                    }
+
                 }
             }
-
         }
         .onReceive(adapterManager.$pendingApproval) { pending in
             DispatchQueue.main.async {
