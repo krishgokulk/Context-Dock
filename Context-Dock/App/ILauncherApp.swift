@@ -983,10 +983,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func unregisterGlobalHotkey() {
-        // Unregister Carbon hotkey
+        // Unregister all three Carbon hotkeys
         if let hotKeyRef = hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
+        }
+        if let ref = contextDockHotKeyRef {
+            UnregisterEventHotKey(ref)
+            contextDockHotKeyRef = nil
         }
         if let ref = clipboardScopeHotKeyRef {
             UnregisterEventHotKey(ref)
