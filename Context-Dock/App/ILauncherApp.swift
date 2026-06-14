@@ -809,7 +809,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.hidesOnDeactivate = false
         // Persistent context dock: window stays visible + joins all spaces
         applyPersistentDockBehavior()
-        launcherWindow?.acceptsMouseMovedEvents = true
 
         // Set min/max size for resizing
         launcherWindow?.minSize = NSSize(width: 400, height: 60)
@@ -1695,6 +1694,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         window.orderFrontRegardless()
         window.makeKey()
+        window.acceptsMouseMovedEvents = true
         NSApp.activate(ignoringOtherApps: true)
 
         // Reset content state now that the window is key and the app is active.
@@ -1738,6 +1738,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 window.animator().alphaValue = 0
             },
             completionHandler: {
+                window.acceptsMouseMovedEvents = false
                 window.orderOut(nil)
                 window.alphaValue = 1  // reset for next show
             })

@@ -1257,6 +1257,7 @@ extension LauncherView {
                                     .focused($isSearchFieldFocused)
                                     .focusEffectDisabled()
                                     .background(FocusRingSuppressor())
+                                    .accessibilityLabel("Search — Context Dock")
                                     // For prefix match: TextField stays visible (shows typed text + cursor).
                                     // For fuzzy match or empty: hide it so the full result name shows cleanly.
                                     .opacity(
