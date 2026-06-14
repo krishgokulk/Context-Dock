@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    COPY THIS ENTIRE NSServices ARRAY INTO YOUR Info.plist
+    
+    Location in Xcode:
+    1. Select your ILauncher target
+    2. Go to "Info" tab
+    3. Find "Custom macOS Application Target Properties"
+    4. Right-click → "Add Row"
+    5. Type "Services" (it will auto-complete to NSServices)
+    6. Copy the array contents below into that key
+-->
+<plist version="1.0">
+<dict>
+    <key>NSServices</key>
+    <array>
+        <!-- Service 1: Open with ILauncher -->
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Open with ILauncher</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>openWithSelection</string>
+            <key>NSPortName</key>
+            <string>ILauncher</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>NSStringPboardType</string>
+                <string>public.file-url</string>
+                <string>public.text</string>
+                <string>public.url</string>
+            </array>
+        </dict>
+        
+        <!-- Service 2: Process Files -->
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Process Files with ILauncher</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>handleFiles</string>
+            <key>NSPortName</key>
+            <string>ILauncher</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>public.file-url</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSTextContent</key>
+                <string>FilePath</string>
+            </dict>
+        </dict>
+        
+        <!-- Service 3: Process Text -->
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Process Text with ILauncher</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>handleText</string>
+            <key>NSPortName</key>
+            <string>ILauncher</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.text</string>
+            </array>
+            <key>NSReturnTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.text</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSTextContent</key>
+                <string>Text</string>
+            </dict>
+        </dict>
+        
+        <!-- Service 4: Process URL -->
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Process URL with ILauncher</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>handleURL</string>
+            <key>NSPortName</key>
+            <string>ILauncher</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.url</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSTextContent</key>
+                <string>URL</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

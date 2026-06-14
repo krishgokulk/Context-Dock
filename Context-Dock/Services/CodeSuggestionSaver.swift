@@ -266,7 +266,9 @@ class CodeSuggestionSaver: ObservableObject {
         // Refresh ExtensionManager
         ExtensionManager.shared.refresh()
 
+        #if DEBUG
         print("✅ [CodeSuggestionSaver] Saved extension: \(name)")
+        #endif
     }
 
     /// Cancel the save operation
@@ -309,10 +311,14 @@ class CodeSuggestionSaver: ObservableObject {
                 ofItemAtPath: fileURL.path
             )
 
+            #if DEBUG
             print("✅ [CodeSuggestionSaver] Saved script to: \(fileURL.path)")
+            #endif
 
         } catch {
+            #if DEBUG
             print("❌ [CodeSuggestionSaver] Error saving script: \(error)")
+            #endif
         }
     }
 

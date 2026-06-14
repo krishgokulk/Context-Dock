@@ -2,6 +2,20 @@
 
 Context-Dock is a native macOS launcher for fast app actions, live context actions, file workflows, and AI-assisted commands.
 
+## DoraX Architecture Truth
+
+Product layers are defined in `docs/architecture/`.
+
+- [Product Layers](docs/architecture/PRODUCT_LAYERS.md)
+- [Unified Dock Surface](docs/architecture/UNIFIED_DOCK_SURFACE.md)
+- [UI Rules](docs/architecture/UI_RULES.md)
+- [Performance Rules](docs/architecture/PERFORMANCE_RULES.md)
+- [Selection Shortcut Sheet](docs/architecture/SELECTION_SHORTCUT_SHEET.md)
+
+Core rule: never merge product layers. Global Context, Context Dock, General Chat Mode, Context Dock Chat Mode, Media Dock, and Selection Shortcut Sheet each keep one job.
+
+UI rule: one shell, multiple modes. All floating DoraX surfaces should use Unified Dock Surface Architecture so mode changes swap content inside same stable shell.
+
 ## Core Modes
 
 ### Global Context

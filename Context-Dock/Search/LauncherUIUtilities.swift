@@ -410,7 +410,7 @@ struct GlassBackground: NSViewRepresentable {
         base.backgroundColor =
             dark
             ? CGColor(red: 0.035, green: 0.04, blue: 0.055, alpha: 0.76)  // dark glass tint
-            : CGColor(red: 0.97, green: 0.97, blue: 0.99, alpha: 0.65)  // light warm fill
+            : CGColor(red: 0.92, green: 0.925, blue: 0.94, alpha: 0.86)  // light: denser + dimmer for contrast
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
         let grad = existingGradientLayer(named: "gradientOverlay", in: rootLayer) {
@@ -424,8 +424,8 @@ struct GlassBackground: NSViewRepresentable {
         grad.frame = ve.bounds
         grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         grad.colors = [
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.045 : 0.42),
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.005 : 0.04),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.045 : 0.22),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.005 : 0.01),
         ]
         grad.startPoint = CGPoint(x: 0.5, y: 0)  // top
         grad.endPoint = CGPoint(x: 0.5, y: 1)  // bottom

@@ -478,6 +478,25 @@ extension LauncherView {
 
     // MARK: - Safari Tabs + Button (Extension-powered)
 
+    /// Adds the current browser page to the web-research context (the webpage pill).
+    /// Returns false when not in a browser or no fresh page is available, so the
+    /// right-arrow handler can fall through to other behaviors.
+    @discardableResult
+    func addCurrentSafariPageToContextFromKeyboard() -> Bool {
+        guard AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID) else { return false }
+        let bridge = SafariBrowserBridge.shared
+        guard bridge.isFresh, let ctx = bridge.latestContext,
+            !ctx.url.isEmpty
+        else { return false }
+        if !webResearch.pages.contains(where: { $0.url == ctx.url }) {
+            WebResearchSession.shared.addPage(
+                PageSnapshot(
+                    url: ctx.url, text: ctx.pageTextForAI,
+                    title: ctx.title, timestamp: ctx.timestamp))
+        }
+        return true
+    }
+
     @ViewBuilder
     var safariTabsButton: some View {
         let addedCount = webResearch.count
@@ -495,7 +514,7 @@ extension LauncherView {
             }
         } label: {
             ZStack(alignment: .topTrailing) {
-                Image(systemName: "plus")
+                Image(systemName: "square.on.square")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary.opacity(0.8))
                     .frame(width: 22, height: 22)
@@ -513,7 +532,7 @@ extension LauncherView {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: addedCount)
-        .help(addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Add page to context")
+        .help(addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Tabs — add current page (→)")
         .popover(isPresented: showSafariTabPickerBinding, arrowEdge: .top) {
             safariTabPickerPopover
         }

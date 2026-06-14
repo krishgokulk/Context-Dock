@@ -3860,11 +3860,18 @@ extension LauncherView {
                 action.type == .cliTool && !cliCommand.isEmpty
                 ? cliCommand
                 : action.name
+            let shortcutName = action.shortcutName ?? action.name
+            let pillIcon = action.type == .shortcut
+                ? ShortcutsCatalog.iconName(for: shortcutName)
+                : action.icon
+            let pillAccent = action.type == .shortcut
+                ? ShortcutsCatalog.accentColorName(for: shortcutName)
+                : (action.accentColor ?? "blue")
             var pill = DockPill(
                 id: "adapter-\(scopedBundleId)-\(action.id)",
                 name: pillName,
-                icon: action.icon,
-                accentColorName: action.accentColor ?? "blue",
+                icon: pillIcon,
+                accentColorName: pillAccent,
                 badge: action.type == .menubar
                     ? "Custom" : (action.type == .cliTool ? "CLI" : action.type.displayName),
                 execute: {
@@ -3900,6 +3907,9 @@ extension LauncherView {
                     }
                 })
             pill.rankingKind = action.type == .cliTool ? "cliTool" : "adapter"
+            if action.type == .shortcut {
+                pill.menuItemImage = nil
+            }
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = scopedAppName
             pill.trackingIdentifier = "adapter:\(scopedBundleId):\(action.id)"

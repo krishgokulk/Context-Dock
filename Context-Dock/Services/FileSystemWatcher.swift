@@ -19,7 +19,9 @@ class FileSystemWatcher {
 
     func startWatching() {
         guard !pathsToWatch.isEmpty else {
+            #if DEBUG
             print("⚠️ No paths to watch")
+            #endif
             return
         }
 
@@ -78,13 +80,19 @@ class FileSystemWatcher {
             FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
 
             if FSEventStreamStart(stream) {
+                #if DEBUG
                 print("✅ File system watcher started for \(pathsToWatch.count) paths")
+                #endif
             } else {
+                #if DEBUG
                 print("⚠️ Failed to start file system watcher")
+                #endif
                 stopWatching()
             }
         } else {
+            #if DEBUG
             print("⚠️ Failed to create FSEventStream")
+            #endif
         }
     }
 
@@ -94,7 +102,9 @@ class FileSystemWatcher {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
             eventStream = nil
+            #if DEBUG
             print("🛑 File system watcher stopped")
+            #endif
         }
     }
 

@@ -586,8 +586,7 @@ extension LauncherView {
         let openWithFilter = openWithChildFilter(from: q)
         let menuQuery = openWithFilter == nil ? q : "open"
         let limit = q.isEmpty ? 12 : 10
-        let items = FileContextOverlayController.shared.finderMenuResults(
-            query: menuQuery, limit: limit)
+        let items = finderSelectionMenuResults(query: menuQuery, limit: limit)
 
         var pills =
             openWithFilter.map {
@@ -689,6 +688,110 @@ extension LauncherView {
         }
 
         return pills
+    }
+
+    func finderSelectionMenuResults(query: String, limit: Int = 8) -> [AXMenuItem] {
+        guard let finder = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.finder"
+        }) else {
+            return []
+        }
+
+        let pid = finder.processIdentifier
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let fileActionTitles = [
+            "Open", "Open With", "Open in New Tab", "Get Info", "Rename",
+            "Compress", "Duplicate", "Make Alias", "Move to Trash", "Move to Bin",
+            "Copy", "Share", "Tags", "Quick Look", "Customize Folder",
+            "Customise Folder", "Import from iPhone", "Remove Download",
+            "Keep Downloaded",
+        ]
+        let fileActionPaths = ["File", "Services", "Quick Actions", "Open With", "Tags"]
+        let thirdPartyServiceHints = [
+            "Terminal", "Ghostty", "Downie", "Bluetooth", "TeamViewer",
+            "Hammerspoon", "Tuna", "MEGA", "Upload", "Sync", "Backup",
+            "Workflow", "Service",
+        ]
+        let preferredLimit = trimmedQuery.isEmpty ? max(limit, 12) : limit
+        let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+        let items = (liveItems.isEmpty
+            ? AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
+            : liveItems)
+            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { item -> AXMenuItem in
+                var item = item
+                item.sourcePID = pid
+                item.sourceAppName = "Finder"
+                return item
+            }
+            .filter { item in
+                item.path.contains { part in
+                    fileActionPaths.contains { part.localizedCaseInsensitiveContains($0) }
+                }
+                || fileActionTitles.contains { item.title.localizedCaseInsensitiveContains($0) }
+                || thirdPartyServiceHints.contains { item.title.localizedCaseInsensitiveContains($0) }
+            }
+
+        let matches: [AXMenuItem]
+        if trimmedQuery.isEmpty {
+            matches = items.filter { item in
+                fileActionTitles.contains { needle in
+                    item.title.localizedCaseInsensitiveContains(needle)
+                        || item.pathString.localizedCaseInsensitiveContains(needle)
+                }
+                || item.path.contains { part in
+                    fileActionPaths.contains { part.localizedCaseInsensitiveContains($0) }
+                }
+                || thirdPartyServiceHints.contains { hint in
+                    item.title.localizedCaseInsensitiveContains(hint)
+                }
+            }
+        } else {
+            matches = items.filter { item in
+                item.title.lowercased().contains(trimmedQuery)
+                    || item.path.contains { $0.lowercased().contains(trimmedQuery) }
+            }
+        }
+
+        var seen = Set<String>()
+        let deduped = matches.filter { item in
+            seen.insert(item.pathString.lowercased()).inserted
+        }
+
+        let ordered = deduped.sorted {
+            func priority(_ item: AXMenuItem) -> Int {
+                let title = item.title.lowercased()
+                let pathString = item.pathString.lowercased()
+                if !trimmedQuery.isEmpty {
+                    if title == trimmedQuery { return 0 }
+                    if title.hasPrefix(trimmedQuery) { return 1 }
+                    if pathString.contains(trimmedQuery) { return 2 }
+                }
+                if title == "open" { return 10 }
+                if title.contains("open with") { return 11 }
+                if title.contains("open in new tab") { return 12 }
+                if title.contains("move to bin") || title.contains("move to trash") { return 20 }
+                if title.contains("get info") { return 21 }
+                if title.contains("rename") { return 22 }
+                if title.contains("compress") { return 23 }
+                if title.contains("duplicate") { return 24 }
+                if title.contains("make alias") { return 25 }
+                if title.contains("quick look") { return 26 }
+                if title == "copy" { return 30 }
+                if title.contains("share") { return 31 }
+                if title.contains("tag") { return 32 }
+                if title.contains("quick action") || pathString.contains("quick actions") { return 40 }
+                if title.contains("service") || pathString.contains("services") { return 41 }
+                return 90 + item.path.count
+            }
+
+            let aPriority = priority($0)
+            let bPriority = priority($1)
+            if aPriority != bPriority { return aPriority < bPriority }
+            return $0.path.count < $1.path.count
+        }
+
+        return Array(ordered.prefix(preferredLimit))
     }
 
     func buildLaunchServicesOpenWithPills(

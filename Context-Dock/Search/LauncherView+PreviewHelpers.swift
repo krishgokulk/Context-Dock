@@ -15,7 +15,9 @@ import Vision
 extension LauncherView {
     // MARK: - Folder Preview Helper
     func showFolderPreviewInline(path: String) {
+        #if DEBUG
         print("📂 Opening folder preview inline: \(path)")
+        #endif
         folderPreviewPath = path
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             showFolderPreview = true
@@ -39,7 +41,9 @@ extension LauncherView {
 
         // Only Quick Look files and folders
         guard let filePath = result.filePath else {
+            #if DEBUG
             print("⚠️ Cannot Quick Look: No file path")
+            #endif
             return
         }
 
@@ -47,19 +51,25 @@ extension LauncherView {
 
         // Verify the file/folder exists
         guard FileManager.default.fileExists(atPath: filePath) else {
+            #if DEBUG
             print("⚠️ File does not exist: \(filePath)")
+            #endif
             return
         }
 
         // For folders, show custom preview
         if result.type == .folder {
+            #if DEBUG
             print("👁️ Showing custom folder preview for: \(filePath)")
+            #endif
             showFolderPreviewInline(path: filePath)
             return
         }
 
         // For files, use Quick Look
+        #if DEBUG
         print("👁️ Quick Look preview for file: \(filePath)")
+        #endif
 
         _ = showQuickLookURL(url, toggleIfSame: true)
     }

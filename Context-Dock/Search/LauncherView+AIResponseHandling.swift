@@ -26,11 +26,15 @@ extension LauncherView {
     }
 
     func parseL2AIResponse(_ response: String) -> L2Action {
+        #if DEBUG
         print("🔍 [L2] Parsing AI response...")
+        #endif
 
         // Check for Safari browser control tags
         if let safariCmd = SafariCommandBridge.shared.parseTag(from: response) {
+            #if DEBUG
             print("🌐 [L2] Safari command tag detected")
+            #endif
             return .safariCommand(safariCmd)
         }
 
@@ -46,13 +50,17 @@ extension LauncherView {
                 .replacingOccurrences(of: "]", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
+            #if DEBUG
             print("✅ [L2] AI wants to use extension: \(extensionName)")
+            #endif
             return .useExtension(extensionName)
         }
 
         // Check if AI is suggesting extension creation (explicit tag)
         if response.contains("[SUGGEST_EXTENSION]") {
+            #if DEBUG
             print("💡 [L2] AI is suggesting an extension (explicit tag)")
+            #endif
 
             // Try to parse JSON format first
             if let jsonStart = response.range(of: "\\{[\\s\\S]*?\\}", options: .regularExpression) {
@@ -65,7 +73,9 @@ extension LauncherView {
                     let app = json["app"],
                     let code = json["code"]
                 {
+                    #if DEBUG
                     print("✅ [L2] Parsed JSON extension suggestion")
+                    #endif
                     return .createAndExecuteExtension(
                         name: name, description: description, app: app, code: code)
                 }
@@ -118,8 +128,12 @@ extension LauncherView {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            #if DEBUG
             print("✅ [L2] AI wants to run terminal command: \(command)")
+            #endif
+            #if DEBUG
             print("   Purpose: \(purpose)")
+            #endif
             return .terminalCommand(command: command, purpose: purpose)
         }
 
@@ -134,12 +148,16 @@ extension LauncherView {
                 .replacingOccurrences(of: "]", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
 
+            #if DEBUG
             print("✅ [L2] AI wants to execute command: \(command)")
+            #endif
             return .executeCommand(command)
         }
 
         // Otherwise, it's a direct answer
+        #if DEBUG
         print("💬 [L2] Direct answer from AI")
+        #endif
         return .directAnswer(response)
     }
 
@@ -448,14 +466,18 @@ extension LauncherView {
     func runAppleScript(_ script: String) -> String? {
         var error: NSDictionary?
         guard let scriptObject = NSAppleScript(source: script) else {
+            #if DEBUG
             print("❌ Failed to create AppleScript")
+            #endif
             return nil
         }
 
         let output = scriptObject.executeAndReturnError(&error)
 
         if let error = error {
+            #if DEBUG
             print("❌ AppleScript error: \(error)")
+            #endif
             return nil
         }
 
@@ -465,7 +487,9 @@ extension LauncherView {
     func executeShellCommandSafely(_ command: String) async -> String {
         // Check if this is an ilauncher-api command - handle it directly
         if command.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("ilauncher-api ") {
+            #if DEBUG
             print("🔧 [Shell] Detected ilauncher-api command, routing to APICommandHandler")
+            #endif
 
             // Extract args from command
             let cleanCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -475,11 +499,15 @@ extension LauncherView {
             // Remove "ilauncher-api" prefix
             let args = Array(components.dropFirst())
 
+            #if DEBUG
             print("🔧 [Shell] API args: \(args)")
+            #endif
 
             // Route to API handler
             let result = APICommandHandler.shared.handleCommand(args)
+            #if DEBUG
             print("✅ [Shell] API result: \(result)")
+            #endif
 
             return result
         }
@@ -537,7 +565,9 @@ extension LauncherView {
     func getAvailableExtensionsForContext(frontmostApp: String?, context: UserContext)
         -> [ExtensionInfo]
     {
+        #if DEBUG
         print("📚 [L2] Building extension catalog for AI")
+        #endif
 
         // Get all context-relevant extensions
         let selectedFiles: [URL] = {
@@ -554,7 +584,9 @@ extension LauncherView {
             layer: .l2_context
         )
 
+        #if DEBUG
         print("📚 [L2] Found \(allExtensions.count) total extensions")
+        #endif
 
         // Filter context-relevant extensions
         let relevantExtensions = allExtensions.filter { ext in
@@ -575,7 +607,9 @@ extension LauncherView {
             }
         }
 
+        #if DEBUG
         print("📚 [L2] Filtered to \(relevantExtensions.count) relevant extensions")
+        #endif
 
         // Convert to simplified info for AI
         let catalog = relevantExtensions.map { ext -> ExtensionInfo in
@@ -593,10 +627,14 @@ extension LauncherView {
 
         // Log catalog
         for ext in catalog.prefix(5) {
+            #if DEBUG
             print("  📦 \(ext.name): \(ext.description)")
+            #endif
         }
         if catalog.count > 5 {
+            #if DEBUG
             print("  ... and \(catalog.count - 5) more")
+            #endif
         }
 
         return catalog
@@ -637,7 +675,9 @@ extension LauncherView {
     func executeShortcutWithContext(_ result: SearchResult) {
         let shortcutName = result.title
 
+        #if DEBUG
         print("🎯 [Shortcut Execution] Executing '\(shortcutName)' with context: \(currentContext)")
+        #endif
 
         // Use Universal Runner v2 system
         Task {
@@ -652,35 +692,51 @@ extension LauncherView {
                 switch currentContext {
                 case .filesSelected(let urls):
                     files = urls
+                    #if DEBUG
                     print("📁 Context: \(urls.count) file(s)")
+                    #endif
                     for fileURL in urls {
+                        #if DEBUG
                         print("   📄 \(fileURL.lastPathComponent)")
+                        #endif
                     }
 
                 case .textSelected(let textContent):
                     text = textContent
                     let preview = textContent.prefix(100)
+                    #if DEBUG
                     print("📝 Context: Text - \"\(preview)\(textContent.count > 100 ? "..." : "")\"")
+                    #endif
 
                     // Check if it's a URL
                     if let urlFromText = URL(string: textContent), urlFromText.scheme != nil {
                         url = textContent
+                        #if DEBUG
                         print("🌐 Detected as URL: \(textContent)")
+                        #endif
                     }
 
                 case .url(let urlString):
                     url = urlString
                     text = urlString
+                    #if DEBUG
                     print("🌐 Context: URL - \(urlString)")
+                    #endif
 
                 case .appFocused(let appName, _):
+                    #if DEBUG
                     print("🖥️ Context: App focused - \(appName)")
+                    #endif
 
                 case .contactSelected:
+                    #if DEBUG
                     print("👤 Context: Contact selected")
+                    #endif
 
                 case .none:
+                    #if DEBUG
                     print("❌ No context")
+                    #endif
                 }
 
                 // Execute DIRECTLY with input (no Runner v2 needed!)
@@ -697,21 +753,27 @@ extension LauncherView {
                     )
                 } else if let text = text {
                     // Text context - send text directly
+                    #if DEBUG
                     print("🎯 [Direct Execution] Sending text directly to '\(shortcutName)'")
+                    #endif
                     output = try await ShortcutRunner.shared.runDirectly(
                         shortcutName,
                         with: .text(text)
                     )
                 } else if let url = url {
                     // URL context - send URL as text directly
+                    #if DEBUG
                     print("🎯 [Direct Execution] Sending URL directly to '\(shortcutName)'")
+                    #endif
                     output = try await ShortcutRunner.shared.runDirectly(
                         shortcutName,
                         with: .url(url)
                     )
                 } else {
                     // No context - run shortcut without input
+                    #if DEBUG
                     print("🎯 [Direct Execution] Running '\(shortcutName)' without input")
+                    #endif
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
                     process.arguments = ["run", shortcutName]
@@ -729,7 +791,9 @@ extension LauncherView {
                 }
 
                 await MainActor.run {
+                    #if DEBUG
                     print("✅ [ShortcutRunner] Output: \(output)")
+                    #endif
 
                     // Handle output (could be file path, text, or status)
                     if output.starts(with: "/") {
@@ -738,7 +802,9 @@ extension LauncherView {
                         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                     } else if !output.isEmpty && output != "OK" {
                         // Show as notification or toast
+                        #if DEBUG
                         print("📋 Result: \(output)")
+                        #endif
                     }
 
                     // Close launcher
@@ -747,14 +813,18 @@ extension LauncherView {
 
             } catch ShortcutRunner.RunnerError.runnerNotInstalled {
                 await MainActor.run {
+                    #if DEBUG
                     print("⚠️ ILauncher Runner v2 not installed - falling back to direct execution")
+                    #endif
                     // Fallback to old method
                     executeShortcutLegacy(result)
                 }
 
             } catch {
                 await MainActor.run {
+                    #if DEBUG
                     print("❌ Shortcut execution failed: \(error)")
+                    #endif
                     onClose()
                 }
             }
@@ -792,7 +862,9 @@ extension LauncherView {
                 // For file arrays, pass as newline-separated list
                 inputString = arrayInput.joined(separator: "\n")
             } else {
+                #if DEBUG
                 print("⚠️ Unsupported input type")
+                #endif
                 return
             }
 
@@ -818,15 +890,21 @@ extension LauncherView {
                 process.waitUntilExit()
 
                 if process.terminationStatus == 0 {
+                    #if DEBUG
                     print("✅ Shortcut '\(name)' completed successfully")
+                    #endif
                 } else {
                     let errorData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     if let errorOutput = String(data: errorData, encoding: .utf8) {
+                        #if DEBUG
                         print("❌ Shortcut '\(name)' failed: \(errorOutput)")
+                        #endif
                     }
                 }
             } catch {
+                #if DEBUG
                 print("❌ Failed to run shortcut '\(name)': \(error)")
+                #endif
             }
         }
     }
@@ -870,21 +948,29 @@ extension LauncherView {
     func fetchWebSearchResults(query: String) async throws -> [SearchResult] {
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
         else {
+            #if DEBUG
             print("❌ Failed to encode query")
+            #endif
             return []
         }
 
         // Use DuckDuckGo Instant Answer API (no API key required)
         let urlString =
             "https://api.duckduckgo.com/?q=\(encoded)&format=json&no_html=1&skip_disambig=1"
+        #if DEBUG
         print("🌐 Fetching from: \(urlString)")
+        #endif
         guard let url = URL(string: urlString) else {
+            #if DEBUG
             print("❌ Invalid URL")
+            #endif
             return []
         }
 
         let (data, _) = try await URLSession.shared.data(from: url)
+        #if DEBUG
         print("🌐 Received \(data.count) bytes of data")
+        #endif
 
         struct DDGResponse: Codable {
             let Abstract: String?
@@ -917,7 +1003,9 @@ extension LauncherView {
             let abstractURL = response.AbstractURL, let url = URL(string: abstractURL)
         {
             let heading = response.Heading ?? query
+            #if DEBUG
             print("🌐 Adding abstract result: \(heading)")
+            #endif
             results.append(
                 SearchResult(
                     title: heading,
@@ -965,7 +1053,9 @@ extension LauncherView {
         let googleQuery =
             query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         if let googleURL = URL(string: "https://www.google.com/search?q=\(googleQuery)") {
+            #if DEBUG
             print("🌐 Adding Google search fallback")
+            #endif
             results.append(
                 SearchResult(
                     title: "Search \"\(query)\" on Google",
@@ -982,7 +1072,9 @@ extension LauncherView {
                 ))
         }
 
+        #if DEBUG
         print("🌐 Returning \(results.count) total results")
+        #endif
         return results
     }
 
@@ -1031,6 +1123,8 @@ extension LauncherView {
                         AXTriggerRuleEngine.shared.run(type: .scriptFile, value: sc.actionValue)
                     case .menuItem:
                         AXTriggerRuleEngine.shared.run(type: .menuItem, value: sc.actionValue)
+                    case .shortcut:
+                        AXTriggerRuleEngine.shared.run(type: .shortcut, value: sc.actionValue)
                     }
                 },
                 type: .shortcut,
@@ -1075,7 +1169,9 @@ extension LauncherView {
                 // For now, just show the app itself
 
                 setPinnedResults(appResults, title: "Application", excludeTypes: [])
+                #if DEBUG
                 print("✅ Loaded app-specific content for \(appName)")
+                #endif
             }
         }
     }

@@ -110,13 +110,17 @@ struct ScriptExtension: Identifiable {
     func execute(with input: String) async throws -> String {
         // Check if it's a built-in extension
         if isBuiltIn, let builtInAction = builtInAction {
+            #if DEBUG
             print("🔧 [ScriptExtension] Executing built-in action: \(displayName)")
+            #endif
             return try await builtInAction.execute(with: input)
         }
 
         // Check if it's an app-based extension
         if let app = targetApp {
+            #if DEBUG
             print("🔧 [ScriptExtension] Opening with app: \(app.displayName)")
+            #endif
             let paths = input.components(separatedBy: "\n").filter { !$0.isEmpty }
             for path in paths {
                 let url = URL(fileURLWithPath: path)
@@ -127,7 +131,9 @@ struct ScriptExtension: Identifiable {
 
         // Check if it's a terminal-based extension
         if let command = terminalCommand {
+            #if DEBUG
             print("🔧 [ScriptExtension] Executing terminal command: \(command)")
+            #endif
             let paths = input.components(separatedBy: "\n").filter { !$0.isEmpty }
             guard let firstPath = paths.first else {
                 return "No file provided"
@@ -158,7 +164,9 @@ struct ScriptExtension: Identifiable {
         }
 
         // Execute external script
+        #if DEBUG
         print("🔧 [ScriptExtension] Executing external script: \(path)")
+        #endif
         let process = Process()
 
         // Set up the process
@@ -265,13 +273,17 @@ class ExtensionScanner {
         // Get base URL (parent of ILauncher directory)
         let baseURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
 
+        #if DEBUG
         print("🔍 [ExtensionScanner] Scanning extensions from: \(baseURL.path)")
+        #endif
 
         for (dirName, category) in extensionDirs {
             let dirURL = baseURL.appendingPathComponent(dirName)
 
             guard FileManager.default.fileExists(atPath: dirURL.path) else {
+                #if DEBUG
                 print("⚠️ [ExtensionScanner] Directory not found: \(dirURL.path)")
+                #endif
                 continue
             }
 
@@ -315,15 +327,21 @@ class ExtensionScanner {
                     )
 
                     extensions.append(scriptExtension)
+                    #if DEBUG
                     print("✅ [ExtensionScanner] Found: \(displayName) (\(scriptType.rawValue))")
+                    #endif
                 }
 
             } catch {
+                #if DEBUG
                 print("❌ [ExtensionScanner] Error scanning \(dirName): \(error)")
+                #endif
             }
         }
 
+        #if DEBUG
         print("📦 [ExtensionScanner] Total extensions found: \(extensions.count)")
+        #endif
         return extensions
     }
 

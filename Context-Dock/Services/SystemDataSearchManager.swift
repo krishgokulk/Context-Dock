@@ -117,7 +117,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
     func requestCalendarPermission() async -> Bool {
         // Prevent concurrent permission requests
         if isRequestingCalendarPermission {
+            #if DEBUG
             print("⚠️ Calendar permission request already in progress, waiting...")
+            #endif
             // Wait for the existing request to complete
             while isRequestingCalendarPermission {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -139,7 +141,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
                 return granted
             }
         } catch {
+            #if DEBUG
             print("⚠️ Calendar permission error: \(error)")
+            #endif
             return false
         }
     }
@@ -147,7 +151,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
     func requestRemindersPermission() async -> Bool {
         // Prevent concurrent permission requests
         if isRequestingRemindersPermission {
+            #if DEBUG
             print("⚠️ Reminders permission request already in progress, waiting...")
+            #endif
             // Wait for the existing request to complete
             while isRequestingRemindersPermission {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -173,7 +179,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
                 return granted
             }
         } catch {
+            #if DEBUG
             print("⚠️ Reminders permission error: \(error)")
+            #endif
             return false
         }
     }
@@ -504,13 +512,17 @@ class SystemDataSearchManager: ObservableObject {
     
     func searchAll(query: String, types: Set<SystemDataType>? = nil, perTypeLimit: Int = 10, allowEmptyQuery: Bool = false) async -> [SystemSearchResult] {
         guard !query.isEmpty || allowEmptyQuery else {
+            #if DEBUG
             print("⚠️ [SystemDataManager] Empty query, returning no results")
+            #endif
             return []
         }
         let searchTypes = types ?? [.photo, .contact, .voiceRecording]
         
         let queryLabel = query.isEmpty ? "<all>" : query
+        #if DEBUG
         print("🔍 [SystemDataManager] Starting search for: '\(queryLabel)' across \(searchTypes.count) types")
+        #endif
         
         await MainActor.run {
             isSearching = true
@@ -521,32 +533,42 @@ class SystemDataSearchManager: ObservableObject {
         // Perform searches in parallel
         await withTaskGroup(of: [SystemSearchResult].self) { group in
             if searchTypes.contains(.photo) {
+                #if DEBUG
                 print("📷 [SystemDataManager] Adding photos search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
                     await self.photosManager.searchPhotos(query: query)
                 }
             }
             
             if searchTypes.contains(.contact) {
+                #if DEBUG
                 print("👤 [SystemDataManager] Adding contacts search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
                     await self.contactsManager.searchContacts(query: query)
                 }
             }
             
             if searchTypes.contains(.voiceRecording) {
+                #if DEBUG
                 print("🎤 [SystemDataManager] Adding recordings search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
                     await self.recordingsManager.searchRecordings(query: query)
                 }
             }
             for await results in group {
+                #if DEBUG
                 print("📦 [SystemDataManager] Received batch of \(results.count) results")
+                #endif
                 allResults.append(contentsOf: results)
             }
         }
         
+        #if DEBUG
         print("✅ [SystemDataManager] Total raw results: \(allResults.count)")
+        #endif
         
         await MainActor.run {
             isSearching = false

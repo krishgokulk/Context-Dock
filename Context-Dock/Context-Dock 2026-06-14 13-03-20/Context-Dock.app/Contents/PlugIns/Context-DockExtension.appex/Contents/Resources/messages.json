@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "Context Dock",
+    "description": "Extension name"
+  },
+  "extensionDescription": {
+    "message": "Sends rich browser context to Context Dock.",
+    "description": "Extension description"
+  }
+}

@@ -801,6 +801,18 @@ struct LauncherView: View {
             ),
             executeLeaf: executeLeaf
         )
+        .applyingSafariFavicon(safariHistoryBookmarkURL(for: item, sourceBundleId: sourceBundleId))
+    }
+
+    /// Safari History/Bookmarks menu rows resolve to the page's real URL via the
+    /// local history DB so the row can show the site favicon (same as Global Context).
+    func safariHistoryBookmarkURL(for item: AXMenuItem, sourceBundleId: String) -> URL? {
+        guard sourceBundleId == "com.apple.Safari" else { return nil }
+        let root = (item.path.first ?? "").lowercased()
+        guard root.contains("history") || root.contains("bookmark") else { return nil }
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        return SafariLinkResolver.shared.url(forTitle: title)
     }
 
     func submenuLeafChildren(from parent: AXMenuItem) -> [AXMenuItem] {
@@ -850,7 +862,8 @@ struct LauncherView: View {
                 pill.trackingIdentifier =
                     "\(trackingPrefix):\(child.path.joined(separator: " > ").lowercased())"
                 pill.searchTerms = child.path + parent.path + searchTerms + [parent.title]
-                return pill
+                return pill.applyingSafariFavicon(
+                    safariHistoryBookmarkURL(for: child, sourceBundleId: sourceBundleId))
             }
     }
 
@@ -1544,6 +1557,10 @@ struct LauncherView: View {
             return false
         }
         if !pill.hasLiveAvailability { return true }
+        let normalizedName = normalizedDockPillText(pill.name)
+        if normalizedName == "close selected" || normalizedName.hasPrefix("close selected ") {
+            return true
+        }
         // In Global Context with selected files/text, Context Dock owns focus. Several
         // apps recalculate kAXEnabled only while their native menu is open, so a runnable
         // selection action can report disabled. Execution still validates volatile paths.
@@ -2621,7 +2638,12 @@ struct LauncherView: View {
     func currentShortcutSheetCommandIDs() -> [String] {
         if shortcutSheetSelectionSnapshot != nil {
             guard shortcutSheetSelectionExpanded else { return [] }
-            return selectionSheetCommands.map(\.id)
+            // Match the sheet's ranked, Recommended-first display order.
+            let searching = !shortcutSheetSearchQuery
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return SelectionSheetCommand.ranked(selectionSheetCommands, searching: searching)
+                .flatMap { $0.items }
+                .map(\.id)
         }
         return shortcutSheetCommands.map(\.id)
     }
@@ -2632,7 +2654,9 @@ struct LauncherView: View {
                 shortcutSheetFocusedCommandID = nil
                 return false
             }
-            guard let command = selectionSheetCommands.first(where: { $0.id == id }) else { return false }
+            // "rec-" rows are Recommended copies of a real command — resolve back.
+            let realID = id.hasPrefix("rec-") ? String(id.dropFirst("rec-".count)) : id
+            guard let command = selectionSheetCommands.first(where: { $0.id == realID }) else { return false }
             executeSelectionSheetCommand(command)
             return true
         }

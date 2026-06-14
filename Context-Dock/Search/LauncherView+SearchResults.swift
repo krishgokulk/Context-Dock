@@ -556,20 +556,28 @@ extension LauncherView {
                 // Icon
                 ZStack {
                     if let img = pill.menuItemImage {
-                        Image(nsImage: img)
-                            .resizable()
-                            .interpolation(.medium)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 28, height: 28)
-                            .opacity(isDisabled ? 0.35 : 1.0)
+                        FileThumbnailImage(
+                            filePath: pill.quickLookURL?.path ?? pill.resolvedURL?.path,
+                            fallbackImage: img,
+                            systemName: pill.icon,
+                            tint: accent,
+                            size: 28,
+                            cornerRadius: 5,
+                            isApplication: pill.rankingKind == "appLaunch"
+                        )
+                        .opacity(isDisabled ? 0.35 : 1.0)
                     } else {
-                        Image(systemName: pill.icon)
-                            .font(.system(size: 17, weight: .semibold))
-                            .symbolRenderingMode(.multicolor)
-                            .foregroundStyle(
-                                (isDisabled
-                                    ? accent.opacity(0.30)
-                                    : (isActive ? accent : accent.opacity(0.80))))
+                        FileThumbnailImage(
+                            filePath: pill.quickLookURL?.path ?? pill.resolvedURL?.path,
+                            fallbackImage: nil,
+                            systemName: pill.icon,
+                            tint: isDisabled
+                                ? accent.opacity(0.30)
+                                : (isActive ? accent : accent.opacity(0.80)),
+                            size: 28,
+                            cornerRadius: 5,
+                            isApplication: false
+                        )
                     }
                 }
                 .frame(width: 34, height: 34)
@@ -703,15 +711,25 @@ extension LauncherView {
             // Icon
             ZStack {
                 if let img = primary.menuItemImage {
-                    Image(nsImage: img)
-                        .resizable().interpolation(.medium)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 28, height: 28)
+                    FileThumbnailImage(
+                        filePath: primary.quickLookURL?.path ?? primary.resolvedURL?.path,
+                        fallbackImage: img,
+                        systemName: primary.icon,
+                        tint: accent,
+                        size: 28,
+                        cornerRadius: 5,
+                        isApplication: false
+                    )
                 } else {
-                    Image(systemName: primary.icon)
-                        .font(.system(size: 17, weight: .semibold))
-                        .symbolRenderingMode(.multicolor)
-                        .foregroundStyle(isActive ? accent : accent.opacity(0.80))
+                    FileThumbnailImage(
+                        filePath: primary.quickLookURL?.path ?? primary.resolvedURL?.path,
+                        fallbackImage: nil,
+                        systemName: primary.icon,
+                        tint: isActive ? accent : accent.opacity(0.80),
+                        size: 28,
+                        cornerRadius: 5,
+                        isApplication: false
+                    )
                 }
             }
             .frame(width: 34, height: 34)
@@ -1064,24 +1082,26 @@ extension LauncherView {
             } label: {
                 HStack(spacing: isExpanded ? 0 : (isCompact ? 4 : 6)) {
                     if let img = pill.menuItemImage {
-                        Image(nsImage: img)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: iconSize, height: iconSize)
-                            .opacity(focused ? 1.0 : 0.88)
+                        FileThumbnailImage(
+                            filePath: pill.quickLookURL?.path ?? pill.resolvedURL?.path,
+                            fallbackImage: img,
+                            systemName: pill.icon,
+                            tint: accent,
+                            size: iconSize,
+                            cornerRadius: isExpanded ? 5 : 3,
+                            isApplication: false
+                        )
+                        .opacity(focused ? 1.0 : 0.88)
                     } else {
-                        Image(systemName: pill.icon)
-                            .font(
-                                .system(
-                                    size: isExpanded ? iconSize * 0.72 : (isCompact ? 9 : 11),
-                                    weight: .semibold)
-                            )
-                            .symbolRenderingMode(.multicolor)
-                            .foregroundStyle(focused ? accent : accent.opacity(0.88))
-                            .frame(
-                                width: isExpanded ? iconSize : nil,
-                                height: isExpanded ? iconSize : nil)
+                        FileThumbnailImage(
+                            filePath: pill.quickLookURL?.path ?? pill.resolvedURL?.path,
+                            fallbackImage: nil,
+                            systemName: pill.icon,
+                            tint: focused ? accent : accent.opacity(0.88),
+                            size: isExpanded ? iconSize : (isCompact ? 10 : 14),
+                            cornerRadius: isExpanded ? 5 : 3,
+                            isApplication: false
+                        )
                     }
                     if isExpanded {
                         Rectangle()
@@ -1429,11 +1449,14 @@ extension LauncherView {
         if FileManager.default.fileExists(atPath: workflowPath) {
             return NSWorkspace.shared.icon(forFile: workflowPath)
         }
-        // 4. Shortcuts-provided service → Shortcuts.app icon
-        if let url = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: "com.apple.shortcuts")
-        {
-            return NSWorkspace.shared.icon(forFile: url.path)
+        // 4. Shortcuts-provided service. The public Shortcuts CLI does not expose
+        // the user's exact glyph/color, so use a deterministic per-shortcut symbol
+        // instead of making every service look like Shortcuts.app.
+        if let icon = NSImage(
+            systemSymbolName: ShortcutsCatalog.iconName(for: item.title),
+            accessibilityDescription: item.title
+        ) {
+            return icon
         }
         return nil
     }
@@ -1441,6 +1464,9 @@ extension LauncherView {
     func menuSymbol(for item: AXMenuItem) -> String {
         if item.sourceAppName == "System Settings" || frontmost.bundleID == "com.apple.systempreferences" {
             return SFSymbolResolver.systemSettingsPaneSymbol(title: item.title)
+        }
+        if item.path.contains(where: { $0 == "Services" }) {
+            return ShortcutsCatalog.iconName(for: item.title)
         }
         return SFSymbolResolver.menuSymbol(
             title: item.title,
@@ -1808,6 +1834,17 @@ extension LauncherView {
                 "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
             ]
             AXTriggerRuleEngine.shared.run(type: .menuItem, value: sc.actionValue, envVars: envVars)
+        case .shortcut:
+            let envVars: [String: String] = [
+                "CD_APP_NAME": frontmost.name,
+                "CD_BUNDLE_ID": frontmost.bundleID,
+                "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
+                "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
+                "CD_URL": axContext.currentURL ?? "",
+                "CD_FILE": axContext.selectedFilePaths.first ?? selectedFilePaths.first ?? "",
+                "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
+            ]
+            AXTriggerRuleEngine.shared.run(type: .shortcut, value: sc.actionValue, envVars: envVars)
         }
     }
 

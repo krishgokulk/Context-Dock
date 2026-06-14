@@ -135,10 +135,18 @@ class AIShortcutMatcher {
         allShortcuts: [SearchResult],
         limit: Int = 6
     ) async -> [SearchResult] {
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] ==========================================")
+        #endif
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] Context: \(context.description)")
+        #endif
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] Frontmost App: \(frontmostApp)")
+        #endif
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] Total shortcuts available: \(allShortcuts.count)")
+        #endif
 
         // Step 1: Pre-filter likely candidates by quick semantic/context checks to reduce latency
         let prefiltered: [SearchResult] = prefilterShortcuts(allShortcuts, context: context, frontmostApp: frontmostApp, limit: 30)
@@ -162,11 +170,17 @@ class AIShortcutMatcher {
         let sortedShortcuts = scoredShortcutsArray.sorted { $0.1 > $1.1 }
 
         // Step 4: Log top suggestions
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] Top suggestions:")
+        #endif
         for (index, item) in sortedShortcuts.prefix(limit).enumerated() {
+            #if DEBUG
             print("   \(index + 1). \(item.0.title) - Score: \(item.1) - \(item.2)")
+            #endif
         }
+        #if DEBUG
         print("🤖 [AI Shortcut Matcher] ==========================================")
+        #endif
 
         // Step 5: Filter by confidence threshold and return top N shortcuts
         let filteredByConfidence = sortedShortcuts.filter { $0.1 >= confidenceThreshold }

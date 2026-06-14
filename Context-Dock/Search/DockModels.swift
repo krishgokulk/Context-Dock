@@ -4,8 +4,8 @@ import Foundation
 struct DockPill: Identifiable {
     let id: String
     let name: String
-    let icon: String
-    let accentColorName: String?
+    var icon: String
+    var accentColorName: String?
     let badge: String?
     let execute: () -> Void
     var isSeparator: Bool = false
@@ -27,6 +27,24 @@ struct DockPill: Identifiable {
     var quickLookURL: URL? = nil
     var resolvedURL: URL? = nil
     var dragProvider: (() -> NSItemProvider?)? = nil
+}
+
+extension DockPill {
+    /// Attaches the site favicon (and resolved URL/host badge) for a Safari
+    /// History/Bookmarks row. No-op when `url` is nil. Favicon arrives async via
+    /// FaviconStore; the dock rebuilds on its `revision` publisher.
+    @MainActor
+    func applyingSafariFavicon(_ url: URL?) -> DockPill {
+        guard let url else { return self }
+        var copy = self
+        if let favicon = FaviconStore.shared.icon(for: url) {
+            copy.menuItemImage = favicon
+        }
+        FaviconStore.shared.fetchIfNeeded(for: url)
+        copy.resolvedURL = url
+        if copy.menuStatusBadge == nil { copy.menuStatusBadge = url.host }
+        return copy
+    }
 }
 
 struct SharedResultRowModel: Identifiable {

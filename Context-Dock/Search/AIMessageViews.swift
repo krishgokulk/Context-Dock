@@ -935,12 +935,18 @@ struct AIExtensionChipButton: View {
         Task {
             do {
                 let input = getInputFromContext()
+                #if DEBUG
                 print("🔧 [Extension] Executing: \(suggestion.scriptExtension.displayName)")
+                #endif
+                #if DEBUG
                 print("🔧 [Extension] Input: \(input.prefix(100))...")
+                #endif
 
                 let result = try await suggestion.scriptExtension.execute(with: input)
 
+                #if DEBUG
                 print("✅ [Extension] Result: \(result.prefix(200))...")
+                #endif
 
                 await MainActor.run {
                     isExecuting = false
@@ -954,7 +960,9 @@ struct AIExtensionChipButton: View {
                     chatMessages.append(resultMessage)
                 }
             } catch {
+                #if DEBUG
                 print("❌ [Extension] Error: \(error.localizedDescription)")
+                #endif
 
                 await MainActor.run {
                     isExecuting = false
@@ -1208,10 +1216,14 @@ struct CodeBlockView: View {
                     }
                 }
 
+                #if DEBUG
                 print("✅ Saved extension to Documents/ILauncher/Extensions")
+                #endif
 
             } catch {
+                #if DEBUG
                 print("❌ Failed to save extension: \(error.localizedDescription)")
+                #endif
             }
         }
     }

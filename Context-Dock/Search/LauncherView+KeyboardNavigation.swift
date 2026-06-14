@@ -1305,7 +1305,7 @@ extension LauncherView {
                 window.animator().setFrame(newFrame, display: true)
                 NSAnimationContext.endGrouping()
             } else {
-                window.setFrame(newFrame, display: true)
+                window.setFrame(newFrame, display: false)
             }
 
             // SwiftUI's @FocusState reconciliation fires asynchronously after setFrame and
@@ -1825,6 +1825,19 @@ extension LauncherView {
                     return .handled
                 }
                 if attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
+                    return .handled
+                }
+                // In a browser with an empty field, right-arrow grabs the current
+                // page as a context pill (instead of opening the AI chat panel).
+                if (isGlobalContextActive || showContextInDock),
+                    searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    !aiMode.isActive,
+                    !showMediaLayer,
+                    !isCompactSmartScope,
+                    l2.targetApp == nil,
+                    AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID),
+                    addCurrentSafariPageToContextFromKeyboard()
+                {
                     return .handled
                 }
                 if (isGlobalContextActive || showContextInDock),

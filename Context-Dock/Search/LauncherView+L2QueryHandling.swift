@@ -1397,7 +1397,9 @@ extension LauncherView {
         // Execute find command
         let findCommand =
             "find \"\(targetPath)\" -type f -size \(sizeCriteria) -exec ls -lh {} \\; 2>/dev/null | head -20"
+        #if DEBUG
         print("🔍 [L2] Executing: \(findCommand)")
+        #endif
 
         let task = Process()
         let pipe = Pipe()
@@ -1432,7 +1434,9 @@ extension LauncherView {
                 return results
             }
         } catch {
+            #if DEBUG
             print("❌ [L2] Failed to execute find command: \(error)")
+            #endif
         }
 
         return nil

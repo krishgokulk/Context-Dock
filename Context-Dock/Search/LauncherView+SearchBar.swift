@@ -256,47 +256,25 @@ extension LauncherView {
         return HStack(spacing: 0) {
             Color.clear
                 .frame(width: resultsPanelLeadingInset)
-            VStack(spacing: 0) {
-                dockBaseView(inDockMode: settings.effectiveDockAtBottom)
-                    .frame(width: resultsPanelWidth, alignment: .leading)
+            UnifiedDockSurface(size: .standard, width: resultsPanelWidth, isDark: isEffectiveDark) {
+                VStack(spacing: 0) {
+                    dockBaseView(inDockMode: settings.effectiveDockAtBottom)
+                        .frame(width: resultsPanelWidth, alignment: .leading)
 
-                Rectangle()
-                    .fill(Color.white.opacity(isEffectiveDark ? 0.12 : 0.16))
-                    .frame(height: 1)
-                    .padding(.horizontal, 18)
+                    Rectangle()
+                        .fill(Theme.separator(isEffectiveDark))
+                        .frame(height: 1)
+                        .padding(.horizontal, 18)
 
-                resultsContentView
-                    .frame(minHeight: 0, maxHeight: maxSheetHeight)
-                    .frame(width: resultsPanelWidth, alignment: .leading)
-            }
-            .frame(width: resultsPanelWidth, alignment: .leading)
-            .background(alignment: .topLeading) {
-                GlassBackground(cornerRadius: 28, isDark: isEffectiveDark)
-                    .frame(width: resultsPanelWidth)
-            }
-            .mask(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .frame(width: resultsPanelWidth)
-            }
-            .overlay(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(isEffectiveDark ? 0.16 : 0.42),
-                                .white.opacity(isEffectiveDark ? 0.035 : 0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-                    .frame(width: resultsPanelWidth)
+                    resultsContentView
+                        .frame(minHeight: 0, maxHeight: maxSheetHeight)
+                        .frame(width: resultsPanelWidth, alignment: .leading)
+                }
+                .frame(width: resultsPanelWidth, alignment: .leading)
             }
             Spacer(minLength: 0)
         }
         .frame(width: calculatedWidth, alignment: .leading)
-        .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
     }
 
     // MARK: - Dock Base View (always visible, doesn't move)
@@ -485,9 +463,19 @@ extension LauncherView {
                                                     .spring(response: 0.22, dampingFraction: 0.75),
                                                     value: selIcon)
                                         } else {
-                                            // No selection — global context uses the app clock mark.
-                                            ContextDockGlyph(size: 28, opacity: 1.0)
-                                                .id("context-dock-input-logo")
+                                            // No selection — global context uses the app icon from bundle.
+                                            let appIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+                                            if appIcon.size.width > 0 {
+                                                Image(nsImage: appIcon)
+                                                    .resizable()
+                                                    .interpolation(.high)
+                                                    .aspectRatio(contentMode: .fit)
+                                                    .frame(width: 24, height: 24)
+                                                    .id("context-dock-input-logo")
+                                            } else {
+                                                ContextDockGlyph(size: 28, opacity: 1.0)
+                                                    .id("context-dock-input-logo")
+                                            }
                                         }
                                     } else if let finderSymbol = finderInputSymbolForSearchText() {
                                         Image(systemName: finderSymbol)
@@ -1124,11 +1112,6 @@ extension LauncherView {
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.35))
                                             .lineLimit(1)
-                                        if let badge = ghost.badge, !badge.isEmpty {
-                                            Text("  \(badge)")
-                                                .font(.system(size: 15))
-                                                .foregroundStyle(.secondary.opacity(0.2))
-                                        }
                                         Text("  — ↵")
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.2))
@@ -2206,15 +2189,48 @@ extension LauncherView {
                     forFile: NSWorkspace.shared.urlForApplication(
                         withBundleIdentifier: scope.bundleId)?.path ?? "")
         }()
-        // Scope shown as the matched app name in the app's accent colour —
-        // plain text, no pill chrome. Hovering floats a liquid-glass "X"
-        // badge above the word; clicking it exits the scope instantly,
-        // restoring the alias as normal query text.
         let accent = icon.dominantSwiftUIColor
+        let labelColor: SwiftUI.Color =
+            systemColorScheme == .dark
+            ? .white.opacity(0.96)
+            : .black.opacity(0.88)
 
-        return Text(scope.matchedAlias)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(accent)
+        return HStack(spacing: 5) {
+            Image(nsImage: icon)
+                .resizable()
+                .renderingMode(.original)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(scope.matchedAlias)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(labelColor)
+                .shadow(color: .black.opacity(systemColorScheme == .dark ? 0.35 : 0.08), radius: 1, y: 0.5)
+        }
+            .padding(.leading, 7)
+            .padding(.trailing, 8)
+            .padding(.vertical, 3)
+            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+            .background(
+                accent.opacity(systemColorScheme == .dark ? 0.26 : 0.16),
+                in: Capsule(style: .continuous)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.50),
+                                accent.opacity(systemColorScheme == .dark ? 0.38 : 0.24),
+                                Color.white.opacity(0.10),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.9
+                    )
+            )
+            .shadow(color: .black.opacity(0.20), radius: 6, x: 0, y: 2)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .overlay(alignment: .top) {

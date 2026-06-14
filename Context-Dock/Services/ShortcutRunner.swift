@@ -57,7 +57,9 @@ class ShortcutRunner {
         frontmostApp: (bundleId: String, name: String)? = nil
     ) async throws -> String {
 
+        #if DEBUG
         print("🚀 [ShortcutRunner] Preparing to run '\(shortcutName)'")
+        #endif
 
         // Build context bundle
         let files = fileURLs.map { url in
@@ -95,8 +97,12 @@ class ShortcutRunner {
             throw RunnerError.jsonEncodingFailed
         }
 
+        #if DEBUG
         print("📦 [ShortcutRunner] Context Bundle:")
+        #endif
+        #if DEBUG
         print(jsonString)
+        #endif
 
         // Execute via ILauncher Runner v2
         return try await executeRunner(withPayload: jsonString)
@@ -136,11 +142,15 @@ class ShortcutRunner {
         let error = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if process.terminationStatus != 0 {
+            #if DEBUG
             print("❌ [ShortcutRunner] Error: \(error)")
+            #endif
             throw RunnerError.executionFailed(error)
         }
 
+        #if DEBUG
         print("✅ [ShortcutRunner] Success: \(output)")
+        #endif
         return output
     }
 
@@ -208,7 +218,9 @@ class ShortcutRunner {
                 return output.contains("ILauncher Runner v2")
             }
         } catch {
+            #if DEBUG
             print("❌ Failed to check Runner installation: \(error)")
+            #endif
         }
 
         return false
@@ -224,7 +236,9 @@ class ShortcutRunner {
         with input: DirectInput
     ) async throws -> String {
 
+        #if DEBUG
         print("🎯 [ShortcutRunner] DIRECT MODE - Running '\(shortcutName)' with direct input")
+        #endif
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
@@ -239,40 +253,56 @@ class ShortcutRunner {
 
         switch input {
         case .files(let urls):
+            #if DEBUG
             print("📁 [ShortcutRunner] Direct input: \(urls.count) file(s)")
+            #endif
             let filePaths = urls.map { $0.path }
 
             if filePaths.count == 1 {
                 // Single file - pass via --input-path
                 process.arguments = ["run", shortcutName, "--input-path", filePaths[0]]
+                #if DEBUG
                 print("   File: \(filePaths[0])")
+                #endif
             } else {
                 // Multiple files - pass paths via stdin (one per line)
                 let filesText = filePaths.joined(separator: "\n")
                 process.arguments = ["run", shortcutName, "--input-path", "-"]
                 stdinData = filesText.data(using: .utf8)
                 needsStdinInput = true
+                #if DEBUG
                 print("   Multiple files via stdin:")
+                #endif
                 for (index, path) in filePaths.enumerated() {
+                    #if DEBUG
                     print("     \(index + 1). \(path)")
+                    #endif
                 }
             }
 
         case .text(let text):
+            #if DEBUG
             print("📝 [ShortcutRunner] Direct input: Text (\(text.count) chars)")
+            #endif
             // Text must be passed via stdin with --input-path -
             process.arguments = ["run", shortcutName, "--input-path", "-"]
             stdinData = text.data(using: .utf8)
             needsStdinInput = true
+            #if DEBUG
             print("   Text: \(text.prefix(100))\(text.count > 100 ? "..." : "")")
+            #endif
 
         case .url(let urlString):
+            #if DEBUG
             print("🌐 [ShortcutRunner] Direct input: URL")
+            #endif
             // URL as text via stdin
             process.arguments = ["run", shortcutName, "--input-path", "-"]
             stdinData = urlString.data(using: .utf8)
             needsStdinInput = true
+            #if DEBUG
             print("   URL: \(urlString)")
+            #endif
         }
 
         // Setup process pipes
@@ -282,7 +312,9 @@ class ShortcutRunner {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
+        #if DEBUG
         print("🚀 [ShortcutRunner] Executing: shortcuts \(process.arguments!.joined(separator: " "))")
+        #endif
 
         try process.run()
         
@@ -301,16 +333,24 @@ class ShortcutRunner {
         let error = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if process.terminationStatus != 0 {
+            #if DEBUG
             print("❌ [ShortcutRunner] Direct execution failed with code \(process.terminationStatus)")
+            #endif
             if !error.isEmpty {
+                #if DEBUG
                 print("   Error: \(error)")
+                #endif
             }
             throw RunnerError.executionFailed(error)
         }
 
+        #if DEBUG
         print("✅ [ShortcutRunner] Direct execution completed successfully")
+        #endif
         if !output.isEmpty {
+            #if DEBUG
             print("   Output: \(output.prefix(200))\(output.count > 200 ? "..." : "")")
+            #endif
         }
 
         return output

@@ -187,12 +187,19 @@ class AIProviderService: ObservableObject {
         provider: AIProvider,
         apiKey: String? = nil,
         conversationHistory: [ChatMessage] = [],
-        additionalContextPrompt: String = ""
+        additionalContextPrompt: String = "",
+        attachments: [AIAttachment] = []
     ) async throws -> String {
 
+        #if DEBUG
         print("🤖 [AIProviderService] Sending message to \(provider.displayName)")
+        #endif
+        #if DEBUG
         print("🤖 [AIProviderService] Message: \(message)")
+        #endif
+        #if DEBUG
         print("🤖 [AIProviderService] Context: \(context.description)")
+        #endif
 
         isProcessing = true
         error = nil
@@ -228,7 +235,9 @@ class AIProviderService: ObservableObject {
             additionalContextPrompt: additionalContextPrompt
         )
 
+        #if DEBUG
         print("🤖 [AIProviderService] Context prompt built (\(contextPrompt.count) chars)")
+        #endif
 
         let response = try await AIProviderRouter.shared.sendPrepared(
             provider: provider,
@@ -236,10 +245,13 @@ class AIProviderService: ObservableObject {
             context: context,
             contextPrompt: contextPrompt,
             apiKeyOverride: apiKey,
-            conversationHistory: conversationHistory
+            conversationHistory: conversationHistory,
+            attachments: attachments
         )
 
+        #if DEBUG
         print("✅ [AIProviderService] Response received (\(response.count) chars)")
+        #endif
 
         currentResponse = response
 
@@ -683,7 +695,9 @@ class AIProviderService: ObservableObject {
             }
 
         } catch {
+            #if DEBUG
             print("⚠️ [AIProviderService] Error analyzing file: \(error)")
+            #endif
         }
 
         return analysis
@@ -1039,24 +1053,38 @@ class AIProviderService: ObservableObject {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             Task {
+                #if DEBUG
                 print("🤖 [FoundationModels] Checking availability...")
+                #endif
                 let model = SystemLanguageModel.default
+                #if DEBUG
                 print("🤖 [FoundationModels] Availability: \(model.availability)")
+                #endif
                 guard case .available = model.availability else {
+                    #if DEBUG
                     print("🤖 [FoundationModels] Not available — aborting")
+                    #endif
                     onError("Apple Intelligence is not available. Enable it in System Settings > Apple Intelligence.")
                     return
                 }
+                #if DEBUG
                 print("🤖 [FoundationModels] Creating fresh session...")
+                #endif
                 let session = LanguageModelSession()
+                #if DEBUG
                 print("🤖 [FoundationModels] Calling respond(to:)...")
+                #endif
                 do {
                     let response = try await session.respond(to: message)
                     let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    #if DEBUG
                     print("🤖 [FoundationModels] Got response (\(text.count) chars)")
+                    #endif
                     onComplete(text.isEmpty ? "…" : text)
                 } catch {
+                    #if DEBUG
                     print("🤖 [FoundationModels] ERROR: \(error)")
+                    #endif
                     onError("Apple Intelligence error: \(error.localizedDescription)")
                 }
             }

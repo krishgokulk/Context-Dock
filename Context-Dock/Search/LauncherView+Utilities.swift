@@ -77,7 +77,9 @@ extension LauncherView {
         }
 
         guard let url = URL(string: urlString) else {
+            #if DEBUG
             print("❌ Invalid URL: \(urlString)")
+            #endif
             return
         }
 
@@ -85,7 +87,9 @@ extension LauncherView {
         NSWorkspace.shared.open(url)
         searchState.query = ""
 
+        #if DEBUG
         print("🌐 Opening in default browser: \(urlString)")
+        #endif
     }
 
     func getSearchURL(for query: String) -> URL {

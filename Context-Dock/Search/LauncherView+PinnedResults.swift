@@ -43,7 +43,9 @@ extension LauncherView {
                 }
 
                 setPinnedResults(contactResults, title: "Contacts", excludeTypes: [.contact])
+                #if DEBUG
                 print("✅ Loaded \(contactResults.count) contacts")
+                #endif
             }
         }
     }

@@ -186,7 +186,9 @@ class L2IntentRegistry: ObservableObject {
             await handleCandidate(package.command, for: intent)
         }
         if !detected.isEmpty {
+            #if DEBUG
             print("🎯 [IntentRegistry] '\(package.command)' matched intents: \(detected.map(\.displayName).joined(separator: ", "))")
+            #endif
         }
     }
 
@@ -197,7 +199,9 @@ class L2IntentRegistry: ObservableObject {
             // First package for this intent — auto-assign
             assignments[intent.rawValue] = command
             save()
+            #if DEBUG
             print("✅ [IntentRegistry] Auto-assigned '\(command)' → \(intent.displayName)")
+            #endif
         } else if current != command {
             // Another package already handles this intent — flag conflict
             let alreadyConflicting = conflicts.contains { $0.intent == intent }
@@ -209,7 +213,9 @@ class L2IntentRegistry: ObservableObject {
                     object: nil,
                     userInfo: ["intent": intent.rawValue, "challenger": command]
                 )
+                #if DEBUG
                 print("⚠️ [IntentRegistry] Conflict for \(intent.displayName): '\(current!)' vs '\(command)'")
+                #endif
             }
         }
     }
@@ -220,7 +226,9 @@ class L2IntentRegistry: ObservableObject {
         assignments[conflict.intent.rawValue] = winner
         conflicts.removeAll { $0.id == conflict.id }
         save()
+        #if DEBUG
         print("✅ [IntentRegistry] Resolved conflict for \(conflict.intent.displayName) → '\(winner)'")
+        #endif
     }
 
     func dismissConflict(_ conflict: IntentConflict) {

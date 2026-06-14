@@ -311,20 +311,26 @@ class L2AITaskExecutor: ObservableObject {
         currentTask = task
         
         // Step 2: Analyze query and create todo list
+        #if DEBUG
         print("📋 [L2] Analyzing query: \(query)")
+        #endif
         let todoList = try await analyzePlan(query: query, context: context, aiProvider: aiProvider)
         task.todoList = todoList
         task.status = .executingSteps
         currentTask = task
         
+        #if DEBUG
         print("📋 [L2] Created todo list with \(todoList.count) steps")
+        #endif
         
         // Step 3: Execute each step
         for (index, var step) in todoList.enumerated() {
             task.currentStepIndex = index
             currentTask = task
             
+            #if DEBUG
             print("🔄 [L2] Step \(index + 1)/\(todoList.count): \(step.description)")
+            #endif
             
             // Check if tool is required
             var selectedTool = step.requiredTool
@@ -354,7 +360,9 @@ class L2AITaskExecutor: ObservableObject {
                 
                 if !TerminalTool.isInstalled(requiredTool) {
                     // Tool not installed - ask to install
+                    #if DEBUG
                     print("📦 [L2] Tool '\(requiredTool)' not installed - suggesting Homebrew installation")
+                    #endif
                     step.status = .installingTool
                     task.todoList[index] = step
                     currentTask = task

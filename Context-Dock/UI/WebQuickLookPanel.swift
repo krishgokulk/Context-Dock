@@ -10,6 +10,11 @@ import AppKit
 import SwiftUI
 import WebKit
 
+private final class WebQuickLookNSPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class WebQuickLookPanel: NSObject, NSToolbarDelegate {
     static let shared = WebQuickLookPanel()
@@ -36,7 +41,8 @@ final class WebQuickLookPanel: NSObject, NSToolbarDelegate {
         panel.title = url.host(percentEncoded: false) ?? "Web Preview"
         webView?.load(URLRequest(url: url))
         positionPanel(panel)
-        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+        AppDelegate.shared?.launcherWindow?.makeKey()
     }
 
     func close() {
@@ -55,30 +61,43 @@ final class WebQuickLookPanel: NSObject, NSToolbarDelegate {
         configuration.suppressesIncrementalRendering = false
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
+        if webView.responds(to: Selector(("setDrawsBackground:"))) {
+            webView.setValue(false, forKey: "drawsBackground")
+        }
 
         let size = NSSize(width: 960, height: 660)
-        let newPanel = NSPanel(
+        let newPanel = WebQuickLookNSPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
         newPanel.title = "Web Preview"
-        newPanel.titleVisibility = .visible
-        newPanel.titlebarAppearsTransparent = false
+        newPanel.titleVisibility = .hidden
+        newPanel.titlebarAppearsTransparent = true
         newPanel.isMovableByWindowBackground = true
         newPanel.level = .floating
-        newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         newPanel.isReleasedWhenClosed = false
         newPanel.hidesOnDeactivate = false
-        newPanel.backgroundColor = .clear
+        newPanel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.18)
+        newPanel.isOpaque = false
+        newPanel.hasShadow = true
         newPanel.toolbarStyle = .unifiedCompact
         let toolbar = NSToolbar(identifier: "WebQuickLookToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         newPanel.toolbar = toolbar
-        newPanel.contentView = webView
+        let visual = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+        visual.material = .hudWindow
+        visual.blendingMode = .behindWindow
+        visual.state = .active
+        visual.autoresizingMask = [.width, .height]
+        webView.autoresizingMask = [.width, .height]
+        webView.frame = visual.bounds
+        visual.addSubview(webView)
+        newPanel.contentView = visual
 
         self.panel = newPanel
         self.webView = webView

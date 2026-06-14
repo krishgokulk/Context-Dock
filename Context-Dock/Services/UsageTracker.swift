@@ -109,7 +109,9 @@ class UsageTracker {
         do {
             usageData = try JSONDecoder().decode([String: UsageRecord].self, from: data)
         } catch {
+            #if DEBUG
             print("❌ UsageTracker: failed to load — \(error)")
+            #endif
         }
     }
 
@@ -124,7 +126,9 @@ class UsageTracker {
                 let data = try JSONEncoder().encode(usageData)
                 userDefaults.set(data, forKey: storageKey)
             } catch {
+                #if DEBUG
                 print("❌ UsageTracker: failed to save — \(error)")
+                #endif
             }
         }
         saveWorkItem = item

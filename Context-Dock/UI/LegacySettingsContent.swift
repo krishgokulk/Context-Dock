@@ -227,16 +227,6 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "Dock Position", systemImage: "dock.rectangle") {
-                VStack(spacing: 0) {
-                    SettingsRow {
-                        GeneralToggleLabel("File Context Pill",
-                            caption: "Show a floating action pill for selected files, folders, text, URLs, and clipboard content.")
-                        Toggle("", isOn: $settings.enableFileContextOverlay).labelsHidden()
-                    }
-                }
-            }
-
             CardSection(title: "Smart Features", systemImage: "sparkles") {
                 VStack(spacing: 0) {
                     SettingsRow {
@@ -3114,139 +3104,199 @@ struct PromptTemplatesSection: View {
     private let templates: [Template] = [
         Template(
             id: 0,
-            title: "Quick Action — Shell",
-            icon: "terminal",
-            description: "Ask AI to generate a shell command quick action.",
+            title: "Global Command",
+            icon: "command",
+            description: "Runs from the search bar anywhere. Type the name to fire it. Paste this whole prompt into any AI, then paste the JSON back here.",
             prompt: """
-Ask AI to generate an ILauncher Quick Action using a Shell script.
+You generate a Context-Dock GLOBAL COMMAND. It runs from the search bar in
+any app — the user types its name (or a keyword) and presses Return.
 
-Format required:
-- Name: short action label (e.g. "Open Downloads")
-- Script type: shell
-- Script: a bash/zsh one-liner or short script
-- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT
+Available variable: $CD_QUERY — whatever the user typed after the command name.
+  - In bash scripts use it as the env var "$CD_QUERY".
+  - In AppleScript read it with: system attribute "CD_QUERY".
 
-Example prompt to give AI:
-"Create an ILauncher Quick Action (shell) that opens the Downloads folder in Finder."
-
-Expected output format:
+Output ONLY this JSON (no prose, no markdown fences):
 {
-  "name": "Open Downloads",
-  "script": "open ~/Downloads",
-  "type": "shell"
+  "version": "1.0",
+  "type": "system_commands",
+  "systemCommands": [
+    {
+      "name": "Say Text",
+      "description": "Speak the typed text aloud.",
+      "icon": "speaker.wave.2.fill",
+      "keywords": ["say", "speak", "tts"],
+      "scriptType": "bash",
+      "script": "say \\"$CD_QUERY\\""
+    }
+  ]
 }
+
+Rules:
+- "type" MUST be exactly "system_commands".
+- "scriptType" is "bash", "applescript", or "jxa".
+- "icon" is a valid SF Symbol name.
+- "keywords" are extra words that surface the command.
+- Optional "presets": [..] adds tappable preset values.
+
+Now create one for: "<describe what your command should do>"
 """
         ),
         Template(
             id: 1,
-            title: "Quick Action — AppleScript",
-            icon: "applescript",
-            description: "Ask AI to generate an AppleScript quick action.",
+            title: "Context Dock (App Adapter)",
+            icon: "rectangle.grid.1x2",
+            description: "Per-app actions that appear as pills only when a specific app is frontmost. Paste the JSON back here to install.",
             prompt: """
-Ask AI to generate an ILauncher Quick Action using AppleScript.
+You generate a Context-Dock APP ADAPTER. Its actions appear as pills in the
+Context Dock ONLY when the target app is frontmost.
 
-Format required:
-- Name: short action label
-- Script type: applescript
-- Script: valid AppleScript
-- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT (injected before execution)
+Context variables you may use inside scripts / prompts:
+  $APP_NAME, $BUNDLE_ID, $WINDOW_TITLE, $CURRENT_URL, $AX_SELECTED_TEXT
 
-Example prompt to give AI:
-"Create an ILauncher Quick Action (AppleScript) that shows a dialog with the name of the frontmost app."
-
-Expected output:
+Output ONLY this JSON (no prose, no markdown fences):
 {
-  "name": "Show Frontmost App",
-  "script": "display dialog \"$FRONTMOST_APP\"",
-  "type": "applescript"
+  "id": "com.apple.Safari",
+  "appName": "Safari",
+  "bundleId": "com.apple.Safari",
+  "icon": "safari",
+  "isEnabled": true,
+  "actions": [
+    {
+      "id": "copy-url",
+      "name": "Copy Page URL",
+      "icon": "link",
+      "description": "Copy the current tab URL.",
+      "triggers": ["url", "copy", "link"],
+      "type": "shell",
+      "script": "printf '%s' \\"$CURRENT_URL\\" | pbcopy",
+      "requiresApproval": false,
+      "isDestructive": false
+    }
+  ]
 }
+
+Rules:
+- "id", "bundleId" = the app's real bundle ID; "appName" = display name.
+- Each action "type" is one of: shell, applescript, jxa, urlScheme,
+  openItem, scriptFile, shortcut, aiPrompt.
+- Set the matching payload field for the type:
+  shell/applescript/jxa → "script", urlScheme → "urlScheme",
+  shortcut → "shortcutName", aiPrompt → "aiPromptTemplate".
+- "triggers" are keywords that surface the action while typing.
+
+Now create one for: "<app name + the actions you want>"
 """
         ),
         Template(
             id: 2,
-            title: "Quick Action — JXA",
-            icon: "curlybraces",
-            description: "Ask AI to generate a JavaScript for Automation (JXA) quick action.",
+            title: "Shortcut Sheet (Selection)",
+            icon: "text.viewfinder",
+            description: "Runs on the user's current text/file selection (Cmd-hold sheet). Use a 'selection' trigger. Paste the JSON back here.",
             prompt: """
-Ask AI to generate an ILauncher Quick Action using JavaScript for Automation (JXA).
+You generate a Context-Dock SELECTION EXTENSION. It appears in the Shortcut
+Sheet that opens on the user's current selection (text or files).
 
-Format required:
-- Name: short action label
-- Script type: jxa
-- Script: valid JXA (JavaScript for Automation)
-- Variables available: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT (injected before execution)
+The selected text/path is passed to the script on stdin and as $CD_TEXT.
 
-Example prompt to give AI:
-"Create an ILauncher Quick Action (JXA) that centers the frontmost app window on screen."
-
-Expected output:
+Output ONLY this JSON (no prose, no markdown fences):
 {
-  "name": "Center Window",
-  "script": "var app = Application('$FRONTMOST_APP'); app.windows[0].bounds = {x: 200, y: 100, width: 900, height: 600};",
-  "type": "jxa"
+  "version": "1.0",
+  "extensions": [
+    {
+      "name": "Word Count",
+      "description": "Count words in the selected text.",
+      "icon": "textformat.123",
+      "layer": "L2",
+      "tags": ["text"],
+      "triggers": [ { "type": "selection" } ],
+      "scriptType": "bash",
+      "script": "printf '%s' \\"$CD_TEXT\\" | wc -w"
+    }
+  ]
 }
+
+Rules:
+- MUST include a trigger of { "type": "selection" } so it lands in the
+  Shortcut Sheet.
+- "scriptType": bash, applescript, jxa, python, or swift.
+- "layer": use "L2" for selection/context extensions.
+- "icon" is a valid SF Symbol name.
+
+Now create one for: "<what to do with the selected text or files>"
 """
         ),
         Template(
             id: 3,
-            title: "Context Dock Extension",
-            icon: "rectangle.grid.1x2",
-            description: "Ask AI to generate an L2 Context Dock extension package.",
+            title: "Global Context Extension",
+            icon: "sparkles",
+            description: "Always-available extension shown in Global Context (no selection needed). Paste the JSON back here.",
             prompt: """
-Ask AI to generate an ILauncher Context Dock Extension (L2 Extension).
+You generate a Context-Dock GLOBAL CONTEXT EXTENSION. It is always available
+in Global Context — no app or selection required. Surface it with keyword
+triggers (or "always").
 
-A Context Dock Extension is a folder placed in:
-~/Library/Application Support/ILauncher/Extensions/
-
-Structure:
-  MyExtension/
-    extension.json   ← metadata
-    run.sh           ← the executable script
-
-extension.json format:
+Output ONLY this JSON (no prose, no markdown fences):
 {
-  "name": "Extension Name",
-  "description": "What it does",
-  "icon": "SF Symbol name (e.g. safari)",
-  "context_apps": ["Safari", "com.apple.Safari"],
-  "command": "run.sh",
-  "output": "text"   // or "none"
+  "version": "1.0",
+  "extensions": [
+    {
+      "name": "Toggle Dark Mode",
+      "description": "Switch the system appearance.",
+      "icon": "circle.lefthalf.filled",
+      "layer": "crossLayer",
+      "tags": ["system"],
+      "triggers": [ { "type": "keyword", "value": "dark mode" } ],
+      "scriptType": "applescript",
+      "script": "tell application \\"System Events\\" to tell appearance preferences to set dark mode to not dark mode"
+    }
+  ]
 }
 
-run.sh receives:
-- $FRONTMOST_APP    — frontmost app name
-- $FRONTMOST_BUNDLE — frontmost app bundle ID
-- $QUERY            — user's typed query (if any)
+Rules:
+- Triggers WITHOUT selection/urlPattern/appContext/fileType land in Global
+  Context. Use { "type": "keyword", "value": "..." } or { "type": "always" }.
+- "scriptType": bash, applescript, jxa, python, or swift.
+- "layer": "crossLayer" for system-wide, or "L1" for a search action.
+- "icon" is a valid SF Symbol name.
 
-Example prompt to give AI:
-"Create an ILauncher Context Dock Extension for Safari that shows the title and URL of the current tab."
+Now create one for: "<what the extension should do>"
 """
         ),
         Template(
             id: 4,
-            title: "Context Action (App Shortcut)",
-            icon: "apps.iphone.badge.plus",
-            description: "Ask AI to create an App Shortcut shown in the context dock.",
+            title: "Media Extension",
+            icon: "photo.on.rectangle",
+            description: "Acts on media files (images, video, audio). Use a 'fileType' trigger. Paste the JSON back here.",
             prompt: """
-Ask AI to generate an ILauncher App Shortcut for the Context Dock.
+You generate a Context-Dock MEDIA EXTENSION. It acts on media files and is
+surfaced by file type. The selected file path(s) arrive on stdin and as
+$CD_FILE; the directory is the working directory.
 
-App Shortcuts appear as quick-tap pills in the L2 Context Dock for a specific app.
-
-JSON fields:
+Output ONLY this JSON (no prose, no markdown fences):
 {
-  "name": "Action label",
-  "appKey": "com.app.bundle.id",   // bundle ID of the target app
-  "targetAppKeys": [],              // optional: also show for these additional bundle IDs
-  "placement": "contextDock",       // "quickActions", "contextDock", or "both"
-  "type": "shell",                  // "shell", "applescript", or "jxa"
-  "script": "...",
-  "icon": "SF Symbol name"
+  "version": "1.0",
+  "extensions": [
+    {
+      "name": "Convert to MP4",
+      "description": "Re-encode the selected video to MP4 with ffmpeg.",
+      "icon": "film",
+      "layer": "L2",
+      "tags": ["media", "video"],
+      "triggers": [ { "type": "fileType", "value": "mov" } ],
+      "scriptType": "bash",
+      "script": "ffmpeg -i \\"$CD_FILE\\" \\"${CD_FILE%.*}.mp4\\""
+    }
+  ]
 }
 
-Variables injected: $FRONTMOST_APP, $FRONTMOST_BUNDLE, $SELECTED_TEXT
+Rules:
+- Use { "type": "fileType", "value": "<ext>" } (e.g. mov, png, mp3) so it
+  surfaces on matching media files; add more triggers for more types.
+- Add "media" plus the kind ("video"/"image"/"audio") to "tags".
+- "scriptType": bash, applescript, jxa, python, or swift.
+- "icon" is a valid SF Symbol name.
 
-Example prompt to give AI:
-"Create an ILauncher App Shortcut for Xcode (com.apple.dt.Xcode) that builds the project using xcodebuild and shows the result."
+Now create one for: "<the media transform you want>"
 """
         )
     ]
@@ -3258,7 +3308,7 @@ Example prompt to give AI:
                     .foregroundStyle(.indigo)
                 Text("Prompt Templates")
                     .font(.headline)
-                Text("Copy a template and paste it into your AI to generate ILauncher scripts.")
+                Text("Copy a template, paste it into any AI, then paste the JSON it returns into Create Extension above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -4236,7 +4286,9 @@ struct AddPackageSheet: View {
                 }
             }
         } catch {
+            #if DEBUG
             print("⚠️ Failed to verify command: \(error)")
+            #endif
         }
         
         return nil
@@ -6607,6 +6659,7 @@ struct AppShortcutEditSheet: View {
                 }
 
                 Picker("Action Type", selection: $actionType) {
+                    Text("Shortcut").tag(AppShortcut.ActionType.shortcut)
                     Text("Open URL / Deep Link").tag(AppShortcut.ActionType.openURL)
                     Text("Open File / App").tag(AppShortcut.ActionType.openFile)
                     Text("Shell Command").tag(AppShortcut.ActionType.shellCommand)
@@ -6666,6 +6719,8 @@ struct AppShortcutEditSheet: View {
                     }
                 case .menuItem:
                     TextField("File > New Tab", text: $actionValue)
+                case .shortcut:
+                    ShortcutPickerInline(selectedName: $actionValue)
                 }
             }
 

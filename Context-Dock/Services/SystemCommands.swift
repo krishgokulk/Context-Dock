@@ -442,6 +442,39 @@ final class SystemCommandsRegistry {
             description: "Open Force Quit Applications"
         ),
         SystemCommand(
+            name: "Keep Awake",
+            icon: "cup.and.saucer.fill",
+            keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],
+            scriptType: "bash",
+            script: #"""
+            pidf=/tmp/context-dock-caffeinate.pid
+            if [ -f "$pidf" ]; then kill "$(cat "$pidf")" >/dev/null 2>&1 || true; rm -f "$pidf"; fi
+            v=$(printf '%s' "$CD_QUERY" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            case "$v" in
+                ""|off|false|0|stop|disable) exit 0 ;;
+            esac
+            secs=0
+            case "$v" in
+                on|true|1|start|enable) secs=0 ;;
+                *h) secs=$(( ${v%h} * 3600 )) ;;
+                *m|*min) n=${v%min}; n=${n%m}; secs=$(( n * 60 )) ;;
+                *) printf '%s' "$v" | grep -qE '^[0-9]+$' && secs=$v ;;
+            esac
+            if [ "$secs" -gt 0 ]; then
+                nohup /usr/bin/caffeinate -dimsu -t "$secs" >/dev/null 2>&1 &
+            else
+                nohup /usr/bin/caffeinate -dimsu >/dev/null 2>&1 &
+            fi
+            echo $! > "$pidf"
+            """#,
+            description: "Keep the Mac awake (prevents display + system sleep). Type a duration like 1h or 30m, or leave on indefinitely.",
+            interaction: "toggle",
+            valueScript: #"""
+            pidf=/tmp/context-dock-caffeinate.pid
+            if [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" >/dev/null 2>&1; then echo on; else echo off; fi
+            """#
+        ),
+        SystemCommand(
             name: "Sleep",
             icon: "moon",
             keywords: ["sleep", "standby", "awake", "caffeinate", "presets:Now|Stay Awake Infinity"],

@@ -564,7 +564,9 @@ class TerminalAIBridge: ObservableObject {
                 try logEntry.write(to: logFile, atomically: true, encoding: .utf8)
             }
         } catch {
+            #if DEBUG
             print("Failed to write audit log: \(error)")
+            #endif
         }
     }
 

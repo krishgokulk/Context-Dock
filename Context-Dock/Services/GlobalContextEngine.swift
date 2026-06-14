@@ -176,9 +176,11 @@ final class GlobalContextEngine {
         }
 
         let isWindowMenuAction = isWindowMenuPath(request.path)
+        let isCloseDocumentAction = isVolatileCloseDocumentPath(request.path)
         let shouldTryCachedShortcutFallback =
             isWindowMenuAction
             || isStopMenuPath(request.path)
+            || isCloseDocumentAction
             || (request.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
 
         guard let liveMatch = await waitForExecutableMenuItem(
@@ -189,6 +191,21 @@ final class GlobalContextEngine {
             pauseNanoseconds: 120_000_000
         ) else {
             if shouldTryCachedShortcutFallback {
+                if isCloseDocumentAction {
+                    let executed = await executeCloseWindowFallback(pid: pid, app: app)
+                    await MainActor.run {
+                        AXMenuReader.shared.invalidateCache(for: pid)
+                    }
+                    await forceRefreshCache(for: app)
+                    return GlobalMenuExecutionResult(
+                        status: executed ? .executed : .unavailable,
+                        app: app,
+                        liveItem: nil,
+                        message: executed
+                            ? "Closed \(request.appName) window"
+                            : "\(request.appName) action is not available right now"
+                    )
+                }
                 let executed = await executeMenuAction(
                     path: request.path,
                     shortcutChar: request.shortcutChar,
@@ -219,7 +236,24 @@ final class GlobalContextEngine {
         }
 
         let isStopMenuAction = isStopMenuPath(liveMatch.path)
-        guard liveMatch.isEnabled || isWindowMenuAction || isStopMenuAction else {
+        let liveCloseDocumentAction = isVolatileCloseDocumentPath(liveMatch.path)
+        if liveCloseDocumentAction && !liveMatch.isEnabled {
+            let executed = await executeCloseWindowFallback(pid: pid, app: app)
+            await MainActor.run {
+                AXMenuReader.shared.invalidateCache(for: pid)
+            }
+            await forceRefreshCache(for: app)
+            return GlobalMenuExecutionResult(
+                status: executed ? .executed : .unavailable,
+                app: app,
+                liveItem: liveMatch,
+                message: executed
+                    ? "Closed \(request.appName) window"
+                    : "\(request.appName) action is not available right now"
+            )
+        }
+
+        guard liveMatch.isEnabled || isWindowMenuAction || isStopMenuAction || liveCloseDocumentAction else {
             let clicked = await MainActor.run {
                 AXMenuReader.shared.clickMenuItem(path: liveMatch.path, in: pid)
             }
@@ -666,10 +700,48 @@ final class GlobalContextEngine {
         normalizedMenuPathForMatching(path).first == "window"
     }
 
+    nonisolated private func isVolatileCloseDocumentPath(_ path: [String]) -> Bool {
+        let normalized = normalizedMenuPathForMatching(path)
+        guard normalized.first == "file", let last = normalized.last else { return false }
+        return last == "close selected"
+            || last.hasPrefix("close selected ")
+            || last.hasPrefix("close current ")
+    }
+
     nonisolated private func isStopMenuPath(_ path: [String]) -> Bool {
         let normalized = normalizedMenuPathForMatching(path)
         guard normalized.last == "stop" else { return false }
         return normalized.contains("product") || normalized.contains("run")
+    }
+
+    nonisolated private func executeCloseWindowFallback(
+        pid: pid_t,
+        app: NSRunningApplication
+    ) async -> Bool {
+        await MainActor.run {
+            if !app.isActive {
+                _ = app.activate(options: [.activateIgnoringOtherApps])
+            }
+        }
+        await AXActionResolver.waitForActivation(of: app)
+
+        let candidates = [
+            ["File", "Close Window"],
+            ["File", "Close"],
+        ]
+        for path in candidates {
+            if await MainActor.run(body: { AXMenuReader.shared.clickMenuItem(path: path, in: pid) }) {
+                return true
+            }
+        }
+        if await MainActor.run(body: {
+            AXMenuReader.shared.executeShortcut(char: "w", modifiers: 0, in: pid)
+        }) {
+            return true
+        }
+        return await MainActor.run(body: {
+            AXMenuReader.shared.executeShortcutToFrontmost(char: "w", modifiers: 0)
+        })
     }
 
     nonisolated private func executeMenuAction(

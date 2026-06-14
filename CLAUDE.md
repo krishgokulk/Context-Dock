@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## DoraX architecture rule
+
+Never merge product layers.
+
+- Global Context is not Chat Mode.
+- Context Dock is not Global Context.
+- Context Dock Chat Mode is not General Chat Mode.
+- Selection Shortcut Sheet is not a launcher.
+- Media Dock is not a chat surface.
+
+Each surface must keep one job: search, frontmost app actions, general chat, app-scoped chat, media, or selection-aware actions.
+
+Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specific content. Do not create separate floating visual containers per mode; use shared shell, input, row, animation, and size rules.
+
+Architecture truth files live in `docs/architecture/`.
+
 ## Build
 
 This is a pure Xcode project — no Makefile, no SPM package at the root.

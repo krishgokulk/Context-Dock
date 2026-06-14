@@ -263,7 +263,9 @@ struct FileChangesApprovalView: View {
                         onApprove()
                     } catch {
                         // Handle error
+                        #if DEBUG
                         print("Error: \(error)")
+                        #endif
                     }
                 }
             }) {

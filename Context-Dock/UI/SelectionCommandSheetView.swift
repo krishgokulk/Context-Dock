@@ -46,6 +46,39 @@ struct SelectionSheetCommand: Identifiable {
         self.action = action
     }
 
+    /// A copy promoted into the "Recommended" section. Subtitle becomes the origin
+    /// section so the user sees *why* it's surfaced (the match reason).
+    func recommendedCopy() -> SelectionSheetCommand {
+        SelectionSheetCommand(
+            id: "rec-\(id)", title: title, subtitle: section, section: "Recommended",
+            systemImage: systemImage, iconImage: iconImage,
+            shortcutDisplay: shortcutDisplay, score: score, action: action
+        )
+    }
+
+    /// Single source of truth for ranked, sectioned ordering — used by both the
+    /// sheet UI and keyboard navigation so display order and arrow order match.
+    static func ranked(_ commands: [SelectionSheetCommand], searching: Bool)
+        -> [(title: String, items: [SelectionSheetCommand])]
+    {
+        var order: [String] = []
+        var dict: [String: [SelectionSheetCommand]] = [:]
+        for command in commands {
+            if dict[command.section] == nil { order.append(command.section) }
+            dict[command.section, default: []].append(command)
+        }
+        for key in dict.keys { dict[key]?.sort { $0.score > $1.score } }
+        var result = order.map { (title: $0, items: dict[$0] ?? []) }
+
+        if !searching, result.count >= 2 {
+            let top = commands.sorted { $0.score > $1.score }.prefix(3).map { $0.recommendedCopy() }
+            if top.count >= 2 {
+                result.insert((title: "Recommended", items: Array(top)), at: 0)
+            }
+        }
+        return result
+    }
+
     static func filtered(_ commands: [SelectionSheetCommand], query: String) -> [SelectionSheetCommand] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return commands }
@@ -115,13 +148,8 @@ struct SelectionCommandSheetView: View {
     }
 
     private var sections: [(title: String, items: [SelectionSheetCommand])] {
-        var order: [String] = []
-        var dict: [String: [SelectionSheetCommand]] = [:]
-        for command in visibleCommands {
-            if dict[command.section] == nil { order.append(command.section) }
-            dict[command.section, default: []].append(command)
-        }
-        return order.map { ($0, dict[$0] ?? []) }
+        let searching = !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return SelectionSheetCommand.ranked(visibleCommands, searching: searching)
     }
 
     var body: some View {
@@ -498,7 +526,23 @@ private struct SelectionSheetRowView: View {
     let focusEffectID: String
     let onSelect: (SelectionSheetCommand) -> Void
     @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDark: Bool { colorScheme == .dark }
     private var highlighted: Bool { isFocused || isHovered }
+
+    private var primaryTextColor: Color {
+        if isFocused { return .white }
+        if isHovered { return isDark ? .white : .primary }
+        return .primary
+    }
+    private var accessoryColor: Color {
+        if isFocused { return .white.opacity(0.82) }
+        if isHovered { return isDark ? .white.opacity(0.8) : .secondary }
+        return .secondary
+    }
+    private var accessoryBadgeFill: Color {
+        isFocused ? Color.white.opacity(0.18) : Color.primary.opacity(0.08)
+    }
 
     var body: some View {
         Button { onSelect(command) } label: {
@@ -512,18 +556,18 @@ private struct SelectionSheetRowView: View {
                 } else {
                     Image(systemName: command.systemImage)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(highlighted ? .white.opacity(0.92) : .secondary)
+                        .foregroundStyle(isFocused ? .white.opacity(0.92) : (isHovered && isDark ? .white.opacity(0.92) : .secondary))
                         .frame(width: 20)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(command.title)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(highlighted ? .white : .primary)
+                        .foregroundStyle(primaryTextColor)
                         .lineLimit(1)
                     if !command.subtitle.isEmpty {
                         Text(command.subtitle)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(highlighted ? .white.opacity(0.68) : .secondary)
+                            .foregroundStyle(accessoryColor)
                             .lineLimit(1)
                     }
                 }
@@ -531,12 +575,12 @@ private struct SelectionSheetRowView: View {
                 if let shortcutDisplay = command.shortcutDisplay {
                     Text(shortcutDisplay)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(highlighted ? .white.opacity(0.85) : .secondary)
+                        .foregroundStyle(accessoryColor)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(highlighted ? Color.white.opacity(0.2) : Color.primary.opacity(0.08))
+                                .fill(accessoryBadgeFill)
                         )
                 }
             }
@@ -546,21 +590,29 @@ private struct SelectionSheetRowView: View {
                 ZStack {
                     if isFocused {
                         Capsule(style: .continuous)
-                            .fill(.ultraThinMaterial)
+                            .fill(isDark ? AnyShapeStyle(.ultraThinMaterial)
+                                         : AnyShapeStyle(Color.accentColor))
                             .matchedGeometryEffect(
                                 id: focusEffectID,
                                 in: namespace,
                                 properties: .frame,
                                 isSource: false
                             )
-                        Capsule(style: .continuous)
-                            .fill(LinearGradient(
-                                colors: [Color.white.opacity(0.18), Color.white.opacity(0.055)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
+                        if isDark {
+                            Capsule(style: .continuous)
+                                .fill(LinearGradient(
+                                    colors: [Color.white.opacity(0.18), Color.white.opacity(0.055)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                        } else {
+                            Capsule(style: .continuous)
+                                .strokeBorder(Color.black.opacity(0.12), lineWidth: 0.8)
+                        }
                     } else if isHovered {
-                        Capsule(style: .continuous).fill(Color.primary.opacity(0.08))
+                        Capsule(style: .continuous)
+                            .fill(isDark ? Color.white.opacity(0.08)
+                                         : Color.accentColor.opacity(0.12))
                     }
                 }
                 .padding(.horizontal, 4)

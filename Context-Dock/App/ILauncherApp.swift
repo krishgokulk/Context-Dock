@@ -207,9 +207,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var singleCommandLocalCancelMonitor: Any?
     var commandAloneActive: Bool = false
     var commandAloneDownTime: TimeInterval = 0
-    var selectionControlMonitor: Any?
-    var selectionControlLocalMonitor: Any?
-    var selectionControlKeyDown = false
     /// True when the launcher was opened / switched via the context-dock shortcut.
     /// ContentView reads this on `launcherWindowOpened` to keep the app in L2.
     var isDockContextMode: Bool = false
@@ -217,12 +214,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Store the previously frontmost app for context detection
     var previousFrontmostApp: NSRunningApplication?
-
-    // Finder selection observer — powers the FileContextOverlay (files/folders)
-    private let finderSelectionObserver = AXSelectionObserver()
-
-    // Text selection monitor — powers the FileContextOverlay (text/URL in any app)
-    private let textSelectionMonitor = TextSelectionMonitor()
 
     // Recent app history — last 5 apps the user was in (excluding ILauncher)
     private(set) var recentApps: [NSRunningApplication] = []
@@ -312,7 +303,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
-        registerSelectionControlMonitor()
 
         // Setup notification observers for settings changes
         setupNotificationObservers()
@@ -328,14 +318,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start binary watcher so L2 auto-discovers newly installed CLI tools
         Task { @MainActor in
             BinaryWatcherService.shared.startWatching()
+            #if DEBUG
             print("✅ [AppDelegate] Binary watcher started")
+            #endif
 
             // Scan once after packages have loaded to catch tools installed while app was closed.
             // skipHelpScan=true avoids spawning 100+ --help subprocesses at startup.
             // Help text is fetched lazily when the user taps "Add to L2".
             try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2s
             await BinaryWatcherService.shared.scanNow(skipHelpScan: true)
+            #if DEBUG
             print("✅ [AppDelegate] Startup scan complete")
+            #endif
         }
     }
 
@@ -343,14 +337,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Register the services provider with NSApp
         // This allows shortcuts to appear in the Services menu of all apps
         NSApp.servicesProvider = ServicesProvider.shared
+        #if DEBUG
         print("✅ [Services] Registered ServicesProvider")
+        #endif
     }
 
     func restoreSearchDirectoryAccess() {
         // Start accessing all saved search directories using their security-scoped bookmarks
         // This allows the app to access folders without prompting the user again
         settings.startAccessingSearchDirectories()
+        #if DEBUG
         print("📁 Restored access to \(settings.searchDirectories.count) search directories")
+        #endif
     }
 
     func setupNotificationObservers() {
@@ -401,6 +399,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
+        // Re-register hotkeys on wake — Carbon hotkeys are invalidated after sleep
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWakeFromSleep),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+
         // Track every app activation so recentApps stays current
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -437,13 +443,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
+        #if DEBUG
         print("🔧 [AppDelegate] Received servicesOpenWithFiles notification")
+        #endif
         // Show launcher - the ContentView will handle the context
         showLauncher()
     }
 
     @objc func handleServicesOpenWithText(_ notification: Notification) {
+        #if DEBUG
         print("🔧 [AppDelegate] Received servicesOpenWithText notification")
+        #endif
         // Show launcher - the ContentView will handle the context
         showLauncher()
     }
@@ -456,6 +466,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSApp.setActivationPolicy(.accessory)
             }
         }
+    }
+
+    @objc func handleSystemWakeFromSleep() {
+        // Re-register hotkeys after wake — Carbon hotkeys are invalidated during sleep.
+        // Register methods clean up old handlers automatically, so just re-register all.
+        registerGlobalHotkey()
+        registerContextDockHotkey()
+        registerClipboardScopeHotkey()
     }
 
     func setupApplicationMenu() {
@@ -721,9 +739,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let options = [checkOptPrompt: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
 
+            #if DEBUG
             print("⚠️ Accessibility permissions not granted - system prompt shown")
+            #endif
         } else {
+            #if DEBUG
             print("✅ Accessibility permissions already granted")
+            #endif
         }
     }
 
@@ -942,9 +964,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         if status != noErr {
+            #if DEBUG
             print("Failed to register global hotkey: \(status)")
+            #endif
         } else {
+            #if DEBUG
             print("Successfully registered global hotkey: \(settings.hotkeyDisplayString)")
+            #endif
         }
         // Always add NSEvent monitor as belt-and-suspenders alongside Carbon
         // (Carbon alone can be unreliable on macOS 14+ for accessory apps)
@@ -1347,80 +1373,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func registerSelectionControlMonitor() {
-        if let m = selectionControlMonitor {
-            NSEvent.removeMonitor(m)
-            selectionControlMonitor = nil
-        }
-        if let m = selectionControlLocalMonitor {
-            NSEvent.removeMonitor(m)
-            selectionControlLocalMonitor = nil
-        }
-
-        let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
-            guard let self else { return }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let controlNow = flags.contains(.control)
-            let extraMods = flags.intersection([.command, .option, .shift])
-
-            if controlNow && !self.selectionControlKeyDown && extraMods.isEmpty {
-                self.selectionControlKeyDown = true
-                self.openGlobalContextFromVisibleSelection()
-                return
-            }
-
-            if !controlNow {
-                self.selectionControlKeyDown = false
-            }
-        }
-
-        selectionControlMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
-            handleFlagsChanged($0)
-        }
-        selectionControlLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
-            event in
-            handleFlagsChanged(event)
-            return event
-        }
-    }
-
-    private func openGlobalContextFromVisibleSelection() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard
-                let activation = FileContextOverlayController.shared
-                    .currentGlobalContextActivation()
-            else { return }
-
-            if let window = self.launcherWindow, window.isVisible {
-                return
-            }
-
-            if self.launcherWindow == nil {
-                self.setupLauncherWindow()
-            }
-            if let currentApp = NSWorkspace.shared.frontmostApplication,
-                currentApp.bundleIdentifier != Bundle.main.bundleIdentifier
-            {
-                self.recordFrontmostApp(currentApp)
-            }
-
-            FileContextOverlayController.shared.hide(animated: true)
-            self.isDockContextMode = false
-            self.showLauncher()
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-                NotificationCenter.default.post(
-                    name: .activateGlobalContext,
-                    object: activation
-                )
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                NotificationCenter.default.post(name: .focusSearchField, object: nil)
-            }
-        }
-    }
-
     private func focusAndCenterPersistentDock() {
         guard let window = launcherWindow, window.isVisible else { return }
         let screen = window.screen ?? NSScreen.main
@@ -1654,7 +1606,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func showLauncher() {
         guard let window = launcherWindow, let screen = NSScreen.main else { return }
 
+        #if DEBUG
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
+        #endif
         isDockContextMode = true
 
         // Capture the CURRENT frontmost app RIGHT NOW before we show the window
@@ -1677,7 +1631,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Do not block launcher open on context detection. The detector can touch AX,
         // AppleScript, browser state, PDFs and OCR; running that here freezes typing.
+        #if DEBUG
         print("🔍 [AppDelegate] Scheduling context detection after launcher shows...")
+        #endif
         scheduleUserContextDetection()
 
         // Center the window horizontally and position it based on user preference
@@ -1714,18 +1670,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let keyableWindow = window as? KeyableWindow {
                 keyableWindow.anchorAtBottom = false
             }
+            #if DEBUG
             print("📍 [AppDelegate] Positioning window at TOP (y: \(y)) - Anchor: TOP")
+            #endif
         }
 
         let initialFrame = NSRect(x: x, y: y, width: windowWidth, height: initialHeight)
         if let keyableWindow = window as? KeyableWindow {
             keyableWindow.horizontalResizeAnchorX = initialFrame.midX
         }
+        #if DEBUG
         print("📐 [AppDelegate] Setting initial frame: \(initialFrame)")
+        #endif
+        #if DEBUG
         print("📐 [AppDelegate] Screen frame: \(screenFrame)")
+        #endif
         // Use display: false — window is off-screen; no need to force a render pass here.
         window.setFrame(initialFrame, display: false)
+        #if DEBUG
         print("📐 [AppDelegate] Actual window frame after setFrame: \(window.frame)")
+        #endif
 
         window.alphaValue = 0
 
@@ -1743,21 +1707,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Fade only. Resizing the window while NSVisualEffectView is initializing changes
         // the sampled wallpaper region and makes the dock glass tint drift on launch.
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.16
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.3, 1.0)
+            ctx.duration = 0.10
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1.0
         }
 
+        #if DEBUG
         print("✅ [AppDelegate] Window is now visible and key")
-
-        // Detect frontmost app asynchronously (don't block window showing)
-        if settings.enableFrontmostDetection {
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.detectAndStoreFrontmostApp()
-            }
-        }
-
+        #endif
+        #if DEBUG
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER COMPLETED =====")
+        #endif
     }
 
     func hideLauncher() {
@@ -1790,84 +1750,82 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             let context = UserContextDetector.shared.detectCurrentContext(from: capturedApp)
             DispatchQueue.main.async {
+                #if DEBUG
                 print("🔍 [AppDelegate] ========================================")
+                #endif
+                #if DEBUG
                 print("🔍 [AppDelegate] DETECTING USER CONTEXT (ASYNC)")
+                #endif
                 if let app = capturedApp {
                     print(
                         "🎯 [AppDelegate] Using PREVIOUS frontmost app: \(app.localizedName ?? "Unknown") (\(app.bundleIdentifier ?? "unknown"))"
                     )
                 } else {
+                    #if DEBUG
                     print("⚠️ [AppDelegate] No previous frontmost app stored!")
+                    #endif
                 }
+                #if DEBUG
                 print("📊 [AppDelegate] Detection completed!")
+                #endif
+                #if DEBUG
                 print("📊 [AppDelegate] Detected context: \(context.description)")
+                #endif
+                #if DEBUG
                 print("📤 [AppDelegate] Delivering context to ContextDockEnvironment...")
+                #endif
                 ContextDockEnvironment.shared.userContextDidDetect(context)
+                #if DEBUG
                 print("✅ [AppDelegate] Context delivered successfully")
+                #endif
+                #if DEBUG
                 print("🔍 [AppDelegate] ========================================")
+                #endif
             }
         }
     }
 
     private func detectAndStoreUserContextAsync() {
+        #if DEBUG
         print("🔍 [AppDelegate] ========================================")
+        #endif
+        #if DEBUG
         print("🔍 [AppDelegate] DETECTING USER CONTEXT (SYNC)")
+        #endif
         if let app = previousFrontmostApp {
             print(
                 "🎯 [AppDelegate] Using PREVIOUS frontmost app: \(app.localizedName ?? "Unknown") (\(app.bundleIdentifier ?? "unknown"))"
             )
         } else {
+            #if DEBUG
             print("⚠️ [AppDelegate] No previous frontmost app stored!")
+            #endif
         }
 
         // Detect context SYNCHRONOUSLY so it's ready before window shows
         let context = UserContextDetector.shared.detectCurrentContext(from: previousFrontmostApp)
 
+        #if DEBUG
         print("📊 [AppDelegate] Detection completed!")
+        #endif
+        #if DEBUG
         print("📊 [AppDelegate] Detected context: \(context.description)")
+        #endif
+        #if DEBUG
         print("📤 [AppDelegate] Delivering context to ContextDockEnvironment...")
+        #endif
 
         ContextDockEnvironment.shared.userContextDidDetect(context)
 
+        #if DEBUG
         print("✅ [AppDelegate] Context delivered successfully")
+        #endif
+        #if DEBUG
         print("🔍 [AppDelegate] ========================================")
+        #endif
     }
 
     // Detect and store frontmost app info before ILauncher activates
-    private func detectAndStoreFrontmostApp() {
-        let script = """
-            tell application "System Events"
-                set frontApp to first application process whose frontmost is true
-                set appName to name of frontApp
-                set appBundleID to bundle identifier of frontApp
-                return appName & "|" & appBundleID
-            end tell
-            """
-
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: script) {
-            let output = scriptObject.executeAndReturnError(&error)
-
-            if let result = output.stringValue, !result.isEmpty {
-                let components = result.components(separatedBy: "|")
-                if components.count == 2 {
-                    let appName = components[0]
-                    let bundleID = components[1]
-
-                    // Skip if it's ILauncher itself
-                    if bundleID != Bundle.main.bundleIdentifier {
-                        DispatchQueue.main.async {
-                            ContextDockEnvironment.shared.frontmostAppDidChange(
-                                name: appName, bundleID: bundleID)
-                        }
-                        print(
-                            "🎯 Detected frontmost app BEFORE activation: \(appName) (\(bundleID))")
-                    }
-                }
-            }
-        }
-    }
-
     // Track frontmost app changes to capture the previously active app
     func setupFrontmostAppTracking() {
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -1885,7 +1843,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in
                 MenuWarmCacheService.shared.frontmostAppDidChange(currentApp)
             }
+            #if DEBUG
             print("📱 [AppDelegate] Initial frontmost app: \(currentApp.localizedName ?? "Unknown")")
+            #endif
         }
     }
 
@@ -1901,7 +1861,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
 
         recordFrontmostApp(app)
+        #if DEBUG
         print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
+        #endif
         ContextDockEnvironment.shared.frontmostAppDidChange(
             name: app.localizedName ?? "",
             bundleID: app.bundleIdentifier ?? ""
@@ -1910,45 +1872,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             MenuWarmCacheService.shared.frontmostAppDidChange(app)
         }
 
-        // File / text context overlay
         let pid = app.processIdentifier
-        guard settings.enableFileContextOverlay else {
-            finderSelectionObserver.stop()
-            textSelectionMonitor.stop()
-            Task { @MainActor in FileContextOverlayController.shared.hide() }
-            return
-        }
-
-        if app.bundleIdentifier == "com.apple.finder" {
-            // Finder: watch file/folder selection; position near mouse at selection time
-            textSelectionMonitor.stop()
-            finderSelectionObserver.start(for: pid, debounceInterval: 0.035)
-            finderSelectionObserver.onChange = {
-                Task { @MainActor in
-                    let files = ContextDetector.shared.getFinderSelectedFiles()
-                    let mousePt = NSEvent.mouseLocation
-                    if files.isEmpty {
-                        FileContextOverlayController.shared.updateFromClipboard(at: mousePt)
-                    } else {
-                        FileContextOverlayController.shared.update(files: files, at: mousePt)
-                    }
-                }
-            }
-        } else {
-            // Any other app: watch text/URL selection via global mouse events + AX
-            finderSelectionObserver.stop()
-            Task { @MainActor in FileContextOverlayController.shared.hide() }
-            textSelectionMonitor.start(for: pid)
-            textSelectionMonitor.onChange = { text, mousePt in
-                Task { @MainActor in
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        FileContextOverlayController.shared.updateFromClipboard(at: mousePt)
-                    } else {
-                        FileContextOverlayController.shared.update(text: text, at: mousePt)
-                    }
-                }
-            }
-        }
         // Browser windows are expensive AX trees. Do not eagerly crawl page text just
         // because a browser became frontmost; the dock warms that context on demand.
         if AXWebReader.shared.isBrowser(bundleId: app.bundleIdentifier ?? "") {

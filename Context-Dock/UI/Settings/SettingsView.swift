@@ -11,7 +11,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             if chrome.sidebarVisible {
                 SettingsSidebar(selectedPage: $selectedPage)
-                    .frame(width: 280)
+                    .frame(width: 220)
                     .transition(.move(edge: .leading).combined(with: .opacity))
 
                 Divider()

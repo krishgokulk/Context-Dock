@@ -202,26 +202,36 @@ class ContextDetector {
 
             // For PDF files, extract text content
             if fileExtension == "pdf" {
+                #if DEBUG
                 print("📄 [ContextDetector] Attempting to extract text from PDF: \(url.lastPathComponent)")
+                #endif
                 if let pdfDocument = PDFDocument(url: url) {
+                    #if DEBUG
                     print("✅ [ContextDetector] PDF loaded successfully, \(pdfDocument.pageCount) pages")
+                    #endif
                     var pdfText = ""
                     let maxPages = min(5, pdfDocument.pageCount) // Extract first 5 pages max
 
                     for pageIndex in 0..<maxPages {
                         if let page = pdfDocument.page(at: pageIndex) {
                             if let pageContent = page.string {
+                                #if DEBUG
                                 print("✅ [ContextDetector] Extracted \(pageContent.count) chars from page \(pageIndex + 1)")
+                                #endif
                                 pdfText += "--- Page \(pageIndex + 1) ---\n"
                                 pdfText += pageContent + "\n\n"
                             } else {
+                                #if DEBUG
                                 print("⚠️ [ContextDetector] No text content on page \(pageIndex + 1)")
+                                #endif
                             }
                         }
                     }
 
                     if !pdfText.isEmpty {
+                        #if DEBUG
                         print("✅ [ContextDetector] Total PDF text extracted: \(pdfText.count) characters")
+                        #endif
                         if pdfText.count > 5000 {
                             content = String(pdfText.prefix(5000)) + "\n... (PDF content truncated, showing first 5 pages)"
                         } else {
@@ -231,15 +241,21 @@ class ContextDetector {
                             }
                         }
                     } else {
+                        #if DEBUG
                         print("❌ [ContextDetector] PDF has no extractable text (might be scanned/image-based)")
+                        #endif
                         let ocrText = extractTextFromPDFWithOCR(pdfDocument, maxPages: 2)
                         if !ocrText.isEmpty {
                             content = ocrText.count > 5000 ? String(ocrText.prefix(5000)) + "\n... (OCR content truncated)" : ocrText
+                            #if DEBUG
                             print("✅ [ContextDetector] OCR extracted \(ocrText.count) characters from PDF")
+                            #endif
                         }
                     }
                 } else {
+                    #if DEBUG
                     print("❌ [ContextDetector] Failed to load PDF document")
+                    #endif
                 }
             }
 
@@ -250,7 +266,9 @@ class ContextDetector {
                     let ocrText = extractTextFromImage(cgImage)
                     if !ocrText.isEmpty {
                         content = ocrText.count > 5000 ? String(ocrText.prefix(5000)) + "\n... (OCR content truncated)" : ocrText
+                        #if DEBUG
                         print("✅ [ContextDetector] OCR extracted \(ocrText.count) characters from image")
+                        #endif
                     }
                 }
             }
@@ -274,7 +292,9 @@ class ContextDetector {
             let lines = observations.compactMap { $0.topCandidates(1).first?.string }
             return lines.joined(separator: "\n")
         } catch {
+            #if DEBUG
             print("❌ [ContextDetector] OCR failed: \(error)")
+            #endif
             return ""
         }
     }
@@ -788,20 +808,28 @@ class ContextDetector {
         var contexts: [DetectedContext] = []
         let bundleID = frontmostApp.bundleIdentifier ?? ""
 
+        #if DEBUG
         print("🔍 [ContextDetector] Getting comprehensive context for L2")
+        #endif
 
         // 1. ALWAYS include clipboard if available
         if let clipboard = getClipboardContent() {
+            #if DEBUG
             print("📋 [ContextDetector] Clipboard: \(clipboard.prefix(50))...")
+            #endif
             contexts.append(.clipboard(clipboard))
         }
 
         // 2. Check for currently playing music/podcasts
         if let musicInfo = getMusicInfo() {
+            #if DEBUG
             print("🎵 [ContextDetector] Music: \(musicInfo.title) by \(musicInfo.artist)")
+            #endif
             contexts.append(.music(title: musicInfo.title, artist: musicInfo.artist, album: musicInfo.album))
         } else if let podcastInfo = getPodcastInfo() {
+            #if DEBUG
             print("🎙️ [ContextDetector] Podcast: \(podcastInfo.title)")
+            #endif
             contexts.append(.podcast(title: podcastInfo.title, show: podcastInfo.show))
         }
 
@@ -809,19 +837,25 @@ class ContextDetector {
         if bundleID == "com.apple.Safari" {
             let allTabs = getAllSafariTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Safari: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         } else if bundleID == "com.google.Chrome" {
             let allTabs = getAllChromeTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Chrome: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         } else if bundleID == "company.thebrowser.Browser" {
             let allTabs = getAllArcTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Arc: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         }
@@ -840,7 +874,9 @@ class ContextDetector {
             }
         }
 
+        #if DEBUG
         print("✅ [ContextDetector] Comprehensive context: \(contexts.count) items")
+        #endif
         return contexts
     }
 
@@ -919,14 +955,18 @@ class ContextDetector {
                 var error: NSDictionary?
 
                 guard let scriptObject = NSAppleScript(source: script) else {
+                    #if DEBUG
                     print("❌ [ContextDetector] Failed to create AppleScript")
+                    #endif
                     return nil
                 }
 
                 let output = scriptObject.executeAndReturnError(&error)
 
                 if let error = error {
+                    #if DEBUG
                     print("❌ [ContextDetector] AppleScript error: \(error)")
+                    #endif
                     return nil
                 }
 

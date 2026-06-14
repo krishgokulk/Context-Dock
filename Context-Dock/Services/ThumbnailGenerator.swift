@@ -85,7 +85,9 @@ class ThumbnailGenerator {
 
             QLThumbnailGenerator.shared.generateRepresentations(for: request) { thumbnail, type, error in
                 if let error = error {
+                    #if DEBUG
                     print("⚠️ Failed to generate thumbnail for \(filePath): \(error)")
+                    #endif
                     completion(nil)
                     return
                 }
@@ -111,7 +113,9 @@ class ThumbnailGenerator {
     func clearCache() {
         cacheQueue.async { [weak self] in
             self?.thumbnailCache.removeAll()
+            #if DEBUG
             print("🗑️ Thumbnail cache cleared")
+            #endif
         }
     }
 }

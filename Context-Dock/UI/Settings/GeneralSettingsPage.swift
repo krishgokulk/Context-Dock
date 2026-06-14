@@ -39,16 +39,6 @@ struct GeneralSettingsPage: View {
                 CardSection(title: "Dock Behavior", systemImage: "dock.rectangle") {
                     VStack(spacing: 0) {
                         SettingsPageRow(
-                            icon: "filemenu.and.selection",
-                            iconColor: .purple,
-                            title: "File Context Pill",
-                            subtitle: "Show floating actions for selected files, folders, text, URLs, and clipboard content."
-                        ) {
-                            Toggle("", isOn: $settings.enableFileContextOverlay)
-                                .labelsHidden()
-                        }
-                        Divider()
-                        SettingsPageRow(
                             icon: "puzzlepiece.extension.fill",
                             iconColor: .orange,
                             title: "Built-in Extensions",

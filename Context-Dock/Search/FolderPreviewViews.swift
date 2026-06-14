@@ -525,7 +525,9 @@ struct FolderPreviewView: View {
                 "🔍 Quick Look action received (viewMode: \(viewMode), selectedIndex: \(String(describing: selectedItemIndex)))"
             )
             if let index = selectedItemIndex, index < folderItems.count {
+                #if DEBUG
                 print("🔍 Calling quickLookItem for: \(folderItems[index].name)")
+                #endif
                 quickLookItem(folderItems[index])
             } else {
                 print(
@@ -602,7 +604,9 @@ struct FolderPreviewView: View {
     }
 
     private func handleDroppedFiles(providers: [NSItemProvider]) {
+        #if DEBUG
         print("📥 Files dropped into folder preview")
+        #endif
 
         for provider in providers {
             _ = provider.loadObject(ofClass: URL.self) { url, error in
@@ -622,19 +626,25 @@ struct FolderPreviewView: View {
                     do {
                         // Check if file already exists
                         if FileManager.default.fileExists(atPath: destinationURL.path) {
+                            #if DEBUG
                             print("⚠️ File already exists: \(fileName)")
+                            #endif
                             // Could show an alert here asking to replace
                             return
                         }
 
                         // Copy the file
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                        #if DEBUG
                         print("✅ File copied: \(fileName) → \(self.currentFolderPath)")
+                        #endif
 
                         // Reload folder contents to show the new file
                         self.loadFolderContents()
                     } catch {
+                        #if DEBUG
                         print("❌ Failed to copy file: \(error.localizedDescription)")
+                        #endif
                     }
                 }
             }
@@ -664,17 +674,23 @@ struct FolderPreviewView: View {
 
         // Verify the file exists
         guard FileManager.default.fileExists(atPath: item.path) else {
+            #if DEBUG
             print("⚠️ File does not exist: \(item.path)")
+            #endif
             return
         }
 
+        #if DEBUG
         print("👁️ Quick Look preview for: \(item.path)")
+        #endif
 
         // Use asyncAfter to prevent constraint update crashes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
             // Get or create the Quick Look panel
             guard let panel = QLPreviewPanel.shared() else {
+                #if DEBUG
                 print("⚠️ Could not get Quick Look panel")
+                #endif
                 return
             }
 
@@ -1121,9 +1137,13 @@ class FolderPreviewKeyboardHandler: ObservableObject {
                 }
                 return nil
             case 49:  // Space - Quick Look the selected item
+                #if DEBUG
                 print("⌨️ Space key detected in folder preview")
+                #endif
                 DispatchQueue.main.async {
+                    #if DEBUG
                     print("⌨️ Setting lastAction to .quickLook")
+                    #endif
                     self.lastAction = .quickLook
                 }
                 return nil

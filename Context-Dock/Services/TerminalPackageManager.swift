@@ -159,7 +159,9 @@ class TerminalPackageManager: ObservableObject {
                 }
             }
         } catch {
+            #if DEBUG
             print("⚠️ Failed to find command '\(command)': \(error)")
+            #endif
         }
 
         return nil

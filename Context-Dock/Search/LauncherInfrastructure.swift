@@ -143,15 +143,21 @@ class ShortcutsLinkQuery {
             }
 
             if task.terminationStatus == 0 {
+                #if DEBUG
                 print("✅ Successfully queried shortcuts using CLI tool")
+                #endif
                 return results
             }
         } catch {
+            #if DEBUG
             print("⚠️ Failed to use shortcuts CLI: \(error)")
+            #endif
         }
 
         // Method 2: Fallback to AppleScript
+        #if DEBUG
         print("📝 Trying AppleScript fallback...")
+        #endif
         let script = """
             tell application "Shortcuts Events"
                 get name of every shortcut
@@ -163,7 +169,9 @@ class ShortcutsLinkQuery {
             let output = scriptObject.executeAndReturnError(&error)
 
             if let error = error {
+                #if DEBUG
                 print("AppleScript error: \(error)")
+                #endif
                 throw NSError(
                     domain: "ShortcutsQuery", code: -1,
                     userInfo: [NSLocalizedDescriptionKey: "Failed to query shortcuts: \(error)"])

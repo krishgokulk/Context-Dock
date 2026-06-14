@@ -10,6 +10,8 @@ struct ResultRow: View {
     var usesDockCapsuleSelection: Bool = false
     var selectionNamespace: Namespace.ID? = nil
     var selectionEffectID: String = "dock-result-focus"
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDark: Bool { colorScheme == .dark }
 
     private var typeLabel: String? {
         guard result.showsTypeLabel else { return nil }
@@ -43,27 +45,26 @@ struct ResultRow: View {
                         .foregroundStyle(coloredIconTint)
                         .frame(width: iconImageSize, height: iconImageSize)
                 } else if let icon = result.icon {
-                    if result.type == .application || (result.filePath?.hasSuffix(".app") ?? false) {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .renderingMode(.original)
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: iconImageSize, height: iconImageSize)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    } else {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .renderingMode(.original)
-                            .interpolation(.medium)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: iconImageSize, height: iconImageSize)
-                    }
+                    FileThumbnailImage(
+                        filePath: result.filePath,
+                        fallbackImage: icon,
+                        systemName: fallbackIconName,
+                        tint: iconTint,
+                        size: iconImageSize,
+                        cornerRadius: result.type == .application ? 10 : 5,
+                        isApplication: result.type == .application
+                            || (result.filePath?.hasSuffix(".app") ?? false)
+                    )
                 } else {
-                    Image(systemName: fallbackIconName)
-                        .font(.system(size: fallbackIconSize, weight: .semibold))
-                        .foregroundStyle(iconTint)
-                        .frame(width: iconImageSize, height: iconImageSize)
+                    FileThumbnailImage(
+                        filePath: result.filePath,
+                        fallbackImage: nil,
+                        systemName: fallbackIconName,
+                        tint: iconTint,
+                        size: iconImageSize,
+                        cornerRadius: 5,
+                        isApplication: result.type == .application
+                    )
                 }
             }
             .frame(width: iconBoxSize, height: iconBoxSize)
@@ -187,51 +188,18 @@ struct ResultRow: View {
 
     @ViewBuilder
     private var selectionBackground: some View {
-        if usesDockCapsuleSelection, isSelected {
-            ZStack {
-                if let selectionNamespace {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .matchedGeometryEffect(
-                            id: selectionEffectID,
-                            in: selectionNamespace,
-                            properties: .frame,
-                            isSource: false
-                        )
-                } else {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.18),
-                                Color.white.opacity(0.055)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.34),
-                                Color.white.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
-                Capsule(style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.38), lineWidth: 1.0)
-                    .blur(radius: 2.2)
-            }
+        if isSelected {
+            UnifiedDockRowBackground(
+                isFocused: true,
+                isHovered: false,
+                isEnabled: true,
+                isDark: isDark,
+                selectionNamespace: selectionNamespace,
+                selectionEffectID: selectionEffectID,
+                usesMatchedGeometry: usesDockCapsuleSelection
+            )
         } else {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
+            Color.clear
         }
     }
 

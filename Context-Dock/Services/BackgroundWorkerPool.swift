@@ -109,7 +109,9 @@ class BackgroundWorkerPool: ObservableObject {
 
         Task { await runProcess(id: id, command: command) }
 
+        #if DEBUG
         print("🚀 [WorkerPool] Spawned worker \(id.uuidString.prefix(6)) — \(command.prefix(60))")
+        #endif
         return id
     }
 
@@ -131,7 +133,9 @@ class BackgroundWorkerPool: ObservableObject {
             process: nil
         )
         workers[id] = worker
+        #if DEBUG
         print("📺 [WorkerPool] Registered PTY worker \(id.uuidString.prefix(6)) — \(command.prefix(60))")
+        #endif
         return id
     }
 
@@ -140,7 +144,9 @@ class BackgroundWorkerPool: ObservableObject {
     func terminate(_ id: UUID) {
         workers[id]?.process?.terminate()
         workers[id]?.status = .terminated
+        #if DEBUG
         print("⏹ [WorkerPool] Terminated worker \(id.uuidString.prefix(6))")
+        #endif
     }
 
     func terminateAll() {
@@ -245,7 +251,9 @@ class BackgroundWorkerPool: ObservableObject {
 
         let code = process.terminationStatus
         workers[id]?.status = .completed(exitCode: code)
+        #if DEBUG
         print("✅ [WorkerPool] Worker \(id.uuidString.prefix(6)) finished — exit \(code)")
+        #endif
     }
 
     private func appendOutput(_ text: String, to id: UUID) {

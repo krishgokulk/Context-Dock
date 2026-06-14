@@ -21,7 +21,9 @@ class QuickLookPreviewManager {
     /// Show Quick Look preview for a file
     func showPreview(for filePath: String) {
         guard FileManager.default.fileExists(atPath: filePath) else {
+            #if DEBUG
             print("⚠️ File does not exist: \(filePath)")
+            #endif
             return
         }
 

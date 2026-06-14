@@ -30,22 +30,32 @@ class LaunchAtLoginHelper: ObservableObject {
         do {
             if enabled {
                 if SMAppService.mainApp.status == .enabled {
+                    #if DEBUG
                     print("✅ Launch at login already enabled")
+                    #endif
                 } else {
                     try SMAppService.mainApp.register()
+                    #if DEBUG
                     print("✅ Launch at login enabled")
+                    #endif
                 }
             } else {
                 if SMAppService.mainApp.status == .notRegistered {
+                    #if DEBUG
                     print("✅ Launch at login already disabled")
+                    #endif
                 } else {
                     try SMAppService.mainApp.unregister()
+                    #if DEBUG
                     print("✅ Launch at login disabled")
+                    #endif
                 }
             }
             isEnabled = enabled
         } catch {
+            #if DEBUG
             print("⚠️ Failed to update launch at login status: \(error.localizedDescription)")
+            #endif
         }
     }
 
@@ -69,6 +79,8 @@ class LegacyLaunchAtLoginHelper {
     }
 
     func setEnabled(_ enabled: Bool) {
+        #if DEBUG
         print("⚠️ Launch at login requires macOS 13+")
+        #endif
     }
 }

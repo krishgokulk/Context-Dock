@@ -166,10 +166,7 @@ extension SettingsSidebarSection {
                     .frontmostAppAdapters
                 ]),
                 SettingsSidebarRow("Media Actions", page: .mediaActions),
-                SettingsSidebarRow("Automation / Workflows", children: [
-                    .workflows,
-                    .shortcutSheetWorkflows
-                ])
+                SettingsSidebarRow("Shortcut Sheet", page: .shortcutSheetWorkflows)
             ]
         ),
         SettingsSidebarSection(

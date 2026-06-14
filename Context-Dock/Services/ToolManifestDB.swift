@@ -62,7 +62,9 @@ class ToolManifestDB: ObservableObject {
         if let data = try? JSONEncoder().encode(manifest) {
             try? data.write(to: file, options: .atomic)
         }
+        #if DEBUG
         print("💾 [ManifestDB] Saved manifest for '\(manifest.toolName)' (AI: \(manifest.generatedByAI))")
+        #endif
     }
 
     func manifest(for toolName: String) -> ToolManifest? {
@@ -102,7 +104,9 @@ class ToolManifestDB: ObservableObject {
             }
         }
         if !manifests.isEmpty {
+            #if DEBUG
             print("📋 [ManifestDB] Loaded \(manifests.count) tool manifests")
+            #endif
         }
     }
 }

@@ -94,7 +94,9 @@ final class DoraXSpotlightIndexService {
                 pills: records.count
             )
         } catch {
+            #if DEBUG
             print("⚠️ [DoraXSpotlight] Rebuild failed: \(error.localizedDescription)")
+            #endif
         }
     }
 

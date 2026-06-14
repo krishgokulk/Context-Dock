@@ -212,6 +212,24 @@ extension LauncherView {
     }
 
     // MARK: - L2 Chat Section
+    /// One-line "Using: <app> · <cli tools> · <N shortcuts>" summary shown under the
+    /// Context Dock Chat header so the user sees the conversation's tool scope.
+    func contextDockChatUsingSummary(bundleId: String, appName: String) -> String {
+        var parts: [String] = [appName]
+        let cli = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
+        }
+        if !cli.isEmpty {
+            parts.append(cli.map(\.command).joined(separator: ", "))
+        }
+        let shortcutCount = adapterManager.adapter(for: bundleId)?
+            .actions.filter { $0.type == .shortcut }.count ?? 0
+        if shortcutCount > 0 {
+            parts.append("\(shortcutCount) shortcut\(shortcutCount == 1 ? "" : "s")")
+        }
+        return "Using: " + parts.joined(separator: " · ")
+    }
+
     @ViewBuilder
     var l2ChatSection: some View {
         let hasConversation = !l2.chatMessages.isEmpty || l2.isLoading
@@ -222,10 +240,23 @@ extension LauncherView {
                     // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
                     HStack(spacing: 8) {
                         if let scopedTarget {
-                            Text(scopedTarget.name)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            AppBundleIconView(
+                                bundleId: scopedTarget.bundleId,
+                                fallbackSymbol: "bubble.left.and.text.bubble.right",
+                                size: 20, cornerRadius: 5
+                            )
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Chat with \(scopedTarget.name)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Text(contextDockChatUsingSummary(
+                                    bundleId: scopedTarget.bundleId, appName: scopedTarget.name))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
                         }
                         Spacer()
                         Button {
@@ -376,24 +407,36 @@ extension LauncherView {
 
     // MARK: - AI Extension Suggestions Loading
     func loadAIExtensionSuggestions() {
+        #if DEBUG
         print("🔧 [ContentView] Loading AI extension suggestions...")
+        #endif
+        #if DEBUG
         print("🔧 [ContentView] Current context: \(currentContext.description)")
+        #endif
 
         Task {
             let matcher = IntelligentExtensionMatcher.shared
             let detectedContext = convertUserContextToDetectedContext(currentContext)
 
+            #if DEBUG
             print("🔧 [ContentView] Converted to DetectedContext: \(detectedContext)")
+            #endif
 
             // Get suggestions from matcher
             var newSuggestions = matcher.suggestExtensions(for: detectedContext)
+            #if DEBUG
             print("🔧 [ContentView] Got \(newSuggestions.count) suggestions from matcher")
+            #endif
 
             // If no suggestions from matcher, load default built-in extensions
             if newSuggestions.isEmpty {
+                #if DEBUG
                 print("⚠️ [ContentView] No suggestions from matcher, loading defaults...")
+                #endif
                 let allExtensions = ExtensionManager.shared.getEnabledExtensions()
+                #if DEBUG
                 print("📦 [ContentView] Found \(allExtensions.count) total extensions")
+                #endif
 
                 newSuggestions = allExtensions.map { ext in
                     let score: Double = {
@@ -420,7 +463,9 @@ extension LauncherView {
             // Sort by relevance
             newSuggestions.sort { $0.relevanceScore > $1.relevanceScore }
 
+            #if DEBUG
             print("🔧 [ContentView] Sorted suggestions: \(newSuggestions.count)")
+            #endif
             for (index, suggestion) in newSuggestions.prefix(6).enumerated() {
                 print(
                     "🔧 [ContentView]   \(index + 1). \(suggestion.scriptExtension.displayName) (score: \(suggestion.relevanceScore))"
@@ -429,7 +474,9 @@ extension LauncherView {
 
             await MainActor.run {
                 aiExtensionSuggestions = newSuggestions
+                #if DEBUG
                 print("✅ [ContentView] AI extension suggestions updated!")
+                #endif
             }
         }
     }
@@ -1844,7 +1891,9 @@ extension LauncherView {
 
         l2.currentTask = Task {
             do {
+                #if DEBUG
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
+                #endif
 
                 if provider != .onDevice && provider != .shortcuts {
                     let commandExecutor: (String, String) async -> (Bool, String) = { command, purpose in

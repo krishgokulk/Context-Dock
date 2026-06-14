@@ -131,11 +131,11 @@ struct AutomationSettingsView: View {
             } else {
                 // ── Column 2: Item list ──────────────────────────────
                 itemList
-                    .frame(minWidth: 260, idealWidth: 300)
+                    .frame(minWidth: 280, idealWidth: 300, maxWidth: 360)
 
                 // ── Column 3: Detail / Editor ────────────────────────
                 detailPane
-                    .frame(minWidth: 340)
+                    .frame(minWidth: 360)
             }
         }
         .sheet(isPresented: $showExtensionSheet) {
@@ -940,12 +940,17 @@ struct AutomationSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(itemListTitle)
                     .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Text(itemListSubtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(0)
+            Spacer(minLength: 8)
             if selectedCategory == .menuCache {
                 Button {
                     Task { await loadInstalledAppsCatalogIfNeeded() }
@@ -968,12 +973,16 @@ struct AutomationSettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .fixedSize()
+                    .layoutPriority(1)
                 }
                 Button(action: presentCreateFlow) {
                     Label(createButtonTitle, systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .fixedSize()
+                .layoutPriority(1)
             }
         }
         .padding(.horizontal, 12)
@@ -983,12 +992,12 @@ struct AutomationSettingsView: View {
 
     private var itemListTitle: String {
         switch settingsPage {
-        case .extensionsGlobalWithSelection: return "Global Actions / With Selection"
-        case .extensionsGlobalWithoutSelection: return "Global Actions / Commands"
+        case .extensionsGlobalWithSelection: return "With Selection"
+        case .extensionsGlobalWithoutSelection: return "Commands"
         case .extensionsCLIToolScope: return "CLI Tool Scope"
-        case .frontmostAppAdapters: return "Frontmost App Actions / App Adapters"
-        case .workflows: return "Automation / Workflows"
-        case .shortcutSheetWorkflows: return "Shortcut Sheet Actions"
+        case .frontmostAppAdapters: return "App Adapters"
+        case .workflows: return "Workflows"
+        case .shortcutSheetWorkflows: return "Shortcut Sheet"
         case .advanced: return "Menu Cache"
         default: return selectedCategory.rawValue
         }
@@ -2396,6 +2405,119 @@ struct AppCLIToolPickerSheet: View {
     }
 }
 
+// MARK: - App Shortcut Picker Sheet
+
+/// Lets the user link macOS Shortcuts to an App Adapter. Each picked shortcut is
+/// stored as a `.shortcut` adapter action, so it surfaces in the dock (filtered
+/// alongside menus / actions) only when that app is frontmost.
+struct AppShortcutPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var catalog = ShortcutsCatalog.shared
+    let appName: String
+    let bundleId: String
+    let alreadyLinked: Set<String>   // lowercased shortcut names already linked
+    let onPick: (MacShortcut) -> Void
+    @State private var searchText = ""
+
+    private var availableShortcuts: [MacShortcut] {
+        let items = catalog.shortcuts.filter {
+            !alreadyLinked.contains($0.name.lowercased())
+        }
+        guard !searchText.isEmpty else { return items }
+        let q = searchText.localizedLowercase
+        return items.filter { $0.name.localizedLowercase.contains(q) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Link Shortcuts to \(appName)")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Tap a shortcut to link it. It appears in the dock when \(appName) is frontmost.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    catalog.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Reload shortcuts")
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search shortcuts…", text: $searchText).textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color(NSColor.textBackgroundColor))
+
+            Divider()
+
+            if catalog.isLoading && catalog.shortcuts.isEmpty {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("Loading shortcuts…")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
+            } else if availableShortcuts.isEmpty {
+                VStack(spacing: 8) {
+                    ShortcutTileIcon(size: 36, corner: 9)
+                    Text(catalog.shortcuts.isEmpty
+                        ? "No shortcuts found. Create some in the Shortcuts app."
+                        : "All shortcuts are already linked.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
+            } else {
+                List {
+                    ForEach(availableShortcuts) { shortcut in
+                        Button {
+                            onPick(shortcut)
+                        } label: {
+                            HStack(spacing: 10) {
+                                ShortcutTileIcon(shortcut: shortcut)
+                                Text(shortcut.name)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                                    .foregroundStyle(Color.accentColor)
+                                    .font(.system(size: 14))
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .frame(width: 430, height: 500)
+        .onAppear { catalog.loadIfNeeded() }
+    }
+}
+
 struct GlobalCLIToolPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var settings = AppSettings.shared
@@ -2604,6 +2726,7 @@ struct AutomationAdapterDetailView: View {
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
+    @State private var showShortcutPicker = false
     @State private var showDeleteConfirm = false
     @State private var isScanningHelp = false
 
@@ -2616,11 +2739,18 @@ struct AutomationAdapterDetailView: View {
     }
 
     private var appOnlyActions: [AdapterAction] {
-        visibleActions.filter { $0.type != .pageJS }
+        visibleActions.filter { $0.type != .pageJS && $0.type != .shortcut }
     }
 
     private var browserExtensionActions: [AdapterAction] {
         visibleActions.filter { $0.type == .pageJS }
+    }
+
+    /// macOS Shortcuts linked to this adapter (stored as `.shortcut` actions).
+    private var linkedShortcuts: [AdapterAction] {
+        visibleActions
+            .filter { $0.type == .shortcut }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Extracts "yt-dlp" from bundleId "cli://yt-dlp", nil for real app adapters.
@@ -2948,6 +3078,69 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
+                // MARK: Linked Shortcuts section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Linked Shortcuts")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            ShortcutsCatalog.shared.loadIfNeeded()
+                            showShortcutPicker = true
+                        } label: {
+                            Label("Add Shortcut", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+
+                    if linkedShortcuts.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No linked shortcuts")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Link macOS Shortcuts to \(currentAdapter.appName). They appear in the dock — filtered alongside menus and actions — only when \(currentAdapter.appName) is frontmost.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(16)
+                        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(linkedShortcuts) { action in
+                            HStack(spacing: 10) {
+                                ShortcutTileIcon(name: action.shortcutName ?? action.name)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                    Text("Shortcut")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(role: .destructive) {
+                                    Task {
+                                        await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
+                                    }
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.red.opacity(0.7))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if action.id != linkedShortcuts.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Linked CLI Tools")
@@ -3064,6 +3257,14 @@ struct AutomationAdapterDetailView: View {
                 alreadyLinked: Set(linkedCLITools.map(\.id))
             )
         }
+        .sheet(isPresented: $showShortcutPicker) {
+            AppShortcutPickerSheet(
+                appName: currentAdapter.appName,
+                bundleId: currentAdapter.bundleId,
+                alreadyLinked: Set(linkedShortcuts.map { ($0.shortcutName ?? $0.name).lowercased() }),
+                onPick: { shortcut in linkShortcut(shortcut) }
+            )
+        }
         .alert("Remove \(currentAdapter.appName)?", isPresented: $showDeleteConfirm) {
             Button("Remove", role: .destructive) {
                 Task {
@@ -3075,6 +3276,30 @@ struct AutomationAdapterDetailView: View {
         } message: {
             Text("This will delete all actions for \(currentAdapter.appName). This cannot be undone.")
         }
+    }
+
+    /// Persist a picked macOS Shortcut as a `.shortcut` adapter action so it
+    /// surfaces in the dock when this app is frontmost.
+    private func linkShortcut(_ shortcut: MacShortcut) {
+        let name = shortcut.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        // Skip duplicates (by shortcut name).
+        if linkedShortcuts.contains(where: {
+            ($0.shortcutName ?? $0.name).caseInsensitiveCompare(name) == .orderedSame
+        }) { return }
+
+        let action = AdapterAction(
+            id: "shortcut-\(UUID().uuidString.prefix(8))",
+            name: name,
+            icon: shortcut.iconName,
+            description: "Run the “\(name)” shortcut",
+            triggers: [name],
+            type: .shortcut,
+            shortcutName: name,
+            accentColor: shortcut.accentColor
+        )
+        let bid = currentAdapter.bundleId
+        Task { await adapterManager.appendAction(action, to: bid) }
     }
 
     private func unlinkCLITool(_ package: TerminalPackage) {

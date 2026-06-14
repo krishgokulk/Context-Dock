@@ -129,7 +129,9 @@ class AppleAppsAPI {
         _ = semaphore.wait(timeout: .now() + 5)
 
         guard accessGranted else {
+            #if DEBUG
             print("❌ Calendar access not granted")
+            #endif
             return false
         }
 
@@ -143,10 +145,14 @@ class AppleAppsAPI {
 
         do {
             try eventStore.save(event, span: .thisEvent)
+            #if DEBUG
             print("✅ Calendar event created: \(title)")
+            #endif
             return true
         } catch {
+            #if DEBUG
             print("❌ Failed to create calendar event: \(error.localizedDescription)")
+            #endif
             return false
         }
     }
@@ -233,7 +239,9 @@ class AppleAppsAPI {
                 }
             }
         } catch {
+            #if DEBUG
             print("Failed to fetch contacts: \(error)")
+            #endif
         }
 
         return contacts

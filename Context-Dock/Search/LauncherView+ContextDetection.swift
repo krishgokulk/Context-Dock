@@ -605,10 +605,8 @@ extension LauncherView {
         if !panel.isVisible {
             panel.orderFront(nil)
         }
-        if searchState.activeSmartQueryKey == "clipboard",
-            let window = AppDelegate.shared?.launcherWindow
-        {
-            window.makeKeyAndOrderFront(nil)
+        if let window = AppDelegate.shared?.launcherWindow {
+            window.makeKey()
             isSearchFieldFocused = true
         }
         return true
@@ -630,6 +628,23 @@ extension LauncherView {
                 }
             }
             return
+        }
+
+        if WebQuickLookPanel.shared.isVisible {
+            if let pill = currentFocusedDockPillForQuickLook(),
+                let url = pill.resolvedURL,
+                url.scheme == "https" || url.scheme == "http"
+            {
+                WebQuickLookPanel.shared.show(url: url)
+                return
+            }
+            if let pill = focusedGlobalGroupedListPill(),
+                let url = pill.resolvedURL,
+                url.scheme == "https" || url.scheme == "http"
+            {
+                WebQuickLookPanel.shared.show(url: url)
+                return
+            }
         }
 
         guard quickLookPanelIsVisible() else { return }
@@ -690,27 +705,21 @@ extension LauncherView {
     func findAllShortcuts() -> [SearchResult] {
         var shortcuts: [SearchResult] = []
 
-        let shortcutsAppIcon: NSImage = {
-            if let appURL = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: "com.apple.shortcuts")
-            {
-                return NSWorkspace.shared.icon(forFile: appURL.path)
-            } else {
-                return NSWorkspace.shared.icon(forFileType: "shortcut")
-            }
-        }()
-
         do {
             let query = ShortcutsLinkQuery()
             let results = try query.shortcuts()
 
             for shortcut in results {
                 let shortcutName = shortcut.name
+                let shortcutIcon = NSImage(
+                    systemSymbolName: ShortcutsCatalog.iconName(for: shortcutName),
+                    accessibilityDescription: shortcutName
+                ) ?? ShortcutsCatalog.appIcon ?? NSWorkspace.shared.icon(forFileType: "shortcut")
                 shortcuts.append(
                     SearchResult(
                         title: shortcutName,
                         subtitle: "Shortcut",
-                        icon: shortcutsAppIcon,
+                        icon: shortcutIcon,
                         action: {
                             if let encodedName = shortcutName.addingPercentEncoding(
                                 withAllowedCharacters: .urlPathAllowed),
@@ -896,7 +905,9 @@ extension LauncherView {
         }
 
         guard fileIndexManager.isReady else {
+            #if DEBUG
             print("⚠️ File index not ready yet")
+            #endif
             indexedFileResults = []
             return
         }
@@ -962,7 +973,9 @@ extension LauncherView {
             return
         }
 
+        #if DEBUG
         print("🔍 [SystemSearch] Starting search for: '\(query)'")
+        #endif
 
         // Search all system data types
         let systemResults = await systemDataManager.searchAll(
@@ -971,7 +984,9 @@ extension LauncherView {
             perTypeLimit: 5
         )
 
+        #if DEBUG
         print("✅ [SystemSearch] Found \(systemResults.count) system data results")
+        #endif
         if systemResults.isEmpty {
             print(
                 "⚠️ [SystemSearch] No results found - this might indicate permission issues or no matching data"
@@ -1016,13 +1031,21 @@ extension LauncherView {
             )
         }
 
+        #if DEBUG
         print("✅ [SystemSearch] Converted to \(convertedSearchResults.count) SearchResults")
+        #endif
 
         await MainActor.run {
+            #if DEBUG
             print("📝 [SystemSearch] Updating systemDataResults on main thread")
+            #endif
             systemDataResults = convertedSearchResults
+            #if DEBUG
             print("📝 [SystemSearch] Current systemDataResults count: \(systemDataResults.count)")
+            #endif
+            #if DEBUG
             print("📝 [SystemSearch] Current allItems count: \(allItems.count)")
+            #endif
             // Trigger re-search on next run loop to avoid state changes during view updates
             DispatchQueue.main.async {
                 performSearchWithoutSpotlight()
@@ -1226,7 +1249,9 @@ extension LauncherView {
                 updateL2Results(buildL2OutputResults(title: ext.name, output: output))
             }
         } catch {
+            #if DEBUG
             print("❌ [L2 Extension] Failed to run \(ext.name): \(error.localizedDescription)")
+            #endif
         }
     }
 

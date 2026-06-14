@@ -619,16 +619,6 @@ extension LauncherView {
                 }
                 currentContext = context
             }
-            .onReceive(NotificationCenter.default.publisher(for: .overlayAskAboutSelection)) {
-                notification in
-                guard !isExplicitAppScopeLocked else { return }
-                guard let text = notification.userInfo?["text"] as? String else { return }
-                searchState.query = text
-                aiMode.isActive = true
-                showContextInDock = false
-                showMediaLayer = false
-                AppDelegate.shared?.showLauncher()
-            }
             .onReceive(contextEnv.frontmostAppUpdates) { appInfo in
                 let appName = appInfo.name
                 let bundleID = appInfo.bundleID
@@ -862,17 +852,20 @@ extension LauncherView {
 
         let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
         globalContextActivation = nil
+
+        // Reset transient UI state unconditionally on every open
+        aiMode.isActive = false
+        showMediaLayer = false
+        showFolderPreview = false
+        searchState.isInSmartMode = false
+
         if !openingForDockContext {
             searchState.query = ""
             searchState.results = []
             searchState.selectedIndex = nil
-            aiMode.isActive = false
-            showMediaLayer = false
-            showFolderPreview = false
             showContextInDock = true
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
-            searchState.isInSmartMode = false
             searchState.appPanelAllItems = []
         }
 

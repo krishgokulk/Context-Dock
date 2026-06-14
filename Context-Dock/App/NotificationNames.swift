@@ -47,7 +47,4 @@ extension Notification.Name {
     // MARK: - AI / intent
     static let intentConflictDetected    = Notification.Name("com.ilauncher.intentConflictDetected")
 
-    // MARK: - Overlay
-    // Posted by FileContextOverlay; string kept for Safari extension compatibility.
-    static let overlayAskAboutSelection  = Notification.Name("ContextDockAskAboutSelection")
 }

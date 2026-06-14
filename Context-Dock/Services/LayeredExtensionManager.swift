@@ -84,7 +84,9 @@ class LayeredExtensionManager: ObservableObject {
         extensions.append(contentsOf: scanned)
         allExtensions = extensions
 
+        #if DEBUG
         print("✅ Loaded \(allExtensions.count) extensions")
+        #endif
         printExtensionBreakdown()
     }
 
@@ -94,10 +96,18 @@ class LayeredExtensionManager: ObservableObject {
         let l3Count = allExtensions.filter { $0.layer == .l3_browser }.count
         let crossCount = allExtensions.filter { $0.layer == .crossLayer }.count
 
+        #if DEBUG
         print("   L1 (Search): \(l1Count)")
+        #endif
+        #if DEBUG
         print("   L2 (Context): \(l2Count)")
+        #endif
+        #if DEBUG
         print("   L3 (Browser): \(l3Count)")
+        #endif
+        #if DEBUG
         print("   Cross-Layer: \(crossCount)")
+        #endif
     }
 
     // MARK: - Extension Discovery (nonisolated static — safe to call from Task.detached)
@@ -132,7 +142,9 @@ class LayeredExtensionManager: ObservableObject {
             }
             return ext
         } catch {
+            #if DEBUG
             print("⚠️ Failed to load extension from \(metadataURL.path): \(error)")
+            #endif
             return nil
         }
     }
@@ -451,19 +463,25 @@ class LayeredExtensionManager: ObservableObject {
     func addExtension(_ ext: ILExtension) {
         saveExtension(ext)
         Task { await self.loadExtensions() }
+        #if DEBUG
         print("✅ Extension '\(ext.name)' added and reloaded")
+        #endif
     }
 
     func updateExtension(_ ext: ILExtension) {
         saveExtension(ext)
         Task { await self.loadExtensions() }
+        #if DEBUG
         print("✅ Extension '\(ext.name)' updated and reloaded")
+        #endif
     }
 
     func deleteExtension(_ ext: ILExtension) {
         deleteExtensionFiles(ext)
         Task { await self.loadExtensions() }
+        #if DEBUG
         print("✅ Extension '\(ext.name)' deleted and reloaded")
+        #endif
     }
 
     private func saveExtension(_ ext: ILExtension) {

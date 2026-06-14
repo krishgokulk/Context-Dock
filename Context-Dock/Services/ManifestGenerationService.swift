@@ -21,7 +21,9 @@ class ManifestGenerationService {
         binaryPath: String,
         helpText: String
     ) async {
+        #if DEBUG
         print("🔬 [ManifestGen] Generating manifest for '\(toolName)'...")
+        #endif
 
         let manifest: ToolManifest
 
@@ -47,7 +49,9 @@ class ManifestGenerationService {
                                helpText: helpText)
         await L2IntentRegistry.shared.autoAssignIntent(for: pkg)
 
+        #if DEBUG
         print("✅ [ManifestGen] Done — '\(toolName)' → \(manifest.primaryIntent) (AI:\(manifest.generatedByAI), model:\(manifest.aiModelUsed ?? "keyword"))")
+        #endif
     }
 
     // MARK: - Strategy 1: Apple FoundationModels
@@ -64,7 +68,9 @@ class ManifestGenerationService {
             let response = try await session.respond(to: prompt)
             return parseResponse(response.content, toolName: toolName, binaryPath: binaryPath, model: "apple-on-device")
         } catch {
+            #if DEBUG
             print("⚠️ [ManifestGen] FoundationModels error: \(error.localizedDescription)")
+            #endif
             return nil
         }
     }
@@ -196,7 +202,9 @@ class ManifestGenerationService {
 
         guard let data = jsonText.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            #if DEBUG
             print("⚠️ [ManifestGen] Failed to parse JSON from \(model) response")
+            #endif
             return nil
         }
 

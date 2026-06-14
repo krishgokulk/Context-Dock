@@ -556,13 +556,15 @@ final class AIProviderRouter {
         context: UserContext,
         contextPrompt: String,
         apiKeyOverride: String? = nil,
-        conversationHistory: [ChatMessage] = []
+        conversationHistory: [ChatMessage] = [],
+        attachments: [AIAttachment] = []
     ) async throws -> String {
         let request = AIRequest(
             text: message,
             context: context,
             history: conversationHistory,
-            source: .workflow
+            attachments: attachments,
+            source: .aiChat
         )
         try safetyPolicy.validate(message: message, context: context, provider: provider)
         let assessment = safetyPolicy.assess(message: message, context: context, provider: provider)
@@ -576,17 +578,37 @@ final class AIProviderRouter {
             }
         }
         #if DEBUG
-        print("🤖 [AIProviderRouter] legacy-facade source=workflow provider=\(provider.rawValue)")
+        print("🤖 [AIProviderRouter] legacy-facade provider=\(provider.rawValue) attachments=\(attachments.count)")
         #endif
         if provider == .onDevice {
+            let imageURLs = attachments.filter { $0.kind == .image }.map(\.url)
             return try await AIProviderService.shared.sendPreparedOnDevice(
-                message: message, contextPrompt: contextPrompt, history: conversationHistory
+                message: message, contextPrompt: contextPrompt,
+                history: conversationHistory, imageURLs: imageURLs
             )
         }
         let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
-        return try await adapter(for: provider).send(
-            request: request, contextPrompt: contextPrompt, configuration: configuration
+        // If the provider can't natively take an attachment kind, append a text note
+        // so the model knows what was attached instead of silently ignoring it.
+        let fallback = attachmentFallbackPrompt(
+            attachments: attachments,
+            capabilities: adapter(for: provider).capabilities
         )
+        return try await adapter(for: provider).send(
+            request: request, contextPrompt: contextPrompt + fallback, configuration: configuration
+        )
+    }
+
+    /// Public capability lookup so UI can show vision/file support and gate attachments.
+    /// On-device is treated as image-capable because it OCRs images into text.
+    func capabilities(for provider: AIProvider) -> AIProviderCapabilities {
+        if provider == .onDevice {
+            return AIProviderCapabilities(
+                supportsImages: true, supportsFiles: false,
+                supportsToolCalls: false, runsLocally: true
+            )
+        }
+        return adapter(for: provider).capabilities
     }
 
     private func configuration(

@@ -671,6 +671,53 @@ final class AXTriggerRuleEngine {
             }
             guard !path.isEmpty, let targetApp = menuTargetApp(from: envVars) else { return }
             AXActionResolver.shared.execute(menuPath: path, in: targetApp, envVars: envVars)
+
+        case .shortcut:
+            // `value` is the macOS Shortcut name. Pass the current selection as
+            // input: file (path) → text → URL → no input.
+            var name = value
+            for (k, v) in envVars { name = name.replacingOccurrences(of: "{\(k)}", with: v) }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
+            let file = envVars["CD_FILE"] ?? ""
+            let text = envVars["CD_SELECTED_TEXT"] ?? ""
+            let url  = envVars["CD_URL"] ?? ""
+            let cmd: String
+            if !file.isEmpty {
+                cmd = "/usr/bin/shortcuts run \"\(escaped)\" --input-path \"$CD_FILE\""
+            } else if !text.isEmpty {
+                cmd = "printf '%s' \"$CD_SELECTED_TEXT\" | /usr/bin/shortcuts run \"\(escaped)\""
+            } else if !url.isEmpty {
+                cmd = "printf '%s' \"$CD_URL\" | /usr/bin/shortcuts run \"\(escaped)\""
+            } else {
+                cmd = "/usr/bin/shortcuts run \"\(escaped)\""
+            }
+            Task.detached(priority: .userInitiated) {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                proc.arguments = ["-lc", cmd]
+                var env = ProcessInfo.processInfo.environment
+                envVars.forEach { env[$0] = $1 }
+                proc.environment = env
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError  = pipe
+                try? proc.run()
+                proc.waitUntilExit()
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let success = proc.terminationStatus == 0
+                await MainActor.run {
+                    ILauncherNotificationManager.shared.post(
+                        title: success ? name : "\(name) failed",
+                        body: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              ? (success ? "Shortcut ran" : "Exit code \(proc.terminationStatus)")
+                              : String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)),
+                        icon: success ? "checkmark.circle.fill" : "xmark.circle.fill",
+                        accentColor: success ? "purple" : "red"
+                    )
+                }
+            }
         }
     }
 
