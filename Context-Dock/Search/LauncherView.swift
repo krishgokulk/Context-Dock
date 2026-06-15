@@ -132,8 +132,6 @@ struct LauncherView: View {
     @ObservedObject var fileIndexManager = FileIndexManager.shared
     @Environment(\.openSettings) var openSettings
     @Environment(\.colorScheme) var systemColorScheme
-    @State var useUnifiedShell: Bool = false  // Feature flag for new architecture
-
     // Compute current visible pills based on mode
     var currentDockPills: [DockPill] {
         if showContextInDock || l2.targetApp != nil {
@@ -1107,48 +1105,13 @@ struct LauncherView: View {
 
     var body: some View {
         Group {
-            if useUnifiedShell {
-                // New unified shell architecture
-                UnifiedDockShell(
-                    isVisible: .constant(true),
-                    results: searchState.results,
-                    query: searchState.query,
-                    dockPills: currentDockPills
-                )
-            } else {
-                // Legacy LauncherView implementation
-                ZStack {
-                    contentKeyHandlersView
-
-                    // Contact Preview Overlay
-                    if showContactPreview, let contact = contactPreviewData {
-                        ContactPreviewCard(contact: contact, isPresented: showContactPreviewBinding)
-                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    }
-
-                    // AI Extension Suggestions Overlay
-                    if showAIExtensionSuggestions {
-                        ZStack {
-                            // Dim background
-                            Color.black.opacity(0.3)
-                                .ignoresSafeArea()
-                                .onTapGesture {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        showAIExtensionSuggestions = false
-                                    }
-                                }
-
-                            // AI Suggestions View
-                            AIModeView(
-                                currentContext: currentContextBinding,
-                                isVisible: showAIExtensionSuggestionsBinding
-                            )
-                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                        }
-                    }
-
-                }
-            }
+            UnifiedDockShell(
+                isVisible: .constant(true),
+                results: searchState.results,
+                query: searchState.query,
+                dockPills: currentDockPills
+            )
+            .environment(\.colorScheme, resolvedColorScheme ?? .light)
         }
         .onReceive(adapterManager.$pendingApproval) { pending in
             DispatchQueue.main.async {
