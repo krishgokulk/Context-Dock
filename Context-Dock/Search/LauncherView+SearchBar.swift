@@ -180,9 +180,11 @@ extension LauncherView {
     var currentResultsSurface: some View {
         switch currentDockSurfaceMode {
         case .generalChat:
-            generalChatSurface
+            // Owns its content inside compactScopeIntegratedSheet.
+            EmptyView()
         case .contextDockChat:
-            contextDockChatSurface
+            // Owns its content inside compactScopeIntegratedSheet.
+            EmptyView()
         case .globalContext, .contextDock, .mediaDock:
             resultsCardAlignedToSearchInput
         }
@@ -192,8 +194,17 @@ extension LauncherView {
         Group {
             switch currentDockSurfaceMode {
             case .generalChat:
-                compactScopeIntegratedSheet
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                // Only wrap in the glass card once the user has sent a message.
+                // Before that, show the bare floating capsule — consistent with contextDock idle.
+                if hasUserSentMessageInCurrentSession
+                    && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil)
+                {
+                    compactScopeIntegratedSheet
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                } else {
+                    dockCardRow(inDockMode: settings.effectiveDockAtBottom)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
             case .contextDockChat:
                 compactScopeIntegratedSheet
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -217,10 +228,8 @@ extension LauncherView {
         if shouldUseIntegratedSheetForCurrentSurface {
             compactScopeIntegratedSheet
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        } else if hasResultsToShow {
-            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
         } else {
-            dockCardRow(inDockMode: settings.effectiveDockAtBottom)
+            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
         }
     }
 
@@ -229,10 +238,8 @@ extension LauncherView {
         if shouldUseIntegratedSheetForCurrentSurface {
             compactScopeIntegratedSheet
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-        } else if hasResultsToShow {
-            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
         } else {
-            dockBaseRow(inDockMode: settings.effectiveDockAtBottom)
+            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
         }
     }
 
@@ -243,7 +250,20 @@ extension LauncherView {
                 .frame(width: resultsPanelLeadingInset)
             UnifiedDockSurface(size: .standard, width: resultsPanelWidth, isDark: isEffectiveDark) {
                 VStack(spacing: 0) {
-                    dockBaseView(inDockMode: inDockMode)
+                    // When action pills are active and dock is at bottom: pills → divider → dock bar
+                    if usesVerticalListDockLayout && inDockMode {
+                        currentListDockSurface
+                            .frame(width: resultsPanelWidth, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                            .padding(.bottom, 8)
+                        Rectangle()
+                            .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
+                            .frame(height: 1)
+                            .padding(.horizontal, 22)
+                    }
+
+                    dockBaseView(inDockMode: inDockMode, fillWidth: true)
                         .frame(width: resultsPanelWidth, alignment: .leading)
                         .onDrop(
                             of: [.fileURL, .text, .plainText, .url],
@@ -256,6 +276,19 @@ extension LauncherView {
                                 revealClipboardDropTarget()
                             }
                         }
+
+                    // When action pills are active and dock is at top: dock bar → divider → pills
+                    if usesVerticalListDockLayout && !inDockMode {
+                        Rectangle()
+                            .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
+                            .frame(height: 1)
+                            .padding(.horizontal, 22)
+                        currentListDockSurface
+                            .frame(width: resultsPanelWidth, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                            .padding(.bottom, 8)
+                    }
 
                     if hasResultsToShow {
                         Rectangle()
@@ -382,11 +415,16 @@ extension LauncherView {
 
     // MARK: - Dock Base View (always visible, doesn't move)
     @ViewBuilder
-    func dockBaseView(inDockMode: Bool) -> some View {
+    func dockBaseView(inDockMode: Bool, fillWidth: Bool = false) -> some View {
+        // fillWidth: inside unifiedSearchPanelSurface the input bar must span the full
+        // resultsPanelWidth so the pill row and the result rows read as one block. Without it the
+        // capsule collapses to collapsedInputWidth whenever a result/app pill is focused, leaving a
+        // narrow pill floating over the wider panel ("two docks" look).
         let inputIsExpanded =
-            (isSearchBarExpanded || usesVerticalListDockLayout)
-            && (l2.focusedPillIndex == nil || usesVerticalListDockLayout)
-            && !showMediaLayer
+            fillWidth
+            || ((isSearchBarExpanded || usesVerticalListDockLayout)
+                && (l2.focusedPillIndex == nil || usesVerticalListDockLayout)
+                && !showMediaLayer)
         // Input bar size is driven by the expanded state, NOT by whether results/action-list are
         // showing. Keying it off usesVerticalListDockLayout made the bar grow the moment the user
         // typed (52 → 56) because the action list only appears once there's a query. Lock the

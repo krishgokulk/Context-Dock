@@ -2204,9 +2204,7 @@ struct LauncherView: View {
         return !searchState.results.isEmpty
             || (currentDockSurfaceMode == .globalContext && !searchState.query.isEmpty)
             || (!searchState.query.isEmpty && !isL2ContextActive && currentDockSurfaceMode != .generalChat)
-            || currentDockSurfaceMode == .generalChat
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
-            || shouldShowContextDockChatSheet
             || (shouldShowContextDockAppPanel
                 && !(showContextInDock && l2.chatArmed && !l2.showChatPopover))
             || shouldShowFinderSearchResultsPanel(for: searchState.query)
