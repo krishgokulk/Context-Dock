@@ -4,9 +4,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension LauncherView {
+    var shouldUseIntegratedSheetForCurrentSurface: Bool {
+        if isCompactSmartScope { return true }
+        switch currentDockSurfaceMode {
+        case .generalChat:
+            return true
+        case .contextDockChat:
+            return true
+        case .contextDock:
+            return false
+        case .globalContext, .mediaDock:
+            return false
+        }
+    }
+
     var shouldShowSelectionTrailingButton: Bool {
         !showMediaLayer
-            && !aiMode.isActive
+            && currentDockSurfaceMode != .generalChat
             && !isCompactSmartScope
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && activeSelectionLabel != nil
@@ -176,84 +190,19 @@ extension LauncherView {
 
     var searchBarSection: some View {
         Group {
-            if shouldUseIntegratedScopeSheet {
+            switch currentDockSurfaceMode {
+            case .generalChat:
                 compactScopeIntegratedSheet
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else if settings.effectiveDockAtBottom {
-                // Dock at bottom: results float above, dock bar anchored at bottom.
-                VStack(spacing: panelGapBelowSearchBar) {
-                    if hasResultsToShow {
-                        currentResultsSurface
-                            .transition(
-                                .asymmetric(
-                                    insertion: .opacity.combined(
-                                        with: .scale(scale: 0.96, anchor: .bottom)),
-                                    removal: .opacity.combined(
-                                        with: .scale(scale: 0.96, anchor: .bottom))
-                                ))
-                    }
-                    // Clipboard floats left of the main dock pill — liquid-drop separation
-                    HStack(alignment: .bottom, spacing: 8) {
-                        if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
-                            clipboardFloatingIconPill
-                                .transition(
-                                    .scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity)
-                                )
-                        }
-                        dockCard(inDockMode: true)
-                            .onDrop(
-                                of: [.fileURL, .text, .plainText, .url],
-                                isTargeted: clipboardDropTargetedBinding
-                            ) { providers in
-                                handleDockContextDrop(providers)
-                            }
-                            .onHover { hovering in
-                                if hovering && clipboardDropTargetVisible {
-                                    revealClipboardDropTarget()
-                                }
-                            }
-                        if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
-                            floatingAppLogoButton
-                        }
-                    }
-                }
-            } else {
-                // Dock at top: dock bar anchored at top, results float below.
-                VStack(spacing: panelGapBelowSearchBar) {
-                    HStack(alignment: .bottom, spacing: 8) {
-                        if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
-                            clipboardFloatingIconPill
-                                .transition(
-                                    .scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity)
-                                )
-                        }
-                        dockCard(inDockMode: false)
-                            .onDrop(
-                                of: [.fileURL, .text, .plainText, .url],
-                                isTargeted: clipboardDropTargetedBinding
-                            ) { providers in
-                                handleDockContextDrop(providers)
-                            }
-                            .onHover { hovering in
-                                if hovering && clipboardDropTargetVisible {
-                                    revealClipboardDropTarget()
-                                }
-                            }
-                        if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
-                            floatingAppLogoButton
-                        }
-                    }
-                    if hasResultsToShow {
-                        currentResultsSurface
-                            .transition(
-                                .asymmetric(
-                                    insertion: .opacity.combined(
-                                        with: .scale(scale: 0.96, anchor: .top)),
-                                    removal: .opacity.combined(
-                                        with: .scale(scale: 0.96, anchor: .top))
-                                ))
-                    }
-                }
+            case .contextDockChat:
+                compactScopeIntegratedSheet
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            case .globalContext:
+                globalContextSearchBarShell
+            case .contextDock:
+                contextDockSearchBarShell
+            case .mediaDock:
+                mediaDockSearchBarShell
             }
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: showGlobalClipboardPill)
@@ -263,8 +212,135 @@ extension LauncherView {
         }
     }
 
+    @ViewBuilder
+    var contextDockSearchBarShell: some View {
+        if shouldUseIntegratedSheetForCurrentSurface {
+            compactScopeIntegratedSheet
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        } else if hasResultsToShow {
+            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
+        } else {
+            dockCardRow(inDockMode: settings.effectiveDockAtBottom)
+        }
+    }
+
+    @ViewBuilder
+    var globalContextSearchBarShell: some View {
+        if shouldUseIntegratedSheetForCurrentSurface {
+            compactScopeIntegratedSheet
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        } else if hasResultsToShow {
+            unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
+        } else {
+            dockBaseRow(inDockMode: settings.effectiveDockAtBottom)
+        }
+    }
+
+    @ViewBuilder
+    func unifiedSearchPanelSurface(inDockMode: Bool) -> some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: resultsPanelLeadingInset)
+            UnifiedDockSurface(size: .standard, width: resultsPanelWidth, isDark: isEffectiveDark) {
+                VStack(spacing: 0) {
+                    dockBaseView(inDockMode: inDockMode)
+                        .frame(width: resultsPanelWidth, alignment: .leading)
+                        .onDrop(
+                            of: [.fileURL, .text, .plainText, .url],
+                            isTargeted: clipboardDropTargetedBinding
+                        ) { providers in
+                            handleDockContextDrop(providers)
+                        }
+                        .onHover { hovering in
+                            if hovering && clipboardDropTargetVisible {
+                                revealClipboardDropTarget()
+                            }
+                        }
+
+                    if hasResultsToShow {
+                        Rectangle()
+                            .fill(Theme.separator(isEffectiveDark))
+                            .frame(height: 1)
+                            .padding(.horizontal, 18)
+
+                        searchResultsContent
+                            .frame(minHeight: 0, maxHeight: searchResultsPanelMaxHeight)
+                            .frame(width: resultsPanelWidth, alignment: .leading)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    }
+                }
+                .frame(width: resultsPanelWidth, alignment: .leading)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(width: calculatedWidth, alignment: .leading)
+    }
+
+    @ViewBuilder
+    var mediaDockSearchBarShell: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            mediaDockSurface
+                .frame(width: visibleDockWidth, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    func dockCardRow(inDockMode: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
+                clipboardFloatingIconPill
+                    .transition(
+                        .scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity)
+                    )
+            }
+            dockCard(inDockMode: inDockMode)
+                .onDrop(
+                    of: [.fileURL, .text, .plainText, .url],
+                    isTargeted: clipboardDropTargetedBinding
+                ) { providers in
+                    handleDockContextDrop(providers)
+                }
+                .onHover { hovering in
+                    if hovering && clipboardDropTargetVisible {
+                        revealClipboardDropTarget()
+                    }
+                }
+            if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
+                floatingAppLogoButton
+            }
+        }
+    }
+
+    @ViewBuilder
+    func dockBaseRow(inDockMode: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
+                clipboardFloatingIconPill
+                    .transition(
+                        .scale(scale: 0.7, anchor: .bottomTrailing).combined(with: .opacity)
+                    )
+            }
+            dockBaseView(inDockMode: inDockMode)
+                .frame(width: visibleDockWidth, alignment: .leading)
+                .onDrop(
+                    of: [.fileURL, .text, .plainText, .url],
+                    isTargeted: clipboardDropTargetedBinding
+                ) { providers in
+                    handleDockContextDrop(providers)
+                }
+                .onHover { hovering in
+                    if hovering && clipboardDropTargetVisible {
+                        revealClipboardDropTarget()
+                    }
+                }
+            if !(showContextInDock && l2.chatArmed && !l2.showChatPopover) {
+                floatingAppLogoButton
+            }
+        }
+    }
+
     var compactScopeIntegratedSheet: some View {
-        let maxSheetHeight: CGFloat = isCompactSmartScope ? 450 : 480
+        let maxSheetHeight: CGFloat = compactScopeIntegratedSheetMaxHeight
         return HStack(spacing: 0) {
             Color.clear
                 .frame(width: resultsPanelLeadingInset)
@@ -273,12 +349,14 @@ extension LauncherView {
                     dockBaseView(inDockMode: settings.effectiveDockAtBottom)
                         .frame(width: resultsPanelWidth, alignment: .leading)
 
-                    Rectangle()
-                        .fill(Theme.separator(isEffectiveDark))
-                        .frame(height: 1)
-                        .padding(.horizontal, 18)
+                    if hasResultsToShow {
+                        Rectangle()
+                            .fill(Theme.separator(isEffectiveDark))
+                            .frame(height: 1)
+                            .padding(.horizontal, 18)
+                    }
 
-                    resultsContentView
+                    integratedSheetContent
                         .frame(minHeight: 0, maxHeight: maxSheetHeight)
                         .frame(width: resultsPanelWidth, alignment: .leading)
                 }
@@ -289,19 +367,36 @@ extension LauncherView {
         .frame(width: calculatedWidth, alignment: .leading)
     }
 
+    var compactScopeIntegratedSheetMaxHeight: CGFloat {
+        switch currentDockSurfaceMode {
+        case .generalChat:
+            return 620
+        case .contextDockChat:
+            return 500
+        case .globalContext, .contextDock:
+            return isCompactSmartScope ? 450 : 480
+        case .mediaDock:
+            return 0
+        }
+    }
+
     // MARK: - Dock Base View (always visible, doesn't move)
     @ViewBuilder
     func dockBaseView(inDockMode: Bool) -> some View {
-        let outerVerticalPadding: CGFloat = usesVerticalListDockLayout ? 4 : 6
-        let inputVerticalPadding: CGFloat = usesVerticalListDockLayout ? 4 : 6
-        let inputPillHeight: CGFloat =
-            usesVerticalListDockLayout ? 56 : CGFloat(settings.dockIconSize) + 8
-        let inputTextSize: CGFloat = 15
-        let inputTextWeight: Font.Weight = .medium
         let inputIsExpanded =
             (isSearchBarExpanded || usesVerticalListDockLayout)
             && (l2.focusedPillIndex == nil || usesVerticalListDockLayout)
             && !showMediaLayer
+        // Input bar size is driven by the expanded state, NOT by whether results/action-list are
+        // showing. Keying it off usesVerticalListDockLayout made the bar grow the moment the user
+        // typed (52 → 56) because the action list only appears once there's a query. Lock the
+        // expanded bar to the larger height so the empty and typed states stay the same size.
+        let outerVerticalPadding: CGFloat = inputIsExpanded ? 4 : 6
+        let inputVerticalPadding: CGFloat = inputIsExpanded ? 4 : 6
+        let inputPillHeight: CGFloat =
+            inputIsExpanded ? 56 : CGFloat(settings.dockIconSize) + 8
+        let inputTextSize: CGFloat = 15
+        let inputTextWeight: Font.Weight = .medium
         let collapsedInputWidth: CGFloat = inputPillHeight
 
         VStack(spacing: 0) {
@@ -311,9 +406,10 @@ extension LauncherView {
                 // so nav focus should never collapse the search bar to an icon.
                 let actionPillNavActive =
                     l2.focusedPillIndex != nil && showContextInDock && !isGlobalContextActive
-                    && !aiMode.isActive && !usesVerticalListDockLayout
+                    && currentDockSurfaceMode != .generalChat && !usesVerticalListDockLayout
                 let globalAppNavActive =
-                    focusedAppPillIndex != nil && isGlobalContextActive && !aiMode.isActive
+                    focusedAppPillIndex != nil && isGlobalContextActive
+                    && currentDockSurfaceMode != .generalChat
                     && !usesVerticalListDockLayout
                 let pillNavActive = actionPillNavActive || globalAppNavActive
                 let compactScopeKey = isCompactSmartScope ? searchState.activeSmartQueryKey : nil
@@ -323,7 +419,7 @@ extension LauncherView {
                 if !pillNavActive && !showMediaLayer {
                     HStack(spacing: 10) {
                         // Search icon
-                        if aiMode.isActive {
+                        if currentDockSurfaceMode == .generalChat {
                             Menu {
                                 ForEach(AIProvider.allCases) { provider in
                                     Button(action: {
@@ -346,11 +442,35 @@ extension LauncherView {
                                     openSettings()
                                 }
                             } label: {
-                                Image(systemName: settings.selectedAIProvider.iconName)
-                                    .foregroundStyle(providerColor)
-                                    .font(.system(size: 16, weight: .medium))
+                                HStack(spacing: 7) {
+                                    Image(systemName: settings.selectedAIProvider.iconName)
+                                        .foregroundStyle(providerColor)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .frame(width: 20, height: 20)
+                                    Image(systemName: "chevron.down")
+                                        .foregroundStyle(.secondary.opacity(0.75))
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 6)
+                                .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .strokeBorder(
+                                            LinearGradient(
+                                                colors: [
+                                                    .white.opacity(isEffectiveDark ? 0.28 : 0.42),
+                                                    .white.opacity(isEffectiveDark ? 0.06 : 0.12),
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 0.8
+                                        )
+                                )
                             }
                             .menuStyle(.borderlessButton)
+                            .buttonStyle(.plain)
                             .fixedSize()
                             .onHover { hovering in
                                 guard acceptsMouseDrivenDockInteraction else { return }
@@ -475,12 +595,7 @@ extension LauncherView {
                                                     .spring(response: 0.22, dampingFraction: 0.75),
                                                     value: selIcon)
                                         } else {
-                                            Image("DoraXD")
-                                                .resizable()
-                                                .interpolation(.high)
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(width: 24, height: 24)
-                                                .blendMode(.screen)
+                                            LiquidGlassArrow(size: 24)
                                                 .id("context-dock-input-logo")
                                         }
                                     } else if let finderSymbol = finderInputSymbolForSearchText() {
@@ -854,7 +969,8 @@ extension LauncherView {
                         // (the input shrinks to icon-only to give pills more room)
                         if inputIsExpanded
                             && showContextInDock && !isGlobalContextActive && l2.targetApp == nil
-                            && !shouldShowFrontmostContextChip && !aiMode.isActive
+                            && !shouldShowFrontmostContextChip
+                            && currentDockSurfaceMode != .generalChat
                             && l2.focusedPillIndex == nil
                         {
                             Rectangle()
@@ -871,7 +987,7 @@ extension LauncherView {
                             let selectedResult: SearchResult? = {
                                 guard let idx = searchState.selectedIndex,
                                     idx < searchState.results.count,
-                                    !aiMode.isActive, !isL2ContextActive,
+                                    currentDockSurfaceMode != .generalChat, !isL2ContextActive,
                                     allGlobalInlineAppScopes.isEmpty,
                                     searchState.activeSmartQueryKey == nil,
                                     searchState.contextApp == nil
@@ -1128,7 +1244,7 @@ extension LauncherView {
                                         Text("filter…")
                                             .foregroundStyle(.secondary.opacity(0.4))
                                             .font(.system(size: 15, weight: .regular))
-                                    } else if aiMode.isActive {
+                                    } else if currentDockSurfaceMode == .generalChat {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
                                             .font(.system(size: 15, weight: .regular))
@@ -1374,7 +1490,7 @@ extension LauncherView {
                                             {
                                                 handleL2QuerySkippingMenuRouter(trimmed)
                                             }
-                                        } else if aiMode.isActive {
+                                        } else if currentDockSurfaceMode == .generalChat {
                                             if launchTypedAppMatchIfNeeded() {
                                                 return
                                             }
@@ -1466,7 +1582,7 @@ extension LauncherView {
                                         .help("Clear")
                                     }
                                 }
-                            } else if aiMode.isActive {
+                            } else if currentDockSurfaceMode == .generalChat {
                                 aiModeControls
                             } else if shouldShowGlobalInputLoadingIndicator {
                                 GlobalInputLoadingDots()
@@ -1555,7 +1671,8 @@ extension LauncherView {
                         // Context dock: keep app scope readable without turning the
                         // search capsule into a saturated app-colored panel.
                         let inContextDock =
-                            showContextInDock || isGlobalContextActive || aiMode.isActive
+                            showContextInDock || isGlobalContextActive
+                                || currentDockSurfaceMode == .generalChat
                         let typedMatch =
                             hasActiveDockContextSelection || shouldUsePureGlobalAppSearch
                             ? nil : typedL2AppIcon(for: searchState.query)
@@ -1674,7 +1791,9 @@ extension LauncherView {
                 }  // end if focusedAppPillIndex == nil
 
                 // Pinned apps or context chips/AI extensions or browser (3-layer swipeable)
-                if !isCompactSmartScope && !aiMode.isActive && !usesVerticalListDockLayout {
+                if !isCompactSmartScope && currentDockSurfaceMode != .generalChat
+                    && !usesVerticalListDockLayout
+                {
                     HStack(spacing: 8) {
                         // Floating selection pill — not shown in context dock (already in search bar)
                         if !showContextInDock { selectionFloatingPill }
@@ -1689,7 +1808,7 @@ extension LauncherView {
                                 appShortcutsInDock
                                     .transition(.opacity)
                             } else if showContextInDock {
-                                if aiMode.isActive {
+                                if currentDockSurfaceMode == .generalChat {
                                     EmptyView()
                                 } else if isGlobalContextActive {
                                     // Global context: empty query shows pinned/running; typed query searches
@@ -1757,15 +1876,24 @@ extension LauncherView {
 
     // MARK: - Results Content (for smart positioning)
     @ViewBuilder
-    var resultsContentView: some View {
-        // Show different content based on current mode (AI vs Normal)
-        // The L3 media dock can still surface search results while typing.
+    var integratedSheetContent: some View {
+        switch currentDockSurfaceMode {
+        case .generalChat:
+            aiChatSection
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        case .contextDockChat:
+            l2ChatSection
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        case .globalContext, .contextDock, .mediaDock:
+            searchResultsContent
+        }
+    }
+
+    @ViewBuilder
+    var searchResultsContent: some View {
+        // Search-only content. General Chat and Context Dock Chat own their surfaces.
         let content = Group {
-            if aiMode.isActive {
-                // AI mode: AI Chat section (works on L1/L2/L3)
-                aiChatSection
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else if isCompactSmartScope {
+            if isCompactSmartScope {
                 Group {
                     if searchState.activeSmartQueryKey == "clipboard" {
                         clipboardScopeView
@@ -1774,10 +1902,6 @@ extension LauncherView {
                     }
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else if shouldShowContextDockChatSheet
-            {
-                l2ChatSection
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else if showContextInDock && !showMediaLayer
                 && !(l2.chatArmed && !l2.showChatPopover)
                 && shouldShowContextDockAppPanel
@@ -2167,7 +2291,9 @@ extension LauncherView {
             l2.showResultsPopover = false
         }
 
-        if !aiMode.isActive && !showContextInDock && !shouldUsePureGlobalAppSearch {
+        if currentDockSurfaceMode != .generalChat && !showContextInDock
+            && !shouldUsePureGlobalAppSearch
+        {
             performSearch()
         }
 
@@ -2289,7 +2415,7 @@ extension LauncherView {
         {
             l2.appCompletion = nil
         }
-        if (isL2ContextActive || aiMode.isActive)
+        if (isL2ContextActive || currentDockSurfaceMode == .generalChat)
             && newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             scheduleBrowserContextWarmup(reason: "query changed")
@@ -2304,7 +2430,7 @@ extension LauncherView {
             if showMediaLayer {
                 // Show separator on L3 if media is playing
                 mediaObserver.isPlaying
-            } else if aiMode.isActive {
+            } else if currentDockSurfaceMode == .generalChat {
                 // Show separator for AI mode
                 hasUserSentMessageInCurrentSession && (!aiMode.messages.isEmpty || aiMode.isLoading)
             } else {

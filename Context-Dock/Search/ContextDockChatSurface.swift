@@ -48,7 +48,7 @@ extension LauncherView {
             maxHeight: 500,
             query: searchState.query
         ) {
-            resultsContentView
+            l2ChatSection
         }
     }
 }

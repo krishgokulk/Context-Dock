@@ -31,10 +31,6 @@ struct LauncherResultPanelSurface<Content: View>: View {
             content
                 .frame(minHeight: 0, maxHeight: maxHeight)
                 .frame(width: panelWidth, alignment: .leading)
-                .background(
-                    .regularMaterial,
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                )
                 .id("launcher-results-card")
             Spacer(minLength: 0)
         }

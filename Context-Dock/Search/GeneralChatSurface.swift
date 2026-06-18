@@ -48,7 +48,7 @@ extension LauncherView {
             maxHeight: 450,
             query: searchState.query
         ) {
-            resultsContentView
+            aiChatSection
         }
     }
 }

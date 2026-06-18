@@ -15,31 +15,34 @@ extension LauncherView {
             (settings.enableFrontmostDetection && frontmost.isSectionExpanded) ? 45 : 0
         let dockRowHeight = CGFloat(settings.dockIconSize) + 4
         let dockVerticalPadding: CGFloat = 12
+        // Mirror dockBaseView: the input bar is the stable 56 whenever it is expanded (focused,
+        // global context, or showing the action list) so the reserved window height does not
+        // wobble between the empty and typed states. Only the collapsed floating dock row uses
+        // the icon-row height.
+        let inputBarExpanded =
+            (isSearchBarExpanded || usesVerticalListDockLayout)
+            && (l2.focusedPillIndex == nil || usesVerticalListDockLayout)
+            && !showMediaLayer
         let searchBarHeight: CGFloat =
-            usesVerticalListDockLayout
+            inputBarExpanded
             ? 56
-            : max(
-                isSearchBarExpanded ? 58 : 50,
-                dockRowHeight + dockVerticalPadding
-            )
+            : max(50, dockRowHeight + dockVerticalPadding)
         let indexingBarHeight: CGFloat = fileIndexManager.progress.isIndexing ? 30 : 0
 
         return DockHeightMetrics(
+            surfaceMode: currentDockSurfaceMode,
             statusBarHeight: statusBarHeight,
             contextHeight: contextHeight,
             searchBarHeight: searchBarHeight,
             indexingBarHeight: indexingBarHeight,
             finderSearchPanelHeight: finderSearchPanelHeightForCurrentState,
             contextChipHeight: contextChipHeightForCurrentState,
-            aiModeActive: aiMode.isActive,
             aiMessageCount: aiMode.messages.count,
             showsContextDockAppPanel: searchState.activeSmartQueryKey != nil
                 && !isCompactSmartScope
                 && shouldShowContextDockAppPanel,
             compactSmartScope: isCompactSmartScope,
-            mediaLayerVisible: showMediaLayer,
             mediaHasDuration: mediaObserver.duration > 0,
-            contextDockChatVisible: shouldShowContextDockChatSheet,
             contextDockChatMessageCount: l2.chatMessages.count,
             listViewDockHeight: listViewDockHeight,
             resultCount: searchState.results.count,

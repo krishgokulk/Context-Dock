@@ -1355,12 +1355,20 @@ extension LauncherView {
             if settings.effectiveDockAtBottom {
                 // Bottom-anchored: grow upward, keep bottom edge fixed
                 newY = currentFrame.minY
-            } else if spaceBelow >= newHeight || spaceBelow >= spaceAbove {
-                // Anchor top edge, grow downward
-                newY = currentFrame.maxY - newHeight
             } else {
-                // Anchor bottom edge, grow upward
-                newY = currentFrame.minY
+                switch surfaceMode {
+                case .generalChat, .contextDockChat:
+                    // Chat surfaces swap content inside the stable dock frame.
+                    newY = max(visibleFrame.minY, currentFrame.maxY - newHeight)
+                case .globalContext, .contextDock, .mediaDock:
+                    if spaceBelow >= newHeight || spaceBelow >= spaceAbove {
+                        // Anchor top edge, grow downward
+                        newY = currentFrame.maxY - newHeight
+                    } else {
+                        // Anchor bottom edge, grow upward
+                        newY = currentFrame.minY
+                    }
+                }
             }
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)

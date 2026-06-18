@@ -371,19 +371,12 @@ struct LauncherView: View {
         return key == "clipboard" || key == "notifications"
     }
 
-    var shouldUseIntegratedScopeSheet: Bool {
-        if isCompactSmartScope { return true }
-        guard showContextInDock, !showMediaLayer, !usesVerticalListDockLayout else { return false }
-        return hasResultsToShow
-    }
-
     var hasSecondaryDockContentBesideInput: Bool {
-        if aiMode.isActive { return false }
+        if currentDockSurfaceMode == .generalChat { return false }
         if isCompactSmartScope { return false }
         if usesVerticalListDockLayout { return false }
         if showMediaLayer || searchState.activeSmartQueryKey != nil { return true }
         if showContextInDock {
-            if aiMode.isActive { return false }
             if isGlobalContextActive {
                 return !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
@@ -457,7 +450,7 @@ struct LauncherView: View {
             && searchState.activeSmartQueryKey == nil
             && searchState.contextApp == nil
             && lockedSubmenuParent == nil
-            && !aiMode.isActive
+            && currentDockSurfaceMode != .generalChat
             && !showMediaLayer
             && !isContextDockChatRoutingLocked
     }
@@ -465,7 +458,7 @@ struct LauncherView: View {
     var shouldShowSeparateActionList: Bool {
         guard showContextInDock,
             !showMediaLayer,
-            !aiMode.isActive,
+            currentDockSurfaceMode != .generalChat,
             !isContextDockChatRoutingLocked,
             shouldShowL2UnifiedDockRow
         else { return false }
@@ -537,7 +530,7 @@ struct LauncherView: View {
         }
         guard showContextInDock,
             !showMediaLayer,
-            !aiMode.isActive,
+            currentDockSurfaceMode != .generalChat,
             !isContextDockChatRoutingLocked,
             !shouldUsePureGlobalAppSearch,
             !q.isEmpty
@@ -1780,7 +1773,9 @@ struct LauncherView: View {
     }
 
     func finderInputSymbolForSearchText() -> String? {
-        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive else { return nil }
+        guard showContextInDock, !isGlobalContextActive, currentDockSurfaceMode != .generalChat else {
+            return nil
+        }
 
         let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else { return nil }
@@ -1796,7 +1791,9 @@ struct LauncherView: View {
     func menuInputIconForSearchText(hasAppMatch: Bool) -> (image: NSImage?, symbol: String)?
     {
         guard !hasAppMatch else { return nil }
-        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive else { return nil }
+        guard showContextInDock, !isGlobalContextActive, currentDockSurfaceMode != .generalChat else {
+            return nil
+        }
 
         let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard query.count >= 2 else { return nil }
@@ -1910,7 +1907,7 @@ struct LauncherView: View {
 
     // Top-ranked pill whose name starts with the current searchState.query — used for inline ghost completion
     var ghostPillCompletion: DockPill? {
-        guard !aiMode.isActive else { return nil }
+        guard currentDockSurfaceMode != .generalChat else { return nil }
         guard lockedSubmenuParent == nil else { return nil }
         guard !searchState.query.isEmpty else { return nil }
         guard !(isL2ContextActive && l2.targetApp == nil && l2.appCompletion != nil) else {
@@ -2205,9 +2202,9 @@ struct LauncherView: View {
     var hasResultsToShow: Bool {
         guard !showMediaLayer else { return false }
         return !searchState.results.isEmpty
-            || (!searchState.query.isEmpty && !isL2ContextActive && !aiMode.isActive)
-            || (aiMode.isActive
-                && (!aiMode.messages.isEmpty || aiMode.isLoading || aiMode.streamingId != nil))
+            || (currentDockSurfaceMode == .globalContext && !searchState.query.isEmpty)
+            || (!searchState.query.isEmpty && !isL2ContextActive && currentDockSurfaceMode != .generalChat)
+            || currentDockSurfaceMode == .generalChat
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || shouldShowContextDockChatSheet
             || (shouldShowContextDockAppPanel
@@ -2237,36 +2234,53 @@ struct LauncherView: View {
             && l2.targetApp == nil
             && globalInlineAppScope == nil
             && !showMediaLayer
-            && !aiMode.isActive
+            && currentDockSurfaceMode != .generalChat
             && !frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && frontmost.icon != nil
     }
 
     @ViewBuilder
     var resultsCardAlignedToSearchInput: some View {
-        LauncherResultPanelSurface(
-            leadingInset: resultsPanelLeadingInset,
-            totalWidth: calculatedWidth,
-            panelWidth: resultsPanelWidth,
-            maxHeight: (aiMode.isActive || shouldShowContextDockChatSheet)
-                ? 500
-                : (l1ResultsReservedHeight > 0 ? l1ResultsReservedHeight : 450),
-            query: searchState.query
-        ) {
-            resultsContentView
+        switch currentDockSurfaceMode {
+        case .globalContext, .contextDock:
+            LauncherResultPanelSurface(
+                leadingInset: resultsPanelLeadingInset,
+                totalWidth: calculatedWidth,
+                panelWidth: resultsPanelWidth,
+                maxHeight: searchResultsPanelMaxHeight,
+                query: searchState.query
+            ) {
+                searchResultsContent
+            }
+        case .generalChat, .contextDockChat, .mediaDock:
+            EmptyView()
         }
     }
 
     @ViewBuilder
     var transparentResultsAlignedToSearchInput: some View {
-        LauncherTransparentPanelSurface(
-            leadingInset: resultsPanelLeadingInset,
-            totalWidth: calculatedWidth,
-            panelWidth: resultsPanelWidth,
-            maxHeight: shouldShowContextDockChatSheet ? 500 : 450,
-            query: searchState.query
-        ) {
-            resultsContentView
+        switch currentDockSurfaceMode {
+        case .globalContext, .contextDock:
+            LauncherTransparentPanelSurface(
+                leadingInset: resultsPanelLeadingInset,
+                totalWidth: calculatedWidth,
+                panelWidth: resultsPanelWidth,
+                maxHeight: searchResultsPanelMaxHeight,
+                query: searchState.query
+            ) {
+                searchResultsContent
+            }
+        case .generalChat, .contextDockChat, .mediaDock:
+            EmptyView()
+        }
+    }
+
+    var searchResultsPanelMaxHeight: CGFloat {
+        switch currentDockSurfaceMode {
+        case .globalContext, .contextDock:
+            return l1ResultsReservedHeight > 0 ? l1ResultsReservedHeight : 450
+        case .generalChat, .contextDockChat, .mediaDock:
+            return 0
         }
     }
 

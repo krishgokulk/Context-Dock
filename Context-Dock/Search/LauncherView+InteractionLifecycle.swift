@@ -34,7 +34,7 @@ extension LauncherView {
             // Consumes the event so the ScrollView underneath never moves.
             if self.isHoveringPillRow
                 && self.showContextInDock
-                && !self.aiMode.isActive
+                && self.currentDockSurfaceMode != .generalChat
                 && !self.showShortcutSheet
                 && abs(dx) > abs(dy)  // horizontal-dominant gesture
             {
@@ -126,8 +126,10 @@ extension LauncherView {
                     && self.isHoveringInputField
                 {
                     guard !self.isExplicitAppScopeLocked else { return event }
-                    if self.aiMode.isActive || self.accumulatedSwipeDeltaX > 0 {
-                        self.toggleAIModeViaSwipe()
+                    if self.currentDockSurfaceMode == .generalChat {
+                        self.exitGeneralChatRestoringLayer()
+                    } else if self.accumulatedSwipeDeltaX > 0 {
+                        self.enterGeneralChatPreservingLayer()
                     }
                 }
                 // Vertical swipe — Context Dock is home: swipe down → Global, swipe up → Media.
@@ -159,9 +161,9 @@ extension LauncherView {
                     }
                     // Swipe DOWN (positive deltaY): Media → Context → Global
                     else {
-                        if self.aiMode.isActive {
+                        if self.currentDockSurfaceMode == .generalChat {
                             // AI chat → previous layer
-                            self.toggleAIModeViaSwipe()
+                            self.exitGeneralChatRestoringLayer()
                         } else if self.showMediaLayer {
                             // Media Dock → Context Dock
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -199,7 +201,11 @@ extension LauncherView {
     }
 
     func toggleAIModeViaSwipe() {
-        toggleAIModePreservingLayer()
+        if currentDockSurfaceMode == .generalChat {
+            exitGeneralChatRestoringLayer()
+        } else {
+            enterGeneralChatPreservingLayer()
+        }
     }
 
     enum DockLayerDirection {
@@ -212,8 +218,8 @@ extension LauncherView {
 
         switch direction {
         case .up:
-            if aiMode.isActive {
-                toggleAIModeViaSwipe()
+            if currentDockSurfaceMode == .generalChat {
+                exitGeneralChatRestoringLayer()
             } else if showMediaLayer {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                     showMediaLayer = false
@@ -230,8 +236,8 @@ extension LauncherView {
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
             }
         case .down:
-            if aiMode.isActive {
-                toggleAIModeViaSwipe()
+            if currentDockSurfaceMode == .generalChat {
+                exitGeneralChatRestoringLayer()
             } else if isGlobalContextActive {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                     dismissContextAndReturnToDock()
@@ -254,7 +260,7 @@ extension LauncherView {
 
     func toggleGlobalContextPreservingQuery() {
         guard !isExplicitAppScopeLocked else { return }
-        guard showContextInDock, !aiMode.isActive else { return }
+        guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) {
             showMediaLayer = false
@@ -278,7 +284,7 @@ extension LauncherView {
     func handleCommandKeyContextScopeToggle() {
         guard settings.singleCommandTogglesContextScope else { return }
         guard !isCompactSmartScope else { return }
-        guard showContextInDock, !aiMode.isActive else { return }
+        guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
         guard Date() >= suppressCommandScopeToggleUntil else { return }
 
         if !isSearchBarExpanded {
@@ -291,8 +297,17 @@ extension LauncherView {
     }
 
     func toggleAIModePreservingLayer() {
+        if currentDockSurfaceMode == .generalChat {
+            exitGeneralChatRestoringLayer()
+        } else {
+            enterGeneralChatPreservingLayer()
+        }
+    }
+
+    func enterGeneralChatPreservingLayer() {
         guard settings.enableAIMode else { return }
-        guard !isExplicitAppScopeLocked || aiMode.isActive else { return }
+        guard !isExplicitAppScopeLocked else { return }
+        guard currentDockSurfaceMode != .generalChat else { return }
 
         searchState.results = []
         searchState.selectedIndex = nil
@@ -300,29 +315,39 @@ extension LauncherView {
         aiMode.currentTask?.cancel()
         aiMode.isLoading = false
 
-        if !aiMode.isActive {
-            chatReturnContextInDock = showContextInDock
-            chatReturnBrowserLayer = showMediaLayer
-            chatReturnGlobalContext = globalContextActivation
-            hasUserSentMessageInCurrentSession = false
-        }
+        let previousMode = currentDockSurfaceMode
+        chatReturnContextInDock = showContextInDock
+        chatReturnBrowserLayer = previousMode == .mediaDock
+        chatReturnGlobalContext = previousMode == .globalContext ? globalContextActivation : nil
+        hasUserSentMessageInCurrentSession = false
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
-            aiMode.isActive.toggle()
-            if aiMode.isActive {
-                // Media hides the input field, so temporarily leave L3 while chat is active.
-                showMediaLayer = false
-            } else {
-                showContextInDock = chatReturnContextInDock
-                showMediaLayer = chatReturnBrowserLayer
-                globalContextActivation = chatReturnGlobalContext
-            }
+            aiMode.isActive = true
+            // Media hides the input field, so temporarily leave L3 while chat is active.
+            showMediaLayer = false
         }
 
-        if aiMode.isActive {
-            collapseTimer?.cancel()
-        } else {
-            if searchState.query.isEmpty { startCollapseTimer() }
+        collapseTimer?.cancel()
+    }
+
+    func exitGeneralChatRestoringLayer() {
+        guard currentDockSurfaceMode == .generalChat else { return }
+
+        searchState.results = []
+        searchState.selectedIndex = nil
+        searchState.query = ""
+        aiMode.currentTask?.cancel()
+        aiMode.isLoading = false
+
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+            aiMode.isActive = false
+            showContextInDock = chatReturnContextInDock
+            showMediaLayer = chatReturnBrowserLayer
+            globalContextActivation = chatReturnGlobalContext
+        }
+
+        if searchState.query.isEmpty {
+            startCollapseTimer()
         }
     }
 
@@ -356,7 +381,7 @@ extension LauncherView {
         collapseTimer?.cancel()
 
         // Collapse timer is an L1 concept — skip entirely in L2 and AI mode
-        if aiMode.isActive || isL2ContextActive {
+        if currentDockSurfaceMode == .generalChat || isL2ContextActive {
             return
         }
 
@@ -443,7 +468,7 @@ extension LauncherView {
 
     var shouldWarmFrontmostBrowserContext: Bool {
         let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return aiMode.isActive || aiMode.isLoading || l2.isLoading
+        return currentDockSurfaceMode == .generalChat || aiMode.isLoading || l2.isLoading
             || (showContextInDock && !query.isEmpty)
     }
 

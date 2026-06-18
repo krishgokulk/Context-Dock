@@ -66,19 +66,17 @@ enum DockResizeReason {
 }
 
 struct DockHeightMetrics {
+    var surfaceMode: DockSurfaceMode
     var statusBarHeight: CGFloat
     var contextHeight: CGFloat
     var searchBarHeight: CGFloat
     var indexingBarHeight: CGFloat
     var finderSearchPanelHeight: CGFloat
     var contextChipHeight: CGFloat
-    var aiModeActive: Bool
     var aiMessageCount: Int
     var showsContextDockAppPanel: Bool
     var compactSmartScope: Bool
-    var mediaLayerVisible: Bool
     var mediaHasDuration: Bool
-    var contextDockChatVisible: Bool
     var contextDockChatMessageCount: Int
     var listViewDockHeight: CGFloat
     var resultCount: Int
@@ -103,8 +101,10 @@ struct DockHeightResolver {
         switch metrics.surfaceMode {
         case .mediaDock:
             return .compact
-        case .contextDockChat, .generalChat:
+        case .generalChat:
             return .expanded
+        case .contextDockChat:
+            return collapsedPreset(metrics)
         case .globalContext, .contextDock:
             if metrics.usesVerticalListDockLayout
                 || metrics.listViewDockHeight > 0
@@ -120,18 +120,46 @@ struct DockHeightResolver {
         }
     }
 
-    static func resolve(_ metrics: DockHeightMetrics) -> CGFloat {
-        let pinnedAppsHeight: CGFloat = 0
+    private static func collapsedPreset(_ metrics: DockHeightPresetMetrics) -> DockHeightPreset {
+        metrics.searchBarExpanded ? .standard : .compact
+    }
 
-        if metrics.aiModeActive {
-            let aiChatHeight: CGFloat =
-                metrics.aiMessageCount == 0
-                ? 0
-                : min(CGFloat(metrics.aiMessageCount) * 76, 400)
-            let aiLoadingHeight: CGFloat = metrics.aiMessageCount == 0 ? 0 : 48
-            return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
-                + aiChatHeight + aiLoadingHeight + 12
+    static func resolve(_ metrics: DockHeightMetrics) -> CGFloat {
+        switch metrics.surfaceMode {
+        case .generalChat:
+            return generalChatHeight(metrics)
+        case .contextDockChat:
+            return collapsedPillHeight(metrics)
+        case .globalContext:
+            return searchSurfaceHeight(metrics)
+        case .contextDock:
+            return searchSurfaceHeight(metrics)
+        case .mediaDock:
+            return mediaDockHeight(metrics)
         }
+    }
+
+    private static func collapsedPillHeight(_ metrics: DockHeightMetrics) -> CGFloat {
+        metrics.statusBarHeight
+            + metrics.contextHeight
+            + metrics.searchBarHeight
+            + metrics.contextChipHeight
+            + metrics.indexingBarHeight
+    }
+
+    private static func generalChatHeight(_ metrics: DockHeightMetrics) -> CGFloat {
+        let chatHeight: CGFloat = 620
+        return metrics.statusBarHeight + metrics.searchBarHeight + chatHeight + 10
+    }
+
+    private static func mediaDockHeight(_ metrics: DockHeightMetrics) -> CGFloat {
+        let mediaPillHeight: CGFloat =
+            metrics.mediaHasDuration ? 70 : metrics.searchBarHeight
+        return metrics.statusBarHeight + mediaPillHeight + 12
+    }
+
+    private static func searchSurfaceHeight(_ metrics: DockHeightMetrics) -> CGFloat {
+        let pinnedAppsHeight: CGFloat = 0
 
         if metrics.showsContextDockAppPanel {
             let panelHeight: CGFloat = 480
@@ -150,21 +178,6 @@ struct DockHeightResolver {
         if metrics.finderSearchPanelHeight > 0 {
             return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
                 + metrics.finderSearchPanelHeight + 14
-        }
-
-        if metrics.mediaLayerVisible {
-            let mediaPillHeight: CGFloat =
-                metrics.mediaHasDuration ? 70 : metrics.searchBarHeight
-            return metrics.statusBarHeight + mediaPillHeight + 12
-        }
-
-        if metrics.contextDockChatVisible {
-            let messageHeight = min(CGFloat(max(metrics.contextDockChatMessageCount, 1)) * 92, 400)
-            let loadingHeight: CGFloat = 54
-            let headerHeight: CGFloat = metrics.contextDockChatMessageCount == 0 ? 0 : 42
-            let chatHeight = min(messageHeight + loadingHeight + headerHeight + 26, 500)
-            return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
-                + chatHeight + 10
         }
 
         if metrics.listViewDockHeight > 0 {
