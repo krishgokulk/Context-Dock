@@ -2,6 +2,27 @@ import AppKit
 import SwiftUI
 
 extension LauncherView {
+    func requestWindowSizeUpdate(
+        reason: DockResizeReason,
+        animated: Bool = true,
+        debounceNanoseconds: UInt64 = 50_000_000
+    ) {
+        let preset = currentDockHeightPreset
+        let mode = currentDockSurfaceMode
+        let presetChanged = lastAppliedDockHeightPreset != preset
+        let modeChanged = lastAppliedDockSurfaceMode != mode
+
+        if reason.isTypingOrContentRefresh
+            && preset.stabilizesResize
+            && !presetChanged
+            && !modeChanged
+        {
+            return
+        }
+
+        updateWindowSize(animated: animated, debounceNanoseconds: debounceNanoseconds)
+    }
+
     // MARK: - Dock pill arrow-key navigation
 
     /// Flat list of app pills currently visible in the pinned/running or global-search row.
@@ -113,6 +134,9 @@ extension LauncherView {
             closeShortcutSheet()
             return nil
         case 125:  // Down
+            if shortcutSheetSelectionSnapshot != nil {
+                shortcutSheetSelectionExpanded = true
+            }
             let commands = currentShortcutSheetCommandIDs()
             guard !commands.isEmpty else { return nil }
             if let id = shortcutSheetFocusedCommandID,
@@ -122,18 +146,27 @@ extension LauncherView {
             } else {
                 shortcutSheetFocusedCommandID = commands[0]
             }
+            refreshShortcutSheetPanel()
             return nil
         case 126:  // Up
+            if shortcutSheetSelectionSnapshot != nil {
+                shortcutSheetSelectionExpanded = true
+            }
             let commands = currentShortcutSheetCommandIDs()
             guard !commands.isEmpty else { return nil }
             guard let id = shortcutSheetFocusedCommandID,
                 let index = commands.firstIndex(of: id)
-            else { return nil }
+            else {
+                shortcutSheetFocusedCommandID = commands[commands.count - 1]
+                refreshShortcutSheetPanel()
+                return nil
+            }
             if index <= 0 {
-                shortcutSheetFocusedCommandID = nil
+                shortcutSheetFocusedCommandID = commands[0]
             } else {
                 shortcutSheetFocusedCommandID = commands[index - 1]
             }
+            refreshShortcutSheetPanel()
             return nil
         case 36:  // Return
             guard let id = shortcutSheetFocusedCommandID,
@@ -342,6 +375,14 @@ extension LauncherView {
             let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
 
+            if event.keyCode == 36,
+                (self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed),
+                q.isEmpty
+            {
+                self.exitContextDockChatAndScope()
+                return nil
+            }
+
             if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
                 return nil
             }
@@ -421,7 +462,7 @@ extension LauncherView {
             let actionPills =
                 q.isEmpty
                 ? self.selectionScopedDockPills(self.cachedDockPills)
-                : self.currentVisibleDockPills(for: pillQuery)
+                : (pillQuery.isEmpty ? [] : self.contextDockViewModel.visiblePills)
             let showPinnedRow =
                 q.isEmpty
                 && self.l2.targetApp == nil
@@ -1053,6 +1094,7 @@ extension LauncherView {
         shortcutSheetSelectionExpanded = false
         shortcutSheetSearchQuery = ""
         shortcutSheetFocusedCommandID = nil
+        primeFinderContextualActionsForSelectionSheet(snapshot)
         showStandaloneShortcutSheetPanel(appName: shortcutSheetAppName, preserveSelection: true)
 
         guard let app else { return }
@@ -1068,6 +1110,15 @@ extension LauncherView {
         }
     }
 
+    func primeFinderContextualActionsForSelectionSheet(_ snapshot: SelectionContextSnapshot) {
+        guard snapshot.sourceBundleID == "com.apple.finder",
+            !snapshot.selectedFiles.isEmpty,
+            !FinderContextualMenuActionSource.shared.hasFreshCache(for: snapshot.selectedFiles)
+        else { return }
+
+        _ = FinderContextualMenuActionSource.shared.actions(for: snapshot.selectedFiles)
+    }
+
     func showStandaloneShortcutSheetPanel(appName: String, preserveSelection: Bool = false) {
         let preservedSnapshot = preserveSelection ? shortcutSheetSelectionSnapshot : nil
         closeShortcutSheet(resetSearch: false)
@@ -1078,6 +1129,7 @@ extension LauncherView {
         showShortcutSheet = true
         ShortcutSheetPanelPresenter.shared.show(
             rootView: shortcutSheetPanelRootView(appName: appName),
+            initialHeight: shortcutSheetSelectionSnapshot != nil ? 132 : 560,
             onKeyDown: handleShortcutSheetPanelKey
         )
     }
@@ -1253,15 +1305,32 @@ extension LauncherView {
             )
             defer { SearchPerformanceLog.shared.endInterval("window.heightUpdate", state: heightSignpost) }
 
+            let heightPreset = self.currentDockHeightPreset
+            let surfaceMode = self.currentDockSurfaceMode
             let newHeight = self.calculatedHeight
             let newWidth = self.calculatedWidth
             let currentFrame = window.frame
             let screen = window.screen ?? NSScreen.main
             let visibleFrame = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
 
+            let presetChanged = self.lastAppliedDockHeightPreset != heightPreset
+            let modeChanged = self.lastAppliedDockSurfaceMode != surfaceMode
+            let widthChanged = abs(currentFrame.width - newWidth) > 1
+            let heightDelta = abs(currentFrame.height - newHeight)
+            if heightPreset.stabilizesResize
+                && !presetChanged
+                && !modeChanged
+                && !widthChanged
+                && heightDelta <= 24
+            {
+                return
+            }
+
             // Only update if size actually changed
-            guard abs(currentFrame.height - newHeight) > 1 || abs(currentFrame.width - newWidth) > 1
+            guard heightDelta > 1 || widthChanged
             else {
+                self.lastAppliedDockHeightPreset = heightPreset
+                self.lastAppliedDockSurfaceMode = surfaceMode
                 return
             }
 
@@ -1307,6 +1376,9 @@ extension LauncherView {
             } else {
                 window.setFrame(newFrame, display: false)
             }
+
+            self.lastAppliedDockHeightPreset = heightPreset
+            self.lastAppliedDockSurfaceMode = surfaceMode
 
             // SwiftUI's @FocusState reconciliation fires asynchronously after setFrame and
             // calls becomeFirstResponder → selectAll on the NSTextField.
@@ -1769,6 +1841,20 @@ extension LauncherView {
                         isSearchFieldFocused = true
                         return .handled
                     }
+                    if shouldShowContextDockChatSheet || l2.showChatPopover {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                            exitContextDockChatAndScope()
+                        }
+                        isSearchFieldFocused = true
+                        return .handled
+                    }
+                    if l2.chatArmed {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                            exitContextDockChatAndScope()
+                        }
+                        isSearchFieldFocused = true
+                        return .handled
+                    }
                     // Exit app/smart-query scope — same as Esc, restores L1
                     if l2.targetApp != nil || searchState.contextApp != nil
                         || searchState.activeSmartQueryKey != nil
@@ -1781,20 +1867,6 @@ extension LauncherView {
                         searchState.lastSmartQuery = ""
                         if wasAppScope {
                             globalContextActivation = GlobalContextActivation(autoActivated: false)
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    if l2.showChatPopover {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            disarmContextDockChat()
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    if l2.chatArmed {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            disarmContextDockChat()
                         }
                         isSearchFieldFocused = true
                         return .handled

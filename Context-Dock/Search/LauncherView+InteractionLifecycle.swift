@@ -272,7 +272,7 @@ extension LauncherView {
             self.isSearchBarExpanded = true
             self.isSearchFieldFocused = true
         }
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .modeChanged)
     }
 
     func handleCommandKeyContextScopeToggle() {
@@ -337,7 +337,7 @@ extension LauncherView {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
             isSearchBarExpanded = true
         }
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .rowLayoutChanged)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.isSearchFieldFocused = true

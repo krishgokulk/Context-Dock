@@ -559,13 +559,24 @@ extension LauncherView {
 
     func refreshCachedFinderCurrentDirectory(for bundleID: String) {
         guard bundleID == "com.apple.finder" else {
-            cachedFinderCurrentDirectoryPath = ""
+            if !cachedFinderCurrentDirectoryPath.isEmpty {
+                cachedFinderCurrentDirectoryPath = ""
+            }
             return
         }
 
-        cachedFinderCurrentDirectoryPath =
+        let now = Date()
+        guard now.timeIntervalSince(contextDockViewModel.lastFinderDirectoryRefresh) >= 0.5 else {
+            return
+        }
+        contextDockViewModel.lastFinderDirectoryRefresh = now
+
+        let refreshedPath =
             ContextDetector.shared.getCurrentFinderDirectory()?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if cachedFinderCurrentDirectoryPath != refreshedPath {
+            cachedFinderCurrentDirectoryPath = refreshedPath
+        }
     }
 
     func isFinderFrontmostWindowContext() -> Bool {
@@ -574,41 +585,46 @@ extension LauncherView {
         return axContext.bundleId == "com.apple.finder"
     }
 
-    /// Returns true when Finder is frontmost AND has at least one real Finder window
-    /// (folder/file browser), distinguishing it from the "desktop-only" state where
-    /// Finder is active but the user clicked the wallpaper (no window open).
+    /// Returns true when Finder has at least one real folder/browser window visible.
+    /// Checks CGWindowList for Finder-owned, layer-0, titled, non-tiny windows.
+    /// Does NOT require Finder to be the frontmost app (works while dock is active).
     func finderHasActiveWindow() -> Bool {
-        guard frontmost.bundleID == "com.apple.finder" || axContext.bundleId == "com.apple.finder"
-        else { return false }
         guard
             let finderApp = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == "com.apple.finder"
             })
         else { return false }
-        let axApp = AXUIElementCreateApplication(finderApp.processIdentifier)
-        var windowsRef: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-                == .success,
-            let windows = windowsRef as? [AXUIElement], !windows.isEmpty
-        else { return false }
-        // A window is "real" if it has a non-empty title that isn't the desktop pseudo-window
-        for win in windows {
-            var titleRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                == .success,
-                let title = titleRef as? String, !title.isEmpty, title.lowercased() != "desktop"
-            {
-                return true
-            }
+
+        let pid = Int(finderApp.processIdentifier)
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+
+        for info in list {
+            guard let wpid = info[kCGWindowOwnerPID as String] as? Int, wpid == pid,
+                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0
+            else { continue }
+            // Service/background windows have no title; real folder windows do.
+            guard let name = info[kCGWindowName as String] as? String, !name.isEmpty else { continue }
+            // Require meaningful size to exclude 0×0 service windows.
+            if let bounds = info[kCGWindowBounds as String] as? [String: Any],
+               let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
+               w > 50 && h > 50 { return true }
         }
         return false
     }
 
-    /// True when Finder is frontmost but only the desktop is visible (no folder window).
+    /// True when Finder is frontmost (or scoped via chip) but only the desktop is visible (no folder window).
     /// In this state the dock behaves like a "no-app" global context.
     var isFinderDesktopOnlyMode: Bool {
-        (frontmost.bundleID == "com.apple.finder") && !finderHasActiveWindow()
+        let finderBundleId = "com.apple.finder"
+        // Use l2.targetApp for explicit chip pin — avoids resolveDockScope which is
+        // query-dependent and returns wrong results when query matches menu items in other apps.
+        let isFinderContext = frontmost.bundleID == finderBundleId
+            || axContext.bundleId == finderBundleId
+            || l2.targetApp?.bundleId == finderBundleId
+        return isFinderContext && !finderHasActiveWindow()
     }
 
     func isFinderCurrentWindowSearchAttached(currentFolderPath: String? = nil) -> Bool {

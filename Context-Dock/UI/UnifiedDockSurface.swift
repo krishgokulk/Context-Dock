@@ -33,10 +33,7 @@ struct UnifiedDockSurface<Content: View>: View {
     var body: some View {
         content
             .frame(width: width, alignment: .leading)
-            .background(alignment: .topLeading) {
-                GlassBackground(cornerRadius: size.cornerRadius, isDark: isDark)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
                     .strokeBorder(

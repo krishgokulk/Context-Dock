@@ -731,7 +731,7 @@ extension LauncherView {
             .onChange(of: l2.focusedPillIndex) { idx in
                 guard let idx, idx >= matches.count else { return }
                 let menuIdx = idx - matches.count
-                refreshQuickLookPreviewForCurrentFocusIfVisible()
+                DispatchQueue.main.async { refreshQuickLookPreviewForCurrentFocusIfVisible() }
                 if menuIdx >= 0, menuIdx < menuRowIDs.count {
                     withAnimation(.easeOut(duration: 0.08)) {
                         proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)

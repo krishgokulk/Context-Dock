@@ -4,6 +4,14 @@ import SwiftUI
 private final class ShortcutSheetPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    var onKeyDown: ((NSEvent) -> Bool)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, onKeyDown?(event) == true {
+            return
+        }
+        super.sendEvent(event)
+    }
 }
 
 @MainActor
@@ -11,18 +19,18 @@ final class ShortcutSheetPanelPresenter {
     static let shared = ShortcutSheetPanelPresenter()
 
     private var panel: NSPanel?
-    private var keyMonitor: Any?
 
     private init() {}
 
     func show<Content: View>(
         rootView: Content,
+        initialHeight: CGFloat = 560,
         onKeyDown: @escaping (NSEvent) -> Bool
     ) {
         close()
 
         let width: CGFloat = 420
-        let height: CGFloat = 560
+        let height = initialHeight
         let panel = ShortcutSheetPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .fullSizeContentView],
@@ -39,12 +47,8 @@ final class ShortcutSheetPanelPresenter {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
+        panel.onKeyDown = onKeyDown
         panel.contentView = NSHostingView(rootView: AnyView(rootView))
-
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in
-            guard let panel, panel.isVisible, NSApp.keyWindow === panel else { return event }
-            return onKeyDown(event) ? nil : event
-        }
 
         let screenFrame = (NSScreen.main?.visibleFrame) ?? .zero
         let mouse = NSEvent.mouseLocation
@@ -59,7 +63,13 @@ final class ShortcutSheetPanelPresenter {
     }
 
     func update<Content: View>(rootView: Content) {
-        panel?.contentView = NSHostingView(rootView: AnyView(rootView))
+        // Reuse the existing hosting view so @State and keyboard focus survive
+        // per-keystroke updates. Creating a new NSHostingView would reset focus.
+        if let hostingView = panel?.contentView as? NSHostingView<AnyView> {
+            hostingView.rootView = AnyView(rootView)
+        } else {
+            panel?.contentView = NSHostingView(rootView: AnyView(rootView))
+        }
     }
 
     func resize(width: CGFloat? = nil, height: CGFloat, keepTopEdge: Bool = true) {
@@ -76,10 +86,7 @@ final class ShortcutSheetPanelPresenter {
     }
 
     func close() {
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
-            self.keyMonitor = nil
-        }
+        (panel as? ShortcutSheetPanel)?.onKeyDown = nil
         panel?.orderOut(nil)
         panel = nil
     }

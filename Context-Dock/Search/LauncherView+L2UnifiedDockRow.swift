@@ -1,0 +1,294 @@
+import SwiftUI
+
+extension LauncherView {
+    @ViewBuilder
+    var l2UnifiedDockRow: some View {
+        makeContextDockSurface()
+    }
+
+    @ViewBuilder
+    func makeGlobalContextSurface() -> some View {
+        let presentation = l2DockRowPresentation
+        GlobalContextSurface(
+            presentation: presentation,
+            onPillQueryChange: handleL2PillQueryChange,
+            onAppear: { handleL2DockRowAppear(pillQuery: presentation.pillQuery) },
+            onFinderDesktopModeChange: { enabled in
+                await handleFinderDesktopModeChange(enabled, pillQuery: presentation.pillQuery)
+            },
+            onSwipeDown: handleL2SwipeDown,
+            onSwipeUp: handleL2SwipeUp
+        ) {
+            l2FindTokenContent
+        } submenuContent: {
+            l2SubmenuContent
+        } globalSearchContent: {
+            l2GlobalSearchContent(presentation.globalSearch)
+        } dockPillContent: {
+            l2DockPillContent(presentation)
+        }
+    }
+
+    @ViewBuilder
+    func makeContextDockSurface() -> some View {
+        let presentation = l2DockRowPresentation
+        ContextDockSurface(
+            presentation: presentation,
+            isFinderDesktopOnlyMode: isFinderDesktopOnlyMode,
+            onPillQueryChange: handleL2PillQueryChange,
+            onAppear: { handleL2DockRowAppear(pillQuery: presentation.pillQuery) },
+            onFinderDesktopModeChange: { enabled in
+                await handleFinderDesktopModeChange(enabled, pillQuery: presentation.pillQuery)
+            },
+            onSwipeDown: handleL2SwipeDown,
+            onSwipeUp: handleL2SwipeUp
+        ) {
+            l2FindTokenContent
+        } submenuContent: {
+            l2SubmenuContent
+        } globalSearchContent: {
+            l2GlobalSearchContent(presentation.globalSearch)
+        } dockPillContent: {
+            l2DockPillContent(presentation)
+        }
+    }
+
+    var l2DockRowPresentation: L2DockRowPresentation {
+        let q =
+            isL2ContextActive
+            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() : ""
+        let pureGlobalAppSearch = shouldUsePureGlobalAppSearch
+        let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
+        let pillQuery = finderSearchPopoverActive ? "" : q
+        let pills = pureGlobalAppSearch || pillQuery.isEmpty
+            ? []
+            : contextDockViewModel.visiblePills
+        let explicitAppTarget =
+            pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
+        let hasActiveContextSelection = hasActiveDockContextSelection
+        let hasAnySelection =
+            hasActiveContextSelection
+            || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
+        let globalAppMatches = currentOrImmediateGlobalAppMatches(for: q)
+        let genericAppListQuery = isGenericApplicationListQuery(q)
+        let preferFrontmostMenuResults =
+            !genericAppListQuery
+            && globalAppMatches.isEmpty
+            && !q.isEmpty
+            && isGlobalContextActive
+            && !hasActiveContextSelection
+            && l2.targetApp == nil
+            && pills.contains { pill in
+                guard !pill.isSeparator else { return false }
+                return pill.rankingKind == "menu" || pill.rankingKind == "finderMenu"
+            }
+        let inlineGlobalScope =
+            isGlobalContextActive && !hasActiveContextSelection && l2.targetApp == nil
+            ? activeGlobalInlineDockScope(for: q)
+            : nil
+        let effectiveAppScope = inlineGlobalScope?.isExplicitAppScope == true
+        let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
+        let scopedMenuListContext: (appName: String, actionQuery: String)? = {
+            guard let scope = inlineGlobalScope, scope.isExplicitAppScope else { return nil }
+            return (scope.scopedAppName, scope.scopedSearchQuery)
+        }()
+        let globalNavState: GlobalGroupedListNavigationState? =
+            (pureGlobalAppSearch && !q.isEmpty) || effectiveAppScope
+            ? globalGroupedListNavigationState(for: q) : nil
+        let globalMenuPills = globalNavState?.menuGroups.flatMap(\.allPills) ?? []
+        let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
+        let globalNavIsScopedAppMenus =
+            globalNavState?.appResults.isEmpty == true
+            && !(globalNavState?.appMenuGroups.isEmpty ?? true)
+        let showGlobalAppSearch =
+            (pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
+            || effectiveAppScope
+        let scopedAppLaunchHint: (bundleId: String, appName: String, appPath: String?)? = {
+            let (bundleId, appName): (String, String) = {
+                if let scope = inlineGlobalScope, scope.isExplicitAppScope {
+                    return (scope.scopedBundleId, scope.scopedAppName)
+                }
+                return ("", "")
+            }()
+            guard !bundleId.isEmpty, globalMenuPills.isEmpty else { return nil }
+            guard !GlobalContextEngine.shared.hasMenuSnapshot(bundleIdentifier: bundleId) else {
+                return nil
+            }
+            let isRunning = NSWorkspace.shared.runningApplications.contains {
+                $0.bundleIdentifier == bundleId && !$0.isTerminated
+            }
+            guard !isRunning else { return nil }
+            let path =
+                allApplications.first {
+                    Bundle(url: URL(fileURLWithPath: $0.subtitle))?.bundleIdentifier == bundleId
+                }?.subtitle
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)?.path
+            return (bundleId, appName, path)
+        }()
+        let globalSearchLoading =
+            showGlobalAppSearch && !q.isEmpty && scopedAppLaunchHint == nil
+            && searchState.isLoadingApps && globalNavState == nil
+
+        return L2DockRowPresentation(
+            query: q,
+            pillQuery: pillQuery,
+            pills: pills,
+            showsFindToken: lockedFindToken?.hasChildMenu == true && showFindTokenMenu,
+            showsSubmenu: lockedSubmenuParent != nil && submenuGhostContext != nil,
+            showsGlobalSearch: showGlobalAppSearch,
+            hasAnySelection: hasAnySelection,
+            explicitAppBundleId: explicitAppTarget?.bundleId,
+            dockAtBottom: settings.effectiveDockAtBottom,
+            globalSearch: L2GlobalSearchPresentation(
+                query: q,
+                matches: globalNavIsScopedAppMenus
+                    ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
+                menuPills: globalMenuPills,
+                appMenuGroups: globalCrossAppGroups,
+                launchHint: scopedAppLaunchHint,
+                scopedMenuAppName: scopedMenuListContext?.appName,
+                scopedMenuActionQuery: scopedMenuListContext?.actionQuery ?? "",
+                isLoading: globalSearchLoading
+            )
+        )
+    }
+
+    @ViewBuilder
+    var l2FindTokenContent: some View {
+        if let findToken = lockedFindToken, showFindTokenMenu, findToken.hasChildMenu {
+            findTokenDropdownView(findToken)
+        }
+    }
+
+    @ViewBuilder
+    var l2SubmenuContent: some View {
+        if let locked = lockedSubmenuParent, let subCtx = submenuGhostContext {
+            submenuDropdownView(
+                parent: locked,
+                children: subCtx.children,
+                prefix: subCtx.childPrefix
+            )
+        }
+    }
+
+    @ViewBuilder
+    func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
+        globalAppSearchListView(
+            query: presentation.query,
+            matches: presentation.matches,
+            menuPills: presentation.menuPills,
+            appMenuGroups: presentation.appMenuGroups,
+            launchHint: presentation.launchHint,
+            scopedMenuAppName: presentation.scopedMenuAppName,
+            scopedMenuActionQuery: presentation.scopedMenuActionQuery,
+            isLoading: presentation.isLoading,
+            menuFirst: false
+        )
+    }
+
+    @ViewBuilder
+    func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
+        if !presentation.showsGlobalSearch {
+            dockPillListView(pills: presentation.pills)
+        }
+    }
+
+    func handleL2PillQueryChange(_ newQuery: String) {
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        if isContextDockChatRoutingLocked {
+            contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+            return
+        }
+        if shouldUsePureGlobalAppSearch, !newQuery.isEmpty, allApplications.isEmpty,
+            !searchState.isLoadingApps
+        {
+            loadApplicationsInBackground()
+        }
+        if shouldUsePureGlobalAppSearch {
+            l2.appCompletion = nil
+            l2.showResultsPopover = false
+            scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 0)
+            return
+        }
+        if isFinderDesktopOnlyMode {
+            commitFinderDesktopModeSnapshot(query: newQuery, preserveFocus: true)
+            scheduleFinderDesktopSearchEnrichment(query: newQuery)
+            return
+        }
+        if newQuery != lastPillQuery {
+            scheduleDockPillRebuild(
+                query: newQuery,
+                delayNanoseconds: 20_000_000,
+                refreshContext: false
+            )
+        }
+    }
+
+    func handleL2DockRowAppear(pillQuery: String) {
+        if isContextDockChatRoutingLocked {
+            contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+            return
+        }
+        if shouldUsePureGlobalAppSearch, !pillQuery.isEmpty, allApplications.isEmpty,
+            !searchState.isLoadingApps
+        {
+            loadApplicationsInBackground()
+        }
+        if shouldUsePureGlobalAppSearch {
+            scheduleGlobalAppMatchRebuild(query: pillQuery, delayNanoseconds: 0)
+            return
+        }
+        if isFinderDesktopOnlyMode {
+            primeFinderDesktopModeCache(commitQuery: pillQuery, preserveFocus: true)
+            scheduleFinderDesktopSearchEnrichment(query: pillQuery)
+            return
+        }
+        scheduleDockPillRebuild(query: pillQuery, delayNanoseconds: 0)
+    }
+
+    func handleFinderDesktopModeChange(_ enabled: Bool, pillQuery: String) async {
+        if enabled {
+            if finderDesktopIndexedPills.isEmpty && finderDesktopRecentPills.isEmpty {
+                primeFinderDesktopModeCache(
+                    commitQuery: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines),
+                    preserveFocus: true
+                )
+            }
+            await refreshFinderDesktopRecentPills()
+        } else {
+            contextDockViewModel.finderDesktopSearchTask?.cancel()
+            contextDockViewModel.finderDesktopSearchTask = nil
+            finderDesktopRecentPills = []
+            finderDesktopSearchPills = []
+            finderDesktopSearchQuery = ""
+        }
+    }
+
+    func handleL2SwipeDown() {
+        guard !isExplicitAppScopeLocked else { return }
+        guard !isGlobalContextActive else { return }
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            globalContextActivation = GlobalContextActivation(autoActivated: false)
+        }
+        scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+    }
+
+    func handleL2SwipeUp() {
+        guard !isExplicitAppScopeLocked else { return }
+        if isGlobalContextActive {
+            dismissContextAndReturnToDock()
+        } else if !showMediaLayer && settings.enableLayer3 {
+            Task {
+                await mediaObserver.refreshNowPlaying()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    showContextInDock = true
+                    showMediaLayer = true
+                }
+                if searchState.query.isEmpty && !isSearchFieldFocused {
+                    startCollapseTimer()
+                }
+            }
+        }
+    }
+}

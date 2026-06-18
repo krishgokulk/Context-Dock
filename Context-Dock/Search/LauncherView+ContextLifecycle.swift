@@ -23,18 +23,30 @@ extension LauncherView {
                 if isEmpty {
                     l1ResultsReservedHeight = 0
                 }
-                updateWindowSize(animated: false, debounceNanoseconds: 110_000_000)
+                requestWindowSizeUpdate(
+                    reason: .resultsChanged,
+                    animated: false,
+                    debounceNanoseconds: 110_000_000
+                )
             }
             .onChange(of: searchState.results.count) { _, newCount in
                 guard !showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
                 // Pre-commit to max height on first result — window stable while typing (Raycast pattern)
                 if newCount > 0 && l1ResultsReservedHeight < 450 {
                     l1ResultsReservedHeight = 450
-                    updateWindowSize(animated: false, debounceNanoseconds: 110_000_000)
+                    requestWindowSizeUpdate(
+                        reason: .resultsChanged,
+                        animated: false,
+                        debounceNanoseconds: 110_000_000
+                    )
                 }
             }
             .onChange(of: listViewResizeToken) { _, _ in
-                updateWindowSize(animated: false, debounceNanoseconds: 110_000_000)
+                requestWindowSizeUpdate(
+                    reason: .rowLayoutChanged,
+                    animated: false,
+                    debounceNanoseconds: 110_000_000
+                )
             }
             .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in
                 // A page favicon finished loading — repaint Safari link rows.
@@ -42,7 +54,7 @@ extension LauncherView {
                     bundleIdentifier: "com.apple.Safari")
             }
             .onChange(of: aiMode.messages.count) { _, _ in
-                updateWindowSize()
+                requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: aiMode.isActive) { _, newValue in
                 suppressHoverExpand = true
@@ -65,11 +77,15 @@ extension LauncherView {
                 }
                 // Delay resize so it runs after the animation starts (prevents background flash)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    updateWindowSize()
+                    requestWindowSizeUpdate(reason: .modeChanged)
                 }
             }
-            .onChange(of: frontmost.isSectionExpanded) { _, _ in updateWindowSize() }
-            .onChange(of: isSearchBarExpanded) { _, _ in updateWindowSize() }
+            .onChange(of: frontmost.isSectionExpanded) { _, _ in
+                requestWindowSizeUpdate(reason: .panelChanged)
+            }
+            .onChange(of: isSearchBarExpanded) { _, _ in
+                requestWindowSizeUpdate(reason: .rowLayoutChanged)
+            }
             .onChange(of: usesVerticalListDockLayout) { _, active in
                 if active {
                     collapseTimer?.cancel()
@@ -79,9 +95,11 @@ extension LauncherView {
                     // unifiedListDockCard). The NSTextField now always lives in the same view
                     // hierarchy, so calling it here would select-all the already-typed text.
                 }
-                updateWindowSize()
+                requestWindowSizeUpdate(reason: .rowLayoutChanged)
             }
-            .onChange(of: l2.chatMessages.count) { _, _ in updateWindowSize() }
+            .onChange(of: l2.chatMessages.count) { _, _ in
+                requestWindowSizeUpdate(reason: .chatChanged)
+            }
             .onChange(of: showContextInDock) { _, newValue in
                 // Block expand during layer transition (icon swap fires phantom hover)
                 suppressHoverExpand = true
@@ -226,7 +244,7 @@ extension LauncherView {
                     menuLoadTask?.cancel()
                     crossAppMenuTask?.cancel()
                 }
-                updateWindowSize()
+                requestWindowSizeUpdate(reason: .modeChanged)
             }
             .onChange(of: showMediaLayer) { _, newValue in
                 if newValue {
@@ -244,7 +262,7 @@ extension LauncherView {
                         self.suppressHoverExpand = false
                     }
                 }
-                updateWindowSize()
+                requestWindowSizeUpdate(reason: .modeChanged)
             }
             // AX selection observer fired — diff enabled states and surface context pills
             .onChange(of: selectionModel.changeCount) { _, _ in
@@ -430,7 +448,7 @@ extension LauncherView {
                         self.lockedSubmenuParent = nil
                     }
                     cachedDockPills = []
-                    pendingDockPreviewPills = []
+                    contextDockViewModel.resetPillRenderingState(cancelBuild: true)
                     globalInlineAppScope = nil
                     additionalGlobalInlineAppScopes = []
                     suppressGlobalInlineAppScopeDetection = false
@@ -559,6 +577,13 @@ extension LauncherView {
                     isSearchFieldFocused = true
                     return
                 }
+                if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        exitContextDockChatAndScope()
+                    }
+                    isSearchFieldFocused = true
+                    return
+                }
                 if l2.targetApp != nil || searchState.contextApp != nil
                     || searchState.activeSmartQueryKey != nil
                 {
@@ -567,13 +592,6 @@ extension LauncherView {
                     remIsInstalled = nil
                     systemDataResults = []
                     searchState.lastSmartQuery = ""
-                    isSearchFieldFocused = true
-                    return
-                }
-                if l2.showChatPopover || l2.chatArmed {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        disarmContextDockChat()
-                    }
                     isSearchFieldFocused = true
                     return
                 }
@@ -694,6 +712,7 @@ extension LauncherView {
                     if !l2.chatMessages.isEmpty || l2.chatArmed || l2.showChatPopover {
                         l2.chatArmed = true
                         l2.showChatPopover = true
+                        l2.chatDismissed = false
                     }
                 }
 
@@ -847,7 +866,7 @@ extension LauncherView {
         suppressOpenResize = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
             suppressOpenResize = false
-            updateWindowSize()
+            requestWindowSizeUpdate(reason: .modeChanged)
         }
 
         let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
@@ -884,7 +903,7 @@ extension LauncherView {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
-                    self.updateWindowSize()
+                    self.requestWindowSizeUpdate(reason: .contentSettled)
                 }
             }
         }
@@ -1511,9 +1530,9 @@ extension LauncherView {
                 showGlobalClipboardPill = false
                 clipboardHistoryExpanded = false
             }
-            updateWindowSize()
+            requestWindowSizeUpdate(reason: .panelChanged)
         }
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
     }
 
     func clipboardSourceApp() -> (name: String, bundleId: String) {

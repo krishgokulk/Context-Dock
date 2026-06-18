@@ -556,8 +556,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(
-                systemSymbolName: "magnifyingglass", accessibilityDescription: "Context-Dock")
+            button.image = menuBarLogoImage()
+                ?? NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Context-Dock")
         }
 
         let menu = NSMenu()
@@ -574,6 +574,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSMenuItem(title: "Quit ILauncher", action: #selector(quitApp), keyEquivalent: "q"))
 
         statusItem?.menu = menu
+    }
+
+    /// Loads DoraXD, strips the black background by mapping luminance → alpha,
+    /// forces RGB to white, then sets isTemplate so macOS tints it correctly for
+    /// any menubar style (dark/light/coloured).
+    private func menuBarLogoImage() -> NSImage? {
+        guard let source = NSImage(named: "DoraXD"),
+              let cgSource = source.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
+
+        let ci = CIImage(cgImage: cgSource)
+
+        // CIColorMatrix: output = dot(inputRGBA, xVector) + bias
+        // → RGB forced to 1 (white), alpha = luminance of original pixel
+        guard let filter = CIFilter(name: "CIColorMatrix") else { return nil }
+        filter.setValue(ci, forKey: kCIInputImageKey)
+        filter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputGVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputBVector")
+        filter.setValue(CIVector(x: 0.299, y: 0.587, z: 0.114, w: 0), forKey: "inputAVector")
+        filter.setValue(CIVector(x: 1, y: 1, z: 1, w: 0), forKey: "inputBiasVector")
+
+        guard let output = filter.outputImage else { return nil }
+
+        let ctx = CIContext(options: [.useSoftwareRenderer: false])
+        guard let cgOut = ctx.createCGImage(output, from: output.extent) else { return nil }
+
+        let size = NSSize(width: 18, height: 18)
+        let result = NSImage(size: size, flipped: false) { rect in
+            NSGraphicsContext.current?.imageInterpolation = .high
+            let img = NSImage(cgImage: cgOut, size: size)
+            img.draw(in: rect)
+            return true
+        }
+        result.isTemplate = true
+        return result
     }
 
     @objc func showLauncherFromMenu() {
@@ -819,33 +855,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         launcherWindow?.showsResizeIndicator = false
 
-        // Apply transparency and appearance from settings
-        applyLauncherWindowOpacity()
+        // Apply appearance from settings
         applyAppearanceOverride()
-
-        // Observe opacity changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(opacitySettingChanged),
-            name: UserDefaults.didChangeNotification,
-            object: nil
-        )
     }
 
-    @objc func opacitySettingChanged() {
-        // UserDefaults.didChangeNotification can fire on any thread — always dispatch to main
-        DispatchQueue.main.async { [weak self] in
-            self?.applyLauncherWindowOpacity()
-            self?.applyAppearanceOverride()
-            self?.applyPersistentDockBehavior()
-        }
-    }
-
-    func applyLauncherWindowOpacity() {
-        // Keep the window fully opaque — opacity is applied only to GlassBackground
-        // so pills, icons, and input fields remain crisp regardless of the slider.
-        launcherWindow?.alphaValue = 1.0
-    }
 
     func applyPersistentDockBehavior() {
         guard let window = launcherWindow else { return }
@@ -857,22 +870,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isMovableByWindowBackground = true
     }
 
-    /// Sets the NSVisualEffectView material based on user appearance preference
-    func applyVisualEffectMaterial(to ve: NSVisualEffectView) {
-        switch settings.appearanceMode {
-        case "light":
-            ve.material = .underWindowBackground
-            ve.appearance = NSAppearance(named: .aqua)
-        case "dark":
-            ve.material = .underWindowBackground
-            ve.appearance = NSAppearance(named: .darkAqua)
-        default:  // "system"
-            ve.material = .underWindowBackground
-            ve.appearance = nil  // follows system
-        }
-    }
-
-    /// Overrides window appearance (light/dark/system) and applies rounded corners
+    /// Overrides window appearance (light/dark/system)
     func applyAppearanceOverride() {
         guard let window = launcherWindow else { return }
         switch settings.appearanceMode {
@@ -882,11 +880,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.appearance = NSAppearance(named: .darkAqua)
         default:
             window.appearance = nil
-        }
-        // Rounded corners — apply to the visual effect view layer
-        if let ve = window.contentView as? NSVisualEffectView {
-            ve.layer?.cornerRadius = 16
-            ve.layer?.masksToBounds = true
         }
     }
 

@@ -58,7 +58,7 @@ extension LauncherView {
 
         addCurrentFinderFolderToConversation()
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
         return true
     }
 

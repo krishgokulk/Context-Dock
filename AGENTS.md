@@ -130,3 +130,46 @@ The app has a 3-layer extension model:
 **Singletons**: 68 `static let shared` instances exist. Initialisation order matters — `AppDelegate.shared` is set as the first line of `applicationDidFinishLaunching`. Do not access other singletons before that point.
 
 **Notification name declarations are not centralised** — search for the string literal if you need to find where a name is defined.
+
+
+## XcodeBuildMCP
+
+XcodeBuildMCP is configured in .codex/config.toml and gives Codex direct Xcode control:
+
+- Build the app (xcodebuild wrapper)
+- Run in simulator and launch on device
+- Capture simulator screenshots for visual debugging
+- Run tests and parse structured results
+- Attach debugger and inspect variables via LLDB
+
+## Skills (Claude Code)
+
+If Claude Code is also active on this project, these skills trigger automatically:
+
+| Task | Skill |
+|---|---|
+| Build / run / fix compile errors | build-run-debug |
+| SwiftUI layout, scenes, navigation, state | swiftui-patterns |
+| Add Liquid Glass / modern macOS 26 UI | liquid-glass |
+| Run or debug tests | testing |
+| AppKit bridges (NSWindow, responder chain) | appkit-interop |
+| Window size, placement, toolbar, materials | window-customization |
+| Refactor large views (LauncherView, ContentView) | view-refactor |
+| Codesign / entitlement / sandbox errors | codesigning |
+| Notarization / App Store distribution | distribution-signing |
+| OSLog instrumentation | app-telemetry |
+
+## Apple Documentation
+
+Always fetch current Apple docs before using any API, especially macOS 26 Tahoe APIs:
+
+- SwiftUI: https://developer.apple.com/documentation/swiftui
+- Liquid Glass (macOS 26): https://developer.apple.com/documentation/swiftui/glass-effect
+- AppKit: https://developer.apple.com/documentation/appkit
+- Accessibility: https://developer.apple.com/documentation/accessibility
+
+## Large Files
+
+These files are very large - read only the relevant range:
+- Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
+- Search/LauncherView+ContextualActions.swift - use same awk pattern

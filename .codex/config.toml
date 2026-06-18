@@ -1,6 +1,10 @@
 [mcp_servers.caveman-shrink]
-args = [
-    "-y",
-    "caveman-shrink",
-]
 command = "npx"
+args = ["-y", "caveman-shrink"]
+
+[mcp_servers.XcodeBuildMCP]
+command = "/opt/homebrew/bin/npx"
+args = ["-y", "xcodebuildmcp@latest", "mcp"]
+
+[mcp_servers.XcodeBuildMCP.env]
+PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"

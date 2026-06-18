@@ -145,7 +145,7 @@ extension LauncherView {
                 state: buildGlobalGroupedListNavigationState(for: ""),
                 animated: false
             )
-            updateWindowSize()
+            requestWindowSizeUpdate(reason: .modeChanged)
         }
     }
 
@@ -162,6 +162,18 @@ extension LauncherView {
         }
     }
 
+    @ViewBuilder
+    var currentResultsSurface: some View {
+        switch currentDockSurfaceMode {
+        case .generalChat:
+            generalChatSurface
+        case .contextDockChat:
+            contextDockChatSurface
+        case .globalContext, .contextDock, .mediaDock:
+            resultsCardAlignedToSearchInput
+        }
+    }
+
     var searchBarSection: some View {
         Group {
             if shouldUseIntegratedScopeSheet {
@@ -171,7 +183,7 @@ extension LauncherView {
                 // Dock at bottom: results float above, dock bar anchored at bottom.
                 VStack(spacing: panelGapBelowSearchBar) {
                     if hasResultsToShow {
-                        resultsCardAlignedToSearchInput
+                        currentResultsSurface
                             .transition(
                                 .asymmetric(
                                     insertion: .opacity.combined(
@@ -232,7 +244,7 @@ extension LauncherView {
                         }
                     }
                     if hasResultsToShow {
-                        resultsCardAlignedToSearchInput
+                        currentResultsSurface
                             .transition(
                                 .asymmetric(
                                     insertion: .opacity.combined(
@@ -366,7 +378,7 @@ extension LauncherView {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                         expandSearchBar()
                                     }
-                                    updateWindowSize()
+                                    requestWindowSizeUpdate(reason: .rowLayoutChanged)
                                 }
                             }) {
                                 // Globe on L3, app icon on L2 (target override or frontmost), magnifying glass on L1
@@ -463,19 +475,13 @@ extension LauncherView {
                                                     .spring(response: 0.22, dampingFraction: 0.75),
                                                     value: selIcon)
                                         } else {
-                                            // No selection — global context uses the app icon from bundle.
-                                            let appIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
-                                            if appIcon.size.width > 0 {
-                                                Image(nsImage: appIcon)
-                                                    .resizable()
-                                                    .interpolation(.high)
-                                                    .aspectRatio(contentMode: .fit)
-                                                    .frame(width: 24, height: 24)
-                                                    .id("context-dock-input-logo")
-                                            } else {
-                                                ContextDockGlyph(size: 28, opacity: 1.0)
-                                                    .id("context-dock-input-logo")
-                                            }
+                                            Image("DoraXD")
+                                                .resizable()
+                                                .interpolation(.high)
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 24, height: 24)
+                                                .blendMode(.screen)
+                                                .id("context-dock-input-logo")
                                         }
                                     } else if let finderSymbol = finderInputSymbolForSearchText() {
                                         Image(systemName: finderSymbol)
@@ -937,7 +943,7 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.25))
                                     }
                                 } else if let result = focusedGlobalAppResult {
-                                    let title = result.title
+                                    let title = inputFieldDisplayTitle(for: result)
                                     let typed = searchState.query
                                     let isPrefixMatch = title.lowercased().hasPrefix(
                                         typed.lowercased())
@@ -962,12 +968,12 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.35))
                                     }
                                 } else if let result = topGlobalAppResult,
-                                    result.title.lowercased().hasPrefix(
+                                    inputFieldDisplayTitle(for: result).lowercased().hasPrefix(
                                         searchState.query.lowercased()),
                                     !searchState.query.isEmpty
                                 {
                                     // Prefix match only: show typed (invisible) + grey completion + action
-                                    let title = result.title
+                                    let title = inputFieldDisplayTitle(for: result)
                                     let typed = searchState.query
                                     HStack(spacing: 0) {
                                         Text(typed)
@@ -985,7 +991,7 @@ extension LauncherView {
                                     // Intelligent inline completion:
                                     // • Prefix match  → show typed text (invisible spacer) + greyed remainder + action
                                     // • Fuzzy match   → show full result name + action
-                                    let title = result.title
+                                    let title = inputFieldDisplayTitle(for: result)
                                     let typed = searchState.query
                                     let isPrefixMatch = title.lowercased().hasPrefix(
                                         typed.lowercased())
@@ -1276,25 +1282,25 @@ extension LauncherView {
                                                     ? 1 : 0
                                             }
                                             if let result = focusedGlobalAppResult {
-                                                let isPrefixMatch = result.title.lowercased()
-                                                    .hasPrefix(
-                                                        searchState.query.lowercased())
+                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
+                                                    .lowercased()
+                                                    .hasPrefix(searchState.query.lowercased())
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 0
                                             }
                                             if let result = topGlobalAppResult {
                                                 // Only hide TextField for prefix match (ghost shows completion).
                                                 // For fuzzy match the TextField stays visible so typed text shows.
-                                                let isPrefixMatch = result.title.lowercased()
-                                                    .hasPrefix(
-                                                        searchState.query.lowercased())
+                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
+                                                    .lowercased()
+                                                    .hasPrefix(searchState.query.lowercased())
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 1
                                             }
                                             if let result = selectedResult {
-                                                let isPrefixMatch = result.title.lowercased()
-                                                    .hasPrefix(
-                                                        searchState.query.lowercased())
+                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
+                                                    .lowercased()
+                                                    .hasPrefix(searchState.query.lowercased())
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 0
                                             }
@@ -1354,6 +1360,12 @@ extension LauncherView {
                                                 return
                                             }
                                             if launchTypedAppMatchIfNeeded() {
+                                                return
+                                            }
+                                            if trimmed.isEmpty,
+                                                shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed
+                                            {
+                                                exitContextDockChatAndScope()
                                                 return
                                             }
                                             guard !trimmed.isEmpty else { return }
@@ -1670,7 +1682,7 @@ extension LauncherView {
 
                         Group {
                             if showMediaLayer {
-                                mediaControlsInDock
+                                mediaDockSurface
                                     .transition(.opacity.combined(with: .move(edge: .trailing)))
                             } else if searchState.activeSmartQueryKey != nil && !isCompactSmartScope
                             {
@@ -1683,14 +1695,14 @@ extension LauncherView {
                                     // Global context: empty query shows pinned/running; typed query searches
                                     // pinned, running, and installed applications.
                                     if shouldShowL2UnifiedDockRow {
-                                        l2UnifiedDockRow
+                                        globalContextSurface
                                             .transition(.opacity)
                                     }
                                 } else if hasAIExtensionsToShow {
                                     aiExtensionsInDock
                                         .transition(.opacity)
                                 } else if shouldShowL2UnifiedDockRow {
-                                    l2UnifiedDockRow
+                                    contextDockSurface
                                         .transition(.opacity)
                                 }
                             } else if !searchState.query.isEmpty {
@@ -2301,7 +2313,7 @@ extension LauncherView {
             resetCollapseTimer()
             return
         }
-        if showContextInDock && l2.chatArmed && !l2.showChatPopover {
+        if isContextDockChatRoutingLocked {
             pendingAIMenuProposal = nil
             l2.appCompletion = nil
             l2.showResultsPopover = false
@@ -2310,6 +2322,15 @@ extension LauncherView {
             searchState.selectedIndex = nil
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil
+            contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+            globalAppMatchTask?.cancel()
+            globalAppMatchTask = nil
+            pendingGlobalAppQuery = nil
+            cachedGlobalAppMatches = []
+            globalGroupedTask?.cancel()
+            globalGroupedTask = nil
+            pendingGlobalGroupedQuery = nil
+            cachedGlobalGroupedState = nil
             resetCollapseTimer()
             return
         }

@@ -2179,6 +2179,38 @@ extension LauncherView {
         return label.isEmpty ? "Context" : label
     }
 
+    func inputFieldDisplayTitle(for result: SearchResult) -> String {
+        switch result.type {
+        case .file, .folder, .document, .photo:
+            let rawPath = (result.filePath ?? result.title)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let fileName = URL(fileURLWithPath: rawPath).lastPathComponent
+            return fileName.isEmpty ? result.title : fileName
+        default:
+            return result.title
+        }
+    }
+
+    var finderDesktopSearchScopeLabel: String {
+        let directories = settings.searchDirectories.filter {
+            !$0.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !directories.isEmpty else { return "home folder" }
+
+        let labels = directories.prefix(2).map { directory in
+            let displayName = directory.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !displayName.isEmpty { return displayName }
+
+            let pathName = URL(fileURLWithPath: directory.path).lastPathComponent
+            return pathName.isEmpty ? finderDisplayPath(directory.path) : pathName
+        }
+
+        if directories.count > 2 {
+            return "\(labels.joined(separator: ", ")) +\(directories.count - 2) more"
+        }
+        return labels.joined(separator: ", ")
+    }
+
     var dockScopeGhostPrompt: String {
         let label = dockScopeDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopeName = label.isEmpty ? "Context" : label
@@ -2189,7 +2221,7 @@ extension LauncherView {
         if bundleId == "com.apple.finder" || lowerName == "finder" {
             hints =
                 attachedFinderFolderSearchPath.isEmpty
-                ? "launch apps and home folders, menu cmds"
+                ? "search files and folders in \(finderDesktopSearchScopeLabel)"
                 : "search this folder, open files, menu cmds"
         } else if AXWebReader.shared.isBrowser(bundleId: bundleId) {
             hints = "tabs, page cmds, menu cmds"
@@ -2441,7 +2473,7 @@ extension LauncherView {
         refreshCompactScopeResults()
         let q = queryOverride.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
         reclaimCompactScopeInputFocus()
     }
 
@@ -2479,7 +2511,7 @@ extension LauncherView {
         isSearchFieldFocused = true
         refreshCompactScopeResults()
         scheduleDockPillRebuild(query: queryOverride, delayNanoseconds: 0, refreshContext: false)
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
         reclaimCompactScopeInputFocus()
     }
 
@@ -2793,128 +2825,75 @@ extension LauncherView {
         delayNanoseconds: UInt64 = 55_000_000,
         refreshContext: Bool = true
     ) {
+        if isContextDockChatRoutingLocked {
+            contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+            return
+        }
+
+        if isFinderDesktopOnlyMode {
+            commitFinderDesktopModeSnapshot(query: query, preserveFocus: true)
+            return
+        }
+
         if isGlobalContextActive,
             !hasActiveDockContextSelection,
             !showGlobalClipboardPill,
             !isContextDockChatConnected
         {
-            pendingDockPreviewPills = []
-            pendingDockPillQuery = nil
-            dockPillBuildTask?.cancel()
-            dockPillBuildTask = nil
+            contextDockViewModel.resetPillRenderingState(cancelBuild: true)
             return
         }
 
-        // Deleting characters widens the result set, which a preview filtered from
-        // the current (narrower) pills can never reconstruct — committing it just
-        // causes a double paint. Hold the current pills until the rebuild lands.
-        let isDeletion = lastPillQuery.hasPrefix(query) && query.count < lastPillQuery.count
-
-        // Multiple context signals often arrive in the same run-loop turn. The pending build
-        // reads current state when it executes, so restarting it only delays the first paint.
-        if pendingDockPillQuery == query, dockPillBuildTask != nil {
-            commitPendingDockPreviewPills(
-                isDeletion ? cachedDockPills : contextDockPreviewPills(for: query)
+        dockPillBuildTask = ContextDockPillCoordinator.schedule(
+            input: ContextDockPillCoordinator.Input(
+                query: query,
+                lastQuery: lastPillQuery,
+                delayNanoseconds: delayNanoseconds,
+                refreshContext: refreshContext,
+                cachedPills: cachedDockPills,
+                previewPills: contextDockPreviewPills(for: query),
+                isQuestionStyle: isQuestionStyleDockQuery(query)
+            ),
+            viewModel: contextDockViewModel,
+            actions: ContextDockPillCoordinator.Actions(
+                commitPreview: { commitPendingDockPreviewPills($0) },
+                clearCachedPills: { cachedDockPills = [] },
+                refreshContext: { refreshFinderSelectionContextFromFinder() },
+                buildPills: { buildDockPills(query: $0) },
+                replaceCachedPills: { pills, preserveFocus in
+                    replaceCachedDockPills(pills, preserveFocus: preserveFocus)
+                },
+                logPerformance: { started, builtQuery in
+                    logDockPerformance(
+                        "deferred pill rebuild",
+                        started: started,
+                        query: builtQuery
+                    )
+                }
             )
-            return
-        }
-
-        dockPillBuildGeneration &+= 1
-        let generation = dockPillBuildGeneration
-        dockPillBuildTask?.cancel()
-        if isQuestionStyleDockQuery(query) {
-            cachedDockPills = []
-            lastPillQuery = query
-            pendingDockPillQuery = nil
-            pendingDockPreviewPills = []
-            dockPillBuildTask = nil
-            return
-        }
-        commitPendingDockPreviewPills(
-            isDeletion ? cachedDockPills : contextDockPreviewPills(for: query)
         )
-        pendingDockPillQuery = query
-        dockPillBuildTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled, dockPillBuildGeneration == generation else { return }
-            // Skip the AX IPC call when the user is typing — selection context doesn't
-            // change while typing, and the call blocks the main thread causing hitches.
-            let shouldRefresh = refreshContext && query.isEmpty
-            if shouldRefresh {
-                refreshFinderSelectionContextFromFinder()
-                guard !Task.isCancelled, dockPillBuildGeneration == generation else { return }
-            }
-            guard dockPillBuildGeneration == generation, pendingDockPillQuery == query else {
-                return
-            }
-            await Task.yield()
-            guard !Task.isCancelled, dockPillBuildGeneration == generation,
-                pendingDockPillQuery == query
-            else { return }
-            let started = Date()
-            replaceCachedDockPills(buildDockPills(query: query), preserveFocus: true)
-            logDockPerformance("deferred pill rebuild", started: started, query: query)
-            lastPillQuery = query
-            pendingDockPillQuery = nil
-            pendingDockPreviewPills = []
-            dockPillBuildTask = nil
-        }
     }
 
     /// Render identity for flicker-free commits: only swap the published pill
     /// array when something the user can see actually changed.
     func dockPillRenderFingerprint(_ pills: [DockPill]) -> String {
-        pills.map {
-            "\($0.id)|\($0.name)|\($0.badge ?? "")|\($0.isEnabled ? 1 : 0)|\($0.menuStatusBadge ?? "")|\($0.menuItemImage != nil ? 1 : 0)"
-        }.joined(separator: "#")
+        contextDockViewModel.pillRenderFingerprint(pills)
     }
 
     /// Commit preview pills without animation, and only when content differs —
     /// unconditional per-keystroke reassignment is what made the dock flicker.
     func commitPendingDockPreviewPills(_ pills: [DockPill]) {
-        guard dockPillRenderFingerprint(pendingDockPreviewPills) != dockPillRenderFingerprint(pills)
-        else { return }
-        var transaction = Transaction()
-        transaction.animation = nil
-        withTransaction(transaction) {
-            pendingDockPreviewPills = pills
-        }
+        contextDockViewModel.commitPreviewPills(pills)
     }
 
     func replaceCachedDockPills(_ pills: [DockPill], preserveFocus: Bool) {
-        // Identical render content — keep the existing array so SwiftUI doesn't
-        // re-diff and animate rows that didn't change.
-        guard dockPillRenderFingerprint(cachedDockPills) != dockPillRenderFingerprint(pills) else {
-            return
-        }
-        let previousFocusedID: String? = {
-            guard preserveFocus,
-                let index = l2.focusedPillIndex,
-                cachedDockPills.indices.contains(index)
-            else { return nil }
-            return cachedDockPills[index].id
-        }()
-
-        var transaction = Transaction()
-        transaction.animation = nil
-        withTransaction(transaction) {
-            cachedDockPills = pills
-        }
-
-        guard preserveFocus else { return }
-        if let previousFocusedID,
-            let newIndex = pills.firstIndex(where: { $0.id == previousFocusedID && !$0.isSeparator }
-            )
-        {
-            l2.focusedPillIndex = newIndex
-            return
-        }
-        if let index = l2.focusedPillIndex,
-            !pills.indices.contains(index) || pills[index].isSeparator
-        {
-            l2.focusedPillIndex = nil
-            l2.pillNavViaKeyboard = false
-        }
+        contextDockViewModel.replaceCachedPills(
+            pills,
+            preserveFocus: preserveFocus,
+            focusedIndex: l2.focusedPillIndex,
+            setFocusedIndex: { l2.focusedPillIndex = $0 },
+            clearPillKeyboardNavigation: { l2.pillNavViaKeyboard = false }
+        )
     }
 
     func logDockPerformance(_ label: String, started: Date, query: String) {
@@ -2935,6 +2914,7 @@ extension LauncherView {
         if lockedSubmenuParent != nil { return [] }
         if lockedFindToken != nil { return [] }
         if isQuestionStyleDockQuery(q) { return [] }
+        if isContextDockChatRoutingLocked { return [] }
 
         if searchState.activeSmartQueryKey == "clipboard" {
             return buildClipboardHistoryPills(query: q)
@@ -3081,13 +3061,29 @@ extension LauncherView {
             && finderFolderQueryModeActive
             && isFinderFolderSearchAttached(currentFolderPath: currentFinderFolderPath())
         let rawPayloadActionPills = buildPayloadActionPills(query: q)
-        let rawFinderFilePills =
-            isFinderScopedDock && !finderFolderAttachedForDock
-            ? buildFinderFilePills(query: q) : []
-        let rawFinderHomeFolderPills =
-            isFinderScopedDock && !finderFolderAttachedForDock
-            ? buildFinderHomeFolderPills(query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
+        // Desktop-only mode: Finder frontmost, no window open — show regardless of global/scoped
+        let rawFinderDesktopOnlyPills: [DockPill] =
+            isFinderDesktopOnlyMode
+            ? buildFinderDesktopModePills(query: q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
             : []
+        if isFinderDesktopOnlyMode {
+            return rankDockPills(
+                rawFinderDesktopOnlyPills,
+                rawQuery: q,
+                rankingQuery: q,
+                scopedBundleId: "com.apple.finder",
+                scopedAppName: "Finder",
+                isExplicitAppScope: false
+            )
+        }
+        let rawMacOSExtensionActionPills =
+            isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
+            ? buildMacOSExtensionActionPills(query: q) : []
+        let rawFinderFilePills = rawMacOSExtensionActionPills
+        // User-added search directories belong only to Finder desktop mode.
+        // When a Finder window is frontmost, Context Dock should stay on that
+        // window's menus/actions/selection, not global directory search.
+        let rawFinderHomeFolderPills: [DockPill] = []
         let finderHomeSearchQuery = (scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let shouldShowFinderHomeSearchOnly =
@@ -3100,10 +3096,14 @@ extension LauncherView {
             isFinderScopedDock
             ? buildAttachedFinderFolderPills(
                 query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery) : []
-        let finderFileTitleSet = Set(rawFinderFilePills.map { normalizedDockPillText($0.name) })
+        let finderFileTitleSet = Set(rawMacOSExtensionActionPills.map { normalizedDockPillText($0.name) })
         let rawFinderSelectionMenuPills =
-            isFinderScopedDock && !finderFolderAttachedForDock
-            ? buildFinderSelectionMenuPills(query: q, excludingTitles: finderFileTitleSet) : []
+            isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
+            ? buildFinderSelectionMenuPills(
+                query: q,
+                excludingTitles: finderFileTitleSet,
+                allowedRootNames: ["file", "open with", "tags"]
+            ) : []
         let filteredFinderSelectionMenuPills = rawFinderSelectionMenuPills
         let payloadActionPills: [DockPill] = {
             guard isExplicitAppScope, !scopedSearchQuery.isEmpty else {
@@ -3248,12 +3248,17 @@ extension LauncherView {
                 return command.isEmpty ? nil : command.lowercased()
             }
         )
-        let visibleCLIPackages = cliPackages.filter { package in
-            !adapterCLICommands.contains(package.command.lowercased())
-        }
+        let shouldExposeCLIPills = scopedBundleId.hasPrefix("cli://")
+        let visibleCLIPackages = shouldExposeCLIPills
+            ? cliPackages.filter { package in
+                !adapterCLICommands.contains(package.command.lowercased())
+            }
+            : []
         // Menu-bar adapter actions duplicate AX menu results and can leak universal Apple-menu
         // rows into Context Dock. AXMenuReader/AppMenuCapabilityCache exclusively own menus.
-        let visibleAdapterActions = adapterActions.filter { $0.type != .menubar }
+        let visibleAdapterActions = adapterActions.filter {
+            $0.type != .menubar && (shouldExposeCLIPills || $0.type != .cliTool)
+        }
         let allAppTools = {
             guard !isGlobalScope else { return [L2Extension]() }
             guard !scopedAppName.isEmpty || !scopedBundleId.isEmpty else {
@@ -3321,9 +3326,11 @@ extension LauncherView {
             pills.append(contentsOf: crossAppPills)
         }
 
-        pills.append(contentsOf: nativeWindowManagementPills)
+        if !isFinderDesktopOnlyMode {
+            pills.append(contentsOf: nativeWindowManagementPills)
+        }
 
-        if useSeededMenuPills && !hasStrongContextQuery {
+        if useSeededMenuPills && !hasStrongContextQuery && !isFinderDesktopOnlyMode {
             let seedItems = Array(
                 liveMenuItems
                     .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -3341,6 +3348,9 @@ extension LauncherView {
                     : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
                 let shortcutChar = item.shortcutChar
                 let shortcutMods = item.shortcutModifiers
+                let isShareMenuItem =
+                    item.path.contains { normalizedDockPillText($0) == "share" }
+                    || normalizedDockPillText(item.title).hasPrefix("share")
                 let pill = makeMenuDockPill(
                     id: "menu-seed-\(item.id)",
                     item: item,
@@ -3349,8 +3359,12 @@ extension LauncherView {
                     badge: item.shortcutDisplay,
                     trackingIdentifier:
                         "menu-seed:\(activeBundleId):\(path.joined(separator: " > ").lowercased())",
-                    searchTerms: item.path + [scopedAppName],
+                    searchTerms: item.path + [scopedAppName] + (isShareMenuItem ? ["share"] : []),
                     executeLeaf: {
+                        if isShareMenuItem {
+                            executeShareMenuDestination(item.title)
+                            return
+                        }
                         guard sourcePID != 0 else { return }
                         self.executeDockMenuAction(
                             sourcePID: sourcePID,
@@ -3383,13 +3397,20 @@ extension LauncherView {
                 let pid = child.sourcePID != 0 ? child.sourcePID : frontPID
                 let sc = child.shortcutChar
                 let mod = child.shortcutModifiers
+                let isShareMenuItem =
+                    child.path.contains { normalizedDockPillText($0) == "share" }
+                    || normalizedDockPillText(child.title).hasPrefix("share")
                 var pill = DockPill(
                     id: "submenu-child-\(child.id)",
                     name: child.title,
-                    icon: menuSymbol(for: child),
-                    accentColorName: "blue",
+                    icon: isShareMenuItem ? "square.and.arrow.up" : menuSymbol(for: child),
+                    accentColorName: isShareMenuItem ? "blue" : "blue",
                     badge: subCtx.parent.title,
                     execute: {
+                        if isShareMenuItem {
+                            executeShareMenuDestination(child.title)
+                            return
+                        }
                         guard pid != 0 else { return }
                         self.executeDockMenuAction(
                             sourcePID: pid, path: path,
@@ -3403,6 +3424,7 @@ extension LauncherView {
                 pill.sourceBundleId = activeBundleId
                 pill.sourceAppName = scopedAppName
                 pill.rankingKind = "submenuChild"
+                pill.isShareAction = isShareMenuItem
                 pill.isEnabled = true
                 pill.rankingScore = 1_000  // pin above everything else
                 pills.append(pill)
@@ -3451,6 +3473,8 @@ extension LauncherView {
 
         pills.append(contentsOf: filteredFinderSelectionMenuPills)
 
+        pills.append(contentsOf: rawFinderDesktopOnlyPills)
+
         pills.append(contentsOf: rawFinderHomeFolderPills)
 
         pills.append(contentsOf: rawAttachedFinderFolderPills)
@@ -3459,20 +3483,22 @@ extension LauncherView {
 
         pills.append(contentsOf: semanticFinderQuickActionPills)
 
-        pills.append(
-            contentsOf: payloadActionPills.map { pill in
-                var enriched = pill
-                if enriched.rankingKind.isEmpty {
-                    enriched.rankingKind = "payload"
-                }
-                if enriched.searchTerms.isEmpty {
-                    enriched.searchTerms = [enriched.name, enriched.badge ?? ""]
-                }
-                if enriched.trackingIdentifier.isEmpty {
-                    enriched.trackingIdentifier = "payload:\(normalizedDockPillText(enriched.name))"
-                }
-                return enriched
-            })
+        if !isFinderDesktopOnlyMode {
+            pills.append(
+                contentsOf: payloadActionPills.map { pill in
+                    var enriched = pill
+                    if enriched.rankingKind.isEmpty {
+                        enriched.rankingKind = "payload"
+                    }
+                    if enriched.searchTerms.isEmpty {
+                        enriched.searchTerms = [enriched.name, enriched.badge ?? ""]
+                    }
+                    if enriched.trackingIdentifier.isEmpty {
+                        enriched.trackingIdentifier = "payload:\(normalizedDockPillText(enriched.name))"
+                    }
+                    return enriched
+                })
+        }
 
         let dedupeMenuItems: ([AXMenuItem]) -> [AXMenuItem] = { items in
             var seen = Set<String>()
@@ -3504,6 +3530,15 @@ extension LauncherView {
             items.filter { item in
                 shouldExposeCachedMenuItem(item)
                     && (allowAppleMenuItems || !isRejectedTopMenuItem(item, appName: scopedAppName))
+                    && (!preferNativeWindowManagement
+                        || !shouldSuppressMenuItemForNativeWindowManagement(item))
+            }
+        }
+        let menuItemsForGlobalContext: ([AXMenuItem]) -> [AXMenuItem] = { items in
+            items.filter { item in
+                shouldExposeCachedMenuItem(item)
+                    && (allowAppleMenuItems || !isRejectedTopMenuItem(item, appName: scopedAppName))
+                    && !self.isGenericAppMenu(item)
                     && (!preferNativeWindowManagement
                         || !shouldSuppressMenuItemForNativeWindowManagement(item))
             }
@@ -3547,8 +3582,9 @@ extension LauncherView {
                 filterQ,
                 preferCached ? pureScopeCandidateLimit : 24
             )
+            let filter = isGlobalScope ? menuItemsForGlobalContext : menuItemsAllowedForCurrentScope
             let matches = dedupeMenuItems(
-                menuItemsAllowedForCurrentScope(cachedMatches + persistentMatches)
+                filter(cachedMatches + persistentMatches)
             )
             if matches.isEmpty,
                 app.bundleIdentifier == "com.apple.finder",
@@ -3562,8 +3598,9 @@ extension LauncherView {
                 if !live.isEmpty {
                     AppMenuCapabilityCache.shared.store(items: live, for: app)
                 }
+                let filter = isGlobalScope ? menuItemsForGlobalContext : menuItemsAllowedForCurrentScope
                 let liveMatches = dedupeMenuItems(
-                    menuItemsAllowedForCurrentScope(
+                    filter(
                         live.filter { menuItemMatchesQuery($0, filterQ) }
                     )
                 )
@@ -3581,8 +3618,9 @@ extension LauncherView {
         }
         let scopedClosedMenuMatches: (String, String, String, Bool) -> [AXMenuItem] = {
             bundleId, appName, filterQ, preferCached in
+            let filter = isGlobalScope ? menuItemsForGlobalContext : menuItemsAllowedForCurrentScope
             let matches = dedupeMenuItems(
-                menuItemsAllowedForCurrentScope(
+                filter(
                     persistentClosedAppMatches(
                         bundleId,
                         appName,
@@ -3600,6 +3638,8 @@ extension LauncherView {
 
         // Live menu items: primary (frontmost app) + optional cross-app when query targets another app
         let menuMatches: [AXMenuItem] = {
+            // Desktop-only: no Finder window open — suppress menus, show file search instead
+            if isFinderDesktopOnlyMode { return [] }
             if let installedMenuTarget {
                 let filterQ = installedMenuTarget.actionQuery
                 let preferCached = isExplicitAppScope && filterQ.isEmpty
@@ -3748,6 +3788,7 @@ extension LauncherView {
             return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
         }()
 
+        if !isFinderDesktopOnlyMode {
         for pill in scopedSystemCommandPills(
             scopedBundleId: scopedBundleId,
             scopedSearchQuery: scopedSearchQuery
@@ -3950,6 +3991,7 @@ extension LauncherView {
                 }
             }
         }
+        } // end !isFinderDesktopOnlyMode
 
         if !useSeededMenuPills || hasStrongContextQuery {
             for item in visibleMenuMatches {
@@ -4065,16 +4107,22 @@ extension LauncherView {
                         )
                     })
                 pill.isFavourited = isFav
-                if item.children.isEmpty, sourcePID != 0, item.title.lowercased().hasPrefix("share")
-                {
+                let isShareMenuItem =
+                    item.children.isEmpty && sourcePID != 0
+                    && (normalizedDockPillText(item.title).hasPrefix("share")
+                        || item.path.contains { normalizedDockPillText($0) == "share" })
+                if isShareMenuItem {
                     pill = DockPill(
                         id: pill.id, name: pill.name,
                         icon: "square.and.arrow.up",
                         accentColorName: "blue",
                         badge: pill.badge,
-                        execute: { showShareSheetForContext() })
+                        execute: { executeShareMenuDestination(item.title) })
                     pill.isShareAction = true
                     pill.isFavourited = isFav
+                    pill.menuItemImage =
+                        resolvedSharingServiceIcon(named: item.title)
+                        ?? resolvedInstalledAppIcon(named: item.title)
                     pill.menuItemName = item.title
                     pill.sourceBundleId = menuBundleId
                     pill.sourceAppName = menuAppName

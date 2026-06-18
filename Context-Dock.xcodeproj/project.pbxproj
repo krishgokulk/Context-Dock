@@ -48,19 +48,19 @@
 			);
 			target = CAFE00000000000000000002 /* Context-DockExtension */;
 		};
+		FD00E2A32FDFE51D003000B2 /* Exceptions for "Context-Dock" folder in "Context-DockExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIcon.icon,
+			);
+			target = CAFE00000000000000000002 /* Context-DockExtension */;
+		};
 		FD1617E22ECEA5B600620C78 /* Exceptions for "Context-Dock" folder in "Context-Dock" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = FD1617D32ECEA5B500620C78 /* Context-Dock */;
-		};
-		FD740C1D2FDEC7F500F62024 /* Exceptions for "Context-Dock" folder in "Context-DockExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				AppIcon.icon,
-			);
-			target = CAFE00000000000000000002 /* Context-DockExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -77,7 +77,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				FD1617E22ECEA5B600620C78 /* Exceptions for "Context-Dock" folder in "Context-Dock" target */,
-				FD740C1D2FDEC7F500F62024 /* Exceptions for "Context-Dock" folder in "Context-DockExtension" target */,
+				FD00E2A32FDFE51D003000B2 /* Exceptions for "Context-Dock" folder in "Context-DockExtension" target */,
 			);
 			path = "Context-Dock";
 			sourceTree = "<group>";

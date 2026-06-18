@@ -86,6 +86,9 @@ extension LauncherView {
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
                     proxy.scrollTo("pill-list-\(visiblePills[idx].id)", anchor: .center)
                 }
+                DispatchQueue.main.async {
+                    refreshQuickLookPreviewForCurrentFocusIfVisible()
+                }
             }
         }
     }
@@ -119,6 +122,12 @@ extension LauncherView {
                 return kind == "findercurrent" ? "Current Folder" : "Home Folders"
             }
             return "Files"
+        }
+        if kind == "finderrecentapp" {
+            return "Applications"
+        }
+        if kind == "finderrecent" || kind == "spotlightsearch" {
+            return "Files & Folders"
         }
         if kind.contains("finder") || badge.contains("finder") {
             return "Finder"
@@ -1024,6 +1033,7 @@ extension LauncherView {
 
     var shouldShowL2UnifiedDockRow: Bool {
         guard showContextInDock, !aiMode.isActive else { return false }
+        if isContextDockChatRoutingLocked { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if isCompactSmartScope {
             return false
@@ -1042,11 +1052,8 @@ extension LauncherView {
         if pendingDockPillQuery == q, pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
             return true
         }
-        if l2.targetApp?.bundleId == "com.apple.finder" {
-            return true
-        }
-        let visiblePills = stableVisibleDockPills(for: q)
-        return visiblePills.contains { !$0.isSeparator } || !q.isEmpty
+        let visiblePills = contextDockViewModel.visiblePills
+        return visiblePills.contains { !$0.isSeparator }
     }
 
     /// Single pill button with focus highlight for keyboard navigation.
@@ -1326,7 +1333,7 @@ extension LauncherView {
     }
 
     func resolvedSharingServiceIcon(named title: String) -> NSImage? {
-        let context = effectiveAXContextForConversation()
+        let context = effectiveShareAXContext()
         var items = ShareIntentRouter.shared.shareItems(for: context)
         if items.isEmpty, let app = AppDelegate.shared?.previousFrontmostApp,
             let bid = app.bundleIdentifier,
@@ -1817,7 +1824,7 @@ extension LauncherView {
                 "CD_BUNDLE_ID": frontmost.bundleID,
                 "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
                 "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
-                "CD_URL": axContext.currentURL ?? "",
+                "CD_URL": axContext.currentURL ?? AXContextReader.shared.current.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
                 "CD_FILE": axContext.selectedFilePaths.first ?? selectedFilePaths.first ?? "",
                 "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
             ]
@@ -1829,7 +1836,7 @@ extension LauncherView {
                 "CD_BUNDLE_ID": frontmost.bundleID,
                 "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
                 "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
-                "CD_URL": axContext.currentURL ?? "",
+                "CD_URL": axContext.currentURL ?? AXContextReader.shared.current.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
                 "CD_FILE": axContext.selectedFilePaths.first ?? selectedFilePaths.first ?? "",
                 "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
             ]
@@ -1840,7 +1847,7 @@ extension LauncherView {
                 "CD_BUNDLE_ID": frontmost.bundleID,
                 "CD_WINDOW_TITLE": axContext.windowTitle ?? "",
                 "CD_SELECTED_TEXT": axContext.selectedText ?? selectedText,
-                "CD_URL": axContext.currentURL ?? "",
+                "CD_URL": axContext.currentURL ?? AXContextReader.shared.current.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
                 "CD_FILE": axContext.selectedFilePaths.first ?? selectedFilePaths.first ?? "",
                 "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
             ]

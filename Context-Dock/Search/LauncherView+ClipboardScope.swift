@@ -516,6 +516,7 @@ extension LauncherView {
         axContext.selectedText = contextText
         l2.chatArmed = true
         l2.showChatPopover = true
+        l2.chatDismissed = false
         handleL2Query(q, skipMenuRouter: true)
         return true
     }
@@ -1571,7 +1572,10 @@ extension LauncherView {
         guard isL2ContextActive, usesVerticalListDockLayout else { return nil }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let pills = currentVisibleDockPills(for: pillQuery)
+        let pills =
+            pillQuery.isEmpty
+            ? selectionScopedDockPills(cachedDockPills)
+            : contextDockViewModel.visiblePills
         let index = l2.focusedPillIndex ?? listViewHoveredIndex
         guard let index, pills.indices.contains(index), !pills[index].isSeparator else {
             return nil

@@ -52,6 +52,7 @@ struct L2State {
     var showResultsPopover: Bool = false
     var showChatPopover: Bool = false
     var chatArmed: Bool = false
+    var chatDismissed: Bool = false
     var chatDraftAppName: String = ""
     var chatDraftBundleId: String = ""
 }

@@ -118,6 +118,13 @@ class TerminalCommandClassifier {
         ("^ping\\s+-c\\s+\\d+\\s", .networkOperation, "Ping host (limited)"),
         ("^curl\\s+https?://wttr\\.in", .networkOperation, "Fetch weather info"),
         ("^curl\\s+https?://(ipinfo\\.io|ifconfig\\.me)", .networkOperation, "Fetch network info"),
+        ("^tailscale\\s+status(\\s|$)", .networkOperation, "Show Tailscale connection status"),
+        ("^tailscale\\s+ip(\\s|$)", .networkOperation, "Show Tailscale IP addresses"),
+        ("^tailscale\\s+netcheck(\\s|$)", .networkOperation, "Check Tailscale network connectivity"),
+        ("^tailscale\\s+lock\\s+status(\\s|$)", .networkOperation, "Show Tailnet Lock status"),
+        ("^tailscale\\s+funnel\\s+status(\\s|$)", .networkOperation, "Show Tailscale Funnel status"),
+        ("^tailscale\\s+serve\\s+status(\\s|$)", .networkOperation, "Show Tailscale Serve status"),
+        ("^tailscale\\s+version(\\s|$)", .networkOperation, "Show Tailscale version"),
 
         // Package info (read-only)
         ("^brew\\s+info\\s", .packageManagement, "Show package information"),

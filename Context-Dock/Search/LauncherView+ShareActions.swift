@@ -5,29 +5,8 @@ extension LauncherView {
     // MARK: - Share sheet
 
     func presentSharingPicker(items: [Any]) {
-        guard !items.isEmpty else { return }
-        let picker = NSSharingServicePicker(items: items)
-        let coordinator = SharePickerCoordinator {
-            self.isSharingSheetActive = false
-        }
-        picker.delegate = coordinator
-        objc_setAssociatedObject(
-            picker,
-            &SharePickerCoordinator.key,
-            coordinator,
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
-
-        isSharingSheetActive = true
-        DispatchQueue.main.async {
-            guard let window = NSApp.keyWindow,
-                let view = window.contentView
-            else {
-                self.isSharingSheetActive = false
-                return
-            }
-            let rect = NSRect(x: window.frame.width / 2 - 60, y: 52, width: 120, height: 1)
-            picker.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+        ShareActionCoordinator.shared.presentSharingPicker(items: items) { active in
+            self.isSharingSheetActive = active
         }
     }
 
@@ -36,9 +15,55 @@ extension LauncherView {
     /// Sets shareSheetVisible = true so arrow keys are passed through to the picker.
     func showShareSheetForContext() {
         let items = ShareIntentRouter.shared.shareableItems(
-            for: effectiveAXContextForConversation())
+            for: effectiveShareAXContext())
         guard !items.isEmpty else { return }
         presentSharingPicker(items: items)
+    }
+
+    func executeShareMenuDestination(_ title: String) {
+        let normalizedTitle = normalizedDockPillText(title)
+        let items = ShareIntentRouter.shared.shareableItems(
+            for: effectiveShareAXContext())
+        ShareActionCoordinator.shared.executeShareDestination(
+            title: title,
+            normalizedTitle: normalizedTitle,
+            items: items,
+            presentSharingPicker: { self.presentSharingPicker(items: $0) }
+        )
+    }
+
+    func effectiveShareAXContext() -> AXContext {
+        let pid = axContext.pid != 0
+            ? axContext.pid
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        return SelectedContextResolver.effectiveShareContext(
+            SelectedContextResolver.ShareInput(
+                axContext: axContext,
+                currentContext: currentContext,
+                selectedFileURLs: effectiveSelectedFileURLsForConversation(),
+                frozenSelectionText: frozenSelectionText,
+                previousFrontmostPID: pid
+            )
+        )
+    }
+
+    func focusedDocumentURLForShareContext() -> URL? {
+        let pid = axContext.pid != 0
+            ? axContext.pid
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        return SelectedContextResolver.focusedDocumentURL(pid: pid)
+    }
+
+    func fileURLFromAXValue(_ value: CFTypeRef) -> URL? {
+        SelectedContextResolver.fileURLFromAXValue(value)
+    }
+
+    func validShareFileURL(_ url: URL) -> URL? {
+        SelectedContextResolver.validShareFileURL(url)
+    }
+
+    func isBrowserBundleId(_ bundleId: String) -> Bool {
+        SelectedContextResolver.isBrowserBundleId(bundleId)
     }
 
     func executeShareIntent(
@@ -181,33 +206,7 @@ extension LauncherView {
     func transformShareReadableContent(from urls: [URL])
         -> (summary: String, content: String, primaryFileName: String)
     {
-        let files = Array(urls.prefix(3))
-        let analyses = ContextDetector.shared.analyzeFiles(files)
-        var chunks: [String] = []
-        var summaryLines: [String] = []
-
-        for analysis in analyses {
-            summaryLines.append(
-                "- \(analysis.url.lastPathComponent) (\(analysis.type), \(analysis.size))")
-            guard
-                let content = analysis.content?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                !content.isEmpty
-            else { continue }
-            chunks.append(
-                """
-                FILE: \(analysis.url.lastPathComponent)
-                CONTENT:
-                \(String(content.prefix(6000)))
-                """
-            )
-        }
-
-        return (
-            summaryLines.joined(separator: "\n"),
-            chunks.joined(separator: "\n\n---\n\n"),
-            files.first?.lastPathComponent ?? "selected file"
-        )
+        TransformShareContentReader.readableContent(from: urls)
     }
 
     func transformSharePrompt(
@@ -215,21 +214,11 @@ extension LauncherView {
         fileSummary: String,
         fileContent: String
     ) -> String {
-        """
-        The user wants a generated message derived from the selected file, then sent to someone.
-
-        User request:
-        \(userMessage)
-
-        Selected file metadata:
-        \(fileSummary)
-
-        Selected file text:
-        \(fileContent)
-
-        Produce only the message body to send. Keep it short unless the user asked otherwise.
-        Do not mention implementation details, file paths, or that you are an AI.
-        """
+        TransformShareContentReader.prompt(
+            userMessage: userMessage,
+            fileSummary: fileSummary,
+            fileContent: fileContent
+        )
     }
 
 }

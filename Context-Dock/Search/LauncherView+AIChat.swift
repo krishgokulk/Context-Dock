@@ -23,10 +23,83 @@ extension LauncherView {
         l2.chatArmed || l2.showChatPopover
     }
 
+    var isContextDockChatRoutingLocked: Bool {
+        showContextInDock
+            && !showMediaLayer
+            && !aiMode.isActive
+            && (l2.chatArmed || l2.showChatPopover)
+    }
+
     var shouldShowContextDockChatSheet: Bool {
         showContextInDock
             && !showMediaLayer
+            && !l2.chatDismissed
             && (l2.showChatPopover || l2.isLoading || !l2.chatMessages.isEmpty)
+    }
+
+    var contextDockBrowserBundleIDs: Set<String> {
+        [
+            "com.apple.Safari",
+            "com.google.Chrome",
+            "com.brave.Browser",
+            "org.chromium.Chromium",
+            "com.microsoft.edgemac",
+        ]
+    }
+
+    var currentContextDockChatScope: (bundleId: String, appName: String) {
+        let targetBundle = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let targetName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !targetBundle.isEmpty {
+            return (targetBundle, targetName.isEmpty ? contextDockChatDraftAppName : targetName)
+        }
+
+        let draftBundle = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !draftBundle.isEmpty {
+            return (draftBundle, draftName.isEmpty ? contextDockChatDraftAppName : draftName)
+        }
+
+        return (frontmost.bundleID, frontmost.name.isEmpty ? "this app" : frontmost.name)
+    }
+
+    func isContextDockBrowserBundle(_ bundleId: String) -> Bool {
+        contextDockBrowserBundleIDs.contains(bundleId.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func sanitizedConversationContextForScope(
+        _ context: UserContext,
+        scopedBundleId: String,
+        scopedAppName: String
+    ) -> UserContext {
+        guard !scopedBundleId.isEmpty, !isContextDockBrowserBundle(scopedBundleId) else {
+            return context
+        }
+        if case .url = context {
+            return .appFocused(
+                name: scopedAppName.isEmpty ? contextDockChatDraftAppName : scopedAppName,
+                bundleID: scopedBundleId
+            )
+        }
+        return context
+    }
+
+    func sanitizedAXContextForScope(_ context: AXContext, scopedBundleId: String) -> AXContext {
+        guard !scopedBundleId.isEmpty, !isContextDockBrowserBundle(scopedBundleId) else {
+            return context
+        }
+        var sanitized = context
+        sanitized.currentURL = nil
+        return sanitized
+    }
+
+    func currentScopedConversationContext() -> UserContext {
+        let scope = currentContextDockChatScope
+        return sanitizedConversationContextForScope(
+            effectiveConversationUserContext,
+            scopedBundleId: scope.bundleId,
+            scopedAppName: scope.appName
+        )
     }
 
     var shouldShowContextDockAIQueryFallback: Bool {
@@ -68,7 +141,8 @@ extension LauncherView {
             !existingBundleId.isEmpty
         {
             l2.chatArmed = true
-            updateWindowSize()
+            l2.chatDismissed = false
+            requestWindowSizeUpdate(reason: .panelChanged)
             return
         }
         let scopedName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -76,17 +150,52 @@ extension LauncherView {
         let fallbackName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackBundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         l2.chatArmed = true
+        l2.chatDismissed = false
         l2.chatDraftAppName = scopedName.isEmpty ? fallbackName : scopedName
         l2.chatDraftBundleId = scopedBundleId.isEmpty ? fallbackBundleId : scopedBundleId
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
     }
 
     func disarmContextDockChat() {
         l2.showChatPopover = false
         l2.chatArmed = false
+        l2.chatDismissed = true
         l2.chatDraftAppName = ""
         l2.chatDraftBundleId = ""
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .panelChanged)
+    }
+
+    func exitContextDockChatSheet() {
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+        }
+        l2.showChatPopover = false
+        l2.chatArmed = false
+        l2.chatDismissed = true
+        l2.chatDraftAppName = ""
+        l2.chatDraftBundleId = ""
+        l2.appCompletion = nil
+        l2.showResultsPopover = false
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        focusedAppPillIndex = nil
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
+        livePanelVisible = false
+        contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+        requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    func exitContextDockChatAndScope() {
+        exitContextDockChatSheet()
+        clearSearchContext()
+        remPanelIsProcessing = false
+        remIsInstalled = nil
+        systemDataResults = []
+        searchState.lastSmartQuery = ""
+        globalContextActivation = GlobalContextActivation(autoActivated: false)
+        isSearchFieldFocused = true
     }
 
     var contextDockChatButton: some View {
@@ -121,7 +230,7 @@ extension LauncherView {
     var contextDockChatCloseButton: some View {
         Button {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                disarmContextDockChat()
+                exitContextDockChatAndScope()
             }
             isSearchFieldFocused = true
         } label: {
@@ -138,10 +247,10 @@ extension LauncherView {
     func toggleInlineAIChatPanel() {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             if l2.showChatPopover {
-                disarmContextDockChat()
+                exitContextDockChatAndScope()
             } else {
                 if l2.chatArmed {
-                    disarmContextDockChat()
+                    exitContextDockChatAndScope()
                 } else {
                     armContextDockChat()
                 }
@@ -163,6 +272,16 @@ extension LauncherView {
             showFolderPreview = false
             l2.focusedPillIndex = nil
             focusedAppPillIndex = nil
+        }
+        // Auto-attach mail context when the user explicitly opens a Mail-scoped chat
+        // (right arrow, pin, or any direct invocation). The deliberate scope choice
+        // is the consent signal — no separate + button press needed.
+        let mailBundleId = "com.apple.mail"
+        if frontmost.bundleID == mailBundleId
+            || l2.targetApp?.bundleId == mailBundleId
+            || l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines) == mailBundleId
+        {
+            isMailContextAttached = true
         }
         isSearchFieldFocused = true
     }
@@ -284,7 +403,9 @@ extension LauncherView {
                         }
                         .buttonStyle(.plain)
                         if scopedTarget != nil {
-                            Button("Exit Scope") { clearSearchContext() }
+                            Button("Exit Scope") {
+                                exitContextDockChatAndScope()
+                            }
                                 .buttonStyle(.bordered)
                                 .controlSize(.mini)
                         }
@@ -588,7 +709,7 @@ extension LauncherView {
                             AIChatMessage(role: .assistant, content: response))
                         self.aiMode.isLoading = false
                     }
-                    self.updateWindowSize()
+                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
             } catch {
                 await MainActor.run {
@@ -600,7 +721,7 @@ extension LauncherView {
                                 isError: true))
                         self.aiMode.isLoading = false
                     }
-                    self.updateWindowSize()
+                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
             }
         }
@@ -882,6 +1003,53 @@ extension LauncherView {
             "IMPORTANT: When the user's request warrants running one or more CLI commands, output each exact ready-to-run command on its own line prefixed with CMD: (example: CMD: pear list-orphaned). Do not put CMD: lines inside code blocks. Emit only real actionable commands the user should approve and run, never informational examples."
         )
         return lines.joined(separator: "\n")
+    }
+
+    func runtimeAppCLIContextPrompt(
+        bundleId: String,
+        appName: String,
+        query: String
+    ) async -> String {
+        let normalizedApp = "\(bundleId) \(appName)".lowercased()
+        guard normalizedApp.contains("tailscale") else { return "" }
+
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wantsNetworkDiagnostics =
+            q.contains("why") || q.contains("connect") || q.contains("network")
+            || q.contains("status") || q.contains("ip") || q.contains("tailnet")
+            || q.contains("lock") || q.contains("funnel") || q.contains("serve")
+
+        var commands: [(String, String)] = [
+            ("tailscale status", "Read Tailscale connection and peer status"),
+            ("tailscale ip", "Read Tailscale IP addresses"),
+        ]
+        if wantsNetworkDiagnostics {
+            commands.append(("tailscale netcheck", "Read Tailscale network diagnostics"))
+            commands.append(("tailscale lock status", "Read Tailnet Lock status"))
+        }
+
+        var blocks: [String] = []
+        for (command, purpose) in commands {
+            let result = await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
+            let status = result.success ? "success" : "failed"
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            blocks.append(
+                """
+                $ \(command) [\(status)]
+                \(String(output.prefix(2000)))
+                """
+            )
+        }
+
+        guard !blocks.isEmpty else { return "" }
+        return """
+        ## Live Tailscale CLI Snapshot
+        Read-only commands were run because the frontmost/scoped app is Tailscale.
+        Use this as factual app state. Do not claim GUI-only state when CLI output disagrees.
+        State-changing Tailscale commands such as `tailscale up`, `tailscale down`, `tailscale logout`, or `tailscale set ...` still require explicit user approval.
+
+        \(blocks.joined(separator: "\n\n"))
+        """
     }
 
     /// Scans AI response for `CMD: <command>` lines, strips them from the displayed message,
@@ -1318,6 +1486,7 @@ extension LauncherView {
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
         armContextDockChat()
         l2.showChatPopover = true
+        l2.chatDismissed = false
         if handleL2TaskControlQueryIfNeeded(query) {
             return
         }
@@ -1338,7 +1507,6 @@ extension LauncherView {
             dockScope.isExplicitAppScope
             && !scopedBundleId.isEmpty
             && !scopedAppName.isEmpty
-
         // Global context + live selection or clipboard → query is about the content; skip app routing
         let globalSelectionActive =
             dockScope.isGlobalScope
@@ -1704,6 +1872,12 @@ extension LauncherView {
             : (dockCLIContextPrompt.isEmpty
                 ? proposalAppendix : dockCLIContextPrompt + "\n\n" + proposalAppendix)
 
+        let scopedConversationContext = sanitizedConversationContextForScope(
+            effectiveConversationUserContext,
+            scopedBundleId: scopedBundleId,
+            scopedAppName: scopedAppName
+        )
+
         // Store original query for potential re-execution after extension install
         originalUserQuery = query
         l2.lastRunnableQuery = query
@@ -1716,7 +1890,7 @@ extension LauncherView {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 isSearchBarExpanded = true
             }
-            updateWindowSize()
+            requestWindowSizeUpdate(reason: .rowLayoutChanged)
         }
 
         let frontmostName: String? = {
@@ -1733,7 +1907,7 @@ extension LauncherView {
         }()
 
         let selectedFiles: [URL] = {
-            if case .filesSelected(let urls) = effectiveConversationUserContext {
+            if case .filesSelected(let urls) = scopedConversationContext {
                 return urls
             }
             return []
@@ -1764,7 +1938,7 @@ extension LauncherView {
             || queryLower.contains("highlight") || queryLower.contains("overview")
             || queryLower.contains("analyse") || queryLower.contains("analyze")
         if isFileContentQuery,
-            case .filesSelected(let urls) = effectiveConversationUserContext,
+            case .filesSelected(let urls) = scopedConversationContext,
             let pdf = ContextDetector.shared.analyzeFiles(urls).first(where: { $0.type == "pdf" }),
             let pdfContent = pdf.content,
             !pdfContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1806,7 +1980,7 @@ extension LauncherView {
 
         if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
             l2.currentTask = Task {
-                await executeL2Extension(top.ilExtension, context: effectiveConversationUserContext)
+                await executeL2Extension(top.ilExtension, context: scopedConversationContext)
                 await MainActor.run { finishL2AIRequest(l2RequestID) }
             }
             return
@@ -1816,15 +1990,11 @@ extension LauncherView {
 
         // ── Ensure browser context is set correctly for Safari / Chrome ──────
         // If frontmost app is a browser but currentContext isn't .url yet, fix it now.
-        let browserBundles = [
-            "com.apple.Safari", "com.google.Chrome", "com.brave.Browser",
-            "org.chromium.Chromium", "com.microsoft.edgemac",
-        ]
         let shouldUseFrontmostBrowserContext =
-            !isExplicitScopedApp || browserBundles.contains(scopedBundleId)
+            scopedBundleId.isEmpty ? !isExplicitScopedApp : isContextDockBrowserBundle(scopedBundleId)
         if shouldUseFrontmostBrowserContext,
             !dockScope.isGlobalScope,
-            browserBundles.contains(frontmost.bundleID)
+            isContextDockBrowserBundle(frontmost.bundleID)
         {
             let liveURL = axContext.currentURL ?? frontmost.bundleID
             if case .url = currentContext { /* already set */
@@ -1843,9 +2013,11 @@ extension LauncherView {
         }
 
         // Fast-path: Safari NL commands ("search youtube for X", "close tab", etc.) skip AI entirely
+        let safariCommandScopeAllowed =
+            scopedBundleId == "com.apple.Safari"
+            || (!isExplicitScopedApp && frontmost.bundleID == "com.apple.Safari")
         if !shouldStayInScopedAIChat,
-            frontmost.bundleID == "com.apple.Safari"
-            || SafariBrowserBridge.shared.safariContextIfFresh() != nil,
+            safariCommandScopeAllowed,
             let directCmd = SafariCommandBridge.shared.parseIntent(query)
         {
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
@@ -1895,21 +2067,30 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                let runtimeCLIContextPrompt = await self.runtimeAppCLIContextPrompt(
+                    bundleId: scopedBundleId,
+                    appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName,
+                    query: query
+                )
+                let activeContextPrompt = [finalContextPrompt, runtimeCLIContextPrompt]
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .joined(separator: "\n\n")
+
                 if provider != .onDevice && provider != .shortcuts {
                     let commandExecutor: (String, String) async -> (Bool, String) = { command, purpose in
                         await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
                     }
-                    let toolQuery = finalContextPrompt.isEmpty
+                    let toolQuery = activeContextPrompt.isEmpty
                         ? query
-                        : "\(finalContextPrompt)\n\nUser request: \(query)"
+                        : "\(activeContextPrompt)\n\nUser request: \(query)"
                     let (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
                         toolQuery,
-                        context: effectiveConversationUserContext,
+                        context: scopedConversationContext,
                         provider: provider,
                         apiKey: apiKey,
                         conversationHistory: chatHistory,
                         commandExecutor: commandExecutor,
-                        additionalSystemPrompt: finalContextPrompt.isEmpty ? nil : finalContextPrompt
+                        additionalSystemPrompt: activeContextPrompt.isEmpty ? nil : activeContextPrompt
                     )
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
@@ -1919,14 +2100,16 @@ extension LauncherView {
                         var msg = AIChatMessage(role: .assistant, content: finalResponse)
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
-                        if !finalContextPrompt.isEmpty {
+                        if !activeContextPrompt.isEmpty {
                             extractAndInsertDockApprovalCards(
                                 from: msg.content, intoMessageAt: msg.id)
                         }
                         finishL2AIRequest(l2RequestID)
                     }
                     // Dispatch any Safari browser control tags embedded in the response
-                    if case .safariCommand(let cmd) = parseL2AIResponse(finalResponse) {
+                    if safariCommandScopeAllowed,
+                        case .safariCommand(let cmd) = parseL2AIResponse(finalResponse)
+                    {
                         let result = await SafariCommandBridge.shared.execute(cmd)
                         if !result.isEmpty {
                             await MainActor.run {
@@ -1949,7 +2132,7 @@ extension LauncherView {
                         if isExplicitScopedApp && !scopedBundleId.isEmpty {
                             return .appFocused(name: scopedAppName, bundleID: scopedBundleId)
                         }
-                        return effectiveConversationUserContext
+                        return scopedConversationContext
                     }()
                     // Prepend date/time as a lightweight header so the model knows current time
                     let dateHeader = await MainActor.run { self.currentDateTimeContextBlock() }
@@ -1961,7 +2144,7 @@ extension LauncherView {
                             message: onDeviceMessage,
                             context: onDeviceContext,
                             history: onDeviceHistory,
-                            additionalContextPrompt: finalContextPrompt,
+                            additionalContextPrompt: activeContextPrompt,
                             onPartial: { token in
                                 DispatchQueue.main.async {
                                     if let idx = self.l2.chatMessages.firstIndex(where: {
@@ -1998,7 +2181,7 @@ extension LauncherView {
                                         )
                                         self.l2.chatMessages[idx] = tagged
                                         let finalContent = tagged.content
-                                        if !finalContextPrompt.isEmpty {
+                                        if !activeContextPrompt.isEmpty {
                                             self.extractAndInsertDockApprovalCards(
                                                 from: finalContent, intoMessageAt: msgId)
                                         }
@@ -2134,7 +2317,11 @@ extension LauncherView {
                 """
         }
         sysL2 += "\n\n" + currentDateTimeContextBlock()
-        let axL2 = effectiveAXContextForConversation()
+        let scoped = currentContextDockChatScope
+        let axL2 = sanitizedAXContextForScope(
+            effectiveAXContextForConversation(),
+            scopedBundleId: scoped.bundleId
+        )
         if !axL2.isEmpty {
             sysL2 +=
                 "\n\n## Live App Context (use this to ground your answers)\n" + axL2.contextSummary
@@ -2160,7 +2347,6 @@ extension LauncherView {
         let safariCommandsAvailable =
             frontmost.bundleID == "com.apple.Safari"
             || l2.targetApp?.bundleId == "com.apple.Safari"
-            || SafariBrowserBridge.shared.safariContextIfFresh() != nil
         let isCloudProvider = settings.selectedAIProvider != .onDevice
         if safariCommandsAvailable && isCloudProvider {
             sysL2 += "\n\n" + SafariCommandBridge.compactSystemPromptBlock
@@ -2172,7 +2358,7 @@ extension LauncherView {
 
         // Check if we have image files selected (for vision support)
         var imageFiles: [URL] = []
-        if case .filesSelected(let urls) = effectiveConversationUserContext {
+        if case .filesSelected(let urls) = currentScopedConversationContext() {
             imageFiles = urls.filter { url in
                 let ext = url.pathExtension.lowercased()
                 return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"].contains(ext)
@@ -2216,7 +2402,7 @@ extension LauncherView {
             )
             : AIRequestBuilder.contextDock(
                 text: query,
-                context: effectiveConversationUserContext,
+                context: currentScopedConversationContext(),
                 history: history,
                 attachments: imageFiles,
                 mode: capabilityPlanningRequested ? .plan : .answer,
@@ -2236,12 +2422,12 @@ extension LauncherView {
             let plan = try AIResponseParser.shared.parseActionPlan(response)
             let result = try await AIExecutionEngine.shared.executeWithApproval(
                 plan,
-                context: effectiveConversationUserContext
+                context: currentScopedConversationContext()
             )
             return await AIResultExplanationService.shared.explain(
                 plan: plan,
                 result: result,
-                context: effectiveConversationUserContext,
+                context: currentScopedConversationContext(),
                 provider: settings.selectedAIProvider
             )
         } catch AICapabilityError.invalidPlan {

@@ -281,7 +281,7 @@ extension LauncherView {
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
         DispatchQueue.main.async {
             self.reclaimSearchInputFocus()
-            self.updateWindowSize()
+            self.requestWindowSizeUpdate(reason: .contentSettled)
         }
     }
 
@@ -382,6 +382,34 @@ extension LauncherView {
             ?? candidates.first
     }
 
+    func actualFrontmostAppAfterTermination(
+        excludingProcessIdentifier processIdentifier: pid_t,
+        excludingBundleIdentifier bundleIdentifier: String?
+    ) -> NSRunningApplication? {
+        let ownBundleID = Bundle.main.bundleIdentifier ?? ""
+
+        func isValid(_ app: NSRunningApplication?) -> Bool {
+            guard let app, !app.isTerminated else { return false }
+            guard app.processIdentifier != processIdentifier else { return false }
+            let appBundleID = app.bundleIdentifier ?? ""
+            guard appBundleID != ownBundleID else { return false }
+            if let bundleIdentifier, !bundleIdentifier.isEmpty {
+                guard appBundleID != bundleIdentifier else { return false }
+            }
+            return app.activationPolicy == .regular
+        }
+
+        if isValid(NSWorkspace.shared.frontmostApplication) {
+            return NSWorkspace.shared.frontmostApplication
+        }
+
+        if let recent = AppDelegate.shared?.recentApps.first(where: { isValid($0) }) {
+            return recent
+        }
+
+        return currentRegularRunningApps().first(where: { isValid($0) })
+    }
+
     func clearLiveDockMenuState() {
         liveMenuItems = []
         crossAppMenuItems = []
@@ -395,14 +423,21 @@ extension LauncherView {
         runningRegularApps = currentRegularRunningApps()
         AppDelegate.shared?.removeRecentApp(app)
         let terminatedBundleID = app.bundleIdentifier ?? ""
+        let shouldStayInContextDockAfterQuit = showContextInDock && !isGlobalContextActive
         let terminatedScope =
             (!terminatedBundleID.isEmpty && l2.targetApp?.bundleId == terminatedBundleID)
             || (!terminatedBundleID.isEmpty
                 && globalInlineAppScope?.bundleId == terminatedBundleID)
-        let fallback = fallbackRunningAppAfterTermination(
-            excludingProcessIdentifier: app.processIdentifier,
-            excludingBundleIdentifier: app.bundleIdentifier
-        )
+        let fallback =
+            shouldStayInContextDockAfterQuit
+            ? actualFrontmostAppAfterTermination(
+                excludingProcessIdentifier: app.processIdentifier,
+                excludingBundleIdentifier: app.bundleIdentifier
+            )
+            : fallbackRunningAppAfterTermination(
+                excludingProcessIdentifier: app.processIdentifier,
+                excludingBundleIdentifier: app.bundleIdentifier
+            )
 
         if let delegate = AppDelegate.shared,
             delegate.previousFrontmostApp?.processIdentifier == app.processIdentifier
@@ -428,12 +463,22 @@ extension LauncherView {
                 let bundleID = fallback.bundleIdentifier,
                 let name = fallback.localizedName
             {
-                _ = activateInlineDockAppScope(
-                    bundleIdentifier: bundleID,
-                    appName: name,
-                    queryOverride: "",
-                    preserveGlobalContext: isGlobalContextActive
-                )
+                if shouldStayInContextDockAfterQuit {
+                    AppDelegate.shared?.recordFrontmostApp(fallback)
+                    ContextDockEnvironment.shared.frontmostAppDidChange(name: name, bundleID: bundleID)
+                    frontmost.name = name
+                    frontmost.bundleID = bundleID
+                    frontmost.icon =
+                        resolvedRunningAppIcon(for: fallback)
+                        ?? preparedDockIcon(fallback.icon)
+                } else {
+                    _ = activateInlineDockAppScope(
+                        bundleIdentifier: bundleID,
+                        appName: name,
+                        queryOverride: "",
+                        preserveGlobalContext: isGlobalContextActive
+                    )
+                }
             }
         }
 
@@ -445,7 +490,16 @@ extension LauncherView {
             clearLiveDockMenuState()
         }
 
-        updateWindowSize()
+        requestWindowSizeUpdate(reason: .modeChanged)
+
+        if shouldStayInContextDockAfterQuit,
+            let fallback,
+            fallback.bundleIdentifier != nil
+        {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                AppDelegate.shared?.activateContextDock()
+            }
+        }
     }
 
     func scheduleDockRefreshAfterTerminationAttempt(

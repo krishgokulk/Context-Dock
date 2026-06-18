@@ -147,7 +147,12 @@ extension LauncherView {
     var shortcutSheetFocusedCommandIDBinding: Binding<String?> {
         Binding(
             get: { launcherViewModel.shortcutSheetFocusedCommandID },
-            set: { launcherViewModel.shortcutSheetFocusedCommandID = $0 }
+            set: { [self] newValue in
+                launcherViewModel.shortcutSheetFocusedCommandID = newValue
+                // The shortcut sheet lives in a detached NSHostingView. Keep
+                // keyboard focus highlights in lockstep with arrow-key state.
+                DispatchQueue.main.async { self.refreshShortcutSheetPanel() }
+            }
         )
     }
 
@@ -159,7 +164,14 @@ extension LauncherView {
     var shortcutSheetSearchQueryBinding: Binding<String> {
         Binding(
             get: { launcherViewModel.shortcutSheetSearchQuery },
-            set: { launcherViewModel.shortcutSheetSearchQuery = $0 }
+            set: { [self] newValue in
+                launcherViewModel.shortcutSheetSearchQuery = newValue
+                // The sheet runs in an isolated NSHostingView that doesn't observe
+                // launcherViewModel, so it won't re-render automatically. Push an
+                // explicit rootView update on each keystroke to keep hasQuery/expanded
+                // in sync and let onChange(of: hasQuery) fire the panel resize.
+                DispatchQueue.main.async { self.refreshShortcutSheetPanel() }
+            }
         )
     }
 
@@ -196,7 +208,10 @@ extension LauncherView {
     var shortcutSheetSelectionExpandedBinding: Binding<Bool> {
         Binding(
             get: { launcherViewModel.shortcutSheetSelectionExpanded },
-            set: { launcherViewModel.shortcutSheetSelectionExpanded = $0 }
+            set: { [self] newValue in
+                launcherViewModel.shortcutSheetSelectionExpanded = newValue
+                DispatchQueue.main.async { self.refreshShortcutSheetPanel() }
+            }
         )
     }
 
@@ -774,7 +789,12 @@ extension LauncherView {
 
     var cachedDockPills: [DockPill] {
         get { contextDockViewModel.cachedPills }
-        nonmutating set { contextDockViewModel.cachedPills = newValue }
+        nonmutating set {
+            contextDockViewModel.cachedPills = newValue
+            if newValue.isEmpty {
+                contextDockViewModel.visiblePills = []
+            }
+        }
     }
 
     var liveMenuItems: [AXMenuItem] {

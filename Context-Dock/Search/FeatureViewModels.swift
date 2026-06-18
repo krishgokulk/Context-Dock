@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Darwin
 import Foundation
+import SwiftUI
 
 @MainActor
 final class LauncherViewModel: ObservableObject {
@@ -115,9 +116,18 @@ final class GlobalContextViewModel: ObservableObject {
 }
 
 @MainActor
+enum ContextDockPillScheduleStart {
+    case skipped
+    case duplicate(previewPills: [DockPill])
+    case questionStyle
+    case scheduled(generation: Int, previewPills: [DockPill])
+}
+
+@MainActor
 final class ContextDockViewModel: ObservableObject {
     @Published var state = ContextDockState()
     @Published var cachedPills: [DockPill] = []
+    @Published var visiblePills: [DockPill] = []
     @Published var pendingAIProposal: AIMenuProposal?
     @Published var pendingPillQuery: String?
     @Published var pendingPreviewPills: [DockPill] = []
@@ -157,7 +167,156 @@ final class ContextDockViewModel: ObservableObject {
     var menuAvailabilityRefreshTask: Task<Void, Never>?
     var menuAvailabilityRefreshGeneration = 0
     var crossAppMenuTask: Task<Void, Never>?
+    var finderDesktopSearchTask: Task<Void, Never>?
+    var finderDesktopSearchGeneration = 0
     var axContextRefreshTimer: Timer?
+    var cachedPreviewPillQuery = ""
+    var cachedPreviewPillSourceFingerprint = ""
+    var cachedPreviewPillScopeKey = ""
+    var cachedPreviewPills: [DockPill] = []
+    var lastFinderDirectoryRefresh: Date = .distantPast
+
+    func resetPillRenderingState(cancelBuild: Bool = false) {
+        pendingPreviewPills = []
+        pendingPillQuery = nil
+        visiblePills = []
+        if cancelBuild {
+            pillBuildTask?.cancel()
+            pillBuildTask = nil
+        }
+    }
+
+    func clearPendingPillBuild(cancelBuild: Bool = false) {
+        pendingPreviewPills = []
+        pendingPillQuery = nil
+        if cancelBuild {
+            pillBuildTask?.cancel()
+            pillBuildTask = nil
+        }
+    }
+
+    func cachedPreviewPills(
+        query: String,
+        sourceFingerprint: String,
+        scopeKey: String
+    ) -> [DockPill]? {
+        guard cachedPreviewPillQuery == query,
+            cachedPreviewPillSourceFingerprint == sourceFingerprint,
+            cachedPreviewPillScopeKey == scopeKey
+        else { return nil }
+        return cachedPreviewPills
+    }
+
+    func storePreviewPills(
+        _ pills: [DockPill],
+        query: String,
+        sourceFingerprint: String,
+        scopeKey: String
+    ) {
+        cachedPreviewPillQuery = query
+        cachedPreviewPillSourceFingerprint = sourceFingerprint
+        cachedPreviewPillScopeKey = scopeKey
+        cachedPreviewPills = pills
+    }
+
+    func preparePillRebuild(
+        query: String,
+        isDeletion: Bool,
+        isQuestionStyle: Bool,
+        cachedPills: [DockPill],
+        previewPills: [DockPill]
+    ) -> ContextDockPillScheduleStart {
+        if pendingPillQuery == query, pillBuildTask != nil {
+            return .duplicate(previewPills: isDeletion ? cachedPills : previewPills)
+        }
+
+        pillBuildGeneration &+= 1
+        pillBuildTask?.cancel()
+
+        if isQuestionStyle {
+            lastPillQuery = query
+            resetPillRenderingState(cancelBuild: true)
+            return .questionStyle
+        }
+
+        pendingPillQuery = query
+        return .scheduled(
+            generation: pillBuildGeneration,
+            previewPills: isDeletion ? cachedPills : previewPills
+        )
+    }
+
+    func scheduledPillRebuildCanContinue(generation: Int, query: String) -> Bool {
+        pillBuildGeneration == generation && pendingPillQuery == query
+    }
+
+    func finishScheduledPillRebuild(query: String) {
+        lastPillQuery = query
+        clearPendingPillBuild(cancelBuild: true)
+    }
+
+    /// Render identity for flicker-free commits: only swap published arrays when
+    /// visible row content changed.
+    func pillRenderFingerprint(_ pills: [DockPill]) -> String {
+        pills.map {
+            "\($0.id)|\($0.name)|\($0.badge ?? "")|\($0.isEnabled ? 1 : 0)|\($0.menuStatusBadge ?? "")|\($0.menuItemImage != nil ? 1 : 0)"
+        }.joined(separator: "#")
+    }
+
+    func commitPreviewPills(_ pills: [DockPill]) {
+        guard pillRenderFingerprint(pendingPreviewPills) != pillRenderFingerprint(pills)
+        else { return }
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            pendingPreviewPills = pills
+            visiblePills = pills
+        }
+    }
+
+    func replaceCachedPills(
+        _ pills: [DockPill],
+        preserveFocus: Bool,
+        focusedIndex: Int?,
+        setFocusedIndex: (Int?) -> Void,
+        clearPillKeyboardNavigation: () -> Void
+    ) {
+        guard pillRenderFingerprint(cachedPills) != pillRenderFingerprint(pills) else {
+            if pillRenderFingerprint(visiblePills) != pillRenderFingerprint(pills) {
+                visiblePills = pills
+            }
+            return
+        }
+
+        let previousFocusedID: String? = {
+            guard preserveFocus,
+                let index = focusedIndex,
+                cachedPills.indices.contains(index)
+            else { return nil }
+            return cachedPills[index].id
+        }()
+
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            cachedPills = pills
+            visiblePills = pills
+        }
+
+        guard preserveFocus else { return }
+        if let previousFocusedID,
+            let newIndex = pills.firstIndex(where: { $0.id == previousFocusedID && !$0.isSeparator })
+        {
+            setFocusedIndex(newIndex)
+            return
+        }
+        if let index = focusedIndex,
+            !pills.indices.contains(index) || pills[index].isSeparator
+        {
+            setFocusedIndex(nil)
+            clearPillKeyboardNavigation()
+        }
+    }
 }
 
 @MainActor

@@ -1105,33 +1105,31 @@ extension LauncherView {
             return
         }
 
-        DispatchQueue.main.async {
-            let currentQuery = searchState.query
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard query.isEmpty || currentQuery == query || globalInlineAppScope != nil else { return }
-            guard globalContextViewModel.cachedGroupedFingerprint != fingerprint else {
-                cachedGlobalGroupedQuery = cacheKey
-                return
-            }
+        let currentQuery = searchState.query
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard query.isEmpty || currentQuery == query || globalInlineAppScope != nil else { return }
+        guard globalContextViewModel.cachedGroupedFingerprint != fingerprint else {
+            cachedGlobalGroupedQuery = cacheKey
+            return
+        }
 
-            globalContextViewModel.cachedGroupedFingerprint = fingerprint
-            let signpostState = SearchPerformanceLog.shared.beginInterval(
-                "global.stateCommit",
-                query: query
-            )
-            defer { SearchPerformanceLog.shared.endInterval("global.stateCommit", state: signpostState) }
+        globalContextViewModel.cachedGroupedFingerprint = fingerprint
+        let signpostState = SearchPerformanceLog.shared.beginInterval(
+            "global.stateCommit",
+            query: query
+        )
+        defer { SearchPerformanceLog.shared.endInterval("global.stateCommit", state: signpostState) }
 
-            if animated {
+        if animated {
+            cachedGlobalGroupedQuery = cacheKey
+            cachedGlobalGroupedState = commitState
+        } else {
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
                 cachedGlobalGroupedQuery = cacheKey
                 cachedGlobalGroupedState = commitState
-            } else {
-                var transaction = Transaction()
-                transaction.animation = nil
-                withTransaction(transaction) {
-                    cachedGlobalGroupedQuery = cacheKey
-                    cachedGlobalGroupedState = commitState
-                }
             }
         }
     }
@@ -1141,9 +1139,7 @@ extension LauncherView {
     ) {
         let scheduleStarted = Date()
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let cacheKey = globalGroupedStateCacheKey(for: q)
         globalGroupedGeneration &+= 1
-        let generation = globalGroupedGeneration
         globalGroupedTask?.cancel()
         guard !q.isEmpty || globalInlineAppScope != nil, !isQuestionStyleDockQuery(q) else {
             cachedGlobalGroupedQuery = ""
@@ -1153,56 +1149,30 @@ extension LauncherView {
             return
         }
 
-        // Keep unscoped app matching immediate: that path only filters in-memory app rows.
-        // Scoped menu state is intentionally deferred. Building it during TextField updates
-        // blocks typing and then duplicates the same work inside the debounced task.
-        if shouldUsePureGlobalAppSearch, globalInlineAppScope == nil {
-            let state = instantGlobalGroupedListNavigationState(for: q)
-            setCachedGlobalGroupedState(query: q, state: state, animated: false)
-            let immediateMS = Date().timeIntervalSince(scheduleStarted) * 1_000
-            if immediateMS >= 8 {
-                SearchPerformanceLog.shared.record(
-                    label: "scheduleGlobalGroupedListRebuild.immediate",
-                    elapsedMS: immediateMS,
-                    query: q,
-                    pills: state.appResults.count + state.menuPills.count
-                )
-            }
+        guard shouldUsePureGlobalAppSearch, !q.isEmpty || globalInlineAppScope != nil else {
+            setCachedGlobalGroupedState(
+                query: q,
+                state: emptyGlobalGroupedListNavigationState(),
+                animated: false
+            )
             pendingGlobalGroupedQuery = nil
             globalGroupedTask = nil
             return
         }
 
-        pendingGlobalGroupedQuery = cacheKey
-        globalGroupedTask = Task { @MainActor in
-            if delayNanoseconds > 0 {
-                try? await Task.sleep(nanoseconds: delayNanoseconds)
-            }
-            guard !Task.isCancelled, globalGroupedGeneration == generation,
-                pendingGlobalGroupedQuery == cacheKey
-            else { return }
+        let state = instantGlobalGroupedListNavigationState(for: q)
+        setCachedGlobalGroupedState(query: q, state: state, animated: false)
+        pendingGlobalGroupedQuery = nil
+        globalGroupedTask = nil
 
-            // ── Phase 1: snapshot @State + compute @State-dependent parts on MainActor ──
-            // (fast — all reads from in-memory caches or simple property lookups)
-            guard shouldUsePureGlobalAppSearch, !q.isEmpty || globalInlineAppScope != nil else {
-                setCachedGlobalGroupedState(
-                    query: q,
-                    state: emptyGlobalGroupedListNavigationState(),
-                    animated: false
-                )
-                pendingGlobalGroupedQuery = nil
-                globalGroupedTask = nil
-                return
-            }
-
-            let state = instantGlobalGroupedListNavigationState(for: q)
-
-            guard !Task.isCancelled, globalGroupedGeneration == generation,
-                pendingGlobalGroupedQuery == cacheKey
-            else { return }
-            setCachedGlobalGroupedState(query: q, state: state, animated: false)
-            pendingGlobalGroupedQuery = nil
-            globalGroupedTask = nil
+        let immediateMS = Date().timeIntervalSince(scheduleStarted) * 1_000
+        if immediateMS >= 8 {
+            SearchPerformanceLog.shared.record(
+                label: "scheduleGlobalGroupedListRebuild.sync",
+                elapsedMS: immediateMS,
+                query: q,
+                pills: state.appResults.count + state.menuPills.count
+            )
         }
     }
 
@@ -1569,7 +1539,6 @@ extension LauncherView {
     {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         globalAppMatchGeneration &+= 1
-        let generation = globalAppMatchGeneration
         globalAppMatchTask?.cancel()
         guard !q.isEmpty, !isQuestionStyleDockQuery(q) else {
             cachedGlobalAppQuery = ""
@@ -1583,68 +1552,14 @@ extension LauncherView {
             return
         }
 
-        if shouldUsePureGlobalAppSearch, globalInlineAppScope == nil {
-            let state = instantGlobalGroupedListNavigationState(for: q)
-            setCachedGlobalGroupedState(query: q, state: state, animated: false)
-            cachedGlobalAppMatches = state.appResults
-            cachedGlobalAppQuery = q
-            pendingGlobalAppQuery = nil
-            pendingGlobalGroupedQuery = nil
-            globalGroupedTask?.cancel()
-            globalAppMatchTask = nil
-            return
-        }
-
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
-        pendingGlobalAppQuery = q
-        let matchLimit = maxListViewDockPills
-
-        // Fast path: if GlobalSearchService index is populated, query it off MainActor.
-        // Falls back to the full globalApplicationMatches scan if index is empty
-        // (e.g., first launch before loadApplicationsInBackground completes).
-        let hasIndex = GlobalSearchService.shared.documentCount > 0
-        globalAppMatchTask = Task.detached(priority: .userInitiated) {
-            try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard !Task.isCancelled else { return }
-
-            let matches: [SearchResult]
-            if hasIndex {
-                // Pure off-MainActor query — no AX, no @State access
-                let docs = GlobalContextSearchCoordinator.shared.snapshot(
-                    query: q,
-                    limit: matchLimit * 3,
-                    includeCachedMenus: false,
-                    includeRunningCachedMenus: false
-                ).appDocuments
-                matches = await MainActor.run {
-                    let appRows = Array(self.searchResults(from: docs, query: q).prefix(matchLimit))
-                    let commandRows = self.globalSystemCommandScopeMatches(
-                        for: q,
-                        limit: min(6, matchLimit)
-                    )
-                    return self.mergeGlobalCommandRows(
-                        commandRows,
-                        with: appRows,
-                        limit: matchLimit
-                    )
-                }
-            } else {
-                matches = await MainActor.run {
-                    self.globalApplicationMatches(for: q, limit: matchLimit)
-                }
-            }
-
-            await MainActor.run {
-                guard !Task.isCancelled, self.globalAppMatchGeneration == generation,
-                    self.pendingGlobalAppQuery == q
-                else { return }
-                self.cachedGlobalAppMatches = matches
-                self.cachedGlobalAppQuery = q
-                self.pendingGlobalAppQuery = nil
-                self.globalAppMatchTask = nil
-                self.scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
-            }
-        }
+        let state = globalGroupedListNavigationState(for: q)
+        cachedGlobalAppMatches = state.appResults
+        cachedGlobalAppQuery = q
+        pendingGlobalAppQuery = nil
+        pendingGlobalGroupedQuery = nil
+        globalGroupedTask?.cancel()
+        globalAppMatchTask = nil
     }
 
     // Convert GlobalSearchService docs → SearchResult on @MainActor (needs closures + icons).
@@ -2818,7 +2733,7 @@ extension LauncherView {
         guard scope.isExplicitAppScope else {
             return []
         }
-        let actionQuery = (scope.scopedSearchQuery.isEmpty ? query : scope.scopedSearchQuery)
+        let actionQuery = scope.scopedSearchQuery
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let isPseudoExtensionScope =
             scope.scopedBundleId.hasPrefix("cli://") || scope.scopedBundleId.hasPrefix("syscmd://")
@@ -2842,7 +2757,7 @@ extension LauncherView {
             )
             let scopedMenuFetchLimit =
                 actionQuery.isEmpty
-                ? max(maxListViewDockPills * 4, 32)
+                ? max(maxListViewDockPills * 10, 96)
                 : maxListViewDockPills
             let indexedPills = indexedScopedAppMenuPills(
                 bundleIdentifier: scope.scopedBundleId,
@@ -2893,7 +2808,18 @@ extension LauncherView {
                     appPath: appPath
                 ), at: 0)
         }
-        return Array(sortScopedGlobalAppPills(visible, query: actionQuery).prefix(maxListViewDockPills))
+        let sorted = sortScopedGlobalAppPills(visible, query: actionQuery)
+        guard actionQuery.isEmpty else {
+            return Array(sorted.prefix(maxListViewDockPills))
+        }
+
+        let useful = sorted.filter {
+            !isLowValueScopedGlobalMenuPill($0, appName: scope.scopedAppName)
+        }
+        let lowValue = sorted.filter {
+            isLowValueScopedGlobalMenuPill($0, appName: scope.scopedAppName)
+        }
+        return Array((useful + lowValue).prefix(maxListViewDockPills))
     }
 
     func sortScopedGlobalAppPills(_ pills: [DockPill], query: String) -> [DockPill] {
@@ -2966,7 +2892,77 @@ extension LauncherView {
 
         if pill.rankingKind == "contentSearch" { score += query.isEmpty ? -80 : 500 }
         if pill.rankingKind == "nativeWindow" { score += query.isEmpty ? 12 : 80 }
+        if query.isEmpty {
+            score += scopedGlobalAppMenuUtilityScore(pill, appName: pill.sourceAppName)
+        }
         return score
+    }
+
+    func scopedGlobalAppMenuUtilityScore(_ pill: DockPill, appName: String) -> Double {
+        let title = normalizedDockPillText(pill.name)
+        let context = normalizedDockPillText(pill.menuContext ?? "")
+        guard !title.isEmpty else { return 0 }
+
+        if isLowValueScopedGlobalMenuPill(pill, appName: appName) {
+            return -1_200
+        }
+
+        var score: Double = 0
+        switch context {
+        case "file", "edit", "view", "go", "history", "bookmarks", "store", "account",
+             "window", "tools", "developer", "debug", "run":
+            score += 220
+        case "help":
+            score -= 400
+        default:
+            score += context.isEmpty ? 0 : 80
+        }
+
+        let highIntentTokens = [
+            "new", "open", "save", "export", "import", "search", "find", "update",
+            "download", "install", "play", "pause", "back", "forward", "reload",
+            "account", "purchases", "categories", "create", "library", "history",
+            "bookmarks", "tabs", "window", "debug", "run", "build", "format",
+        ]
+        if highIntentTokens.contains(where: { title.contains($0) }) {
+            score += 260
+        }
+        if pill.keyboardShortcutLabel?.isEmpty == false || pill.badge?.contains("⌘") == true {
+            score += 90
+        }
+        return score
+    }
+
+    func isLowValueScopedGlobalMenuPill(_ pill: DockPill, appName: String) -> Bool {
+        let title = normalizedDockPillText(pill.name)
+        let context = normalizedDockPillText(pill.menuContext ?? "")
+        let app = normalizedDockPillText(appName)
+        guard !title.isEmpty else { return true }
+
+        if context == "help" { return true }
+        if title == "help" || title.hasSuffix(" help") || title.contains("feedback") {
+            return true
+        }
+        if title.hasPrefix("about ") || title == "about" || title.contains("privacy") {
+            return true
+        }
+        if title == "hide" || title.hasPrefix("hide ") || title == "hide others" {
+            return true
+        }
+        if title == "quit" || title.hasPrefix("quit ") {
+            return true
+        }
+        if !app.isEmpty {
+            if title == app || title == "about \(app)" || title == "\(app) help" {
+                return true
+            }
+            if context == app,
+                title.hasPrefix("about ") || title.hasPrefix("hide ") || title.hasPrefix("quit ")
+            {
+                return true
+            }
+        }
+        return false
     }
 
     func makeScopedAppContentSearchPill(
@@ -3239,7 +3235,7 @@ extension LauncherView {
         }
 
         let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let pillCount = stableVisibleDockPills(for: pillQuery)
+        let pillCount = (pillQuery.isEmpty ? [] : contextDockViewModel.visiblePills)
             .filter { !$0.isSeparator }
             .count
         if pillCount > 0 { return min(maxListViewDockPills, pillCount) }
@@ -3271,7 +3267,7 @@ extension LauncherView {
         // already computed above; > 1 means real pills (a count of 1 can be the
         // no-results sentinel, which keeps the compact height). No pill re-scan
         // here — this var runs on every body evaluation.
-        if !shouldUsePureGlobalAppSearch, !q.isEmpty, rowCount > 1 {
+        if !shouldUsePureGlobalAppSearch, !q.isEmpty {
             return listViewVisibleHeight
         }
         let rowHeight: CGFloat = 52

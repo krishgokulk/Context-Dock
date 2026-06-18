@@ -5,10 +5,18 @@ struct AboutSettingsPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 16) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .frame(width: 72, height: 72)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.black)
+                            .frame(width: 72, height: 72)
+                        Image("DoraXD")
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 72, height: 72)
+                            .blendMode(.screen)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Context Dock")

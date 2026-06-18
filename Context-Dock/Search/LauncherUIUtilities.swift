@@ -381,7 +381,6 @@ struct GlassBackground: NSViewRepresentable {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
 
-        ve.alphaValue = settings.launcherWindowOpacity
         ve.layer?.cornerRadius = cornerRadius
         ve.layer?.masksToBounds = true
         guard let rootLayer = ve.layer else { return }
