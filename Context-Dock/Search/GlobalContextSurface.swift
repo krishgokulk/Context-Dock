@@ -1,21 +1,16 @@
 import SwiftUI
 
-struct GlobalContextSurface<
-    FindTokenContent: View,
-    SubmenuContent: View,
-    GlobalSearchContent: View,
-    DockPillContent: View
->: View {
+struct GlobalContextSurface: View {
     let presentation: L2DockRowPresentation
     let onPillQueryChange: (String) -> Void
     let onAppear: () -> Void
     let onFinderDesktopModeChange: (Bool) async -> Void
     let onSwipeDown: () -> Void
     let onSwipeUp: () -> Void
-    let findTokenContent: FindTokenContent
-    let submenuContent: SubmenuContent
-    let globalSearchContent: GlobalSearchContent
-    let dockPillContent: DockPillContent
+    let findTokenContent: AnyView
+    let submenuContent: AnyView
+    let globalSearchContent: AnyView
+    let dockPillContent: AnyView
 
     init(
         presentation: L2DockRowPresentation,
@@ -24,10 +19,10 @@ struct GlobalContextSurface<
         onFinderDesktopModeChange: @escaping (Bool) async -> Void,
         onSwipeDown: @escaping () -> Void,
         onSwipeUp: @escaping () -> Void,
-        @ViewBuilder findTokenContent: () -> FindTokenContent,
-        @ViewBuilder submenuContent: () -> SubmenuContent,
-        @ViewBuilder globalSearchContent: () -> GlobalSearchContent,
-        @ViewBuilder dockPillContent: () -> DockPillContent
+        @ViewBuilder findTokenContent: () -> some View,
+        @ViewBuilder submenuContent: () -> some View,
+        @ViewBuilder globalSearchContent: () -> some View,
+        @ViewBuilder dockPillContent: () -> some View
     ) {
         self.presentation = presentation
         self.onPillQueryChange = onPillQueryChange
@@ -35,10 +30,10 @@ struct GlobalContextSurface<
         self.onFinderDesktopModeChange = onFinderDesktopModeChange
         self.onSwipeDown = onSwipeDown
         self.onSwipeUp = onSwipeUp
-        self.findTokenContent = findTokenContent()
-        self.submenuContent = submenuContent()
-        self.globalSearchContent = globalSearchContent()
-        self.dockPillContent = dockPillContent()
+        self.findTokenContent = AnyView(findTokenContent())
+        self.submenuContent = AnyView(submenuContent())
+        self.globalSearchContent = AnyView(globalSearchContent())
+        self.dockPillContent = AnyView(dockPillContent())
     }
 
     var body: some View {
