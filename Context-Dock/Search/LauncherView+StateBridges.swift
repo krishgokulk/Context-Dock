@@ -78,6 +78,16 @@ extension LauncherView {
         nonmutating set { launcherViewModel.l1ResultsReservedHeight = newValue }
     }
 
+    var measuredGlobalListContentHeight: CGFloat {
+        get { launcherViewModel.measuredGlobalListContentHeight }
+        nonmutating set { launcherViewModel.measuredGlobalListContentHeight = newValue }
+    }
+
+    var measuredChatContentHeight: CGFloat {
+        get { launcherViewModel.measuredChatContentHeight }
+        nonmutating set { launcherViewModel.measuredChatContentHeight = newValue }
+    }
+
     var showFolderPreview: Bool {
         get { launcherViewModel.showFolderPreview }
         nonmutating set { launcherViewModel.showFolderPreview = newValue }
@@ -840,6 +850,11 @@ extension LauncherView {
     var lockedSubmenuParent: AXMenuItem? {
         get { contextDockViewModel.lockedSubmenuParent }
         nonmutating set { contextDockViewModel.lockedSubmenuParent = newValue }
+    }
+
+    var inlineShareActive: Bool {
+        get { contextDockViewModel.inlineShareActive }
+        nonmutating set { contextDockViewModel.inlineShareActive = newValue }
     }
 
     var lockedFindToken: AppFindToken? {

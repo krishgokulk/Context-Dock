@@ -302,6 +302,17 @@ final class AXContextReader {
 
     // MARK: - Current URL (browsers only)
 
+    /// Fresh, on-demand AX read of a browser's current URL (any WebKit/Chromium
+    /// browser, including DuckDuckGo) — not the cached context. Used at share time so
+    /// the exact current page is sent, not a stale URL.
+    func liveCurrentURL(pid: pid_t, bundleId: String) -> String? {
+        guard pid != 0 else { return nil }
+        let axApp = AXUIElementCreateApplication(pid)
+        let url = readCurrentURL(axApp, bundleId: bundleId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (url?.isEmpty == false) ? url : nil
+    }
+
     private func readCurrentURL(_ axApp: AXUIElement, bundleId: String) -> String? {
         guard Self.browserBundleIds.contains(bundleId)
                 || bundleId.hasPrefix("com.apple.Safari")

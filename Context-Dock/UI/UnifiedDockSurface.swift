@@ -48,12 +48,6 @@ struct UnifiedDockSurface<Content: View>: View {
                         lineWidth: 1
                     )
             }
-            .shadow(
-                color: .black.opacity(isDark ? 0.28 : 0.12),
-                radius: isDark ? size.shadowRadius : 12,
-                x: 0,
-                y: isDark ? 12 : 4
-            )
     }
 }
 

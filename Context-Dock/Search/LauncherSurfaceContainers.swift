@@ -119,40 +119,6 @@ struct LauncherListDockSurface<ListContent: View, DockContent: View>: View {
             }
         }
         .frame(width: width, alignment: dockAtBottom ? .bottom : .top)
-        .background {
-            if usesVerticalListLayout {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: usesVerticalListLayout ? 28 : 0,
-                style: .continuous
-            )
-        )
-        .overlay {
-            if usesVerticalListLayout {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(isDark ? 0.16 : 0.42),
-                                .white.opacity(isDark ? 0.035 : 0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            }
-        }
-        .shadow(
-            color: usesVerticalListLayout ? .black.opacity(0.18) : .clear,
-            radius: 24,
-            x: 0,
-            y: 12
-        )
     }
 
     private var listBlock: some View {

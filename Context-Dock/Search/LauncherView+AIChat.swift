@@ -23,6 +23,26 @@ extension LauncherView {
         l2.chatArmed || l2.showChatPopover
     }
 
+    /// Stores the measured intrinsic height of the active chat conversation and re-fits the window
+    /// so the sheet exactly matches the content (no clipped messages, no empty box).
+    func updateMeasuredChatContentHeight(_ height: CGFloat) {
+        let clamped = max(0, height)
+        // Ignore the transient ~0 the geometry reader emits while the chat view unmounts
+        // (e.g. leaving general chat for Global Context). Resetting to 0 makes a later
+        // re-entry size to the 60px floor first, then jump to the real height. The
+        // message-count gate in DockHeightResolver still collapses the window on Clear.
+        guard clamped > 1 else { return }
+        guard abs(measuredChatContentHeight - clamped) > 1 else { return }
+        // Animate the chat-area frame with the SAME curve/duration the window resize
+        // uses (easeOut 0.18) so the sheet and window grow/shrink as one motion — not a
+        // snap-then-resize. The measured value is the messages' intrinsic height, so
+        // animating the frame can't feed back into the measurement.
+        withAnimation(.easeOut(duration: 0.18)) {
+            measuredChatContentHeight = clamped
+        }
+        requestWindowSizeUpdate(reason: .chatChanged, animated: true)
+    }
+
     var isContextDockChatRoutingLocked: Bool {
         showContextInDock
             && !showMediaLayer
@@ -362,7 +382,7 @@ extension LauncherView {
                             AppBundleIconView(
                                 bundleId: scopedTarget.bundleId,
                                 fallbackSymbol: "bubble.left.and.text.bubble.right",
-                                size: 20, cornerRadius: 5
+                                size: 18, cornerRadius: 4
                             )
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("Chat with \(scopedTarget.name)")
@@ -410,7 +430,10 @@ extension LauncherView {
                                 .controlSize(.mini)
                         }
                     }
-                    .padding(.horizontal, 14)
+                    // Leading 20 aligns the header app icon under the input scope-chip icon
+                    // (input pad 12 + chip leading 8) so the surface doesn't visually jump.
+                    .padding(.leading, 20)
+                    .padding(.trailing, 14)
                     .padding(.vertical, 6)
 
                     Divider().opacity(0.15)
@@ -454,8 +477,13 @@ extension LauncherView {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
+                            // Measure intrinsic message height (independent of the scroll frame).
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                updateMeasuredChatContentHeight(height)
+                            }
                         }
-                        .frame(maxHeight: 460)
+                        // Hug short chats, scroll long ones — frame to the measured height, capped.
+                        .frame(height: min(max(measuredChatContentHeight, 1), 400))
                         .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
                                 if let last = l2.chatMessages.last {
@@ -505,7 +533,13 @@ extension LauncherView {
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                     .padding(.bottom, 8)
+                    // Measure intrinsic conversation height (independent of the scroll frame).
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        updateMeasuredChatContentHeight(height)
+                    }
                 }
+                // Hug short chats, scroll long ones — frame to the measured height, capped at 450.
+                .frame(height: min(max(measuredChatContentHeight, 1), 450))
                 .onChange(of: aiMode.messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) {
                         if let lastMessage = aiMode.messages.last {
@@ -669,12 +703,14 @@ extension LauncherView {
 
         hasUserSentMessageInCurrentSession = true
 
+        let pendingAttachments = aiMode.attachments
+
         withAnimation {
-            aiMode.messages.append(AIChatMessage(role: .user, content: query))
+            aiMode.messages.append(
+                AIChatMessage(role: .user, content: query, attachments: pendingAttachments))
         }
         searchState.query = ""
 
-        let pendingAttachments = aiMode.attachments
         aiMode.attachments = []
 
         aiMode.isLoading = true
@@ -684,29 +720,16 @@ extension LauncherView {
         aiMode.currentTask = Task {
             do {
                 let response: String
-                if !pendingAttachments.isEmpty {
-                    let history = self.aiMode.messages.map { msg in
-                        [
-                            "role": msg.role == .user ? "user" : "assistant",
-                            "content": msg.content,
-                        ]
-                    }
-                    let systemMsg: [String: String] = [
-                        "role": "system", "content": "You are a helpful AI assistant.",
-                    ]
-                    let imageFiles = pendingAttachments.filter {
-                        ["jpg", "jpeg", "png", "gif", "heic", "webp"].contains(
-                            $0.pathExtension.lowercased())
-                    }
-                    response = try await sendToProvider(
-                        query: query, context: [systemMsg] + history, imageFiles: imageFiles)
-                } else {
-                    response = try await sendToAIProvider(query: query)
-                }
+                response = try await sendToAIProvider(
+                    query: query,
+                    attachments: pendingAttachments
+                )
+                let launches = self.referencedAppLaunches(for: query)
                 await MainActor.run {
                     withAnimation {
                         self.aiMode.messages.append(
-                            AIChatMessage(role: .assistant, content: response))
+                            AIChatMessage(
+                                role: .assistant, content: response, appLaunches: launches))
                         self.aiMode.isLoading = false
                     }
                     self.requestWindowSizeUpdate(reason: .chatChanged)
@@ -2072,18 +2095,40 @@ extension LauncherView {
                     appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName,
                     query: query
                 )
-                let activeContextPrompt = [finalContextPrompt, runtimeCLIContextPrompt]
-                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                    .joined(separator: "\n\n")
+                // Real Apple-apps data + weather, so Context Dock chat answers these like
+                // General Chat does (alongside its menu/AX/terminal-tool capabilities).
+                let appleData = await self.appleAppsAndWeatherContext(for: query)
+                // Live MCP tools linked to this app (App Adapters → Linked MCP).
+                let mcpBlock = await MCPRuntime.shared.toolPromptBlock(forBundleId: scopedBundleId)
+                let activeContextPrompt = [
+                    finalContextPrompt, runtimeCLIContextPrompt, appleData, mcpBlock,
+                ]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n\n")
 
                 if provider != .onDevice && provider != .shortcuts {
-                    let commandExecutor: (String, String) async -> (Bool, String) = { command, purpose in
-                        await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
+                    // Collects MCP tools the model invokes via the tool loop, for the chip.
+                    let mcpRan = MCPRunCollector()
+                    let commandExecutor: (String, String) async -> (Bool, String) = {
+                        command, purpose in
+                        // The model often wraps an mcp_call inside a TERMINAL_COMMAND tag — route
+                        // it to the MCP server instead of running it as a shell command (which
+                        // would open Safari / do the wrong thing).
+                        if let call = self.parseMCPCall(from: command) {
+                            let result = (try? await MCPRuntime.shared.callTool(
+                                bundleId: scopedBundleId, server: call.server, tool: call.tool,
+                                arguments: call.arguments)) ?? "MCP tool failed"
+                            await mcpRan.add(
+                                "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+                            return (true, result)
+                        }
+                        return await TerminalAIBridge.shared.processAICommand(
+                            command, purpose: purpose)
                     }
                     let toolQuery = activeContextPrompt.isEmpty
                         ? query
                         : "\(activeContextPrompt)\n\nUser request: \(query)"
-                    let (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
+                    var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
                         toolQuery,
                         context: scopedConversationContext,
                         provider: provider,
@@ -2096,8 +2141,19 @@ extension LauncherView {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
+                    var toolsRan = await mcpRan.tools
+                    // Fallback: model emitted a raw mcp_call as its final text (not via the loop).
+                    if let resolved = await self.resolveMCPToolCall(
+                        in: finalResponse, bundleId: scopedBundleId, userQuery: query,
+                        provider: provider, apiKey: apiKey, history: chatHistory,
+                        systemPrompt: activeContextPrompt)
+                    {
+                        finalResponse = resolved.answer
+                        toolsRan += resolved.toolsRan
+                    }
                     await MainActor.run {
-                        var msg = AIChatMessage(role: .assistant, content: finalResponse)
+                        var msg = AIChatMessage(
+                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan)
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
                         if !activeContextPrompt.isEmpty {
@@ -2224,6 +2280,24 @@ extension LauncherView {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
+                    // On-device MCP: if the streamed reply was a tool-call directive, run the
+                    // tool and replace the message with a grounded answer.
+                    let onDeviceReply = await MainActor.run {
+                        self.l2.chatMessages.first(where: { $0.id == msgId })?.content ?? ""
+                    }
+                    if let resolved = await self.resolveMCPToolCall(
+                        in: onDeviceReply, bundleId: scopedBundleId, userQuery: query,
+                        provider: provider, apiKey: apiKey, history: onDeviceHistory,
+                        systemPrompt: activeContextPrompt)
+                    {
+                        await MainActor.run {
+                            if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
+                                self.l2.chatMessages[idx] = AIChatMessage(
+                                    id: msgId, role: .assistant, content: resolved.answer,
+                                    mcpToolsRan: resolved.toolsRan)
+                            }
+                        }
+                    }
                     await MainActor.run {
                         finishL2AIRequest(l2RequestID)
                     }
@@ -2267,24 +2341,359 @@ extension LauncherView {
         }
     }
 
-    func sendToAIProvider(query: String) async throws -> String {
+    /// Real data from the user's Apple apps (Calendar, Reminders, Contacts, Photos) injected
+    /// into General Chat when the query is about them — otherwise on-device AI guesses
+    /// ("This week is currently ongoing") because it has no actual data. Empty when the query
+    /// isn't about an Apple app or nothing is found.
+    func appleAppsContextBlock(for query: String) -> String {
+        let q = query.lowercased()
+        let api = AppleAppsAPI.shared
+        var blocks: [String] = []
+
+        let iso = ISO8601DateFormatter()
+        let human = DateFormatter()
+        human.dateFormat = "EEE d MMM yyyy, h:mm a"
+        func fmt(_ isoString: Any?) -> String {
+            guard let s = isoString as? String, let d = iso.date(from: s) else { return "" }
+            return human.string(from: d)
+        }
+
+        let wantsEvents =
+            ["event", "calendar", "meeting", "appointment", "schedule", "agenda", "busy",
+             "free time", "plan", "tomorrow", "today", "this week", "next week", "coming week",
+             "weekend"].contains { q.contains($0) }
+        if wantsEvents {
+            // Span the whole current month (incl. earlier days) through the next ~2 months so
+            // "this month", "this week", and specific-date questions all resolve accurately.
+            let cal = Calendar.current
+            let monthStart =
+                cal.date(from: cal.dateComponents([.year, .month], from: Date()))
+                ?? cal.startOfDay(for: Date())
+            let start = min(monthStart, cal.date(byAdding: .day, value: -7, to: Date()) ?? monthStart)
+            let end = cal.date(byAdding: .day, value: 60, to: cal.startOfDay(for: Date())) ?? Date()
+            let events = api.getEvents(from: start, to: end)
+            if events.isEmpty {
+                blocks.append("## Calendar (this month → next 60 days): no events.")
+            } else {
+                // Cap at 30 — on-device Foundation Models has a small context window; a huge
+                // event dump overflows it and the model returns nothing.
+                let lines = events.prefix(30).map { ev -> String in
+                    let title = (ev["title"] as? String) ?? "(untitled)"
+                    let when =
+                        (ev["isAllDay"] as? Bool ?? false)
+                        ? "All day \(fmt(ev["startDate"]))" : fmt(ev["startDate"])
+                    let loc = (ev["location"] as? String).map { " @ \($0)" } ?? ""
+                    return "- \(when): \(title)\(loc)"
+                }.joined(separator: "\n")
+                blocks.append(
+                    "## Calendar (this month → next 60 days) — real events:\n\(lines)")
+            }
+        }
+
+        if ["reminder", "task", "todo", "to-do", "to do", "due"].contains(where: q.contains) {
+            let reminders = api.getReminders(limit: 30)
+            if reminders.isEmpty {
+                blocks.append("## Reminders: none open.")
+            } else {
+                let lines = reminders.prefix(30).map { r -> String in
+                    let title = (r["title"] as? String) ?? "(untitled)"
+                    let due = fmt(r["dueDate"])
+                    return due.isEmpty ? "- \(title)" : "- \(title) (due \(due))"
+                }.joined(separator: "\n")
+                blocks.append("## Reminders — open items:\n\(lines)")
+            }
+        }
+
+        if ["contact", "phone number", "email of", "number of", "call ", "phone of"]
+            .contains(where: q.contains)
+        {
+            // Use the longest capitalized token as the name to search.
+            let nameGuess = query.split(separator: " ").map(String.init)
+                .filter { $0.first?.isUppercase ?? false }
+                .max(by: { $0.count < $1.count }) ?? ""
+            let contacts =
+                nameGuess.isEmpty ? api.getContacts(limit: 20) : api.searchContacts(query: nameGuess)
+            if !contacts.isEmpty {
+                let lines = contacts.prefix(10).map { c -> String in
+                    let name = (c["fullName"] as? String)?.trimmingCharacters(
+                        in: .whitespaces) ?? ""
+                    let phone = (c["phone"] as? String) ?? ""
+                    let email = (c["email"] as? String) ?? ""
+                    var parts = [name.isEmpty ? "(no name)" : name]
+                    if !phone.isEmpty { parts.append("📞 \(phone)") }
+                    if !email.isEmpty { parts.append("✉️ \(email)") }
+                    return "- " + parts.joined(separator: " — ")
+                }.joined(separator: "\n")
+                blocks.append("## Contacts — matches:\n\(lines)")
+            }
+        }
+
+        if ["photo", "picture", "screenshot"].contains(where: q.contains) {
+            let photos = api.getRecentPhotos(limit: 10)
+            if !photos.isEmpty {
+                blocks.append("## Photos — \(photos.count) recent items in the library.")
+            }
+        }
+
+        if ["note", "notes"].contains(where: q.contains) {
+            let nameGuess = query.split(separator: " ").map(String.init)
+                .filter { $0.first?.isUppercase ?? false }
+                .max(by: { $0.count < $1.count }) ?? ""
+            let notes =
+                nameGuess.isEmpty ? api.getNotes(limit: 15) : api.searchNotes(query: nameGuess)
+            if !notes.isEmpty {
+                let lines = notes.prefix(15).map { n -> String in
+                    let title = (n["title"] as? String) ?? "(untitled)"
+                    let body = ((n["body"] as? String) ?? "").prefix(120)
+                    return body.isEmpty ? "- \(title)" : "- \(title): \(body)"
+                }.joined(separator: "\n")
+                blocks.append("## Notes — matches:\n\(lines)")
+            }
+        }
+
+        if ["email", "mail", "inbox", "message from"].contains(where: q.contains) {
+            let emails = api.getRecentEmails(limit: 12)
+            if !emails.isEmpty {
+                let lines = emails.prefix(12).map { e -> String in
+                    let subject = (e["subject"] as? String) ?? "(no subject)"
+                    let sender = (e["sender"] as? String) ?? ""
+                    let unread = (e["read"] as? Bool ?? true) ? "" : " [unread]"
+                    return "- \(subject) — \(sender)\(unread)"
+                }.joined(separator: "\n")
+                blocks.append("## Mail — recent inbox:\n\(lines)")
+            }
+        }
+
+        if ["playing", "song", "music", "track", "now playing"].contains(where: q.contains) {
+            let music = api.getMusicInfo()
+            let title = (music["title"] as? String) ?? ""
+            if !title.isEmpty {
+                let artist = (music["artist"] as? String) ?? ""
+                let state = (music["state"] as? String) ?? ""
+                blocks.append(
+                    "## Music — \(state.isEmpty ? "" : "\(state): ")\(title)"
+                        + (artist.isEmpty ? "" : " by \(artist)"))
+            }
+        }
+
+        if ["tab", "tabs", "safari"].contains(where: q.contains) {
+            let tabs = api.getAllTabs()
+            if !tabs.isEmpty {
+                let lines = tabs.prefix(20).map { t -> String in
+                    let title = (t["title"] as? String) ?? ""
+                    let url = (t["url"] as? String) ?? ""
+                    return "- \(title.isEmpty ? url : title) (\(url))"
+                }.joined(separator: "\n")
+                blocks.append("## Safari — open tabs:\n\(lines)")
+            }
+        }
+
+        guard !blocks.isEmpty else { return "" }
+        return blocks.joined(separator: "\n\n")
+            + "\n\nAnswer the user's question directly and concisely from this real data. Do NOT"
+            + " add text telling the user to open an app — the UI shows an 'Open in <App>' button"
+            + " automatically."
+    }
+
+    /// Combined Apple-apps data + live weather for a query, ready to append to any chat
+    /// system prompt. Used by both General Chat and Context Dock chat so both answer with
+    /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
+    func appleAppsAndWeatherContext(for query: String) async -> String {
+        var block = appleAppsContextBlock(for: query)
+        let ql = query.lowercased()
+        if ["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
+            "how hot", "how cold", "degrees"].contains(where: ql.contains)
+        {
+            let place: String? = {
+                guard let range = ql.range(of: " in ") else { return nil }
+                let tail = query[range.upperBound...]
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " ?.!,"))
+                return tail.isEmpty ? nil : tail
+            }()
+            if let weather = await WeatherService.currentSummary(place: place) {
+                let w = "## Weather — real current conditions:\n\(weather)"
+                block = block.isEmpty ? w : block + "\n\n" + w
+            }
+        }
+        return block
+    }
+
+    /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.
+    actor MCPRunCollector {
+        private(set) var tools: [String] = []
+        func add(_ label: String) { tools.append(label) }
+    }
+
+    /// If the model's reply is an MCP tool-call directive, run the tool — then let the model
+    /// chain further tool calls (keeping the MCP block in context) until it answers in plain
+    /// language or the step cap is hit. Returns nil when the first reply isn't a tool call.
+    func resolveMCPToolCall(
+        in response: String, bundleId: String, userQuery: String,
+        provider: AIProvider, apiKey: String?, history: [ChatMessage], systemPrompt: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        guard parseMCPCall(from: response) != nil else { return nil }
+
+        let maxSteps = 5
+        var transcript = history
+        var current = response
+        var toolsRan: [String] = []
+
+        for _ in 0..<maxSteps {
+            guard let call = parseMCPCall(from: current) else {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+            }
+            let result: String
+            do {
+                result = try await MCPRuntime.shared.callTool(
+                    bundleId: bundleId, server: call.server, tool: call.tool,
+                    arguments: call.arguments)
+            } catch {
+                return (
+                    answer: "MCP tool “\(call.tool)” failed: \(error.localizedDescription)",
+                    toolsRan: toolsRan)
+            }
+            toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+            transcript.append(ChatMessage(role: .assistant, content: current))
+            let followup =
+                "Tool \"\(call.tool)\" returned:\n\(result)\n\n"
+                + "If you need another MCP tool, reply with the same single-line JSON. "
+                + "Otherwise answer the user's request in plain language: \(userQuery)"
+            transcript.append(ChatMessage(role: .user, content: followup))
+            let next = (try? await AIProviderService.shared.sendWithTools(
+                followup, context: .none, provider: provider, apiKey: apiKey,
+                conversationHistory: transcript,
+                commandExecutor: { _, _ in (false, "") },
+                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
+            ))?.finalResponse ?? ""
+            if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (answer: "MCP tool “\(call.tool)” result:\n\(result)", toolsRan: toolsRan)
+            }
+            current = next
+        }
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+    }
+
+    /// Parse a `{"mcp_call": {"server","tool","arguments"}}` directive out of an AI reply —
+    /// even when the model wraps it in a ```json fence or a [TERMINAL_COMMAND: …] tag. Finds
+    /// the balanced JSON object that encloses the "mcp_call" key.
+    func parseMCPCall(from response: String)
+        -> (server: String, tool: String, arguments: [String: Any])?
+    {
+        guard let keyRange = response.range(of: "\"mcp_call\"") else { return nil }
+        // Nearest '{' before the key opens the wrapper object.
+        guard let open = response[..<keyRange.lowerBound].lastIndex(of: "{") else { return nil }
+        // Balance-match to its closing '}'.
+        var depth = 0
+        var end: String.Index?
+        var i = open
+        while i < response.endIndex {
+            switch response[i] {
+            case "{": depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 { end = response.index(after: i) }
+            default: break
+            }
+            if end != nil { break }
+            i = response.index(after: i)
+        }
+        guard let endIdx = end else { return nil }
+        let slice = String(response[open..<endIdx])
+        guard let data = slice.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let call = root["mcp_call"] as? [String: Any],
+            let tool = call["tool"] as? String
+        else { return nil }
+        let server = (call["server"] as? String) ?? ""
+        let args = (call["arguments"] as? [String: Any]) ?? [:]
+        return (server: server, tool: tool, arguments: args)
+    }
+
+    /// "Open in <App>" buttons to attach to an answer, derived from the Apple-app data the
+    /// query touched — lets the user jump straight to Calendar, Reminders, etc.
+    func referencedAppLaunches(for query: String) -> [AppLaunchAction] {
+        let q = query.lowercased()
+        var launches: [AppLaunchAction] = []
+        func add(_ keys: [String], _ label: String, _ icon: String, _ bundleId: String) {
+            guard keys.contains(where: q.contains) else { return }
+            launches.append(AppLaunchAction(label: label, systemIcon: icon, bundleId: bundleId))
+        }
+        add(
+            ["event", "calendar", "meeting", "appointment", "schedule", "agenda", "tomorrow",
+             "today", "this week", "next week", "coming week", "weekend"],
+            "Open Calendar", "calendar", "com.apple.iCal")
+        add(["reminder", "task", "todo", "to-do", "to do", "due"],
+            "Open Reminders", "checklist", "com.apple.reminders")
+        add(["contact", "phone number", "email of", "number of", "call ", "phone of"],
+            "Open Contacts", "person.crop.circle", "com.apple.AddressBook")
+        add(["photo", "picture", "screenshot"], "Open Photos", "photo", "com.apple.Photos")
+        add(["note", "notes"], "Open Notes", "note.text", "com.apple.Notes")
+        add(["email", "mail", "inbox", "message from"], "Open Mail", "envelope", "com.apple.mail")
+        add(["playing", "song", "music", "track", "now playing"],
+            "Open Music", "music.note", "com.apple.Music")
+        add(["tab", "tabs", "safari"], "Open Safari", "safari", "com.apple.Safari")
+        add(["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
+             "how hot", "how cold", "degrees"],
+            "Open Weather", "cloud.sun", "com.apple.weather")
+        return launches
+    }
+
+    func sendToAIProvider(query: String, attachments: [URL] = []) async throws -> String {
         // Build context from previous messages (uses aiMode.messages for global AI mode)
-        var context = aiMode.messages.map { msg in
-            ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
+        let history = aiMode.messages.map { msg in
+            ChatMessage(
+                role: msg.role == .user ? .user : .assistant,
+                content: msg.content
+            )
         }
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead
-        let sysContent = """
+        var sysContent = """
             You are a helpful AI assistant. Provide concise, accurate answers.
             Keep responses brief and to the point.
+            This is General Chat mode. Do not use frontmost app, browser page, Finder selection, menu commands, or Context Dock scope unless the user explicitly attached that item in this chat.
             \(currentDateTimeContextBlock())
             """
-        let systemMessage: [String: String] = ["role": "system", "content": sysContent]
+        if !attachments.isEmpty {
+            // Extract the actual content (PDF text, text/code/markdown) so on-device AI can
+            // answer about the file — passing only the filename gave the model nothing to
+            // read ("Unable to determine PDF content"). Images flow through as vision payload
+            // via the request attachments below.
+            let analyzed = ContextDetector.shared.analyzeFiles(Array(attachments.prefix(20)))
+            let listLines = analyzed.map { "- \($0.url.lastPathComponent) (\($0.type))" }
+                .joined(separator: "\n")
+            sysContent += "\n\nExplicit user attachments for this message:\n\(listLines)"
+            let contentBlocks = analyzed.compactMap { item -> String? in
+                guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !content.isEmpty
+                else { return nil }
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(content)"
+            }
+            if !contentBlocks.isEmpty {
+                sysContent +=
+                    "\n\nAttachment contents — use these to answer the user's question:\n\n"
+                    + contentBlocks.joined(separator: "\n\n")
+            }
+        }
 
-        // Insert system message at the beginning
-        context.insert(systemMessage, at: 0)
+        // Inject real Apple-apps data + live weather when the query is about them.
+        let appleData = await appleAppsAndWeatherContext(for: query)
+        if !appleData.isEmpty {
+            sysContent += "\n\n" + appleData
+        }
 
-        return try await sendToProvider(query: query, context: context)
+        let request = AIRequestBuilder.aiChat(
+            text: query,
+            history: history,
+            attachments: attachments
+        )
+        return try await AIProviderRouter.shared.sendPrepared(
+            request: request,
+            provider: settings.selectedAIProvider,
+            contextPrompt: sysContent
+        )
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
@@ -2378,10 +2787,16 @@ extension LauncherView {
     func sendToProvider(query: String, context: [[String: String]], imageFiles: [URL])
         async throws -> String
     {
-        let systemPrompt = context
+        var systemPrompt = context
             .filter { $0["role"] == "system" }
             .compactMap { $0["content"] }
             .joined(separator: "\n\n")
+        // Context Dock chat answers with real Apple-apps data + weather too (same as General
+        // Chat), on top of its menu/AX/terminal-tool capabilities.
+        let appleData = await appleAppsAndWeatherContext(for: query)
+        if !appleData.isEmpty {
+            systemPrompt += "\n\n" + appleData
+        }
         let history = context.compactMap { item -> ChatMessage? in
             guard let roleValue = item["role"],
                   roleValue != "system",

@@ -19,6 +19,17 @@ final class LauncherViewModel: ObservableObject {
     @Published var systemDataResults: [SearchResult] = []
     @Published var runningRegularApps: [NSRunningApplication] = []
     @Published var l1ResultsReservedHeight: CGFloat = 0
+    /// Measured intrinsic height of the active chat conversation (general chat / context-dock chat),
+    /// so the sheet + window size to the REAL content (approval cards, multi-line replies) instead
+    /// of a per-message estimate that clipped tall messages.
+    @Published var measuredChatContentHeight: CGFloat = 0
+    /// When focus is reclaimed with a deliberate select-all (Up-arrow editing), suppress
+    /// the move-caret-to-end that otherwise prevents the default select-all-on-focus.
+    var pendingSelectAllOnFocus = false
+    /// Measured intrinsic height of the global/scoped result list content. Drives the
+    /// sheet height so it hugs the actually-rendered rows (no half-empty box, no
+    /// count/state mismatch).
+    @Published var measuredGlobalListContentHeight: CGFloat = 0
     @Published var showFolderPreview = false
     @Published var folderPreviewPath: String?
     @Published var folderPreviewSelectedFile: String?
@@ -141,6 +152,9 @@ final class ContextDockViewModel: ObservableObject {
     @Published var lastLiveMenuSignature = ""
     @Published var crossAppMenuItems: [AXMenuItem] = []
     @Published var lockedSubmenuParent: AXMenuItem?
+    /// When set, the dock shows ONLY the live native share destinations (AirDrop,
+    /// Mail, Notes, …) for the current content — DoraX's own inline Share Sheet.
+    @Published var inlineShareActive = false
     @Published var lockedFindToken: LauncherView.AppFindToken?
     @Published var showFindTokenMenu = false
     @Published var crossAppMenuTargetPID: pid_t = 0

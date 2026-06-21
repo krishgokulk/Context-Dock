@@ -20,15 +20,52 @@ extension LauncherView {
         presentSharingPicker(items: items)
     }
 
-    func executeShareMenuDestination(_ title: String) {
-        let normalizedTitle = normalizedDockPillText(title)
-        let items = ShareIntentRouter.shared.shareableItems(
-            for: effectiveShareAXContext())
-        ShareActionCoordinator.shared.executeShareDestination(
-            title: title,
-            normalizedTitle: normalizedTitle,
-            items: items,
-            presentSharingPicker: { self.presentSharingPicker(items: $0) }
+    /// Share items resolved with the LIVE browser URL. Runs synchronous AppleScript,
+    /// so call this ONLY at share-execution time (a user tap) — never during pill
+    /// building / typing, or it stalls the main thread.
+    func liveShareItems() -> [Any] {
+        var context = effectiveShareAXContext()
+        if context.selectedFilePaths.isEmpty, isBrowserBundleId(context.bundleId) {
+            // AppleScript for the scriptable browsers (Safari/Chrome/Arc); for any other
+            // browser (DuckDuckGo, Zen, Brave…) read the live URL via AX. Either way we
+            // send the EXACT current page, never a stale cached URL.
+            let pid =
+                context.pid != 0
+                ? context.pid
+                : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+            let liveURL =
+                ContextDetector.shared.liveBrowserURL(bundleId: context.bundleId)
+                ?? AXContextReader.shared.liveCurrentURL(pid: pid, bundleId: context.bundleId)
+            if let liveURL { context.currentURL = liveURL }
+        }
+        return ShareIntentRouter.shared.shareableItems(for: context)
+    }
+
+    /// Single entry point for any Share menu interaction.
+    /// - Bare "Share" / "Share…" (the share-sheet trigger) → DoraX's own destination
+    ///   list (no guessing a child).
+    /// - A real Share CHILD (Mail / AirDrop / Notes …) → click its EXACT menu path.
+    ///   NEVER resolve by title — that picked the wrong (first) destination.
+    /// - If the exact click can't run (no pid) → native Apple share sheet fallback.
+    func executeShareAction(item: AXMenuItem) {
+        if isShareSheetTitle(item.title) {
+            revealShareDestinations()
+            return
+        }
+        let pid =
+            item.sourcePID != 0
+            ? item.sourcePID
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        guard pid != 0 else {
+            let items = liveShareItems()
+            if !items.isEmpty { presentSharingPicker(items: items) }
+            return
+        }
+        executeDockMenuAction(
+            sourcePID: pid,
+            path: item.path,
+            shortcutChar: item.shortcutChar,
+            shortcutModifiers: item.shortcutModifiers
         )
     }
 

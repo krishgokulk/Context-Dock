@@ -410,6 +410,35 @@ extension LauncherView {
         return currentRegularRunningApps().first(where: { isValid($0) })
     }
 
+    /// After a non-scope app quits, re-point the dock at the app that is actually frontmost now.
+    /// Deferred one tick because macOS hasn't promoted the next app to frontmost at the instant
+    /// `didTerminateApplicationNotification` fires — reading it synchronously would still return
+    /// the dying app (and fall back to recents, surfacing a wrong app like the previous editor).
+    func resyncFrontmostToActualAfterTermination(excluding terminated: NSRunningApplication) {
+        let terminatedPID = terminated.processIdentifier
+        let terminatedBundleID = terminated.bundleIdentifier
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [self] in
+            guard let actual = actualFrontmostAppAfterTermination(
+                excludingProcessIdentifier: terminatedPID,
+                excludingBundleIdentifier: terminatedBundleID
+            ),
+            let bundleID = actual.bundleIdentifier,
+            let name = actual.localizedName,
+            frontmost.bundleID != bundleID
+            else { return }
+
+            AppDelegate.shared?.recordFrontmostApp(actual)
+            ContextDockEnvironment.shared.frontmostAppDidChange(name: name, bundleID: bundleID)
+            frontmost.name = name
+            frontmost.bundleID = bundleID
+            frontmost.icon =
+                resolvedRunningAppIcon(for: actual) ?? preparedDockIcon(actual.icon)
+            if showContextInDock {
+                reloadMenuForApp(actual)
+            }
+        }
+    }
+
     func clearLiveDockMenuState() {
         liveMenuItems = []
         crossAppMenuItems = []
@@ -480,6 +509,15 @@ extension LauncherView {
                     )
                 }
             }
+        }
+
+        // Non-scope termination: the displayed `frontmost` can be stale here. A pass-through app
+        // (ChatGPT is skipped by the activation observer) means `frontmost` still points at the
+        // app from before it, and quitting it doesn't match the terminated-app checks above. Since
+        // contextTargetApp() prioritizes frontmost.bundleID, the dock would keep showing that stale
+        // app instead of the one the user lands on. Re-resolve to the real current frontmost.
+        if shouldStayInContextDockAfterQuit, !terminatedScope {
+            resyncFrontmostToActualAfterTermination(excluding: app)
         }
 
         detectAndUpdateContext()
@@ -613,7 +651,9 @@ extension LauncherView {
         guard shouldShowGlobalRunningAppStrip else { return [] }
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
-        return (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
+        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
+        let others =
+            source
             .filter { app in
                 guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier else { return true }
@@ -621,6 +661,11 @@ extension LauncherView {
                     && bundleID != frontmostBundle
                     && bundleID != scopedBundle
             }
+        // Finder always leads the strip in Global Context.
+        let finder = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
+        }
+        return (Array([finder].compactMap { $0 }) + others)
             .prefix(5)
             .map { $0 }
     }
@@ -638,7 +683,7 @@ extension LauncherView {
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
         var seen = Set<String>()
-        return (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
+        let others = (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
             .filter { app in
                 guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return false }
@@ -648,6 +693,12 @@ extension LauncherView {
                 if bundleID == scopedBundle { return true }
                 return bundleID != frontmostBundle
             }
+        // Finder leads the cycle so the first right-arrow scopes Finder (matches the strip),
+        // entering desktop file-search mode.
+        let finder = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
+        }
+        return Array([finder].compactMap { $0 }) + others
     }
 
     @discardableResult
@@ -657,6 +708,12 @@ extension LauncherView {
             !bundleID.isEmpty,
             !appName.isEmpty
         else { return false }
+        // Scoping Finder in Global Context is pure desktop/home file search — it must NOT
+        // inherit a folder attachment left over from an earlier Context Dock session
+        // (otherwise the desktop mode "locks" to e.g. Downloads).
+        if bundleID == "com.apple.finder" {
+            detachFinderFolderSearch()
+        }
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
@@ -665,10 +722,11 @@ extension LauncherView {
             preserveGlobalContext: true
         )
         if activated {
-            DispatchQueue.main.async {
-                DispatchQueue.main.async {
-                    self.reclaimSearchInputFocus()
-                }
+            // Run AFTER activateInlineDockAppScope's own focus toggle settles, so this is
+            // the authoritative last focus claim — otherwise the racing toggles leave the
+            // field unfocused (no caret, can't type) after a right-arrow scope.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                self.reclaimSearchInputFocus()
             }
         }
         return activated

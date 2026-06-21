@@ -269,6 +269,16 @@ extension LauncherView {
     }
 
     func contextTargetApp() -> NSRunningApplication? {
+        if let target = l2.targetApp,
+            !target.bundleId.isEmpty,
+            !target.bundleId.hasPrefix("scope://"),
+            let targetApp = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == target.bundleId && !$0.isTerminated
+            })
+        {
+            return targetApp
+        }
+
         if !frontmost.bundleID.isEmpty,
             frontmost.bundleID != Bundle.main.bundleIdentifier,
             let resolvedApp = NSWorkspace.shared.runningApplications.first(where: {
@@ -1121,7 +1131,9 @@ extension LauncherView {
         suppressedAutomaticFinderSelectionSignature = nil
         dismissedFinderSelectionSignature = nil
 
-        if settings.effectiveDockAtBottom && showContextInDock {
+        // Always-float (or taskbar mode): keep the dock visible after the action runs;
+        // just reset it to idle and refocus the input for the next command.
+        if settings.alwaysFloatDock || (settings.effectiveDockAtBottom && showContextInDock) {
             searchState.query = ""
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil

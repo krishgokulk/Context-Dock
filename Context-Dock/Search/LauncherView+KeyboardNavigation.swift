@@ -505,7 +505,38 @@ extension LauncherView {
                     }
                     self.focusedAppPillIndex = curLeft - 1
                     return nil
-                case 124:  // Right — mirror context dock: wrap to input field at end
+                case 124:  // Right — vertical list: scope the focused app into a pill.
+                    //          Horizontal pill row: move focus right / wrap to input.
+                    if self.usesVerticalListDockLayout {
+                        if self.searchInputHasHighlightedText() { return event }
+                        let qq = self.searchState.query
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !qq.isEmpty else { return event }
+                        let matches = self.currentOrImmediateGlobalAppMatches(for: qq)
+                        // Render-default highlights row 0 even when focusedAppPillIndex is nil.
+                        let targetIdx = self.focusedAppPillIndex ?? 0
+                        guard targetIdx >= 0, targetIdx < matches.count else { return event }
+                        let result = matches[targetIdx]
+                        guard result.type == .application,
+                            let bundleId = self.bundleIdentifier(forApplicationResult: result),
+                            !bundleId.isEmpty
+                        else { return event }
+                        self.focusedAppPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        self.activateInlineDockAppScope(
+                            bundleIdentifier: bundleId,
+                            appName: result.title,
+                            queryOverride: "",  // clear "ter" so it doesn't show behind the pill
+                            preserveGlobalContext: true
+                        )
+                        // The focused field editor can write its stale buffer ("ter") back
+                        // over the binding after the in-scope clear — force it empty next
+                        // runloop so no text bleeds behind the scope pill.
+                        DispatchQueue.main.async {
+                            if !self.searchState.query.isEmpty { self.searchState.query = "" }
+                        }
+                        return nil
+                    }
                     if self.searchInputHasHighlightedText() {
                         self.focusedAppPillIndex = nil
                         return event
@@ -548,6 +579,17 @@ extension LauncherView {
                 case 36:  // Enter — launch/activate
                     if let idx = self.focusedAppPillIndex, idx < appPills.count {
                         appPills[idx].execute()
+                        self.searchState.query = ""
+                        self.focusedAppPillIndex = nil
+                        self.hideLauncherAfterResultExecution()
+                        return nil
+                    }
+                    // Render-default: first row is shown pre-selected (focusedAppPillIndex nil) while
+                    // typing — Enter launches it (the ghost top result), matching the highlight.
+                    if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        let first = appPills.first
+                    {
+                        first.execute()
                         self.searchState.query = ""
                         self.focusedAppPillIndex = nil
                         self.hideLauncherAfterResultExecution()
@@ -659,7 +701,14 @@ extension LauncherView {
                         self.l2.focusedPillIndex = downIdx
                         return nil
                     }
-                    let curIdx = self.l2.focusedPillIndex ?? -1
+                    // The first selectable pill is shown pre-selected (render default) while typing
+                    // even though focusedPillIndex is nil. Treat that as the current position so the
+                    // first Down advances to the SECOND result instead of re-selecting the first.
+                    let defaultStart =
+                        (!q.isEmpty && self.l2.focusedPillIndex == nil)
+                        ? (pills.firstIndex(where: { !$0.isSeparator }) ?? -1)
+                        : -1
+                    let curIdx = self.l2.focusedPillIndex ?? defaultStart
                     var downIdx = curIdx + 1
                     while downIdx < pills.count && pills[downIdx].isSeparator { downIdx += 1 }
                     if downIdx < pills.count {
@@ -691,15 +740,16 @@ extension LauncherView {
                         }
                         return nil
                     }
-                    if let cur = self.l2.focusedPillIndex, cur > 0 {
+                    // Stop at the first selectable pill: Up from there returns to the input with the
+                    // query selected (Spotlight-style), since the first pill is the default selection.
+                    let firstSelectable = pills.firstIndex(where: { !$0.isSeparator }) ?? 0
+                    if let cur = self.l2.focusedPillIndex, cur > firstSelectable {
                         var upIdx = cur - 1
-                        while upIdx > 0 && pills[upIdx].isSeparator { upIdx -= 1 }
+                        while upIdx > firstSelectable && pills[upIdx].isSeparator { upIdx -= 1 }
                         self.l2.pillNavViaKeyboard = true
                         self.l2.focusedPillIndex = upIdx
                     } else {
-                        self.l2.focusedPillIndex = nil
-                        self.l2.pillNavViaKeyboard = false
-                        DispatchQueue.main.async { self.isSearchFieldFocused = true }
+                        DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
                     }
                     return nil
                 }
@@ -1351,24 +1401,18 @@ extension LauncherView {
             let maxX = visibleFrame.maxX - newWidth - horizontalMargin
             let newX = min(max(proposedX, minX), max(minX, maxX))
 
+            _ = spaceBelow
+            _ = spaceAbove
             let newY: CGFloat
             if settings.effectiveDockAtBottom {
                 // Bottom-anchored: grow upward, keep bottom edge fixed
                 newY = currentFrame.minY
             } else {
-                switch surfaceMode {
-                case .generalChat, .contextDockChat:
-                    // Chat surfaces swap content inside the stable dock frame.
-                    newY = max(visibleFrame.minY, currentFrame.maxY - newHeight)
-                case .globalContext, .contextDock, .mediaDock:
-                    if spaceBelow >= newHeight || spaceBelow >= spaceAbove {
-                        // Anchor top edge, grow downward
-                        newY = currentFrame.maxY - newHeight
-                    } else {
-                        // Anchor bottom edge, grow upward
-                        newY = currentFrame.minY
-                    }
-                }
+                // Spotlight model for every top-anchored mode: keep the TOP edge fixed and grow
+                // downward, clamped to the screen. Anchoring the bottom (the old global/context
+                // branch) made the window jump upward while typing as results/inline-scope pills
+                // changed the height. One rule → no jump, consistent with the chat surfaces.
+                newY = max(visibleFrame.minY, currentFrame.maxY - newHeight)
             }
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
@@ -1384,6 +1428,9 @@ extension LauncherView {
             } else {
                 window.setFrame(newFrame, display: false)
             }
+            // Transparent window: recompute the macOS drop-shadow for the new glass
+            // shape, otherwise it lags / keeps the old outline as the dock resizes.
+            window.invalidateShadow()
 
             self.lastAppliedDockHeightPreset = heightPreset
             self.lastAppliedDockSurfaceMode = surfaceMode
@@ -1473,6 +1520,15 @@ extension LauncherView {
             }
             .onKeyPress(.upArrow) {
                 if isGlobalContextActive,
+                    shouldUsePureGlobalAppSearch,
+                    !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    _ = moveGlobalGroupedListFocus(
+                        direction: settings.effectiveDockAtBottom ? 1 : -1
+                    )
+                    return .handled
+                }
+                if isGlobalContextActive,
                     isSearchFieldFocused,
                     focusedAppPillIndex == nil,
                     l2.focusedPillIndex == nil,
@@ -1508,6 +1564,15 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
+                if isGlobalContextActive,
+                    shouldUsePureGlobalAppSearch,
+                    !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    _ = moveGlobalGroupedListFocus(
+                        direction: settings.effectiveDockAtBottom ? -1 : 1
+                    )
+                    return .handled
+                }
                 if showContextInDock, isGlobalContextActive, !aiMode.isActive {
                     let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased()
@@ -1659,7 +1724,11 @@ extension LauncherView {
                         let trimmed = searchState.query.trimmingCharacters(
                             in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return .handled }
-                        if (l2.chatArmed && !l2.showChatPopover)
+                        // Send when arming the chat (first message, before the sheet opens) AND when a
+                        // conversation is already open — otherwise once showChatPopover is true every
+                        // follow-up Enter fell through to `.handled` below and was silently dropped.
+                        if l2.chatArmed
+                            || shouldShowContextDockChatSheet
                             || shouldShowContextDockAIQueryFallback
                         {
                             dismissMediaLayer()
@@ -1795,6 +1864,13 @@ extension LauncherView {
                     }
                     return .handled
                 }
+                // Inline Share Sheet: ESC exits back to normal dock
+                if inlineShareActive {
+                    inlineShareActive = false
+                    isSearchFieldFocused = true
+                    scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+                    return .handled
+                }
                 // App scope or app panel: ESC exits scope and returns to L1 (stays open)
                 if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
                     || searchState.contextApp != nil
@@ -1835,6 +1911,13 @@ extension LauncherView {
             .onKeyPress(.delete) {
                 let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
+                    // Exit inline Share Sheet first
+                    if inlineShareActive {
+                        inlineShareActive = false
+                        isSearchFieldFocused = true
+                        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                        return .handled
+                    }
                     // Unlock locked submenu parent first
                     if lockedSubmenuParent != nil {
                         withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {

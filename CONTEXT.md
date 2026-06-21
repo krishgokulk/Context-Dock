@@ -1,5 +1,5 @@
 # Context-Dock — AI Context Snapshot
-Generated: 2026-06-18 02:33
+Generated: 2026-06-19 16:50
 
 ## App overview
 macOS 26 launcher and dock-replacement app.
@@ -130,6 +130,7 @@ Search/LauncherState.swift
 Search/LauncherSupportViews.swift
 Search/LauncherSurfaceContainers.swift
 Search/LauncherUIUtilities.swift
+Search/LauncherView.swift
 Search/LauncherView+AIChat.swift
 Search/LauncherView+AIResponseHandling.swift
 Search/LauncherView+ClipboardScope.swift
@@ -163,7 +164,6 @@ Search/LauncherView+SearchResults.swift
 Search/LauncherView+ShareActions.swift
 Search/LauncherView+StateBridges.swift
 Search/LauncherView+Utilities.swift
-Search/LauncherView.swift
 Search/MediaDockSurface.swift
 Search/NotificationViews.swift
 Search/ResultRow.swift
@@ -176,12 +176,12 @@ Search/SystemExtensionActionSource.swift
 Services/AppAdapterManager.swift
 Services/AppCatalogService.swift
 Services/AppInteractionStore.swift
+Services/AppleAppsAPI.swift
 Services/AppMenuCapabilityCache.swift
 Services/AppPanelChatStore.swift
 Services/AppScopeMatchCache.swift
 Services/AppSuggestionsDB.swift
 Services/AppUsageLearner.swift
-Services/AppleAppsAPI.swift
 Services/BackgroundWorkerPool.swift
 Services/BinaryWatcherService.swift
 Services/BluetoothDeviceProvider.swift
@@ -232,7 +232,6 @@ Services/PromptRunner.swift
 Services/QueryFailureGuide.swift
 Services/QueryIntentCache.swift
 Services/RecentItemsService.swift
-Services/SFSymbolResolver.swift
 Services/SafariBrowserBridge.swift
 Services/SafariCommandBridge.swift
 Services/SafariDeepContextStubs.swift
@@ -242,6 +241,7 @@ Services/SafariTabManager.swift
 Services/SearchPerformanceLog.swift
 Services/SelectedContextResolver.swift
 Services/SettingsBackupManager.swift
+Services/SFSymbolResolver.swift
 Services/ShareActionCoordinator.swift
 Services/ShortcutRunner.swift
 Services/ShortcutsCatalog.swift
@@ -263,7 +263,7 @@ Services/WebResearchSession.swift
 Services/WiFiNetworkProvider.swift
 Services/WindowManagementService.swift
 
-### UI/ (38 files)
+### UI/ (39 files)
 UI/AppBundleIconView.swift
 UI/AppToast.swift
 UI/BrewInstallButton.swift
@@ -272,14 +272,14 @@ UI/DesignTokens.swift
 UI/FileChangesApprovalView.swift
 UI/GitHubToolView.swift
 UI/LegacySettingsContent.swift
+UI/LiquidGlassArrow.swift
 UI/MiniPlayerOverlay.swift
 UI/PinnedAppsRow.swift
 UI/QuickLookPreview.swift
-UI/SFSymbolPickerView.swift
 UI/SelectionCommandSheetView.swift
-UI/Settings/AIProvidersSettingsPage.swift
 UI/Settings/AboutSettingsPage.swift
 UI/Settings/AdvancedSettingsPage.swift
+UI/Settings/AIProvidersSettingsPage.swift
 UI/Settings/AppearanceSettingsPage.swift
 UI/Settings/DataStorageSettingsPage.swift
 UI/Settings/ExtensionsSettingsPage.swift
@@ -293,6 +293,7 @@ UI/Settings/SettingsModels.swift
 UI/Settings/SettingsSidebar.swift
 UI/Settings/SettingsView.swift
 UI/Settings/UpdatesSettingsPage.swift
+UI/SFSymbolPickerView.swift
 UI/ShortcutMenuCommand.swift
 UI/ShortcutSheetPanelPresenter.swift
 UI/ShortcutSheetView.swift
@@ -304,16 +305,21 @@ UI/UnifiedDockSurface.swift
 UI/WebQuickLookPanel.swift
 
 ## Recent commits (last 10)
-- 0f72b05 refactor: extract coordinators, surfaces, and service layers (31 minutes ago)
-- f6690d2 chore: add Claude Code skills for Context-Dock development (2 days ago)
-- 06950d8 refactor: complete cutover to UnifiedDockShell (Step 5/5) (3 days ago)
-- f4ba144 refactor: wire dockPills to surfaces (Step 4/5) (3 days ago)
-- cb9cee7 refactor: integrate UnifiedDockShell with feature flag (Step 3/5) (3 days ago)
-- 73c5003 refactor: wire surfaces to data flow (Step 2/5) (3 days ago)
-- d73ca84 refactor: extract unified dock shell + mode surfaces (3 days ago)
-- 62abf4a feat: update app icon to DoraX logo (3 days ago)
-- 5c0788d fix: debounce AX selection rebuilds, move MainActor sleeps to background, clear AX observers on sleep/wake (4 days ago)
-- b21ea65 fix: hotkey re-registration on settings change now unregisters all three hotkeys (4 days ago)
+- 94d3735 fix: unified panel width, remove stale hasResultsToShow conditions (21 hours ago)
+- 751910e refactor: unified panel container, mode-driven sizing (24 hours ago)
+- c4e8135 refactor: surface purity — surfaces now own their shell, lifecycle, and presentation (2 days ago)
+- 0f72b05 refactor: extract coordinators, surfaces, and service layers (2 days ago)
+- f6690d2 chore: add Claude Code skills for Context-Dock development (3 days ago)
+- 06950d8 refactor: complete cutover to UnifiedDockShell (Step 5/5) (5 days ago)
+- f4ba144 refactor: wire dockPills to surfaces (Step 4/5) (5 days ago)
+- cb9cee7 refactor: integrate UnifiedDockShell with feature flag (Step 3/5) (5 days ago)
+- 73c5003 refactor: wire surfaces to data flow (Step 2/5) (5 days ago)
+- d73ca84 refactor: extract unified dock shell + mode surfaces (5 days ago)
 
 ## CHANGES.md (last 30 lines)
-(no CHANGES.md yet)
+# Context-Dock — Change Journal
+
+Auto-generated. One entry per commit.
+For full diff: `git show <hash>`
+
+---

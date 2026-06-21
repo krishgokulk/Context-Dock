@@ -319,12 +319,18 @@ extension LauncherView {
         chatReturnContextInDock = showContextInDock
         chatReturnBrowserLayer = previousMode == .mediaDock
         chatReturnGlobalContext = previousMode == .globalContext ? globalContextActivation : nil
-        hasUserSentMessageInCurrentSession = false
+        // Keep the previous conversation visible on switch-back — only a fresh session
+        // (no messages) starts collapsed. Resetting to false hid the retained chat.
+        hasUserSentMessageInCurrentSession = !aiMode.messages.isEmpty
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
             aiMode.isActive = true
             // Media hides the input field, so temporarily leave L3 while chat is active.
             showMediaLayer = false
+        }
+        // Auto-expand to the retained conversation height (glow + grow), no manual nudge.
+        if !aiMode.messages.isEmpty {
+            requestWindowSizeUpdate(reason: .modeChanged)
         }
 
         collapseTimer?.cancel()
@@ -589,8 +595,8 @@ extension LauncherView {
                 let bundleID = app.bundleIdentifier ?? ""
                 let appName = app.localizedName ?? "Unknown"
 
-                // Skip if it's ILauncher itself or ChatGPT desktop app
-                if bundleID == Bundle.main.bundleIdentifier || bundleID == "com.openai.chat" {
+                // Skip only our own app — ChatGPT is now treated as a normal frontmost app.
+                if bundleID == Bundle.main.bundleIdentifier {
                     return
                 }
 

@@ -21,21 +21,25 @@ struct AppearanceSettingsPage: View {
                     }
                 }
 
-
-                CardSection(title: "Taskbar Mode", systemImage: "menubar.dock.rectangle.badge.record") {
-                    SettingsPageRow(
-                        icon: "rectangle.bottomhalf.inset.filled",
-                        iconColor: .blue,
-                        title: "Always on Bottom",
-                        subtitle: "Pin Context-Dock to the bottom of your screen like a Windows taskbar, always visible above all apps."
-                    ) {
-                        Toggle("", isOn: $settings.alwaysDockAtBottom)
-                            .labelsHidden()
-                            .onChange(of: settings.alwaysDockAtBottom) { _, _ in
-                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
-                            }
+                CardSection(title: "Liquid Glass", systemImage: "circle.lefthalf.filled") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Glass Darkness")
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Text("\(Int(settings.glassDarkness * 100))%")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $settings.glassDarkness, in: 0...1)
+                        Text("Darken the dock's Liquid Glass — 0% is pure glass, higher is darker.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 10)
                 }
+
 
                 CardSection(title: "Pill Layout", systemImage: "rectangle.grid.1x2") {
                     SettingsPageRow(

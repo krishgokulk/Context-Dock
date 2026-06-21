@@ -821,6 +821,12 @@ class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
+    /// 0…1 dark tint laid over the Liquid Glass dock shell. 0 = pure glass, 1 = much
+    /// darker. User-adjustable in Appearance settings.
+    @AppStorage("glassDarkness") var glassDarkness: Double = 0
+    /// When on, the dock never auto-hides on focus loss or after an action runs — it
+    /// stays floating until explicitly dismissed (Escape / hotkey).
+    @AppStorage("alwaysFloatDock") var alwaysFloatDock: Bool = false
     @AppStorage("enableSpotlightSearch") var enableSpotlightSearch: Bool = true
     @AppStorage("enableL1DocumentSearch") var enableL1DocumentSearch: Bool = true
     @AppStorage("enableL1FileSearch") var enableL1FileSearch: Bool = true
@@ -882,12 +888,13 @@ class AppSettings: ObservableObject {
     @AppStorage("enableFrontmostDetection") var enableFrontmostDetection: Bool = true  // Show frontmost app context
     @AppStorage("enableContextAIExtensions") var enableContextAIExtensions: Bool = true  // Show built-in context-aware AI extensions
     @AppStorage("allowSelectedTextCloudSharing") var allowSelectedTextCloudSharing: Bool = true
-    @AppStorage("alwaysDockAtBottom") var alwaysDockAtBottom: Bool = false  // Always keep dock at bottom (results above)
     @AppStorage("singleCommandTogglesContextScope") var singleCommandTogglesContextScope: Bool =
         true
     @AppStorage("showFloatingAppLogo") var showFloatingAppLogo: Bool = false
 
-    var effectiveDockAtBottom: Bool { alwaysDockAtBottom }
+    // The "Always on Bottom" / taskbar dock mode was removed — the dock always anchors at the top
+    // and grows downward. Kept as a constant so existing call sites compile without a 54-site rewrite.
+    var effectiveDockAtBottom: Bool { false }
     @AppStorage("enableAIMode") var enableAIMode: Bool = true  // Allow switching to AI chat mode (Tab key or horizontal swipe)
 
     // Layer Toggles — controls which layers are accessible via swipe and hotkeys
@@ -2043,6 +2050,15 @@ class AppSettings: ObservableObject {
 
         let directory = SearchDirectory(path: path, displayName: displayName)
         searchDirectories.append(directory)
+        triggerSearchIndexRefresh()
+    }
+
+    /// Restart the live Spotlight query so newly added/removed directories take effect
+    /// immediately — the running NSMetadataQuery otherwise keeps its launch-time scope.
+    private func triggerSearchIndexRefresh() {
+        Task { @MainActor in
+            await FileIndexManager.shared.forceReindex()
+        }
     }
 
     /// Add a search directory with security-scoped bookmark for persistent access
@@ -2070,6 +2086,7 @@ class AppSettings: ObservableObject {
         let directory = SearchDirectory(
             path: url.path, displayName: displayName, bookmarkData: bookmarkData)
         searchDirectories.append(directory)
+        triggerSearchIndexRefresh()
     }
 
     /// Resolve and start accessing all saved search directories
@@ -2169,6 +2186,7 @@ class AppSettings: ObservableObject {
 
     func removeSearchDirectory(_ directory: SearchDirectory) {
         searchDirectories.removeAll { $0.id == directory.id }
+        triggerSearchIndexRefresh()
     }
 
     func pinApp(name: String, path: String, bundleIdentifier: String? = nil) {

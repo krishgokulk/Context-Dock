@@ -561,12 +561,17 @@ final class AXMenuReader {
         let keyCode = MenuShortcutFormatter.virtualKeyCode(for: ch.value)
         guard keyCode != 0xFFFF else { return false }  // unsupported key — let caller fall back
 
-        if let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true),
-           let up   = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false) {
-            down.flags = cgMods
-            down.postToPid(pid)
-            up.postToPid(pid)
-        }
+        // Post through the global HID stream, not postToPid: many apps ignore postToPid for
+        // command-key equivalents (Xcode ⌘., etc.), so the event silently no-ops while we
+        // still report success — which then blocks the AX-click fallback. Callers activate the
+        // target app before invoking this, so the frontmost app receives the keystroke.
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true),
+            let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
+        else { return false }
+        down.flags = cgMods
+        up.flags = cgMods
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
         return true
     }
 

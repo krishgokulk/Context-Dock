@@ -524,6 +524,46 @@ struct FocusRingSuppressor: NSViewRepresentable {
     }
 }
 
+struct InlineCompletionApplier: NSViewRepresentable {
+    let typedText: String
+    let completionText: String?
+    let isActive: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard isActive,
+            let completionText,
+            !typedText.isEmpty,
+            completionText.count > typedText.count,
+            completionText.lowercased().hasPrefix(typedText.lowercased())
+        else { return }
+
+        DispatchQueue.main.async {
+            guard let window = view.window ?? NSApp.keyWindow,
+                let textView = window.firstResponder as? NSTextView
+            else { return }
+
+            let typedLength = (typedText as NSString).length
+            let completionLength = (completionText as NSString).length
+            guard completionLength > typedLength else { return }
+
+            let current = textView.string
+            let selected = textView.selectedRange()
+            let desiredSelection = NSRange(location: typedLength, length: completionLength - typedLength)
+            if current == completionText, selected == desiredSelection { return }
+            guard current == typedText || current == completionText else { return }
+
+            textView.string = completionText
+            textView.setSelectedRange(desiredSelection)
+        }
+    }
+}
+
 extension View {
     /// Wraps a view in the full glass-pill container: NSVisualEffectView blur + gradient + border stroke.
     func glassContainer(cornerRadius: CGFloat = 16) -> some View {

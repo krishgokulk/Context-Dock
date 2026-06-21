@@ -2,11 +2,43 @@ import AppKit
 import ObjectiveC
 import SwiftUI
 
+/// A single resolved native share destination, ready to render as a DoraX pill.
+/// Carries the actual NSSharingService OBJECT so execution is by object identity
+/// (`service.perform(withItems:)`) — never resolved by title, which mis-picked the
+/// first service (the "always AirDrop" bug). Discovered via
+/// `NSSharingService.sharingServices(forItems:)`, so it includes every installed
+/// share-extension (Downie, LocalSend, Bridges, …), exactly like the system sheet.
+struct ShareDestinationEntry: Identifiable {
+    let title: String
+    let image: NSImage?
+    let service: NSSharingService
+    var id: String { title }
+
+    /// Run this exact service with freshly-resolved items (e.g. the live page URL).
+    func perform(withItems items: [Any]) {
+        service.perform(withItems: items)
+        AppToast.show("Sharing via \(title)", icon: "square.and.arrow.up", tint: .blue)
+    }
+}
+
 @MainActor
 final class ShareActionCoordinator {
     static let shared = ShareActionCoordinator()
 
     private init() {}
+
+    /// One row per native macOS share destination for the given items — the exact
+    /// list the system Share Sheet would show (AirDrop, Mail, Messages, Notes, plus
+    /// every installed share-extension), with each app's real icon. Lets DoraX render
+    /// the share sheet inline as pills instead of bouncing to NSSharingServicePicker.
+    func shareDestinations(items: [Any]) -> [ShareDestinationEntry] {
+        guard !items.isEmpty else { return [] }
+        return NSSharingService.sharingServices(forItems: items).compactMap { service in
+            let title = service.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            return ShareDestinationEntry(title: title, image: service.image, service: service)
+        }
+    }
 
     func presentSharingPicker(
         items: [Any],

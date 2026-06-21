@@ -1,6 +1,22 @@
 import Foundation
 
 struct AIRequestBuilder {
+    static func aiChat(
+        text: String,
+        history: [ChatMessage] = [],
+        attachments: [URL] = []
+    ) -> AIRequest {
+        AIRequest(
+            text: text,
+            context: attachments.isEmpty ? .none : .filesSelected(attachments),
+            history: history,
+            attachments: attachments.map(AIAttachment.inferred(from:)),
+            mode: .answer,
+            source: .aiChat,
+            liveContext: nil
+        )
+    }
+
     static func globalContext(
         text: String,
         context: UserContext,

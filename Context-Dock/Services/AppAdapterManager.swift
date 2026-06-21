@@ -1062,6 +1062,10 @@ final class AppAdapterManager: ObservableObject {
     /// If the frontmost app has no adapter, build a synthetic one from its live menu tree.
     /// Stored only in memory (not on disk) — vanishes on app restart, which is intentional.
     func autoGenerateAdapterIfNeeded(for app: NSRunningApplication) async {
+        // Disabled: DoraX ships NO default adapter actions. Apps surface their commands
+        // through the live menu pipeline; App Adapters only hold user-added actions.
+        return
+
         guard let bundleId = app.bundleIdentifier, !bundleId.isEmpty,
               let appName  = app.localizedName,    !appName.isEmpty else { return }
         guard adapter(for: bundleId) == nil,
@@ -1082,8 +1086,14 @@ final class AppAdapterManager: ObservableObject {
 
     private func buildSyntheticAdapter(appName: String, bundleId: String,
                                        menuItems: [AXMenuItem]) -> AppAdapter {
-        // Build one AdapterAction per menu leaf — limit to 40 most useful items
-        let actions: [AdapterAction] = menuItems.prefix(40).compactMap { item in
+        // Build one AdapterAction per menu leaf — limit to 40 most useful items.
+        // Filter out recent-files / Open-Recent / reveal entries first: the Apple menu's
+        // "Recent Items" (and apps' "Open Recent") list documents/apps/folders that are
+        // NOT real actions (e.g. "Visual Studio Code.app", ".hammerspoon",
+        // "Show "X" in Finder") and were polluting every adapter with garbage.
+        let actions: [AdapterAction] = menuItems
+            .filter { Self.isUsefulAdapterMenuItem($0) }
+            .prefix(40).compactMap { item in
             guard !item.title.isEmpty else { return nil }
             let words = item.title.lowercased()
                 .components(separatedBy: .init(charactersIn: " /…-"))
@@ -1106,6 +1116,33 @@ final class AppAdapterManager: ObservableObject {
             icon: "square.grid.2x2", isEnabled: true, isBuiltIn: false,
             actions: actions
         )
+    }
+
+    /// True for genuine action menu items; false for recent-files / file-path / reveal
+    /// entries that pollute auto-generated adapters.
+    static func isUsefulAdapterMenuItem(_ item: AXMenuItem) -> Bool {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return false }
+        let lower = title.lowercased()
+        // Reveal companions and app/dotfile/path-looking titles.
+        if lower.contains(" in finder") { return false }
+        if lower.hasSuffix(".app") { return false }
+        if title.hasPrefix(".") || title.hasPrefix("~") || title.contains("/") { return false }
+        // file.ext-looking titles (short trailing extension), e.g. "report.pdf".
+        if let dot = title.lastIndex(of: "."), dot != title.startIndex {
+            let ext = title[title.index(after: dot)...]
+            if (2...5).contains(ext.count), ext.allSatisfy({ $0.isLetter || $0.isNumber }) {
+                return false
+            }
+        }
+        // Anything living under a Recent/Open-Recent submenu.
+        let pathLower = item.path.map { $0.lowercased() }
+        if pathLower.contains(where: {
+            $0.contains("recent") || $0 == "open recent" || $0.contains("recently")
+        }) {
+            return false
+        }
+        return true
     }
 
     private func syntheticMenuIcon(for title: String) -> String {

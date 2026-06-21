@@ -1047,8 +1047,9 @@ extension LauncherView {
                 {
                     let url = URL(fileURLWithPath: path)
                     let normalizedPath = url.standardizedFileURL.path
-                    let parentPath = url.deletingLastPathComponent().standardizedFileURL.path
-                    guard parentPath == normalizedFolderPath else { continue }
+                    guard normalizedPath == normalizedFolderPath
+                        || normalizedPath.hasPrefix(normalizedFolderPath + "/")
+                    else { continue }
                     let resourceValues =
                         (try? url.resourceValues(forKeys: [
                             .isDirectoryKey, .contentModificationDateKey, .fileSizeKey,
@@ -1175,7 +1176,9 @@ extension LauncherView {
                 folderPath: isDirectory ? url.path : url.deletingLastPathComponent().path,
                 sourceQuery: url.lastPathComponent
             )
-            NSWorkspace.shared.open(url)
+            // Folders navigate the existing front Finder window (same window, like Go menu)
+            // instead of spawning a new one; files open normally.
+            openFinderFolderPreferringTab(url, isDirectory: isDirectory)
             searchState.query = ""
             l2.focusedPillIndex = nil
         }
@@ -1443,7 +1446,7 @@ extension LauncherView {
             refreshAttachedFinderFolderSnapshot(path: folderPath, force: false)
         }
 
-        return
+        let scored = Array(
             attachedFinderFolderSnapshotItems
             .compactMap { item -> (item: FinderFolderSnapshotItem, score: Double)? in
                 guard item.url.deletingLastPathComponent().standardizedFileURL.path == folderPath
@@ -1467,7 +1470,9 @@ extension LauncherView {
                 return $0.item.displayName.localizedCaseInsensitiveCompare($1.item.displayName)
                     == .orderedAscending
             }
-            .prefix(10)
+            .prefix(10))
+        let basePills =
+            scored
             .map { match in
                 let item = match.item
                 let itemPath = item.path
@@ -1492,7 +1497,7 @@ extension LauncherView {
                     badge: folderName,
                     execute: {
                         recordFinderCurrentFolderLaunch(itemPath: itemPath, folderPath: folderPath)
-                        NSWorkspace.shared.open(item.url)
+                        openFinderFolderPreferringTab(item.url, isDirectory: item.isDirectory)
                         searchState.query = ""
                         l2.focusedPillIndex = nil
                         hideLauncherAfterFinderAction()
@@ -1511,6 +1516,96 @@ extension LauncherView {
                     item.displayName, itemPath, folderPath, "finder", "current folder",
                 ]
                 pill.rankingScore = match.score
+                return pill
+            }
+
+        // Drill-in: if a matched item is a folder whose name matches the query, list its
+        // contents right below it (e.g. searching "skill" → the Skill folder's files).
+        let childPills = finderMatchedFolderChildPills(scored: scored, query: semanticQuery)
+        return basePills + childPills
+    }
+
+    /// Navigate the EXISTING front Finder window to a folder (same window, like the Go menu)
+    /// instead of spawning a new window. Files and the no-window case fall back to the normal
+    /// open. Keeps the user's Finder tidy — no window pile-up.
+    func openFinderFolderPreferringTab(_ url: URL, isDirectory: Bool) {
+        guard isDirectory, finderHasActiveWindow() else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let path = url.path.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = """
+            tell application "Finder"
+                activate
+                if (count of Finder windows) > 0 then
+                    set target of front Finder window to (POSIX file "\(path)" as alias)
+                else
+                    open (POSIX file "\(path)" as alias)
+                end if
+            end tell
+            """
+        DispatchQueue.global(qos: .userInitiated).async {
+            var err: NSDictionary?
+            NSAppleScript(source: script)?.executeAndReturnError(&err)
+        }
+    }
+
+    /// Immediate contents of the best matching subfolder, as Finder pills. Lets the user
+    /// drill into a folder match without leaving the dock.
+    func finderMatchedFolderChildPills(
+        scored: [(item: FinderFolderSnapshotItem, score: Double)],
+        query: String
+    ) -> [DockPill] {
+        guard
+            let dir = scored.first(where: {
+                $0.item.isDirectory
+                    && normalizedDockPillText($0.item.displayName).hasPrefix(query)
+            })
+        else { return [] }
+
+        let dirURL = dir.item.url
+        let folderName = dir.item.displayName
+        let contents =
+            (try? FileManager.default.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])) ?? []
+        guard !contents.isEmpty else { return [] }
+
+        return
+            contents
+            .sorted {
+                $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent)
+                    == .orderedAscending
+            }
+            .prefix(8)
+            .enumerated()
+            .map { index, childURL in
+                let isDir =
+                    (try? childURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                var pill = DockPill(
+                    id: "finder-folder-child-\(childURL.path)",
+                    name: childURL.lastPathComponent,
+                    icon: isDir ? "folder.fill" : "doc",
+                    accentColorName: isDir ? "blue" : "teal",
+                    badge: folderName,
+                    execute: {
+                        openFinderFolderPreferringTab(childURL, isDirectory: isDir)
+                        searchState.query = ""
+                        l2.focusedPillIndex = nil
+                        hideLauncherAfterFinderAction()
+                    }
+                )
+                pill.sourceBundleId = "com.apple.finder"
+                pill.sourceAppName = "Finder"
+                pill.rankingKind = "finderCurrent"
+                pill.menuContext = folderName
+                pill.menuItemImage = preparedDockIcon(NSWorkspace.shared.icon(forFile: childURL.path))
+                pill.quickLookURL = childURL
+                pill.trackingIdentifier = "finder-folder-child:\(childURL.path.lowercased())"
+                pill.searchTerms = [childURL.lastPathComponent, folderName, "finder"]
+                pill.rankingScore = dir.score - Double(index + 1)
                 return pill
             }
     }
@@ -1672,6 +1767,7 @@ extension LauncherView {
             badge: nil,
             execute: { [self] in navigateFinderToPath(path) }
         )
+        pill.menuItemImage = preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
         pill.sourceBundleId = "com.apple.finder"
         pill.rankingKind = "finderGoTo"
         pill.trackingIdentifier = finderGoToTrackingIdentifier(for: path)

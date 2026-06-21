@@ -153,6 +153,14 @@ struct SearchContextApp {
     }
 }
 
+/// A tappable "Open in <App>" chip shown under an assistant message that used an Apple
+/// app's data (Calendar, Reminders, Contacts, …), so the user can jump straight there.
+struct AppLaunchAction: Equatable {
+    let label: String
+    let systemIcon: String
+    let bundleId: String
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -161,6 +169,9 @@ struct AIChatMessage: Identifiable, Equatable {
     var isError: Bool
     var structuredData: String?  // JSON data from extensions
     var hasInstallButton: Bool  // Show "Add to Extensions" button
+    var attachments: [URL]  // Files the user attached to this message (shown as chips)
+    var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
+    var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
 
     enum ChatRole {
         case user
@@ -171,7 +182,8 @@ struct AIChatMessage: Identifiable, Equatable {
 
     init(
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
-        hasInstallButton: Bool = false
+        hasInstallButton: Bool = false, attachments: [URL] = [],
+        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
     ) {
         self.id = UUID()
         self.role = role
@@ -180,12 +192,16 @@ struct AIChatMessage: Identifiable, Equatable {
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton
+        self.attachments = attachments
+        self.appLaunches = appLaunches
+        self.mcpToolsRan = mcpToolsRan
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
     init(
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
-        structuredData: String? = nil, hasInstallButton: Bool = false
+        structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
+        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
     ) {
         self.id = id
         self.role = role
@@ -194,6 +210,9 @@ struct AIChatMessage: Identifiable, Equatable {
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton
+        self.attachments = attachments
+        self.appLaunches = appLaunches
+        self.mcpToolsRan = mcpToolsRan
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -278,11 +297,88 @@ struct AIChatMessageView: View {
         }
     }
 
+    @ViewBuilder
+    private var appLaunchButtons: some View {
+        HStack(spacing: 6) {
+            ForEach(message.appLaunches, id: \.bundleId) { launch in
+                Button {
+                    if let url = NSWorkspace.shared.urlForApplication(
+                        withBundleIdentifier: launch.bundleId)
+                    {
+                        NSWorkspace.shared.openApplication(
+                            at: url, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: launch.systemIcon)
+                        Text(launch.label).fontWeight(.medium)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(providerColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(providerColor.opacity(0.3)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mcpToolChips: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(message.mcpToolsRan, id: \.self) { label in
+                HStack(spacing: 5) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("ran \(label)")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.purple)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.purple.opacity(0.12), in: Capsule())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentChips: some View {
+        let alignment: HorizontalAlignment = message.role == .user ? .trailing : .leading
+        VStack(alignment: alignment, spacing: 4) {
+            ForEach(message.attachments, id: \.absoluteString) { url in
+                HStack(spacing: 6) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                    Text(url.lastPathComponent)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.primary.opacity(0.85))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.regularMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.08)))
+            }
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if message.role == .user { Spacer(minLength: 52) }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
+                // Attachment chips (files the user attached to this message)
+                if !message.attachments.isEmpty {
+                    attachmentChips
+                }
+                // MCP tool-run chips ("ran <tool> via <server>")
+                if !message.mcpToolsRan.isEmpty {
+                    mcpToolChips
+                }
                 // Detect extension proposal in structuredData
                 if let sd = message.structuredData, message.role == .assistant,
                     let data = sd.data(using: .utf8),
@@ -332,6 +428,10 @@ struct AIChatMessageView: View {
                     }
                     .foregroundStyle(message.role == .user ? Color.white : Color.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                if !message.appLaunches.isEmpty {
+                    appLaunchButtons
                 }
 
                 if message.hasInstallButton, message.structuredData == nil,

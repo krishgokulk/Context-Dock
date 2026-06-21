@@ -94,6 +94,11 @@ extension LauncherView {
         let appPath: String
         var matchedAlias: String
         var aliasStartIndex: Int
+        /// True for scopes entered explicitly (right-arrow on a running app) rather
+        /// than by typing the app's name. Explicit scopes are sticky — they survive
+        /// alias reconciliation so the user can type an action query without the scope
+        /// (whose alias isn't in the query) being dropped.
+        var isExplicit: Bool = false
     }
 
     struct DockScopeResolution {
@@ -701,7 +706,7 @@ extension LauncherView {
                     badge: finderDisplayPath(url.deletingLastPathComponent().path),
                     rankingKind: file.isDirectory ? "finderRecent" : "spotlightSearch",
                     query: nil,
-                    loadIcon: false,
+                    loadIcon: true,
                     isDirectoryHint: file.isDirectory
                 )
             )
@@ -735,7 +740,7 @@ extension LauncherView {
                         badge: finderDisplayPath(url.deletingLastPathComponent().path),
                         rankingKind: isDirectory ? "finderRecent" : "spotlightSearch",
                         query: nil,
-                        loadIcon: false,
+                        loadIcon: true,
                         isDirectoryHint: isDirectory
                     )
                 )
@@ -748,9 +753,20 @@ extension LauncherView {
         let roots = finderDesktopSearchRootPaths()
         let runningAppPills = finderDesktopRecentApplicationPills(query: "")
         let indexedPills = finderDesktopIndexedCachePills(roots: roots)
-        let fallbackPills = indexedPills.isEmpty
-            ? finderDesktopDirectFallbackPills(roots: roots)
-            : []
+        // Per-root coverage: any root Spotlight returned nothing for (e.g. iCloud Drive under
+        // ~/Library, or a freshly added dir before the index refreshes) gets a direct disk scan.
+        // Previously this only fired when the entire index was empty, so the busy Home root
+        // suppressed the fallback for iCloud forever.
+        let coveredRoots: Set<String> = Set(
+            indexedPills.compactMap { pill -> String? in
+                guard let path = pill.resolvedURL?.path else { return nil }
+                return roots.first { path == $0 || path.hasPrefix($0 + "/") }
+            }
+        )
+        let uncoveredRoots = roots.filter { !coveredRoots.contains($0) }
+        let fallbackPills = uncoveredRoots.isEmpty
+            ? []
+            : finderDesktopDirectFallbackPills(roots: uncoveredRoots)
         let recentFilePills = finderRecentDocumentPaths(limit: 20).map { path -> DockPill in
             let url = URL(fileURLWithPath: path)
             return makeDesktopPill(
@@ -949,7 +965,7 @@ extension LauncherView {
                 let url = URL(fileURLWithPath: path)
                 return makeDesktopPill(path: path, name: url.lastPathComponent,
                     badge: finderDisplayPath(url.deletingLastPathComponent().path),
-                    rankingKind: "finderRecent", query: nil, loadIcon: false, isDirectoryHint: false)
+                    rankingKind: "finderRecent", query: nil, loadIcon: true, isDirectoryHint: false)
         }
 
         guard isFinderDesktopOnlyMode else { return }
@@ -1008,7 +1024,7 @@ extension LauncherView {
             guard !name.hasPrefix("."), seen.insert(path.lowercased()).inserted else { continue }
             enriched.append(makeDesktopPill(path: path, name: name,
                 badge: finderDisplayPath(url.deletingLastPathComponent().path),
-                rankingKind: "spotlightSearch", query: nil, loadIcon: false, isDirectoryHint: nil))
+                rankingKind: "spotlightSearch", query: nil, loadIcon: true, isDirectoryHint: nil))
         }
         guard generation == nil || contextDockViewModel.finderDesktopSearchGeneration == generation else {
             return
@@ -1359,11 +1375,13 @@ extension LauncherView {
             let shortcutChar = item.shortcutChar
             let shortcutModifiers = item.shortcutModifiers
             let badge = item.shortcutDisplay  // parent menu name dropped — use shortcut only
-            let isShareItem =
-                normalizedTitle.hasPrefix("share")
-                || item.path.contains { normalizedDockPillText($0) == "share" }
+            // Bare "Share"/"Share…" ONLY — never path.contains("share"), which would
+            // mis-mark real children (Mail/AirDrop) as the share trigger and click the
+            // wrong destination. Children fall through and execute their exact path.
+            let isShareItem = isShareSheetTitle(item.title)
 
             let menuImg = resolvedMenuIcon(for: item)
+            let shareItem = item
             var pill = DockPill(
                 id: "finder-menu-\(item.id)",
                 name: item.title,
@@ -1372,7 +1390,7 @@ extension LauncherView {
                 badge: badge,
                 execute: {
                     if isShareItem {
-                        executeShareMenuDestination(item.title)
+                        executeShareAction(item: shareItem)
                         return
                     }
 
@@ -1703,6 +1721,8 @@ extension LauncherView {
     /// Native share sheet entry for active selections in either scope. This is intentionally
     /// cache/context based only; it must not trigger live menu or AX reads while typing.
     func buildGlobalSelectionSharePills(query q: String) -> [DockPill] {
+        // Selection-gated, no AppleScript/enumeration here — keep typing instant.
+        // Browser-page sharing is reached via the app's "Share…" menu item instead.
         guard hasActiveDockContextSelection else { return [] }
         let normalizedQuery = normalizedDockPillText(q)
         if !normalizedQuery.isEmpty {
@@ -1713,9 +1733,6 @@ extension LauncherView {
                 })
             else { return [] }
         }
-
-        let context = effectiveAXContextForConversation()
-        guard !ShareIntentRouter.shared.shareableItems(for: context).isEmpty else { return [] }
 
         let badge: String = {
             switch activeSelection {
@@ -1729,13 +1746,15 @@ extension LauncherView {
                 return "Selection"
             }
         }()
+        // Single "Share Selection" pill. Activating it reveals the native destinations
+        // inline — DoraX never bounces to the system NSSharingServicePicker.
         var pill = DockPill(
             id: "selection-share",
             name: "Share Selection",
             icon: "square.and.arrow.up",
             accentColorName: "blue",
             badge: badge,
-            execute: { showShareSheetForContext() }
+            execute: { revealShareDestinations() }
         )
         pill.rankingKind = "payload"
         pill.trackingIdentifier = "selection-share"
@@ -1743,6 +1762,145 @@ extension LauncherView {
             "share", "send", "airdrop", "export", "selection", "files", "text", "url",
         ]
         return [pill]
+    }
+
+    /// True only for the share-SHEET menu title ("Share", "Share…") — NOT incidental
+    /// names like "Share My Screen" / "Shared with You", which are ordinary actions.
+    func isShareSheetTitle(_ title: String) -> Bool {
+        let t = normalizedDockPillText(title)
+        return t == "share" || t == "share…" || t == "share..."
+    }
+
+    /// True when the scoped/frontmost app actually exposes a Share SHEET menu. Used to
+    /// gate DoraX's share destinations so we never invent a Share for apps (e.g.
+    /// Messages) whose menus contain no real Share item.
+    func frontmostAppHasShareMenu() -> Bool {
+        func scan(_ items: [AXMenuItem]) -> Bool {
+            for item in items {
+                if isShareSheetTitle(item.title) { return true }
+                if !item.children.isEmpty, scan(item.children) { return true }
+            }
+            return false
+        }
+        return scan(liveMenuItems)
+    }
+
+    /// True when the app exposes a Share submenu whose CHILDREN are captured by AX
+    /// (e.g. DuckDuckGo's File ▸ Share ▸ Notes/Mail/…). For those apps we let the AX
+    /// menu items run the share — the app provides the exact payload (current page,
+    /// selection) to the extension. Apps whose URL we can't read (privacy browsers)
+    /// only work that way, so NSSharingService (our list) must NOT duplicate them.
+    func frontmostAppHasShareSubmenuChildren() -> Bool {
+        func scan(_ items: [AXMenuItem]) -> Bool {
+            for item in items {
+                if isShareSheetTitle(item.title), !item.children.isEmpty { return true }
+                if !item.children.isEmpty, scan(item.children) { return true }
+            }
+            return false
+        }
+        return scan(liveMenuItems)
+    }
+
+    /// Activate DoraX's inline Share Sheet — the dock then shows ONLY the live
+    /// native share destinations for the current content. Works in any app.
+    func revealShareDestinations() {
+        searchState.query = ""
+        inlineShareActive = true
+        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+    }
+
+    /// Live native macOS share destinations (AirDrop, Mail, Messages, Notes, every
+    /// installed share-extension) for the current page/selection, as DoraX pills.
+    /// This is the inline replacement for NSSharingServicePicker.
+    ///
+    /// Listing uses the cached context (fast, no AppleScript). The real share runs at
+    /// tap time via `liveShareItems()`, which resolves the live browser URL then.
+    func buildInlineShareDestinationPills(query q: String) -> [DockPill] {
+        let listingItems = ShareIntentRouter.shared.shareableItems(
+            for: effectiveAXContextForConversation())
+        guard !listingItems.isEmpty else {
+            var pill = DockPill(
+                id: "share-empty",
+                name: "Nothing to share here",
+                icon: "square.and.arrow.up",
+                accentColorName: "gray",
+                badge: nil,
+                execute: { inlineShareActive = false }
+            )
+            pill.rankingKind = "payload"
+            pill.isEnabled = false
+            return [pill]
+        }
+
+        return shareDestinationPills(listingItems: listingItems, filter: normalizedDockPillText(q))
+    }
+
+    /// Typing "share"/"send"/"airdrop"/… directly surfaces the app's share children —
+    /// the live NSSharingService destinations — for ANY app, no drill-in and without
+    /// depending on AX having captured a lazy Share submenu. Gated to share-term queries
+    /// so the enumeration never runs on ordinary typing. Listing uses cached context
+    /// (no AppleScript); the real share resolves the live URL at tap.
+    func buildShareQueryDestinationPills(query q: String) -> [DockPill] {
+        let nq = normalizedDockPillText(q)
+        guard nq.count >= 2 else { return [] }
+        // Only when the app truly has a Share menu, or there's a selection to share.
+        guard hasActiveDockContextSelection || frontmostAppHasShareMenu() else { return [] }
+        // If the app exposes its Share destinations as AX menu items (e.g. DuckDuckGo's
+        // File ▸ Share ▸ Notes/Mail/…), DON'T duplicate them with NSSharingService — the
+        // AX items run the app's OWN share, which provides the exact payload (the current
+        // page/selection). NSSharingService only fills the gap for apps whose share menu
+        // has no captured children (Safari/Preview lazy submenus, bare "Share…").
+        if frontmostAppHasShareSubmenuChildren(), !hasActiveDockContextSelection {
+            return []
+        }
+        let genericVerbs = ["share", "send", "export"]
+        let destinationVerbs = ["airdrop", "mail", "message", "messages", "notes", "reminders"]
+        let isGeneric = genericVerbs.contains { $0.hasPrefix(nq) }
+        let isDestination = destinationVerbs.contains { $0.hasPrefix(nq) }
+        guard isGeneric || isDestination else { return [] }
+
+        let listingItems = ShareIntentRouter.shared.shareableItems(
+            for: effectiveAXContextForConversation())
+        guard !listingItems.isEmpty else { return [] }
+        // Generic verb → show all destinations; a destination-name query → filter to it.
+        let filter = isGeneric ? "" : nq
+        return shareDestinationPills(listingItems: listingItems, filter: filter)
+    }
+
+    /// Shared builder: one DoraX pill per native share destination. `filter` matches
+    /// destination titles ("" = all). Listing items drive enumeration; the live URL is
+    /// resolved at tap so the correct page/file is shared.
+    func shareDestinationPills(listingItems: [Any], filter normalizedQuery: String) -> [DockPill] {
+        let destinations = ShareActionCoordinator.shared.shareDestinations(items: listingItems)
+        return destinations.enumerated().compactMap { index, dest in
+            let normalizedTitle = normalizedDockPillText(dest.title)
+            guard normalizedQuery.isEmpty || normalizedTitle.contains(normalizedQuery)
+            else { return nil }
+            var pill = DockPill(
+                id: "share-dest-\(normalizedTitle)",
+                name: dest.title,
+                icon: "square.and.arrow.up",
+                accentColorName: "blue",
+                badge: "Share",
+                execute: {
+                    inlineShareActive = false
+                    // Execute THIS exact service object with the live items — object
+                    // identity, never resolved by title (no "always AirDrop" bug).
+                    let live = liveShareItems()
+                    dest.perform(withItems: live.isEmpty ? listingItems : live)
+                }
+            )
+            pill.menuItemImage = dest.image ?? shareDestinationIcon(forTitle: dest.title)
+            pill.isShareAction = true
+            pill.menuItemName = dest.title
+            pill.menuContext = "Share"
+            pill.rankingKind = "submenuChild"
+            pill.hasLiveAvailability = true
+            pill.rankingScore = Double(1_000 - index)
+            pill.trackingIdentifier = "share-dest:\(normalizedTitle)"
+            pill.searchTerms = [dest.title, "share", "send", "airdrop", "export"]
+            return pill
+        }
     }
 
     /// Selection is additive in Context Dock: these AI actions sit beside normal app menus.
@@ -2082,6 +2240,14 @@ extension LauncherView {
         item.isAppleMenu
             || menuContextLabel(from: item.path) == "Apple Menu"
             || item.path.first == "Apple"
+    }
+
+    /// Apple-menu "Recent Items" submenu (recent apps/documents/servers + Clear Menu).
+    /// Excluded even when the live Apple menu is allowed — these are noise, not actions.
+    nonisolated func isAppleRecentItemsMenuItem(_ item: AXMenuItem) -> Bool {
+        guard isAppleMenuItem(item) else { return false }
+        return item.path.contains { normalizedDockPillText($0).contains("recent") }
+            || normalizedDockPillText(item.title).contains("recent")
     }
 
     nonisolated func isApplicationMenuItem(_ item: AXMenuItem, appName: String) -> Bool {

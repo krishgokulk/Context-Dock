@@ -851,22 +851,20 @@ extension LauncherView {
         }
 
         if direction > 0 {
-            let next = min((focusedAppPillIndex ?? -1) + 1, matches.count - 1)
+            // Row 0 is shown pre-selected (render default) while typing even though
+            // focusedAppPillIndex is nil — start from it so the first Down goes to the second row.
+            let start = focusedAppPillIndex ?? (q.isEmpty ? -1 : 0)
+            let next = min(start + 1, matches.count - 1)
             focusedAppPillIndex = next
             l2.pillNavViaKeyboard = true
             return true
         }
 
         if direction < 0 {
-            guard let current = focusedAppPillIndex else {
-                focusedAppPillIndex = nil
-                l2.pillNavViaKeyboard = false
-                return true
-            }
-            if current <= 0 {
-                focusedAppPillIndex = nil
-                l2.pillNavViaKeyboard = false
-                DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+            // At the first row (explicit index 0, or the render-default first where index is nil):
+            // Up returns to the input with the query selected, Spotlight-style.
+            guard let current = focusedAppPillIndex, current > 0 else {
+                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
                 return true
             }
             focusedAppPillIndex = current - 1
@@ -1274,7 +1272,7 @@ extension LauncherView {
         if direction > 0 {
             let visibleOrder = globalGroupedVisibleOrder(state: state)
             let current = currentGlobalGroupedFocusIndex(state: state)
-                .flatMap { visibleOrder.firstIndex(of: $0) } ?? -1
+                .flatMap { visibleOrder.firstIndex(of: $0) } ?? (q.isEmpty ? -1 : 0)
             setGlobalGroupedFocus(visibleOrder[min(current + 1, visibleOrder.count - 1)], state: state)
             return true
         }
@@ -1285,10 +1283,12 @@ extension LauncherView {
                 let current = visibleOrder.firstIndex(of: focused)
             else {
                 setGlobalGroupedFocus(nil, state: state)
+                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
                 return true
             }
             if current <= 0 {
                 setGlobalGroupedFocus(nil, state: state)
+                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
             } else {
                 setGlobalGroupedFocus(visibleOrder[current - 1], state: state)
             }
@@ -1484,9 +1484,13 @@ extension LauncherView {
             bundleId: bundleID,
             appPath: appPath,
             matchedAlias: alias,
-            aliasStartIndex: 0
+            aliasStartIndex: 0,
+            isExplicit: true
         )
         additionalGlobalInlineAppScopes = []
+        // Clear any stale hover so the new chip doesn't render in its red "remove"
+        // state just because it appeared under the resting cursor.
+        hoveredGlobalInlineScopeBundleId = nil
         searchState.query = ""
         scheduleGlobalAppMatchRebuild(query: "", delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
@@ -1533,6 +1537,37 @@ extension LauncherView {
     func moveSearchInsertionPointToEnd(in textView: NSTextView) {
         let end = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: end, length: 0))
+    }
+
+    /// Like reclaimSearchInputFocus, but selects the whole query (Spotlight-style) so pressing Up
+    /// from the first result lands back on the input with the typed text highlighted.
+    func reclaimSearchInputFocusSelectingAll() {
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        // Deliberate select-all (Up-arrow editing) — tell the focus handler not to move
+        // the caret to end this time.
+        launcherViewModel.pendingSelectAllOnFocus = true
+        if let window = AppDelegate.shared?.launcherWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+        func selectAll(in textView: NSTextView) {
+            let length = (textView.string as NSString).length
+            textView.setSelectedRange(NSRange(location: 0, length: length))
+        }
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+            isSearchFieldFocused = true
+            selectAll(in: textView)
+            return
+        }
+        DispatchQueue.main.async {
+            self.isSearchFieldFocused = true
+            DispatchQueue.main.async {
+                if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    selectAll(in: textView)
+                }
+            }
+        }
     }
 
     func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000)
@@ -2098,6 +2133,7 @@ extension LauncherView {
             aliasStartIndex: target.aliasStartIndex
         )
         additionalGlobalInlineAppScopes = []
+        hoveredGlobalInlineScopeBundleId = nil
         ensureTrailingSpaceAfterInlineScopeIfNeeded(target: target, rawQuery: raw)
         let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 80_000_000)
@@ -2235,6 +2271,12 @@ extension LauncherView {
         for var scope in allGlobalInlineAppScopes.sorted(by: {
             $0.aliasStartIndex < $1.aliasStartIndex
         }) {
+            // Explicit (right-arrow) scopes aren't tied to a typed alias — keep them
+            // verbatim so typing an action query doesn't drop the scope.
+            if scope.isExplicit {
+                reconciledScopes.append(scope)
+                continue
+            }
             let aliasTokens = scope.matchedAlias.split(separator: " ").map {
                 normalizedDockPillText(String($0))
             }
@@ -2616,16 +2658,38 @@ extension LauncherView {
         return pill
     }
 
-    /// Safari History/Bookmarks rows resolve to the page's real URL when the
-    /// title is in local history — those rows open the link directly instead
-    /// of replaying menu clicks.
+    /// Browser History/Bookmarks/Recent rows resolve to the page's real URL when the
+    /// title is in local browser history — those rows open in Safari directly instead
+    /// of replaying menu clicks against the source app.
     func browserLinkURL(for descriptor: GlobalMenuDescriptor) -> URL? {
-        guard descriptor.bundleID == "com.apple.Safari", descriptor.path.count > 1 else {
-            return nil
-        }
+        guard descriptor.path.count > 1, isBrowserMenuSource(descriptor.bundleID) else { return nil }
         let root = descriptor.path.first.map(normalizedDockPillText) ?? ""
-        guard root == "history" || root == "bookmarks" else { return nil }
+        let pathText = descriptor.path.map(normalizedDockPillText).joined(separator: " ")
+        let linkContext =
+            root == "history"
+            || root == "bookmarks"
+            || pathText.contains("recent")
+            || pathText.contains("recently")
+            || pathText.contains("tabs")
+            || pathText.contains("visited")
+        guard linkContext else { return nil }
         return SafariLinkResolver.shared.url(forTitle: descriptor.name)
+    }
+
+    func isBrowserMenuSource(_ bundleID: String) -> Bool {
+        let normalized = bundleID.lowercased()
+        return normalized == "com.apple.safari"
+            || normalized == "com.google.chrome"
+            || normalized == "com.google.chrome.canary"
+            || normalized == "com.microsoft.edgemac"
+            || normalized == "com.brave.browser"
+            || normalized == "company.thebrowser.browser"
+            || normalized == "com.vivaldi.vivaldi"
+            || normalized == "org.mozilla.firefox"
+            || normalized == "app.zen-browser.zen"
+            || normalized.contains("browser")
+            || normalized.contains("tutor")
+            || normalized.contains("distill")
     }
 
     func openLinkInSafari(_ url: URL) {
@@ -2667,6 +2731,12 @@ extension LauncherView {
                     openLinkInSafari(linkURL)
                 } else if let documentURL {
                     NSWorkspace.shared.open(documentURL)
+                } else if let windowCommand = windowCommand(forMenuPath: path) {
+                    launchAndApplyWindowCommand(
+                        bundleId: bundleID,
+                        appName: descriptor.appName,
+                        command: windowCommand
+                    )
                 } else {
                     executeLearnedGhostAction(
                         bundleID: bundleID,
@@ -2703,6 +2773,33 @@ extension LauncherView {
             pill.searchTerms.append(documentURL.path)
         }
         return pill
+    }
+
+    func windowCommand(forMenuPath path: [String]) -> WindowManagementService.Command? {
+        let normalized = path.map(normalizedDockPillText)
+        guard normalized.contains("window"), let title = normalized.last else { return nil }
+        if title == "minimize" || title == "minimise" { return .minimize }
+        if title == "zoom" { return .zoom }
+        if title == "fill" || title.contains("fill") { return .fill }
+        if title == "centre" || title == "center" { return .center }
+        if title == "left" { return .left }
+        if title == "right" { return .right }
+        if title == "top" { return .top }
+        if title == "bottom" { return .bottom }
+        if title == "top left" { return .topLeft }
+        if title == "top right" { return .topRight }
+        if title == "bottom left" { return .bottomLeft }
+        if title == "bottom right" { return .bottomRight }
+        if title == "left right" { return .leftAndRight }
+        if title == "right left" { return .rightAndLeft }
+        if title == "top bottom" { return .topAndBottom }
+        if title == "bottom top" { return .bottomAndTop }
+        if title == "quarters" { return .quarters }
+        if title.contains("previous size") { return .restorePreviousSize }
+        if title.contains("full screen") || title.contains("fullscreen") { return .fullScreen }
+        if title == "bring all to front" { return .bringAllToFront }
+        if title.hasPrefix("switch window") { return .switchWindow }
+        return nil
     }
 
     func resolvedRecentDocumentURL(for descriptor: GlobalMenuDescriptor) -> URL? {
@@ -3261,14 +3358,14 @@ extension LauncherView {
                 return 86
             }
         }
-        // Context Dock typing: fixed sheet like Global Context — results change
-        // inside a stable container instead of resizing the window per row count,
-        // which read as the sheet being recreated on every keystroke. rowCount is
-        // already computed above; > 1 means real pills (a count of 1 can be the
-        // no-results sentinel, which keeps the compact height). No pill re-scan
-        // here — this var runs on every body evaluation.
-        if !shouldUsePureGlobalAppSearch, !q.isEmpty {
-            return listViewVisibleHeight
+        // Size to the MEASURED rendered content (global list) so the sheet hugs the
+        // actual rows — no half-empty box. The frontmost Context Dock list isn't
+        // measured, so it falls through to the row-count estimate below (accurate there
+        // because rowCount == the rendered pill count). Either way: few rows → small
+        // sheet, many rows → cap at listViewVisibleHeight and scroll.
+        let measured = measuredGlobalListContentHeight
+        if measured > 1 {
+            return min(max(measured, 86), listViewVisibleHeight)
         }
         let rowHeight: CGFloat = 52
         let headerReserve: CGFloat = rowCount > 0 ? 24 : 0
@@ -3345,9 +3442,27 @@ extension LauncherView {
     }
 
     var listViewResizeToken: String {
-        // Only changes when L2 dock activates/deactivates — not per pill or result count.
-        // Content scrolls within a fixed container; window never resizes during typing.
-        usesVerticalListDockLayout ? "on" : "off"
+        guard usesVerticalListDockLayout else { return "off" }
+        // Global search / inline scope hugs content — encode the MEASURED height (8px
+        // buckets to limit churn) so the sheet settles to fit the real rows (debounced
+        // + animated resize, no empty box). Frontmost Context Dock keeps a fixed scroll
+        // container so it never resizes while typing.
+        if isGlobalContextActive {
+            return "global:\(Int(measuredGlobalListContentHeight / 8))"
+        }
+        // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
+        // per app, so row count alone undercounts) — react to the measured height in 8px
+        // buckets so the sheet settles to fit the real rows, no clipped last row.
+        return "scoped:\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
+    }
+
+    /// Records the measured intrinsic height of the global/scoped result list. The
+    /// sheet sizes to this (via currentListViewDockContentHeight) and the resize token
+    /// reacts to it, so the window settles to fit the actual rendered rows.
+    func updateMeasuredGlobalListHeight(_ height: CGFloat) {
+        let clamped = max(0, height)
+        guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
+        measuredGlobalListContentHeight = clamped
     }
 
 

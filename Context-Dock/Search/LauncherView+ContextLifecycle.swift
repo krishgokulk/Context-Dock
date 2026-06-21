@@ -42,18 +42,28 @@ extension LauncherView {
                 }
             }
             .onChange(of: listViewResizeToken) { _, _ in
+                // Long debounce → the sheet SETTLES to fit after typing pauses instead
+                // of resizing on every keystroke. Animated so the settle glides.
                 requestWindowSizeUpdate(
                     reason: .rowLayoutChanged,
-                    animated: false,
-                    debounceNanoseconds: 110_000_000
+                    animated: true,
+                    debounceNanoseconds: 260_000_000
                 )
             }
             .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in
-                // A page favicon finished loading — repaint Safari link rows.
-                refreshVisibleGlobalContextAfterMenuCacheUpdate(
-                    bundleIdentifier: "com.apple.Safari")
+                // A page favicon finished loading — repaint EVERY view that shows web-link rows, not
+                // just Safari global context. Without rebuilding, the favicon sits in the cache but
+                // the already-built pills keep their generic icon (menuItemImage was nil at build).
+                refreshVisibleGlobalContextAfterMenuCacheUpdate()
+                if showContextInDock && !isGlobalContextActive {
+                    scheduleDockPillRebuild(
+                        query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
+                }
             }
             .onChange(of: aiMode.messages.count) { _, _ in
+                // Reset is handled by the message-count gate in DockHeightResolver, and l2 chat reuses
+                // this same path — avoid adding more .onChange modifiers here (deeply nested
+                // SubscriptionView<…> from too many chained subscriptions crashes the view body).
                 requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: aiMode.isActive) { _, newValue in
@@ -434,6 +444,9 @@ extension LauncherView {
             }
             .onChange(of: l2.chatMessages.count) { _, _ in
                 persistActiveL2DockSession()
+                // Reuse this existing subscription for the chat-sheet resize (don't add a new
+                // .onChange — extra chained SubscriptionViews crash the view body).
+                requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: isGlobalContextActive) { _, isActive in
                 if isActive, globalContextActivation?.autoActivated == false {
@@ -641,6 +654,10 @@ extension LauncherView {
                 let appName = appInfo.name
                 let bundleID = appInfo.bundleID
 
+                if bundleID == Bundle.main.bundleIdentifier {
+                    return
+                }
+
                 // Check if app changed (not just re-detection of same app)
                 let appChanged =
                     !frontmost.bundleID.isEmpty && frontmost.bundleID != bundleID
@@ -709,6 +726,9 @@ extension LauncherView {
                 let scopeLocked = l2.targetApp != nil
                 if scopeLocked {
                     syncL2DockSession(force: l2.activeDockSessionKey == nil)
+                    if let pinnedApp = contextTargetApp() {
+                        reloadMenuForApp(pinnedApp)
+                    }
                     if !l2.chatMessages.isEmpty || l2.chatArmed || l2.showChatPopover {
                         l2.chatArmed = true
                         l2.showChatPopover = true
@@ -805,6 +825,7 @@ extension LauncherView {
                 l2.focusedPillIndex = nil
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
+                inlineShareActive = false
                 showShortcutSheet = false
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 activateSearchField()
@@ -886,6 +907,7 @@ extension LauncherView {
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
             searchState.appPanelAllItems = []
+            inlineShareActive = false
         }
 
         activateSearchField()

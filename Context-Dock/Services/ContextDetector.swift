@@ -460,6 +460,25 @@ class ContextDetector {
         return (url: parts[0], title: parts[1])
     }
 
+    /// Live current-tab URL for the frontmost supported browser. Used at share
+    /// time to override any stale cached `currentURL` (a previously visited page),
+    /// which would otherwise share the wrong link.
+    func liveBrowserURL(bundleId: String) -> String? {
+        let url: String?
+        switch bundleId {
+        case "com.apple.Safari":
+            url = getSafariContext()?.url
+        case "com.google.Chrome":
+            url = getChromeContext()?.url
+        case "company.thebrowser.Browser":
+            url = getArcContext()?.url
+        default:
+            return nil
+        }
+        let trimmed = url?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
+    }
+
     /// Returns the user's selected text from the active Safari tab.
     /// Only available when the Safari Web Extension is installed and enabled.
     func getSafariSelectedText() -> String? {

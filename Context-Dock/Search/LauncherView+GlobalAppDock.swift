@@ -467,10 +467,6 @@ extension LauncherView {
             limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) != nil }
             + limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) == nil }
         let indexedMatches = Array(matches.enumerated())
-        // Pre-compute running status once — avoids O(results × running_apps) scan per render
-        let runningBundleIDs: Set<String> = Set(
-            runningRegularApps.compactMap { $0.bundleIdentifier }
-        )
         // In global context, isEnabled reflects AX state of whatever app was frontmost at
         // snapshot time — meaningless here. Force enabled so no "Unavailable" badge shows.
         let visibleMenuPills = Array(
@@ -585,14 +581,17 @@ extension LauncherView {
                             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                     }
                     ForEach(indexedMatches, id: \.element.id) { idx, result in
-                        let bundleId = bundleIdentifierForApplicationPath(result.filePath)
-                        let isRunning = bundleId.map { runningBundleIDs.contains($0) } ?? false
+                        // Match by bundleId → path → localized name (robust for apps whose
+                        // indexed bundleId differs from the live one, e.g. ChatGPT), and fall
+                        // back to the live running set when runningRegularApps is empty.
+                        let isRunning = runningApplication(forGlobalResult: result, lookup: runningLookup) != nil
                         appListRow(
                             icon: result.icon,
                             name: result.title,
                             subtitle: globalListSubtitle(for: result, isRunning: isRunning),
                             index: idx,
                             isCommandIcon: globalListUsesCommandIcon(for: result),
+                            defaultsToFirstSelection: true,
                             quitAction: isRunning ? makeQuitAction(result) : nil,
                             action: makeAction(result)
                         )
@@ -716,6 +715,12 @@ extension LauncherView {
                 }
                 .padding(6)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
+                // Measure the real rendered content height so the sheet hugs the rows
+                // exactly (no half-empty box / count mismatch). LazyVStack reports its
+                // full intrinsic height even with lazy row rendering.
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    updateMeasuredGlobalListHeight(height)
+                }
             }
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
             .frame(maxWidth: .infinity, alignment: .topLeading)

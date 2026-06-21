@@ -575,8 +575,35 @@ extension LauncherView {
             ContextDetector.shared.getCurrentFinderDirectory()?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if cachedFinderCurrentDirectoryPath != refreshedPath {
+            let hadPreviousFolder = !cachedFinderCurrentDirectoryPath.isEmpty
             cachedFinderCurrentDirectoryPath = refreshedPath
+            // Finder's Edit/File menu titles bake the current folder/selection name
+            // (e.g. Copy "Pictures" as Pathname, Slideshow "Pictures"). Those titles go stale the
+            // moment the user navigates to another folder, but the menu snapshot is keyed only by
+            // app — so a query keeps matching the old folder's baked name. Drop the Finder menu
+            // snapshot on every folder change so the next query re-reads the live menus.
+            if hadPreviousFolder {
+                invalidateFinderMenuSnapshot()
+            }
         }
+    }
+
+    /// Clears every cached Finder menu snapshot so dynamic, folder/selection-dependent menu
+    /// titles are re-read live on the next dock query.
+    func invalidateFinderMenuSnapshot() {
+        let finderBundleId = "com.apple.finder"
+        AppMenuCapabilityCache.shared.purge(bundleIdentifiers: [finderBundleId])
+        if let finder = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == finderBundleId && !$0.isTerminated
+        }) {
+            let pid = finder.processIdentifier
+            AXMenuReader.shared.invalidateCache(for: pid)
+            crossAppMenuItems.removeAll { $0.sourcePID == pid }
+        }
+        if frontmost.bundleID == finderBundleId || axContext.bundleId == finderBundleId {
+            liveMenuItems = []
+        }
+        cachedDockPills = []
     }
 
     func isFinderFrontmostWindowContext() -> Bool {
@@ -619,12 +646,28 @@ extension LauncherView {
     /// In this state the dock behaves like a "no-app" global context.
     var isFinderDesktopOnlyMode: Bool {
         let finderBundleId = "com.apple.finder"
+        // An explicit inline app scope (e.g. typing "xcode" in global context) means the user is
+        // asking for THAT app's menus — it must win over Finder's desktop file search even though
+        // Finder is the frontmost app. Without this guard the desktop-mode early-return in
+        // buildDockPills hijacks the scoped query and shows Files & Folders under the wrong chip.
+        let hasNonFinderInlineScope =
+            (globalInlineAppScope.map { $0.bundleId != finderBundleId } ?? false)
+            || additionalGlobalInlineAppScopes.contains { $0.bundleId != finderBundleId }
+        // Right-arrow scoping a running app stores it in l2.targetApp — same intent:
+        // show THAT app's menus, not Finder's desktop files, even though Finder is the
+        // real frontmost app behind the dock.
+        let hasNonFinderTargetApp =
+            (l2.targetApp?.bundleId).map { $0 != finderBundleId } ?? false
+        guard !hasNonFinderInlineScope, !hasNonFinderTargetApp else { return false }
         // Use l2.targetApp for explicit chip pin — avoids resolveDockScope which is
         // query-dependent and returns wrong results when query matches menu items in other apps.
+        let explicitFinderScope = l2.targetApp?.bundleId == finderBundleId
         let isFinderContext = frontmost.bundleID == finderBundleId
             || axContext.bundleId == finderBundleId
-            || l2.targetApp?.bundleId == finderBundleId
-        return isFinderContext && !finderHasActiveWindow()
+            || explicitFinderScope
+        // Explicitly scoping Finder (strip icon / right-arrow) always means "search files" —
+        // desktop file-search regardless of whether a Finder window is open.
+        return isFinderContext && (explicitFinderScope || !finderHasActiveWindow())
     }
 
     func isFinderCurrentWindowSearchAttached(currentFolderPath: String? = nil) -> Bool {

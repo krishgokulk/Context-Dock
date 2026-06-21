@@ -48,6 +48,10 @@ extension LauncherView {
     @discardableResult
     func attachCurrentFinderFolderFromEmptyFieldIfNeeded() -> Bool {
         guard showContextInDock else { return false }
+        // Explicit Finder scope (right-arrow desktop mode) is whole-home file search — it must
+        // NOT auto-attach the frontmost Finder window's folder, which would "lock" the desktop
+        // mode to e.g. Downloads. Auto-attach is only for the unscoped frontmost-Finder dock.
+        guard l2.targetApp == nil, !isGlobalContextActive else { return false }
         guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }

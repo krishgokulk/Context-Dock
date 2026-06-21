@@ -1092,20 +1092,8 @@ extension LauncherView {
                 accentColorName: "blue",
                 badge: "Window",
                 execute: {
-                    guard
-                        let app = NSWorkspace.shared.runningApplications.first(where: {
-                            $0.bundleIdentifier == scopedBundleId && !$0.isTerminated
-                        })
-                    else {
-                        AppToast.show(
-                            "\(scopedAppName) is not running",
-                            icon: "exclamationmark.triangle",
-                            tint: .orange
-                        )
-                        return
-                    }
-                    _ = WindowManagementService.shared.execute(command, sourceApp: app)
-                    self.resetDockStateAfterAppAction()
+                    launchAndApplyWindowCommand(
+                        bundleId: scopedBundleId, appName: scopedAppName, command: command)
                 }
             )
             pill.sourceBundleId = scopedBundleId
@@ -1115,6 +1103,60 @@ extension LauncherView {
             pill.trackingIdentifier = "native-window:\(scopedBundleId):\(command.id)"
             pill.searchTerms = command.searchTerms + [scopedAppName]
             return pill
+        }
+    }
+
+    /// Launch (if needed) and tile. In Global Context the target app may be quit,
+    /// minimized, or on another Space — so instead of erroring "not running", open it
+    /// on the current desktop, restore/activate it, then apply the window arrangement.
+    func launchAndApplyWindowCommand(
+        bundleId: String, appName: String, command: WindowManagementService.Command
+    ) {
+        Task { @MainActor in
+            @MainActor func apply(_ app: NSRunningApplication) async {
+                await MenuExecutionCoordinator.restoreWindowIfAllMinimized(app)
+                app.activate(options: [.activateIgnoringOtherApps])
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                _ = WindowManagementService.shared.execute(command, sourceApp: app)
+                resetDockStateAfterAppAction()
+            }
+
+            if let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleId && !$0.isTerminated
+            }) {
+                await apply(app)
+                return
+            }
+
+            guard
+                let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+            else {
+                AppToast.show(
+                    "Could not open \(appName)", icon: "exclamationmark.triangle", tint: .orange)
+                return
+            }
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            do {
+                let app = try await NSWorkspace.shared.openApplication(
+                    at: url, configuration: config)
+                // Wait for the app to put a real window on the current Space.
+                for _ in 0..<24 {
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    let hasWindow =
+                        (CGWindowListCopyWindowInfo(
+                            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                            as? [[String: Any]])?
+                        .contains {
+                            ($0[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier
+                        } ?? false
+                    if hasWindow { break }
+                }
+                await apply(app)
+            } catch {
+                AppToast.show(
+                    "Could not open \(appName)", icon: "exclamationmark.triangle", tint: .orange)
+            }
         }
     }
 
@@ -1949,11 +1991,14 @@ extension LauncherView {
     // Warm menu cache for a specific app if it's running but not yet snapshotted.
     // After scraping, updates crossAppMenuItems if that app is the current scope target,
     // then triggers a pill rebuild so results appear without another keystroke.
-    func warmMenuCacheIfNeeded(bundleId: String, appName: String) {
+    func warmMenuCacheIfNeeded(bundleId: String, appName: String, force: Bool = false) {
         guard !bundleId.isEmpty else { return }
-        let staleThreshold: TimeInterval = 7 * 24 * 3600
-        let age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleId) ?? .infinity
-        guard age > staleThreshold else { return }  // fresh snapshot exists — skip
+        if !force {
+            let staleThreshold: TimeInterval = 7 * 24 * 3600
+            let age =
+                AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleId) ?? .infinity
+            guard age > staleThreshold else { return }  // fresh snapshot exists — skip
+        }
         guard warmingMenuBundleIds.insert(bundleId).inserted else { return }
         guard
             let app = NSWorkspace.shared.runningApplications.first(where: {
@@ -1978,7 +2023,7 @@ extension LauncherView {
                 return
             }
             let pid = app.processIdentifier
-            await MenuWarmCacheService.shared.warm(app: app, force: false)
+            await MenuWarmCacheService.shared.warm(app: app, force: force)
             var items = await MainActor.run { AXMenuReader.shared.peekCachedAllMenuItems(for: pid) }
             if items.isEmpty {
                 items = ContextDockEngine.shared.cachedMenuItems(for: app, maxResults: 120)
@@ -2177,6 +2222,16 @@ extension LauncherView {
     var dockHeaderDisplayName: String {
         let label = dockScopeDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty ? "Context" : label
+    }
+
+    /// Ghost/input title for a dock pill. Finder folder/file pills carry the absolute
+    /// path as their name; show only the last path component (the file/folder name).
+    func inputGhostPillTitle(_ pill: DockPill) -> String {
+        let raw = pill.name
+        guard raw.contains("/") else { return raw }
+        let expanded = (raw as NSString).expandingTildeInPath
+        let component = URL(fileURLWithPath: expanded).lastPathComponent
+        return component.isEmpty ? raw : component
     }
 
     func inputFieldDisplayTitle(for result: SearchResult) -> String {
@@ -2745,7 +2800,11 @@ extension LauncherView {
                 await MainActor.run {
                     guard self.crossAppMenuTargetPID == pid else { return }
                     self.crossAppMenuItems = preparedItems
-                    self.warmMenuCacheIfNeeded(bundleId: app.bundleIdentifier ?? "", appName: name)
+                    // No cached menu for this scoped app → force a live AX scan so its
+                    // commands actually appear (otherwise the scoped dock stays empty).
+                    self.warmMenuCacheIfNeeded(
+                        bundleId: app.bundleIdentifier ?? "", appName: name,
+                        force: preparedItems.isEmpty)
                 }
             }
         }
@@ -2913,6 +2972,8 @@ extension LauncherView {
         // skip all pill logic so no app/file/other pills compete with it.
         if lockedSubmenuParent != nil { return [] }
         if lockedFindToken != nil { return [] }
+        // Inline Share Sheet: show ONLY the live native share destinations.
+        if inlineShareActive { return buildInlineShareDestinationPills(query: q) }
         if isQuestionStyleDockQuery(q) { return [] }
         if isContextDockChatRoutingLocked { return [] }
 
@@ -2974,6 +3035,10 @@ extension LauncherView {
 
         var pills: [DockPill] = []
         pills.append(contentsOf: buildGlobalSelectionSharePills(query: q))
+        // Typing "share"/"airdrop"/… (in any app that exposes a Share menu) lists the
+        // live NSSharingService destinations — every installed share-extension — as
+        // pills, executed by object identity. This is DoraX's share source, not AX.
+        pills.append(contentsOf: buildShareQueryDestinationPills(query: q))
         pills.append(contentsOf: buildContextDockSelectionAIPills(query: q))
         // Safari page-level command pills (search, click, open) — appear before AX menu items
         pills.append(contentsOf: buildSafariCommandPills(query: q))
@@ -3035,7 +3100,11 @@ extension LauncherView {
         }()
         let isExplicitAppScope = scope.isExplicitAppScope
         let isGlobalScope = scope.isGlobalScope
-        let allowAppleMenuItems = false
+        // Allow the Apple menu (About This Mac, System Settings, Sleep, Restart…) but
+        // LIVE only — for the frontmost Context Dock, never Global Context. The cache
+        // already excludes Apple-menu items (AppMenuCapabilityCache), so these come from
+        // the live menu read; Recent Items are filtered out below.
+        let allowAppleMenuItems = !isGlobalScope && !isGlobalContextActive
         let scopedBundleId = scope.scopedBundleId
         let scopedAppName = scope.scopedAppName
         let scopedSearchQuery = scope.scopedSearchQuery
@@ -3148,8 +3217,13 @@ extension LauncherView {
         }()
         _ = shouldShowFinderHomeSearchOnly
         if finderFolderAttachedForDock {
+            let attachedFolderPills = dedupeDockPillsByTrackingIdentifier(
+                rawAttachedFinderFolderPills
+                    + semanticFinderPills
+                    + semanticFinderQuickActionPills
+            )
             return rankDockPills(
-                rawAttachedFinderFolderPills,
+                attachedFolderPills,
                 rawQuery: q,
                 rankingQuery: scopedSearchQuery.isEmpty ? q : scopedSearchQuery,
                 scopedBundleId: scopedBundleId,
@@ -3348,10 +3422,10 @@ extension LauncherView {
                     : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
                 let shortcutChar = item.shortcutChar
                 let shortcutMods = item.shortcutModifiers
-                let isShareMenuItem =
-                    item.path.contains { normalizedDockPillText($0) == "share" }
-                    || normalizedDockPillText(item.title).hasPrefix("share")
-                let pill = makeMenuDockPill(
+                // Bare "Share"/"Share…" ONLY — never path.contains("share").
+                let isBareShareMenuItem = isShareSheetTitle(item.title)
+                let shareItem = item
+                var pill = makeMenuDockPill(
                     id: "menu-seed-\(item.id)",
                     item: item,
                     sourceBundleId: activeBundleId,
@@ -3359,10 +3433,10 @@ extension LauncherView {
                     badge: item.shortcutDisplay,
                     trackingIdentifier:
                         "menu-seed:\(activeBundleId):\(path.joined(separator: " > ").lowercased())",
-                    searchTerms: item.path + [scopedAppName] + (isShareMenuItem ? ["share"] : []),
+                    searchTerms: item.path + [scopedAppName] + (isBareShareMenuItem ? ["share"] : []),
                     executeLeaf: {
-                        if isShareMenuItem {
-                            executeShareMenuDestination(item.title)
+                        if isBareShareMenuItem {
+                            executeShareAction(item: shareItem)
                             return
                         }
                         guard sourcePID != 0 else { return }
@@ -3374,6 +3448,16 @@ extension LauncherView {
                         )
                     }
                 )
+                if isBareShareMenuItem {
+                    // Show the share glyph, not the resolved document/app icon. Routes
+                    // to DoraX's inline share sheet (always works) — drop menu state.
+                    pill.icon = "square.and.arrow.up"
+                    pill.menuItemImage = nil
+                    pill.accentColorName = "blue"
+                    pill.isShareAction = true
+                    pill.hasLiveAvailability = false
+                    pill.menuStatusBadge = nil
+                }
                 pills.append(pill)
             }
         }
@@ -3397,18 +3481,20 @@ extension LauncherView {
                 let pid = child.sourcePID != 0 ? child.sourcePID : frontPID
                 let sc = child.shortcutChar
                 let mod = child.shortcutModifiers
-                let isShareMenuItem =
-                    child.path.contains { normalizedDockPillText($0) == "share" }
-                    || normalizedDockPillText(child.title).hasPrefix("share")
+                // Bare "Share"/"Share…" → reveal destinations; a real child (Mail/
+                // AirDrop/Notes) → click its EXACT menu path (never resolve by title).
+                let isBareShareMenuItem = isShareSheetTitle(child.title)
+                let parentIsShare = normalizedDockPillText(subCtx.parent.title).contains("share")
+                let shareChild = child
                 var pill = DockPill(
                     id: "submenu-child-\(child.id)",
                     name: child.title,
-                    icon: isShareMenuItem ? "square.and.arrow.up" : menuSymbol(for: child),
-                    accentColorName: isShareMenuItem ? "blue" : "blue",
+                    icon: isBareShareMenuItem ? "square.and.arrow.up" : menuSymbol(for: child),
+                    accentColorName: "blue",
                     badge: subCtx.parent.title,
                     execute: {
-                        if isShareMenuItem {
-                            executeShareMenuDestination(child.title)
+                        if isBareShareMenuItem {
+                            executeShareAction(item: shareChild)
                             return
                         }
                         guard pid != 0 else { return }
@@ -3418,16 +3504,23 @@ extension LauncherView {
                         )
                     }
                 )
-                pill.menuItemImage = resolvedMenuIcon(for: child)
+                // Bare Share gets the glyph; real children keep their destination icon.
+                pill.menuItemImage =
+                    isBareShareMenuItem
+                    ? nil
+                    : ((parentIsShare ? shareDestinationIcon(forTitle: child.title) : nil)
+                        ?? resolvedMenuIcon(for: child))
                 pill.menuItemName = child.title
                 pill.menuContext = subCtx.parent.title
                 pill.sourceBundleId = activeBundleId
                 pill.sourceAppName = scopedAppName
                 pill.rankingKind = "submenuChild"
-                pill.isShareAction = isShareMenuItem
+                pill.isShareAction = isBareShareMenuItem || parentIsShare
                 pill.isEnabled = true
                 pill.rankingScore = 1_000  // pin above everything else
-                pills.append(pill)
+                pills.append(
+                    pill.applyingSafariFavicon(
+                        safariHistoryBookmarkURL(for: child, sourceBundleId: activeBundleId)))
             }
         }
 
@@ -4107,30 +4200,30 @@ extension LauncherView {
                         )
                     })
                 pill.isFavourited = isFav
-                let isShareMenuItem =
-                    item.children.isEmpty && sourcePID != 0
-                    && (normalizedDockPillText(item.title).hasPrefix("share")
-                        || item.path.contains { normalizedDockPillText($0) == "share" })
-                if isShareMenuItem {
+                // Bare "Share"/"Share…" leaf ONLY (no children) — never path.contains.
+                let isBareShareMenuItem =
+                    item.children.isEmpty && isShareSheetTitle(item.title)
+                if isBareShareMenuItem {
+                    let shareItem = item
                     pill = DockPill(
                         id: pill.id, name: pill.name,
                         icon: "square.and.arrow.up",
                         accentColorName: "blue",
                         badge: pill.badge,
-                        execute: { executeShareMenuDestination(item.title) })
+                        execute: { executeShareAction(item: shareItem) })
                     pill.isShareAction = true
                     pill.isFavourited = isFav
-                    pill.menuItemImage =
-                        resolvedSharingServiceIcon(named: item.title)
-                        ?? resolvedInstalledAppIcon(named: item.title)
+                    // Show the share glyph (square.and.arrow.up), never a resolved app
+                    // icon. This routes to DoraX's own inline share sheet, which always
+                    // works, so don't carry the menu item's "Unavailable now" state.
+                    pill.menuItemImage = nil
                     pill.menuItemName = item.title
                     pill.sourceBundleId = menuBundleId
                     pill.sourceAppName = menuAppName
                     pill.menuContext = menuContextLabel(from: item.path)
                     pill.rankingKind = "menu"
-                    pill.hasLiveAvailability = item.hasLiveAvailability
-                    pill.menuStatusBadge = menuStatusBadge(
-                        for: item, bundleIdentifier: menuBundleId)
+                    pill.hasLiveAvailability = false
+                    pill.menuStatusBadge = nil
                     pill.trackingIdentifier =
                         "menu:\(menuBundleId):\(path.joined(separator: " > ").lowercased())"
                     pill.searchTerms = item.path + [menuAppName, "share"]

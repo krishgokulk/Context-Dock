@@ -7,6 +7,22 @@ struct GeneralSettingsPage: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                CardSection(title: "Release", systemImage: "testtube.2") {
+                    SettingsPageRow(
+                        icon: "testtube.2",
+                        iconColor: .purple,
+                        title: "Context-Dock Beta",
+                        subtitle: "Beta build for testing Global Context, Context Dock, media, AI chat, and selection actions."
+                    ) {
+                        Text("1.1 beta")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.thinMaterial, in: Capsule(style: .continuous))
+                    }
+                }
+
                 CardSection(title: "Startup", systemImage: "power") {
                     VStack(spacing: 0) {
                         SettingsPageRow(
@@ -38,6 +54,16 @@ struct GeneralSettingsPage: View {
 
                 CardSection(title: "Dock Behavior", systemImage: "dock.rectangle") {
                     VStack(spacing: 0) {
+                        SettingsPageRow(
+                            icon: "pin.fill",
+                            iconColor: .pink,
+                            title: "Always Float Dock",
+                            subtitle: "Keep the dock visible after running actions — don't auto-hide on focus loss. Dismiss with Escape."
+                        ) {
+                            Toggle("", isOn: $settings.alwaysFloatDock)
+                                .labelsHidden()
+                        }
+                        Divider()
                         SettingsPageRow(
                             icon: "puzzlepiece.extension.fill",
                             iconColor: .orange,

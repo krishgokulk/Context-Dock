@@ -631,14 +631,16 @@ final class WindowManagementService {
         guard let frame = frame(of: window), frame.width >= 120, frame.height >= 80 else {
             return false
         }
+        // Some apps (e.g. Image Playground) error on the size-settable query while position
+        // is still movable. Requiring BOTH queries to succeed wrongly rejected those windows
+        // ("no window found"). Treat a failed query as "not settable" instead of rejecting,
+        // and keep the window if EITHER position or size can be set.
         var positionSettable = DarwinBoolean(false)
         var sizeSettable = DarwinBoolean(false)
-        guard
-            AXUIElementIsAttributeSettable(
-                window, kAXPositionAttribute as CFString, &positionSettable) == .success,
-            AXUIElementIsAttributeSettable(
-                window, kAXSizeAttribute as CFString, &sizeSettable) == .success
-        else { return false }
+        _ = AXUIElementIsAttributeSettable(
+            window, kAXPositionAttribute as CFString, &positionSettable)
+        _ = AXUIElementIsAttributeSettable(
+            window, kAXSizeAttribute as CFString, &sizeSettable)
         return positionSettable.boolValue || sizeSettable.boolValue
     }
 

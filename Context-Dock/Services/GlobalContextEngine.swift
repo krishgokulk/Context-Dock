@@ -183,6 +183,23 @@ final class GlobalContextEngine {
             || isCloseDocumentAction
             || (request.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
 
+        if isWindowMenuAction,
+            await MainActor.run(body: {
+                WindowManagementService.shared.executeIfSupported(
+                    path: request.path,
+                    sourceApp: app
+                )
+            })
+        {
+            await forceRefreshCache(for: app)
+            return GlobalMenuExecutionResult(
+                status: .executed,
+                app: app,
+                liveItem: nil,
+                message: "\(request.appName) window updated"
+            )
+        }
+
         guard let liveMatch = await waitForExecutableMenuItem(
             path: request.path,
             app: app,

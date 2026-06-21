@@ -198,7 +198,11 @@ final class AppMenuCapabilityCache {
         loadFromDisk()
     }
 
-    nonisolated func store(items: [AXMenuItem], for app: NSRunningApplication) {
+    /// - Parameter replace: when true, the cache for this app is REPLACED with exactly
+    ///   the scanned items (no merge with prior records). Used for the frontmost app's
+    ///   full live scan so the cache always mirrors the current live menu — stale
+    ///   items / outdated enabled-states are dropped, never linger.
+    nonisolated func store(items: [AXMenuItem], for app: NSRunningApplication, replace: Bool = false) {
         guard let bundleIdentifier = app.bundleIdentifier, !bundleIdentifier.isEmpty else { return }
         let appName = app.localizedName ?? bundleIdentifier
         let bundleVersion = bundleVersion(for: app)
@@ -250,17 +254,21 @@ final class AppMenuCapabilityCache {
         guard !records.isEmpty else { return }
 
         lock.lock()
-        let existingRecords = snapshots[bundleIdentifier]?.records ?? []
         var mergedByPath = [String: AppMenuCapabilityRecord]()
-        for record in existingRecords {
-            if isVolatileMenuPath(record.path) { continue }
-            guard shouldPersistMenuCapability(
-                title: record.title,
-                path: record.path,
-                bundleIdentifier: bundleIdentifier,
-                resolvedFilePath: record.resolvedFilePath
-            ) else { continue }
-            mergedByPath[record.normalizedPath] = record
+        // Frontmost live scan REPLACES — skip prior records so the cache exactly
+        // mirrors the current menu (no stale items, no outdated enabled-state).
+        if !replace {
+            let existingRecords = snapshots[bundleIdentifier]?.records ?? []
+            for record in existingRecords {
+                if isVolatileMenuPath(record.path) { continue }
+                guard shouldPersistMenuCapability(
+                    title: record.title,
+                    path: record.path,
+                    bundleIdentifier: bundleIdentifier,
+                    resolvedFilePath: record.resolvedFilePath
+                ) else { continue }
+                mergedByPath[record.normalizedPath] = record
+            }
         }
         for record in records {
             mergedByPath[record.normalizedPath] = record

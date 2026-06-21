@@ -245,6 +245,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // (keeps the cache warm for apps that stay alive between dock opens)
     }
 
+    private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
+        guard let app, !app.isTerminated else { return nil }
+        let ownBundleID = Bundle.main.bundleIdentifier ?? ""
+        if let bundleID = app.bundleIdentifier, !bundleID.isEmpty, bundleID != ownBundleID {
+            return app
+        }
+
+        // Some apps, notably ChatGPT, can briefly report a helper process as frontmost.
+        // The helper has no bundle identifier, but its executable lives inside the real .app.
+        if let bundleURL = app.bundleURL,
+            let resolved = runningApplication(forAppBundleURL: bundleURL, excluding: ownBundleID)
+        {
+            return resolved
+        }
+        if let executableURL = app.executableURL,
+            let appBundleURL = enclosingAppBundleURL(for: executableURL),
+            let resolved = runningApplication(forAppBundleURL: appBundleURL, excluding: ownBundleID)
+        {
+            return resolved
+        }
+
+        return nil
+    }
+
+    private func enclosingAppBundleURL(for url: URL) -> URL? {
+        var current = url
+        while current.path != "/" {
+            if current.pathExtension == "app" { return current }
+            current.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    private func runningApplication(forAppBundleURL appURL: URL, excluding ownBundleID: String) -> NSRunningApplication? {
+        guard
+            let bundle = Bundle(url: appURL),
+            let bundleID = bundle.bundleIdentifier,
+            !bundleID.isEmpty,
+            bundleID != ownBundleID
+        else { return nil }
+
+        return NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }
+    }
+
     // Settings window size protection
     private var settingsResizeObserver: NSObjectProtocol?
     private var settingsEndLiveResizeObserver: NSObjectProtocol?
@@ -427,9 +473,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard
             let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                 as? NSRunningApplication,
-            app.bundleIdentifier != Bundle.main.bundleIdentifier
+            let resolvedApp = resolvedUserFacingApplication(app)
         else { return }
-        recordFrontmostApp(app)
+        recordFrontmostApp(resolvedApp)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
     }
 
@@ -842,6 +888,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.level = windowLevel
         launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         launcherWindow?.isMovableByWindowBackground = true
+        // No window shadow: on a tight transparent window it renders as a hard dark
+        // edge that fights the glass rim (double outline). A soft shadow needs window
+        // margin around the card — handled in SwiftUI instead.
         launcherWindow?.hasShadow = false
         launcherWindow?.delegate = self
         launcherWindow?.ignoresMouseEvents = false
@@ -898,6 +947,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         guard notification.object as? NSWindow === launcherWindow else { return }
         guard !settings.effectiveDockAtBottom else { return }
+        // Always-float: never auto-hide on focus loss (incl. when a launched/menu-acted
+        // app comes frontmost). Dismiss only via Escape / hotkey.
+        guard !settings.alwaysFloatDock else { return }
         guard Date() >= suppressHideOnResignUntil else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
@@ -1313,9 +1365,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.setupLauncherWindow()
                 }
                 guard let window = self.launcherWindow else { return }
-                if let currentApp = NSWorkspace.shared.frontmostApplication,
-                    currentApp.bundleIdentifier != Bundle.main.bundleIdentifier
-                {
+                if let currentApp = self.resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
                     self.recordFrontmostApp(currentApp)
                 }
                 if !window.isVisible {
@@ -1615,9 +1665,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Capture the CURRENT frontmost app RIGHT NOW before we show the window
         // This is the app the user was using when they pressed the hotkey
-        if let currentApp = NSWorkspace.shared.frontmostApplication,
-            currentApp.bundleIdentifier != Bundle.main.bundleIdentifier
-        {
+        if let currentApp = resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
             recordFrontmostApp(currentApp)
             print(
                 "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
@@ -1799,9 +1847,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         // Initialize with current frontmost app
-        if let currentApp = NSWorkspace.shared.frontmostApplication,
-            currentApp.bundleIdentifier != Bundle.main.bundleIdentifier
-        {
+        if let currentApp = resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
             recordFrontmostApp(currentApp)
             Task { @MainActor in
                 MenuWarmCacheService.shared.frontmostAppDidChange(currentApp)
@@ -1820,25 +1866,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // Only track non-ILauncher apps
-        guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        // Only track user-facing non-DoraX apps. Resolve helper processes (ChatGPT helper, etc.)
+        // back to their owning .app before pushing context into LauncherView.
+        guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
 
-        recordFrontmostApp(app)
+        recordFrontmostApp(resolvedApp)
         #if DEBUG
-        print("📱 [AppDelegate] Frontmost app changed to: \(app.localizedName ?? "Unknown")")
+        print("📱 [AppDelegate] Frontmost app changed to: \(resolvedApp.localizedName ?? "Unknown")")
         #endif
         ContextDockEnvironment.shared.frontmostAppDidChange(
-            name: app.localizedName ?? "",
-            bundleID: app.bundleIdentifier ?? ""
+            name: resolvedApp.localizedName ?? "",
+            bundleID: resolvedApp.bundleIdentifier ?? ""
         )
         Task { @MainActor in
-            MenuWarmCacheService.shared.frontmostAppDidChange(app)
+            MenuWarmCacheService.shared.frontmostAppDidChange(resolvedApp)
         }
 
-        let pid = app.processIdentifier
+        let pid = resolvedApp.processIdentifier
         // Browser windows are expensive AX trees. Do not eagerly crawl page text just
         // because a browser became frontmost; the dock warms that context on demand.
-        if AXWebReader.shared.isBrowser(bundleId: app.bundleIdentifier ?? "") {
+        if AXWebReader.shared.isBrowser(bundleId: resolvedApp.bundleIdentifier ?? "") {
             AXWebReader.shared.invalidate(pid: pid)
         } else {
             // Not a browser — evict stale cache so memory doesn't grow
@@ -1850,6 +1897,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Stop accessing security-scoped resources
         settings.stopAccessingSearchDirectories()
+
+        // Terminate any running MCP server subprocesses.
+        Task { await MCPRuntime.shared.shutdownAll() }
 
         // Unregister hotkeys and cleanup
         unregisterGlobalHotkey()

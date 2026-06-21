@@ -85,6 +85,12 @@ final class SafariBrowserBridge: ObservableObject {
         else { return }
         latestContext = decode(dict)
         isExtensionActive = latestContext != nil
+
+        // Teach the link resolver this title→url live, so Safari history/bookmark
+        // rows can resolve a favicon without Full Disk Access (no History.db read).
+        if let ctx = latestContext, !ctx.title.isEmpty, let url = URL(string: ctx.url) {
+            SafariLinkResolver.shared.record(title: ctx.title, url: url)
+        }
     }
 
     private func registerDarwinObserver() {

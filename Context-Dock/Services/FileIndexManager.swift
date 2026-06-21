@@ -366,8 +366,19 @@ final class FileIndexManager: ObservableObject {
 
     private func spotlightScopes() -> [Any] {
         let settings = AppSettings.shared
-        if settings.useCustomSearchDirectories, !settings.searchDirectories.isEmpty {
-            return settings.searchDirectories.map { URL(fileURLWithPath: $0.path) }
+        let custom = settings.searchDirectories.map { URL(fileURLWithPath: $0.path) }
+
+        // Restrict mode: only the user-chosen directories.
+        if settings.useCustomSearchDirectories, !custom.isEmpty {
+            return custom
+        }
+
+        // Additive mode: home scope PLUS any extra directories. The home scope
+        // (NSMetadataQueryUserHomeScope) excludes ~/Library, so paths like iCloud Drive
+        // (~/Library/Mobile Documents/com~apple~CloudDocs) never appear unless added as
+        // their own explicit scope here.
+        if !custom.isEmpty {
+            return [NSMetadataQueryUserHomeScope] + custom
         }
         return [NSMetadataQueryUserHomeScope]
     }

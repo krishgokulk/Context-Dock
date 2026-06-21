@@ -47,7 +47,8 @@ extension LauncherView {
             listViewDockHeight: listViewDockHeight,
             resultCount: searchState.results.count,
             loadingApps: searchState.isLoadingApps,
-            l1ResultsReservedHeight: l1ResultsReservedHeight
+            l1ResultsReservedHeight: l1ResultsReservedHeight,
+            measuredChatContentHeight: measuredChatContentHeight
         )
     }
 
@@ -61,11 +62,12 @@ extension LauncherView {
             compactSmartScope: isCompactSmartScope,
             resultCount: searchState.results.count,
             loadingApps: searchState.isLoadingApps,
-            searchBarExpanded: isSearchBarExpanded
+            searchBarExpanded: isSearchBarExpanded,
+            aiMessageCount: aiMode.messages.count
         )
     }
 
-    private var finderSearchPanelHeightForCurrentState: CGFloat {
+    var finderSearchPanelHeightForCurrentState: CGFloat {
         guard
             showContextInDock && !showMediaLayer
                 && shouldShowFinderSearchResultsPanel(for: searchState.query)

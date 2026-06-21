@@ -54,12 +54,42 @@ final class GlobalSearchService {
     private let lock = NSLock()
     nonisolated(unsafe) private var documents: [SearchDocument] = []
     nonisolated(unsafe) private var revision: Int = 0
+    // n-gram (1- and 2-char) → document indices. Any occurrence of a query (prefix OR
+    // substring) contains the query's first gram, so `gramIndex[q.prefix(2)]` is a
+    // superset of all matchable docs — we score only those, never the full array.
+    nonisolated(unsafe) private var gramIndex: [String: [Int]] = [:]
+    nonisolated(unsafe) private var bundleIndex: [String: [Int]] = [:]
+
+    /// Grams (1- and 2-char) of a normalized string, for building/querying the index.
+    nonisolated private static func grams(_ s: String) -> Set<String> {
+        guard !s.isEmpty else { return [] }
+        let chars = Array(s)
+        var out = Set<String>()
+        for i in chars.indices {
+            out.insert(String(chars[i]))
+            if i + 1 < chars.count { out.insert(String(chars[i...(i + 1)])) }
+        }
+        return out
+    }
 
     // MARK: - Build
 
     func rebuild(with docs: [SearchDocument]) {
+        var grams: [String: [Int]] = [:]
+        var bundle: [String: [Int]] = [:]
+        for (i, doc) in docs.enumerated() {
+            var keys = Set<String>()
+            keys.formUnion(Self.grams(doc.normalizedTitle))
+            if !doc.acronym.isEmpty { keys.formUnion(Self.grams(doc.acronym)) }
+            for alias in doc.aliases { keys.formUnion(Self.grams(alias)) }
+            for key in keys { grams[key, default: []].append(i) }
+            if !doc.bundleId.isEmpty { bundle[doc.bundleId, default: []].append(i) }
+        }
+
         lock.lock()
         documents = docs
+        gramIndex = grams
+        bundleIndex = bundle
         revision &+= 1
         lock.unlock()
     }
@@ -78,12 +108,18 @@ final class GlobalSearchService {
 
         lock.lock()
         let docs = documents
+        // Candidate doc indices from the n-gram index — only docs whose text contains
+        // the query's first gram can match (prefix OR substring). Score just those.
+        let key = String(q.prefix(2))
+        let candidates = gramIndex[key] ?? []
         lock.unlock()
 
         var results: [(doc: SearchDocument, score: Double)] = []
-        results.reserveCapacity(min(docs.count, max(limit, 1)))
+        results.reserveCapacity(min(candidates.count, max(limit, 1)))
 
-        for doc in docs {
+        for index in candidates {
+            guard index < docs.count else { continue }
+            let doc = docs[index]
             if !includeCachedMenus, case .cachedMenu = doc.action {
                 guard includeRunningCachedMenus, doc.sourceKind == .runningMenu else { continue }
             }
@@ -95,7 +131,7 @@ final class GlobalSearchService {
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 8 {
             SearchPerformanceLog.shared.record(
-                label: "GlobalSearchService.query docs=\(docs.count) limit=\(limit) menus=\(includeCachedMenus) runningMenus=\(includeRunningCachedMenus)",
+                label: "GlobalSearchService.query cand=\(candidates.count)/\(docs.count) limit=\(limit) menus=\(includeCachedMenus) runningMenus=\(includeRunningCachedMenus)",
                 elapsedMS: elapsedMS,
                 query: q,
                 pills: output.count
@@ -121,11 +157,12 @@ final class GlobalSearchService {
         guard !wanted.isEmpty else { return [] }
         lock.lock()
         let docs = documents
+        let indices = bundleIndex[wanted] ?? []
         lock.unlock()
         var results: [SearchDocument] = []
         results.reserveCapacity(min(limit, 24))
-        for doc in docs where doc.bundleId == wanted {
-            results.append(doc)
+        for index in indices where index < docs.count {
+            results.append(docs[index])
             if results.count >= limit { break }
         }
         return results
@@ -139,17 +176,20 @@ final class GlobalSearchService {
 
         lock.lock()
         let docs = documents
+        // Only this app's documents (bundle index) — never the whole array.
+        let bundleDocIndices = bundleIndex[wanted] ?? []
+        let gramCandidates: Set<Int> =
+            q.isEmpty ? [] : Set(gramIndex[String(q.prefix(2))] ?? [])
         lock.unlock()
 
         if q.isEmpty {
-            let output = docs
-                .filter {
-                    guard $0.bundleId == wanted else { return false }
-                    if case .cachedMenu = $0.action { return true }
-                    return false
-                }
-                .prefix(limit)
-                .map { $0 }
+            var output: [SearchDocument] = []
+            output.reserveCapacity(min(limit, 24))
+            for index in bundleDocIndices where index < docs.count {
+                let doc = docs[index]
+                if case .cachedMenu = doc.action { output.append(doc) }
+                if output.count >= limit { break }
+            }
             let elapsedMS = Date().timeIntervalSince(started) * 1_000
             if elapsedMS >= 8 {
                 SearchPerformanceLog.shared.record(
@@ -163,8 +203,9 @@ final class GlobalSearchService {
         }
 
         var results: [(doc: SearchDocument, score: Double)] = []
-        results.reserveCapacity(min(docs.count, max(limit, 1)))
-        for doc in docs where doc.bundleId == wanted {
+        results.reserveCapacity(min(bundleDocIndices.count, max(limit, 1)))
+        for index in bundleDocIndices where gramCandidates.contains(index) && index < docs.count {
+            let doc = docs[index]
             guard case .cachedMenu = doc.action else { continue }
             guard let score = matchScore(query: q, doc: doc) else { continue }
             insertRanked((doc, score), into: &results, limit: limit)

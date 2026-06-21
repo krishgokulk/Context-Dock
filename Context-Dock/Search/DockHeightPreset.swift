@@ -82,6 +82,7 @@ struct DockHeightMetrics {
     var resultCount: Int
     var loadingApps: Bool
     var l1ResultsReservedHeight: CGFloat
+    var measuredChatContentHeight: CGFloat = 0
 }
 
 struct DockHeightPresetMetrics {
@@ -94,6 +95,7 @@ struct DockHeightPresetMetrics {
     var resultCount: Int
     var loadingApps: Bool
     var searchBarExpanded: Bool
+    var aiMessageCount: Int = 0
 }
 
 struct DockHeightResolver {
@@ -102,7 +104,7 @@ struct DockHeightResolver {
         case .mediaDock:
             return .compact
         case .generalChat:
-            return .expanded
+            return metrics.aiMessageCount > 0 ? .expanded : .compact
         case .contextDockChat:
             return collapsedPreset(metrics)
         case .globalContext, .contextDock:
@@ -129,7 +131,7 @@ struct DockHeightResolver {
         case .generalChat:
             return generalChatHeight(metrics)
         case .contextDockChat:
-            return collapsedPillHeight(metrics)
+            return contextDockChatHeight(metrics)
         case .globalContext:
             return searchSurfaceHeight(metrics)
         case .contextDock:
@@ -147,9 +149,34 @@ struct DockHeightResolver {
             + metrics.indexingBarHeight
     }
 
+    /// Shared chat-area height for the chat modes. Driven by the MEASURED intrinsic height of the
+    /// conversation (not a per-message estimate), so tall messages — approval cards, multi-line
+    /// replies — are never clipped. Capped at 450 (scrolls beyond). 0 when there is no content.
+    static func chatAreaHeight(measuredContentHeight: CGFloat) -> CGFloat {
+        guard measuredContentHeight > 1 else { return 0 }
+        return min(measuredContentHeight + 8, 450)
+    }
+
     private static func generalChatHeight(_ metrics: DockHeightMetrics) -> CGFloat {
-        let chatHeight: CGFloat = 620
-        return metrics.statusBarHeight + metrics.searchBarHeight + chatHeight + 10
+        let bars = metrics.statusBarHeight + metrics.searchBarHeight
+        // Gate on real message count, not the measured height — otherwise a stale measurement from a
+        // previous conversation keeps the window tall after Clear/Delete (which made it reposition).
+        guard metrics.aiMessageCount > 0 else { return bars }
+        let chatHeight = min(max(metrics.measuredChatContentHeight, 60), 450)
+        return bars + chatHeight + 10
+    }
+
+    /// Chat-with-frontmost-app sheet. The window must reserve the chat area (the old resolver
+    /// returned bars-only, so the sheet content was clipped to a sliver). Mirrors generalChat:
+    /// armed-with-no-messages shows just the "Chat with X" row; otherwise grows with messages.
+    private static func contextDockChatHeight(_ metrics: DockHeightMetrics) -> CGFloat {
+        let bars = metrics.statusBarHeight + metrics.searchBarHeight
+        // Gate on real message count (ignore stale measured) so Clear/Exit collapses to the pill.
+        guard metrics.contextDockChatMessageCount > 0 else { return bars }
+        // Fixed header (~52) above a scroll capped at 400; measured is the message height only.
+        let header: CGFloat = 52
+        let scroll = min(max(metrics.measuredChatContentHeight, 60), 400)
+        return bars + header + scroll + 18
     }
 
     private static func mediaDockHeight(_ metrics: DockHeightMetrics) -> CGFloat {

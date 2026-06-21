@@ -2,6 +2,8 @@
 
 Context-Dock is a native macOS launcher for fast app actions, live context actions, file workflows, and AI-assisted commands.
 
+> Beta: Context-Dock 1.1 beta is a test build. Use it to validate Global Context, Context Dock, Media Dock, General AI Chat, Context Dock Chat, Selection Shortcut Sheet, browser link actions, and native window management before stable release.
+
 ## DoraX Architecture Truth
 
 Product layers are defined in `docs/architecture/`.
@@ -24,6 +26,8 @@ Global Context is a cache-first universal command surface.
 
 - Launch installed apps.
 - Search cached menus from running apps while typing.
+- Open browser history/bookmark/recent-tab results as real URLs in Safari, with favicon-backed link rows when available.
+- Run native window-management actions even for quit, minimized, hidden, or cross-Space apps by launching/activating first, then applying the layout.
 - Surface Apple menu commands instantly, excluding volatile Recent Items.
 - Search files, workflows, extensions, and settings.
 - Verify cached menu commands against live accessibility state before execution.
@@ -145,6 +149,16 @@ xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration R
 ```
 
 SwiftTerm resolves through Swift Package Manager automatically.
+
+## Beta DMG
+
+Current beta artifact:
+
+```text
+Context-Dock-1.1-beta.dmg
+```
+
+Install by opening the DMG and dragging `Context-Dock.app` to Applications. Grant Accessibility permission when macOS prompts.
 
 ## Project Layout
 

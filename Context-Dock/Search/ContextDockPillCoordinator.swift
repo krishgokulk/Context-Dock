@@ -42,14 +42,18 @@ struct ContextDockPillCoordinator {
         case .skipped:
             return nil
         case .duplicate(let previewPills):
-            actions.commitPreview(previewPills)
+            // Defer the published preview write off the current view-update cycle —
+            // scheduleDockPillRebuild can be invoked while SwiftUI is mid-update, and a
+            // synchronous publish there triggers "Publishing changes from within view
+            // updates". One runloop hop is imperceptible (pills are already debounced).
+            Task { @MainActor in actions.commitPreview(previewPills) }
             return nil
         case .questionStyle:
             actions.clearCachedPills()
             return nil
         case .scheduled(let generation, let previewPills):
             scheduledGeneration = generation
-            actions.commitPreview(previewPills)
+            Task { @MainActor in actions.commitPreview(previewPills) }
         }
 
         return Task { @MainActor in

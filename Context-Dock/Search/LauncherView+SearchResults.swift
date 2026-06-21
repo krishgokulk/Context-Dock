@@ -76,9 +76,15 @@ extension LauncherView {
                     }
                 }
                 .padding(6)
+                // Measure the real rendered content (section headers vary per app) so the
+                // panel hugs it instead of relying on a row-count estimate that undercounts
+                // multiple headers and clips the last row at the rounded corner.
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    updateMeasuredGlobalListHeight(height)
+                }
             }
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-            .frame(height: listViewVisibleHeight)
+            .frame(maxHeight: listViewVisibleHeight)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
@@ -115,6 +121,11 @@ extension LauncherView {
             return "Home Folders"
         }
         if kind == "findercurrent" || kind == "findersearch" {
+            // Folder drill-in children carry the parent folder name in menuContext —
+            // keep them in the "Current Folder" group, right under the matched folder.
+            if kind == "findercurrent", let context = pill.menuContext, !context.isEmpty {
+                return "Current Folder"
+            }
             if pill.icon.localizedCaseInsensitiveContains("folder")
                 || badge.contains("folder")
                 || name.contains("folder")
@@ -536,10 +547,29 @@ extension LauncherView {
         }
     }
 
+    /// Index of the first selectable (non-separator) action pill, for Spotlight-style default
+    /// selection in the context-dock ACTIONS list.
+    var firstSelectableDockPillIndex: Int {
+        Array(contextDockViewModel.visiblePills.prefix(maxListViewDockPills))
+            .firstIndex(where: { !$0.isSeparator }) ?? -1
+    }
+
     @ViewBuilder
     func pillListRow(pill: DockPill, index: Int) -> some View {
         let accent = accentColor(for: pill.accentColorName)
-        let isKeyboardFocused = l2.focusedPillIndex == index
+        // Spotlight-style default: highlight the first action pill while typing when nothing is
+        // explicitly focused/hovered. Render-only — l2.focusedPillIndex stays nil so Enter keeps
+        // its context-dock semantics and the input never collapses to pill-nav mode.
+        let isDefaultFirstRow =
+            l2.focusedPillIndex == nil
+            && listViewHoveredIndex == nil
+            && index == firstSelectableDockPillIndex
+            && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // When the global app list already shows a default-first row (apps render
+            // above these menu rows), it owns the selection — don't ALSO highlight the
+            // first menu row, or two rows show the focus ring at once.
+            && !globalAppListOwnsDefaultFirstSelection
+        let isKeyboardFocused = l2.focusedPillIndex == index || isDefaultFirstRow
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let isDisabled = !pill.isEnabled && !isStaleAvailabilityMenuPill(pill)
@@ -894,6 +924,20 @@ extension LauncherView {
         .transition(.opacity)
     }
 
+    /// True when the Global Context app-result list is showing its Spotlight-style
+    /// default-first row (apps present above any menu rows, nothing explicitly
+    /// focused). The menu rows must defer their own default-first to avoid two focus
+    /// rings showing at once.
+    var globalAppListOwnsDefaultFirstSelection: Bool {
+        guard isGlobalContextActive,
+            focusedAppPillIndex == nil,
+            hoveredAppPillIndex == nil
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        return !currentOrImmediateGlobalAppMatches(for: q).isEmpty
+    }
+
     @ViewBuilder
     func appListRow(
         icon: NSImage?,
@@ -901,10 +945,26 @@ extension LauncherView {
         subtitle: String,
         index: Int,
         isCommandIcon: Bool = false,
+        defaultsToFirstSelection: Bool = false,
         quitAction: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        let isKeyboardFocused = focusedAppPillIndex == index
+        // Spotlight-style default selection: in a typed-query RESULT list, the first row reads as
+        // selected with nothing explicitly focused/hovered so the list never looks "unfocused".
+        // Purely a render default — focusedAppPillIndex stays nil (no input collapse / pill-nav
+        // side effects), and Enter already runs the top result via the input-ghost preview.
+        // Gated to result lists only (not the dock's pinned-apps list) and only while typing.
+        let isDefaultFirstRow =
+            defaultsToFirstSelection
+            && index == 0
+            && focusedAppPillIndex == nil
+            && hoveredAppPillIndex == nil
+            // A menu row is explicitly focused → don't ALSO default-ring the first app
+            // (that's the second focus ring).
+            && l2.focusedPillIndex == nil
+            && listViewHoveredIndex == nil
+            && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isKeyboardFocused = focusedAppPillIndex == index || isDefaultFirstRow
         let isHov = hoveredAppPillIndex == index
         let isActive = isKeyboardFocused || isHov
 
@@ -1049,6 +1109,9 @@ extension LauncherView {
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
+        if !isGlobalContextActive {
+            return true
+        }
         if pendingDockPillQuery == q, pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
             return true
         }
@@ -1257,31 +1320,40 @@ extension LauncherView {
         else {
             return nil
         }
+        // Open With titles arrive decorated: "Music.app (default)", "IINA.app",
+        // "Books.app". Strip the trailing "(default)"/parenthetical and the ".app"
+        // suffix so the name resolves to a real app icon (not a generic doc icon).
         let rawTitle = item.title
             .replacingOccurrences(of: "...", with: "")
             .replacingOccurrences(of: "…", with: "")
+            .replacingOccurrences(
+                of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTitle.isEmpty else { return nil }
-        return MenuIconMemoryCache.shared.image(for: "open-with:\(rawTitle)") {
+        let appName =
+            rawTitle.hasSuffix(".app")
+            ? String(rawTitle.dropLast(4)) : rawTitle
+        return MenuIconMemoryCache.shared.image(for: "open-with:\(appName)", cacheMisses: false) {
             if let app = NSWorkspace.shared.runningApplications.first(where: {
-                ($0.localizedName ?? "").caseInsensitiveCompare(rawTitle) == .orderedSame
+                ($0.localizedName ?? "").caseInsensitiveCompare(appName) == .orderedSame
                     && !$0.isTerminated
             }) {
                 return preparedDockIcon(app.icon)
             }
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: rawTitle) {
-                return NSWorkspace.shared.icon(forFile: url.path)
-            }
-            let searchNames = [rawTitle, rawTitle.replacingOccurrences(of: ".app", with: "")]
             for dir in [
-                "/Applications", "/System/Applications", "\(NSHomeDirectory())/Applications",
+                "/Applications", "/System/Applications",
+                "/System/Applications/Utilities", "\(NSHomeDirectory())/Applications",
             ] {
-                for name in searchNames {
-                    let path = "\(dir)/\(name).app"
-                    if FileManager.default.fileExists(atPath: path) {
-                        return NSWorkspace.shared.icon(forFile: path)
-                    }
+                let path = "\(dir)/\(appName).app"
+                if FileManager.default.fileExists(atPath: path) {
+                    return preparedDockIcon(NSWorkspace.shared.icon(forFile: path))
                 }
+            }
+            // Last resort: let LaunchServices find it anywhere by display name.
+            if let url = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: appName)
+            {
+                return preparedDockIcon(NSWorkspace.shared.icon(forFile: url.path))
             }
             return nil
         }
@@ -1290,25 +1362,28 @@ extension LauncherView {
     func resolvedShareMenuIcon(for item: AXMenuItem) -> NSImage? {
         let normalizedPath = item.path.map(normalizedDockPillText)
         guard normalizedPath.contains("share") else { return nil }
-        let rawTitle = item.title
+        return shareDestinationIcon(forTitle: item.title)
+    }
+
+    /// Resolve a share-destination icon purely from its title (Notes, Mail, AirDrop,
+    /// app extensions). Use when the caller already KNOWS the row is a share child —
+    /// the AX path of a flattened submenu child often drops the "Share" segment, so
+    /// the path-guarded `resolvedShareMenuIcon` would miss it.
+    func shareDestinationIcon(forTitle title: String) -> NSImage? {
+        let rawTitle = title
             .replacingOccurrences(of: "...", with: "")
             .replacingOccurrences(of: "…", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTitle.isEmpty else { return nil }
 
-        return MenuIconMemoryCache.shared.image(for: "share:\(rawTitle)") {
-            if let serviceIcon = resolvedSharingServiceIcon(named: rawTitle) {
-                return serviceIcon
-            }
-            if let direct = resolvedInstalledAppIcon(named: rawTitle) {
-                return direct
-            }
-
+        return MenuIconMemoryCache.shared.image(for: "share:\(rawTitle)", cacheMisses: false) {
+            // Cheap, deterministic lookups first (installed-app catalog + aliases) so
+            // the common destinations resolve fast and cache as a hit. The expensive
+            // NSSharingService enumeration is the last resort for unknown extensions.
             let normalizedTitle = normalizedDockPillText(rawTitle)
             let aliases: [(String, String)] = [
                 ("add to photos", "Photos"),
                 ("photos", "Photos"),
-                ("airdrop", "AirDrop"),
                 ("mail", "Mail"),
                 ("messages", "Messages"),
                 ("notes", "Notes"),
@@ -1322,11 +1397,31 @@ extension LauncherView {
             {
                 return icon
             }
-
-            if normalizedTitle == "airdrop" {
+            if normalizedTitle.contains("airdrop") {
                 return NSImage(
                     systemSymbolName: "antenna.radiowaves.left.and.right",
                     accessibilityDescription: "AirDrop")
+            }
+            // The real NSSharingService image is the exact icon the native menu shows
+            // (QR code, Downie, Bridges, share-extensions). Use it BEFORE the loose
+            // installed-app lookup, which falsely matched "Create QR Code" → "Code".
+            if let serviceIcon = resolvedSharingServiceIcon(named: rawTitle) {
+                return serviceIcon
+            }
+            // SF-symbol fallbacks for service-only destinations with no app/icon.
+            let symbolFallbacks: [(String, String)] = [
+                ("qr code", "qrcode"),
+                ("copy link", "link"),
+                ("copy", "doc.on.doc"),
+                ("reading list", "eyeglasses"),
+            ]
+            if let s = symbolFallbacks.first(where: { normalizedTitle.contains($0.0) }),
+                let img = NSImage(systemSymbolName: s.1, accessibilityDescription: nil)
+            {
+                return img
+            }
+            if let direct = resolvedInstalledAppIcon(named: rawTitle) {
+                return direct
             }
             return nil
         }

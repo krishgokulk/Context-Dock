@@ -181,7 +181,12 @@ final class MenuWarmCacheService {
 
         guard !app.isTerminated else { return }
         guard !items.isEmpty else { return }
-        AppMenuCapabilityCache.shared.store(items: items, for: capturedApp)
+        // If this app is frontmost, the live scan is authoritative — REPLACE its cache
+        // so it always mirrors the current menu (drop stale items / outdated state).
+        let isFrontmost =
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        AppMenuCapabilityCache.shared.store(
+            items: items, for: capturedApp, replace: isFrontmost)
         lastWarmDateByBundleID[bundleID] = Date()
     }
 

@@ -2723,10 +2723,12 @@ struct AutomationAdapterDetailView: View {
     @Binding var selectedActionID: String?
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
+    @ObservedObject private var mcpManager = MCPServerManager.shared
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
     @State private var showShortcutPicker = false
+    @State private var showMCPSheet = false
     @State private var showDeleteConfirm = false
     @State private var isScanningHelp = false
 
@@ -2769,6 +2771,10 @@ struct AutomationAdapterDetailView: View {
             .sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
+    }
+
+    private var linkedMCPServers: [MCPServerConfig] {
+        mcpManager.servers(forBundleId: currentAdapter.bundleId)
     }
 
     var body: some View {
@@ -3241,9 +3247,94 @@ struct AutomationAdapterDetailView: View {
                 }
                 .padding(16)
 
+                Divider()
+
+                // MARK: Linked MCP section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Linked MCP")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            showMCPSheet = true
+                        } label: {
+                            Label("Add MCP", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+
+                    if linkedMCPServers.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No linked MCP servers")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Link Model Context Protocol servers so scoped dock chat for \(currentAdapter.appName) can use their tools. Paste the app's mcpServers JSON config, or add a stdio command manually.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(16)
+                        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(linkedMCPServers) { server in
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.purple.opacity(0.12))
+                                        .frame(width: 28, height: 28)
+                                    Image(systemName: "cpu")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.purple)
+                                }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(server.name)
+                                            .font(.system(size: 12, weight: .medium))
+                                        Text(server.transport)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(Color.purple.opacity(0.12), in: Capsule())
+                                            .foregroundStyle(.purple)
+                                    }
+                                    Text(([server.command] + server.args).joined(separator: " "))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+
+                                Spacer()
+
+                                Button(role: .destructive) {
+                                    mcpManager.unlink(id: server.id, from: currentAdapter.bundleId)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.red.opacity(0.7))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if server.id != linkedMCPServers.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+
             }
         }
         .background(Color(NSColor.controlBackgroundColor))
+        .sheet(isPresented: $showMCPSheet) {
+            AddMCPServerSheet(
+                appName: currentAdapter.appName,
+                bundleId: currentAdapter.bundleId
+            )
+        }
         .sheet(isPresented: $showAddActionSheet) {
             AdapterActionEditorSheet(bundleId: currentAdapter.bundleId, existing: editingAction) {
                 showAddActionSheet = false
@@ -5868,6 +5959,125 @@ struct SystemCommandEditorView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
             content()
+        }
+    }
+}
+
+// MARK: - Add MCP Server Sheet
+
+struct AddMCPServerSheet: View {
+    let appName: String
+    let bundleId: String
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var mcpManager = MCPServerManager.shared
+
+    private enum Mode: String, CaseIterable { case json = "Paste JSON", manual = "Manual" }
+    @State private var mode: Mode = .json
+    @State private var jsonText: String = ""
+    @State private var name: String = ""
+    @State private var command: String = ""
+    @State private var argsText: String = ""
+    @State private var errorText: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.purple)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add MCP Server")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Linked to \(appName)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Picker("", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if mode == .json {
+                Text("Paste the app's mcpServers config (the JSON block from its MCP settings).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $jsonText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(height: 180)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.secondary.opacity(0.15)))
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    mcpField("Name", "my-server", $name)
+                    mcpField("Command", "/path/to/server-cli", $command)
+                    mcpField("Arguments (space-separated)", "--mcp", $argsText)
+                }
+            }
+
+            if let errorText {
+                Text(errorText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Add") { addServer() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canAdd)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private var canAdd: Bool {
+        mode == .json
+            ? !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            : !name.trimmingCharacters(in: .whitespaces).isEmpty
+                && !command.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func addServer() {
+        if mode == .json {
+            let count = mcpManager.addFromJSON(jsonText, linkedTo: bundleId)
+            if count == 0 {
+                errorText = "No MCP servers found. Expected a { \"mcpServers\": { … } } object."
+                return
+            }
+        } else {
+            let args = argsText.split(separator: " ").map(String.init)
+            mcpManager.add(
+                MCPServerConfig(
+                    name: name.trimmingCharacters(in: .whitespaces),
+                    command: command.trimmingCharacters(in: .whitespaces),
+                    args: args),
+                linkedTo: bundleId)
+        }
+        dismiss()
+    }
+
+    @ViewBuilder
+    private func mcpField(_ label: String, _ placeholder: String, _ text: Binding<String>)
+        -> some View
+    {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
         }
     }
 }

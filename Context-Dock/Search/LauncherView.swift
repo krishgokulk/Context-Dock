@@ -480,6 +480,7 @@ struct LauncherView: View {
         let hasListContent =
             pills.contains(where: { !$0.isSeparator })
             || showGlobalAppSearch
+            || (!isGlobalContextActive && !q.isEmpty)
         return hasListContent && !showPinnedRow
     }
 
@@ -683,7 +684,9 @@ struct LauncherView: View {
     }
 
     func shouldExposeCachedMenuItem(_ item: AXMenuItem) -> Bool {
-        item.isEnabled
+        // Apple-menu Recent Items never surface, even when the live Apple menu is allowed.
+        if isAppleRecentItemsMenuItem(item) { return false }
+        return item.isEnabled
             || menuItemHasNativeShortcut(item)
             || item.resolvedFilePath != nil
             || item.isLeaf
@@ -736,12 +739,44 @@ struct LauncherView: View {
     /// Safari History/Bookmarks menu rows resolve to the page's real URL via the
     /// local history DB so the row can show the site favicon (same as Global Context).
     func safariHistoryBookmarkURL(for item: AXMenuItem, sourceBundleId: String) -> URL? {
-        guard sourceBundleId == "com.apple.Safari" else { return nil }
-        let root = (item.path.first ?? "").lowercased()
-        guard root.contains("history") || root.contains("bookmark") else { return nil }
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
-        return SafariLinkResolver.shared.url(forTitle: title)
+        // Works for every app's History/Bookmarks rows (Safari, Chrome, Edge, Arc,
+        // Brave, Firefox, Zen, and even non-browser players whose history titles match
+        // a page we have indexed). Resolver merges all browser histories + the Safari
+        // extension map; then a host-from-title guess for domain-shaped titles.
+        if let resolved = SafariLinkResolver.shared.url(forTitle: title) { return resolved }
+        return Self.webURLGuess(fromTitle: title)
+    }
+
+    /// Best-effort web URL from a menu row title. Matches a whole-string host
+    /// ("github.com", "music.youtube.com/…") or the first domain-shaped token
+    /// embedded in the title ("Settings for github.com…"). Returns nil for plain
+    /// labels so non-web menu commands never get a bogus favicon.
+    static func webURLGuess(fromTitle title: String) -> URL? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let direct = URL(string: trimmed),
+            let scheme = direct.scheme?.lowercased(),
+            scheme == "https" || scheme == "http", direct.host != nil
+        {
+            return direct
+        }
+
+        let hostPattern = "(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}(?:/[^\\s]*)?"
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: hostPattern, options: [.caseInsensitive])
+        else { return nil }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        guard
+            let match = regex.firstMatch(in: trimmed, options: [], range: range),
+            let matchRange = Range(match.range, in: trimmed)
+        else { return nil }
+
+        let candidate = String(trimmed[matchRange])
+        return URL(string: "https://\(candidate)")
     }
 
     func submenuLeafChildren(from parent: AXMenuItem) -> [AXMenuItem] {
@@ -766,7 +801,11 @@ struct LauncherView: View {
         searchTerms: [String],
         executeChild: @escaping (AXMenuItem) -> Void
     ) -> [DockPill] {
-        submenuLeafChildren(from: parent)
+        // Share submenu children are NOT surfaced from AX (unreliable + the AX-click
+        // mis-fired). DoraX populates share destinations from NSSharingService instead
+        // (every installed share-extension), executed by object identity.
+        if normalizedDockPillText(parent.title).contains("share") { return [] }
+        return submenuLeafChildren(from: parent)
             .filter { !isRejectedTopMenuItem($0, appName: sourceAppName) && shouldExposeCachedMenuItem($0) }
             .prefix(maxListViewDockPills)
             .map { child in
@@ -1497,6 +1536,14 @@ struct LauncherView: View {
         if hasActiveDockContextSelection && pill.sourceBundleId == "com.apple.finder" {
             return true
         }
+        if showContextInDock && !isGlobalContextActive {
+            let targetBundleId = l2.targetApp?.bundleId
+                ?? AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+                ?? ""
+            if !targetBundleId.isEmpty, pill.sourceBundleId == targetBundleId {
+                return true
+            }
+        }
         return false
     }
 
@@ -1563,9 +1610,14 @@ struct LauncherView: View {
             return true
         }
 
-        guard let actionQuery = directAppActionQuery(for: q),
-            isDirectAppActionQuery(actionQuery)
-        else {
+        // The first selectable pill is shown pre-selected while typing (render default). Enter must
+        // launch it — matching the visible highlight / ghost text — even when it isn't a recognised
+        // "direct app action" query. Question-style queries return no pills (handled upstream), so
+        // this never steals the Enter-to-AI path.
+        let hasDefaultHighlightedPill =
+            !q.isEmpty && pills.contains(where: { !$0.isSeparator })
+        let isDirectAction = directAppActionQuery(for: q).map(isDirectAppActionQuery) ?? false
+        guard hasDefaultHighlightedPill || isDirectAction else {
             return false
         }
 
@@ -2028,6 +2080,10 @@ struct LauncherView: View {
                 })
             else { continue }
 
+            // Never ghost-drill a "Share" submenu — DoraX shows NSSharingService
+            // destinations (all installed share-extensions) instead of AX children.
+            if isShareSheetTitle(parent.title) { continue }
+
             // Collect enabled leaf children (direct leaves + one level deeper)
             var leafChildren: [AXMenuItem] = []
             for child in parent.children {
@@ -2202,8 +2258,6 @@ struct LauncherView: View {
     var hasResultsToShow: Bool {
         guard !showMediaLayer else { return false }
         return !searchState.results.isEmpty
-            || (currentDockSurfaceMode == .globalContext && !searchState.query.isEmpty)
-            || (!searchState.query.isEmpty && !isL2ContextActive && currentDockSurfaceMode != .generalChat)
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (shouldShowContextDockAppPanel
                 && !(showContextInDock && l2.chatArmed && !l2.showChatPopover))
