@@ -19,8 +19,16 @@ struct AboutSettingsPage: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Context Dock")
-                            .font(.system(size: 24, weight: .bold))
+                        HStack(spacing: 8) {
+                            Text("Context Dock")
+                                .font(.system(size: 24, weight: .bold))
+                            Text("BETA")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.purple)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.purple.opacity(0.15), in: Capsule())
+                        }
                         Text(bundleVersion)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)

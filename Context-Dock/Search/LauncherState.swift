@@ -66,6 +66,19 @@ struct AIModeState {
     var currentTask: Task<Void, Never>? = nil
     var streamingId: UUID? = nil
     var attachments: [URL] = []
+    // Selection Scope chat context — the selected text / files / page URL the conversation is
+    // grounded in. Injected into every message of the session so the AI always answers about
+    // the user's current selection (webpage, document, files, …).
+    var selectionText: String? = nil
+    var selectionFiles: [URL] = []
+    var selectionURL: String? = nil
+    // Awaiting user confirmation before sending an AI result via Share (two-step "Send via X?").
+    var pendingShare: PendingSelectionShare? = nil
+}
+
+struct PendingSelectionShare: Equatable {
+    let text: String
+    let destination: String
 }
 
 // MARK: - Frontmost App

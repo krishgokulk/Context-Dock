@@ -361,6 +361,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start event-driven AX observer pipeline
         AXObserverManager.shared.startMonitoring()
 
+        // Beta updater: check manifest in the background after launch.
+        AppUpdateService.shared.runLaunchAutoCheckIfNeeded()
+
         // Start binary watcher so L2 auto-discovers newly installed CLI tools
         Task { @MainActor in
             BinaryWatcherService.shared.startWatching()
@@ -1101,26 +1104,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             UnregisterEventHotKey(ref)
             contextDockHotKeyRef = nil
         }
-        guard settings.contextDockHotkeyEnabled else { return }
-        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6364), id: 2)  // 'ILcd'
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
-        let handler: EventHandlerUPP = { (_, theEvent, userData) -> OSStatus in
-            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
-                return noErr
-            }
-            delegate.activateContextDock()
-            return noErr
-        }
-        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
-        selfPtr.initialize(to: self)
-        var handlerRef: EventHandlerRef?
-        InstallEventHandler(
-            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
-        contextDockEventHandlerRef = handlerRef  // store so next call can remove it
-        RegisterEventHotKey(
-            settings.contextDockHotkeyKeyCode, settings.contextDockHotkeyModifiers,
-            hotKeyID, GetApplicationEventTarget(), 0, &contextDockHotKeyRef)
+        // "Show Context Dock" global hotkey removed — Context Dock is reached by tapping ⌘
+        // (single-command monitor) to switch from Global Context. This stays as a cleanup-only
+        // no-op so any stale handler from a previous launch is torn down.
     }
 
     func registerClipboardScopeHotkey() {

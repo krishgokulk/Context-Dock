@@ -12,7 +12,7 @@ struct GeneralSettingsPage: View {
                         icon: "testtube.2",
                         iconColor: .purple,
                         title: "Context-Dock Beta",
-                        subtitle: "Beta build for testing Global Context, Context Dock, media, AI chat, and selection actions."
+                        subtitle: "Open-source beta for testing Global Context, Context Dock, media, AI chat, and selection actions."
                     ) {
                         Text("1.1 beta")
                             .font(.system(size: 12, weight: .semibold))

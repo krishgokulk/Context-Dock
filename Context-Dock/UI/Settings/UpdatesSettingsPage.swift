@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct UpdatesSettingsPage: View {
-    @State private var isChecking = false
-    @State private var lastChecked: Date? = nil
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var updater = AppUpdateService.shared
 
     var body: some View {
         ScrollView {
@@ -17,44 +17,26 @@ struct UpdatesSettingsPage: View {
                 }
 
                 CardSection(title: "Software Update", systemImage: "arrow.down.circle.fill") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 12) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.green)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Context Dock is up to date")
-                                    .font(.system(size: 13, weight: .medium))
-                                if let checked = lastChecked {
-                                    Text("Last checked \(checked, style: .relative) ago")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("Checks run automatically on launch")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Button {
-                                checkForUpdates()
-                            } label: {
-                                if isChecking {
-                                    HStack(spacing: 6) {
-                                        ProgressView().scaleEffect(0.75)
-                                        Text("Checking…")
-                                    }
-                                    .frame(minWidth: 90)
-                                } else {
-                                    Text("Check Now")
-                                        .frame(minWidth: 90)
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isChecking)
+                    VStack(spacing: 0) {
+                        SettingsPageRow(
+                            icon: "arrow.triangle.2.circlepath.circle.fill",
+                            iconColor: .green,
+                            title: "Automatic Updates",
+                            subtitle: "Check on launch, download beta DMG, and open installer when update is ready."
+                        ) {
+                            Toggle("", isOn: $settings.automaticUpdatesEnabled)
+                                .labelsHidden()
+                        }
+                        Divider()
+                        SettingsPageRow(
+                            icon: "shippingbox.fill",
+                            iconColor: .blue,
+                            title: updateTitle,
+                            subtitle: updateSubtitle
+                        ) {
+                            updateAccessory
                         }
                     }
-                    .padding(.vertical, 12)
                 }
 
                 CardSection(title: "What's New", systemImage: "note.text") {
@@ -67,12 +49,81 @@ struct UpdatesSettingsPage: View {
                             ReleaseNoteRow("Menu actions use native shortcuts and frontmost-app routing")
                             ReleaseNoteRow("Settings, extensions, and shortcut sheet import flow polished")
                             ReleaseNoteRow("AI profiles and provider routing prepared for beta testing")
+                            ReleaseNoteRow("Open-source beta update channel uses GitHub-hosted release manifest")
                         }
                     }
                     .padding(.vertical, 12)
                 }
             }
             .padding(28)
+        }
+    }
+
+    @ViewBuilder
+    private var updateAccessory: some View {
+        switch updater.status {
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().scaleEffect(0.75)
+                Text("Checking")
+            }
+            .frame(minWidth: 100)
+        case .available(let manifest):
+            Button("Download") {
+                updater.downloadAndOpen(manifest)
+            }
+            .buttonStyle(.borderedProminent)
+        case .downloading:
+            HStack(spacing: 6) {
+                ProgressView().scaleEffect(0.75)
+                Text("Downloading")
+            }
+            .frame(minWidth: 110)
+        case .downloaded:
+            Button("Open DMG") {
+                updater.openDownloadedUpdate()
+            }
+            .buttonStyle(.borderedProminent)
+        default:
+            Button("Check Now") {
+                updater.checkForUpdates()
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var updateTitle: String {
+        switch updater.status {
+        case .checking: return "Checking for Updates"
+        case .upToDate: return "Context-Dock is up to date"
+        case .available(let manifest): return "Context-Dock \(manifest.version) beta available"
+        case .downloading(let manifest): return "Downloading \(manifest.version) beta"
+        case .downloaded(let manifest, _): return "\(manifest.version) beta ready to install"
+        case .failed: return "Update check failed"
+        case .idle: return "Check for Updates"
+        }
+    }
+
+    private var updateSubtitle: String {
+        let checkedText: String
+        if let checked = updater.lastChecked {
+            let relative = RelativeDateTimeFormatter()
+            checkedText = "Last checked \(relative.localizedString(for: checked, relativeTo: Date()))."
+        } else {
+            checkedText = settings.automaticUpdatesEnabled
+                ? "Auto-check runs after launch."
+                : "Auto-check is disabled."
+        }
+
+        switch updater.status {
+        case .available(let manifest):
+            return "\(manifest.channel.capitalized) build \(manifest.build). \(manifest.notes.first ?? checkedText)"
+        case .downloaded(_, let url):
+            return "Downloaded to \(url.path). Open DMG, drag app to Applications."
+        case .failed(let message):
+            return "\(message). \(checkedText)"
+        default:
+            return checkedText
         }
     }
 
@@ -87,13 +138,6 @@ struct UpdatesSettingsPage: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1"
     }
 
-    private func checkForUpdates() {
-        isChecking = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            isChecking = false
-            lastChecked = Date()
-        }
-    }
 }
 
 private struct ReleaseNoteRow: View {

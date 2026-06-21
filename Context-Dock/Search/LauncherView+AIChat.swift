@@ -503,6 +503,41 @@ extension LauncherView {
         }
     }
 
+    /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
+    /// destination before the native Share fires.
+    @ViewBuilder
+    func selectionShareConfirmCard(_ pending: PendingSelectionShare) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Send via \(pending.destination)?")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(aiMode.selectionFiles.isEmpty
+                    ? "Sends the result text" : "Sends the result + \(aiMode.selectionFiles.count) file(s)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") { aiMode.pendingShare = nil }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Send") {
+                let p = pending
+                aiMode.pendingShare = nil
+                shareSelectionResult(text: p.text, destination: p.destination)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.blue.opacity(0.25)))
+    }
+
     // MARK: - AI Chat Section
     @ViewBuilder
     var aiChatSection: some View {
@@ -528,6 +563,10 @@ extension LauncherView {
                             }
                             .padding(.horizontal, 4)
                             .id("loading")
+                        }
+                        if let pending = aiMode.pendingShare {
+                            selectionShareConfirmCard(pending)
+                                .id("pending-share")
                         }
                     }
                     .padding(.horizontal, 12)
@@ -725,12 +764,22 @@ extension LauncherView {
                     attachments: pendingAttachments
                 )
                 let launches = self.referencedAppLaunches(for: query)
+                // SHARE_VIA directive → send the AI result (+ any selected files) through the
+                // native Share service. Strip the directive line from the visible message.
+                let shareDest = self.parseShareViaDirective(response)
+                let cleaned = self.stripShareViaDirective(response)
                 await MainActor.run {
                     withAnimation {
                         self.aiMode.messages.append(
                             AIChatMessage(
-                                role: .assistant, content: response, appLaunches: launches))
+                                role: .assistant, content: cleaned, appLaunches: launches))
                         self.aiMode.isLoading = false
+                    }
+                    // Two-step: don't send yet — show a confirm card so the user approves the
+                    // destination first.
+                    if let shareDest {
+                        self.aiMode.pendingShare = PendingSelectionShare(
+                            text: cleaned, destination: shareDest)
                     }
                     self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
@@ -746,6 +795,48 @@ extension LauncherView {
                     }
                     self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
+            }
+        }
+    }
+
+    /// Extract `SHARE_VIA: <dest>` from an AI reply (the model emits it when the user asked to
+    /// send/share the result). Returns the destination name, or nil.
+    func parseShareViaDirective(_ response: String) -> String? {
+        guard let range = response.range(of: "SHARE_VIA:") else { return nil }
+        let tail = response[range.upperBound...]
+            .prefix(while: { $0 != "\n" })
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .<>"))
+        return tail.isEmpty ? nil : tail
+    }
+
+    func stripShareViaDirective(_ response: String) -> String {
+        response
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.contains("SHARE_VIA:") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Share the AI result (plus any selected files) through the native macOS Share service
+    /// matching `destination` (Mail / Messages / Notes / …) — DoraX's NSSharingService path.
+    func shareSelectionResult(text: String, destination: String) {
+        var items: [Any] = []
+        if !aiMode.selectionFiles.isEmpty { items.append(contentsOf: aiMode.selectionFiles) }
+        if !text.isEmpty { items.append(text) }
+        guard !items.isEmpty else { return }
+
+        let dests = ShareActionCoordinator.shared.shareDestinations(items: items)
+        let nd = destination.lowercased()
+        let match = dests.first {
+            let t = $0.title.lowercased()
+            return t.contains(nd) || nd.contains(t)
+        }
+        forceHideLauncherAfterResultExecution()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if let match {
+                match.perform(withItems: items)
+            } else {
+                self.presentSharingPicker(items: items)
             }
         }
     }
@@ -2682,6 +2773,38 @@ extension LauncherView {
         let appleData = await appleAppsAndWeatherContext(for: query)
         if !appleData.isEmpty {
             sysContent += "\n\n" + appleData
+        }
+
+        // Selection Scope: ground the whole conversation in the user's current selection
+        // (text / page URL / files) so every turn answers about their actual content.
+        if let selText = aiMode.selectionText, !selText.isEmpty {
+            sysContent +=
+                "\n\nThe user is working with this SELECTED CONTENT — base your answers on it:\n"
+                + "\"\"\"\n\(String(selText.prefix(8000)))\n\"\"\""
+        }
+        if let pageURL = aiMode.selectionURL, !pageURL.isEmpty {
+            sysContent += "\n\nThe selection is from this page: \(pageURL)"
+        }
+        if !aiMode.selectionFiles.isEmpty {
+            let analyzed = ContextDetector.shared.analyzeFiles(aiMode.selectionFiles)
+            let blocks = analyzed.compactMap { item -> String? in
+                guard let c = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !c.isEmpty
+                else { return nil }
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(c)"
+            }
+            if !blocks.isEmpty {
+                sysContent +=
+                    "\n\nSelected file contents — use these:\n\n" + blocks.joined(separator: "\n\n")
+            }
+        }
+        // The model can send results through macOS Share (Mail/Messages/Notes/…) — when the
+        // user asks to send/share/email, finish with: SHARE_VIA: <destination>.
+        if aiMode.selectionText != nil || !aiMode.selectionFiles.isEmpty {
+            sysContent +=
+                "\n\nIf the user asks to send/share/email/message the result (e.g. \"summarize this"
+                + " and send to mail\"), produce the content, then append a final line exactly:"
+                + " SHARE_VIA: <Mail|Messages|Notes|Reminders|AirDrop|Freeform>."
         }
 
         let request = AIRequestBuilder.aiChat(

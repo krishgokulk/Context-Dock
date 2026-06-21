@@ -1,8 +1,8 @@
 # Context-Dock
 
-Context-Dock is a native macOS launcher for fast app actions, live context actions, file workflows, and AI-assisted commands.
+Context-Dock is an open-source native macOS launcher for fast app actions, live context actions, file workflows, and AI-assisted commands.
 
-> Beta: Context-Dock 1.1 beta is a test build. Use it to validate Global Context, Context Dock, Media Dock, General AI Chat, Context Dock Chat, Selection Shortcut Sheet, browser link actions, and native window management before stable release.
+> Beta: Context-Dock 1.1 beta is an open-source test build. Use it to validate Global Context, Context Dock, Media Dock, General AI Chat, Context Dock Chat, Selection Shortcut Sheet, browser link actions, native window management, and beta updates before stable release.
 
 ## DoraX Architecture Truth
 
@@ -159,6 +159,15 @@ Context-Dock-1.1-beta.dmg
 ```
 
 Install by opening the DMG and dragging `Context-Dock.app` to Applications. Grant Accessibility permission when macOS prompts.
+
+## Beta Updates
+
+Settings → Updates can check the open-source beta channel, download the latest DMG, and open the installer.
+
+- `Automatic Updates` checks the GitHub-hosted manifest after launch.
+- When enabled, new beta builds download automatically and the DMG opens when ready.
+- Users can disable automatic updates anytime in Settings → Updates.
+- Current manifest: `update-manifest.json`.
 
 ## Project Layout
 

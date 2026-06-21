@@ -126,6 +126,40 @@ extension LauncherView {
         return nil
     }
 
+    /// If the launcher opened while text/files were selected, enter Selection Scope (Global
+    /// Context + selection) directly instead of Context Dock. Returns true when it activated.
+    @discardableResult
+    func openInSelectionScopeIfSelectionPresent() -> Bool {
+        let hasFiles =
+            !isDismissedFinderSelection(axContext.selectedFilePaths)
+            && !axContext.selectedFilePaths.isEmpty
+        let hasText =
+            !(axContext.selectedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasFiles || hasText else { return false }
+        guard let activation = currentSelectionActivationSnapshot(refresh: false) else {
+            return false
+        }
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+            globalContextActivation = activation
+            aiMode.isActive = false
+            showMediaLayer = false
+            showContextInDock = true
+            searchState.activeSmartQueryKey = nil
+            searchState.contextApp = nil
+            searchState.query = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
+            l2.focusedPillIndex = nil
+            focusedAppPillIndex = nil
+            setCachedGlobalGroupedState(
+                query: "",
+                state: buildGlobalGroupedListNavigationState(for: ""),
+                animated: false
+            )
+        }
+        return true
+    }
+
     func openSelectionContextFromTrailingButton() {
         let activation =
             currentSelectionActivationSnapshot(refresh: true)

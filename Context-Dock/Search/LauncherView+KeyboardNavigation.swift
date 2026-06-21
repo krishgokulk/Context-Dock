@@ -96,7 +96,6 @@ extension LauncherView {
     }
 
     enum KeyRoutingMode {
-        case shortcutSheet
         case shareSheet
         case ai
         case compactScope
@@ -106,7 +105,6 @@ extension LauncherView {
     }
 
     var keyRoutingMode: KeyRoutingMode {
-        if showShortcutSheet { return .shortcutSheet }
         if isSharingSheetActive { return .shareSheet }
         if aiMode.isActive { return .ai }
         if isCompactSmartScope { return .compactScope }
@@ -117,64 +115,10 @@ extension LauncherView {
 
     func handleTopLevelKeyRouting(_ event: NSEvent, mode: KeyRoutingMode) -> NSEvent? {
         switch mode {
-        case .shortcutSheet:
-            return handleShortcutSheetKey(event)
         case .shareSheet, .ai, .compactScope, .hidden:
             return event
         case .globalContext, .contextDock:
             return nil
-        }
-    }
-
-    func handleShortcutSheetKey(_ event: NSEvent) -> NSEvent? {
-        guard showShortcutSheet else { return event }
-
-        switch event.keyCode {
-        case 53:  // Escape
-            closeShortcutSheet()
-            return nil
-        case 125:  // Down
-            if shortcutSheetSelectionSnapshot != nil {
-                shortcutSheetSelectionExpanded = true
-            }
-            let commands = currentShortcutSheetCommandIDs()
-            guard !commands.isEmpty else { return nil }
-            if let id = shortcutSheetFocusedCommandID,
-                let index = commands.firstIndex(of: id)
-            {
-                shortcutSheetFocusedCommandID = commands[min(commands.count - 1, index + 1)]
-            } else {
-                shortcutSheetFocusedCommandID = commands[0]
-            }
-            refreshShortcutSheetPanel()
-            return nil
-        case 126:  // Up
-            if shortcutSheetSelectionSnapshot != nil {
-                shortcutSheetSelectionExpanded = true
-            }
-            let commands = currentShortcutSheetCommandIDs()
-            guard !commands.isEmpty else { return nil }
-            guard let id = shortcutSheetFocusedCommandID,
-                let index = commands.firstIndex(of: id)
-            else {
-                shortcutSheetFocusedCommandID = commands[commands.count - 1]
-                refreshShortcutSheetPanel()
-                return nil
-            }
-            if index <= 0 {
-                shortcutSheetFocusedCommandID = commands[0]
-            } else {
-                shortcutSheetFocusedCommandID = commands[index - 1]
-            }
-            refreshShortcutSheetPanel()
-            return nil
-        case 36:  // Return
-            guard let id = shortcutSheetFocusedCommandID,
-                executeFocusedShortcutSheetCommand(id: id)
-            else { return event }
-            return nil
-        default:
-            return event
         }
     }
 
@@ -775,21 +719,17 @@ extension LauncherView {
                     )
                     return nil
                 }
-                if self.l2.focusedPillIndex != nil,
-                    !self.showShortcutSheet,
-                    self.executeFocusedOrDirectAppPillIfNeeded()
+                if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded()
                 {
                     return nil
                 }
 
-                if !self.showShortcutSheet,
-                    self.executeFirstMatchingFinderFolderPillIfNeeded()
+                if self.executeFirstMatchingFinderFolderPillIfNeeded()
                 {
                     return nil
                 }
 
-                if !self.showShortcutSheet,
-                    self.executeFirstAttachedFinderFolderResultIfNeeded()
+                if self.executeFirstAttachedFinderFolderResultIfNeeded()
                 {
                     return nil
                 }
@@ -798,7 +738,7 @@ extension LauncherView {
                     return nil
                 }
 
-                if !self.showShortcutSheet, self.executeFocusedOrDirectAppPillIfNeeded() {
+                if self.executeFocusedOrDirectAppPillIfNeeded() {
                     return nil
                 }
 
@@ -894,22 +834,12 @@ extension LauncherView {
                 && !event.modifierFlags.contains(.control)
 
             if cmdDown {
+                // ⌘ long-press (Shortcut Sheet) removed — ⌘ only TAP-toggles scope now. Arm the
+                // tap; no hold task is scheduled.
                 if !cmdTapArmed {
                     cmdTapArmed = true
                     cmdChordUsed = false
                     cmdHoldTriggered = false
-                }
-                guard cmdHoldTask == nil else { return event }  // already counting
-                let targetApp =
-                    AppDelegate.shared?.previousFrontmostApp
-                    ?? NSWorkspace.shared.frontmostApplication
-                cmdHoldTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 s
-                    guard !Task.isCancelled else { return }
-                    guard !self.aiMode.isActive, !self.isCompactSmartScope else { return }
-                    self.cmdHoldTriggered = true
-                    self.presentCommandHoldSheet(for: targetApp)
-                    self.cmdHoldTask = nil
                 }
             } else {
                 // Cmd released — bare tap toggles Context Dock ↔ Global Context.
@@ -917,7 +847,6 @@ extension LauncherView {
                     cmdTapArmed
                     && !cmdChordUsed
                     && !cmdHoldTriggered
-                    && !showShortcutSheet
 
                 cmdHoldTask?.cancel()
                 cmdHoldTask = nil
@@ -955,379 +884,18 @@ extension LauncherView {
                 && !event.modifierFlags.contains(.control)
 
             if cmdDown {
+                // ⌘ long-press (Shortcut Sheet) removed — arm tap only, no hold task.
                 if !cmdTapArmed {
                     cmdTapArmed = true
                     cmdChordUsed = false
                     cmdHoldTriggered = false
                 }
-                guard cmdHoldTask == nil else { return }
-                let targetApp = NSWorkspace.shared.frontmostApplication
-                cmdHoldTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 800_000_000)
-                    guard !Task.isCancelled, !cmdChordUsed else { return }
-                    guard !self.aiMode.isActive, !self.isCompactSmartScope else { return }
-                    self.cmdHoldTriggered = true
-                    self.presentCommandHoldSheet(for: targetApp)
-                    self.cmdHoldTask = nil
-                }
             } else {
-                cmdHoldTask?.cancel()
-                cmdHoldTask = nil
                 cmdTapArmed = false
                 cmdChordUsed = false
                 cmdHoldTriggered = false
             }
         }
-    }
-
-    func presentCommandHoldSheet(for app: NSRunningApplication?) {
-        if let snapshot = currentSelectionSheetSnapshot(refresh: true, app: app) {
-            presentSelectionCommandSheet(snapshot: snapshot, app: app)
-            return
-        }
-        // No selection resolved — still open a sheet with the app's menu commands
-        // so cmd-hold always surfaces something (never a dead key press).
-        presentGlobalShortcutSheet(for: app)
-    }
-
-    func isMailLikeApp(_ bundleID: String) -> Bool {
-        ["com.apple.mail", "com.microsoft.Outlook", "com.readdle.smartemail-Mac"]
-            .contains(bundleID)
-    }
-
-    func currentSelectionSheetSnapshot(
-        refresh: Bool,
-        app: NSRunningApplication?
-    ) -> SelectionContextSnapshot? {
-        if refresh, let app, app.bundleIdentifier != Bundle.main.bundleIdentifier {
-            AXContextReader.shared.refresh(from: app)
-            axContext = AXContextReader.shared.current
-        }
-
-        let sourceAppName = app?.localizedName ?? frontmost.name
-        let sourceBundleID = app?.bundleIdentifier ?? frontmost.bundleID
-        let files: [URL] = {
-            let axFiles = isDismissedFinderSelection(axContext.selectedFilePaths)
-                ? []
-                : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
-            if !axFiles.isEmpty { return axFiles }
-            if case .filesSelected(let urls) = currentContext,
-                !isDismissedFinderSelection(urls)
-            {
-                return urls
-            }
-            // Mail attachments aren't in the AX file-selection path — resolve the
-            // focused/selected attachment's cached file URL on demand so it gets
-            // real file actions (Open With, Quick Look, Share).
-            if isMailLikeApp(sourceBundleID), let pid = app?.processIdentifier {
-                let attachments = ContextDetector.shared.getMailAttachmentFiles(pid: pid)
-                if !attachments.isEmpty { return attachments }
-            }
-            return []
-        }()
-
-        if !files.isEmpty {
-            let title = files.count == 1 ? files[0].lastPathComponent : "\(files.count) items selected"
-            let subtitle = files.count == 1
-                ? files[0].deletingLastPathComponent().lastPathComponent
-                : sourceAppName
-            return SelectionContextSnapshot(
-                sourceAppName: sourceAppName,
-                sourceBundleID: sourceBundleID,
-                selectedText: nil,
-                selectedFiles: files,
-                iconName: files.count == 1
-                    ? fileIcon(for: files[0].pathExtension.lowercased())
-                    : "doc.on.doc.fill",
-                title: title,
-                subtitle: subtitle
-            )
-        }
-
-        let text: String? = {
-            if let text = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-                text.count > 2
-            {
-                return text
-            }
-            if case .textSelected(let text) = currentContext {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.count > 2 ? trimmed : nil
-            }
-            return nil
-        }()
-
-        if let text {
-            return SelectionContextSnapshot(
-                sourceAppName: sourceAppName,
-                sourceBundleID: sourceBundleID,
-                selectedText: text,
-                selectedFiles: [],
-                iconName: "text.cursor",
-                title: String(text.prefix(48)),
-                subtitle: sourceAppName
-            )
-        }
-
-        return nil
-    }
-
-    func presentGlobalShortcutSheet(for app: NSRunningApplication?) {
-        guard let app,
-            !app.isTerminated,
-            app.bundleIdentifier != Bundle.main.bundleIdentifier
-        else { return }
-
-        AppDelegate.shared?.recordFrontmostApp(app)
-        ContextDockEnvironment.shared.frontmostAppDidChange(
-            name: app.localizedName ?? "",
-            bundleID: app.bundleIdentifier ?? ""
-        )
-
-        globalContextActivation = nil
-        aiMode.isActive = false
-        shortcutSheetSelectionSnapshot = nil
-        shortcutSheetSearchQuery = ""
-        shortcutSheetFocusedCommandID = nil
-        shortcutSheetSourcePID = app.processIdentifier
-        shortcutSheetAppName = app.localizedName ?? "App"
-
-        let cachedItems = MenuWarmCacheService.shared.cachedMenuItems(for: app, maxResults: 180)
-        if !cachedItems.isEmpty {
-            liveMenuItems = cachedItems
-        } else {
-            liveMenuItems = []
-        }
-        showStandaloneShortcutSheetPanel(appName: shortcutSheetAppName)
-
-        Task { @MainActor in
-            await MenuWarmCacheService.shared.warm(app: app, force: true)
-            let warmedItems = MenuWarmCacheService.shared.cachedMenuItems(for: app, maxResults: 180)
-            if !warmedItems.isEmpty {
-                self.liveMenuItems = warmedItems
-            }
-            for _ in 0..<6 {
-                if !self.liveMenuItems.isEmpty { break }
-                try? await Task.sleep(nanoseconds: 120_000_000)
-            }
-            guard !self.isCompactSmartScope else { return }
-            self.shortcutSheetFocusedCommandID = nil
-            self.showShortcutSheet = true
-            ShortcutSheetPanelPresenter.shared.update(
-                rootView: self.shortcutSheetPanelRootView(appName: self.shortcutSheetAppName)
-            )
-        }
-    }
-
-    func presentSelectionCommandSheet(
-        snapshot: SelectionContextSnapshot,
-        app: NSRunningApplication?
-    ) {
-        if let app {
-            AppDelegate.shared?.recordFrontmostApp(app)
-            ContextDockEnvironment.shared.frontmostAppDidChange(
-                name: app.localizedName ?? "",
-                bundleID: app.bundleIdentifier ?? ""
-            )
-            shortcutSheetSourcePID = app.processIdentifier
-            shortcutSheetAppName = app.localizedName ?? snapshot.sourceAppName
-            let cachedItems = MenuWarmCacheService.shared.cachedMenuItems(for: app, maxResults: 180)
-            liveMenuItems = cachedItems
-        } else {
-            shortcutSheetSourcePID = 0
-            shortcutSheetAppName = snapshot.sourceAppName
-            liveMenuItems = []
-        }
-
-        aiMode.isActive = false
-        shortcutSheetSelectionSnapshot = snapshot
-        shortcutSheetSelectionExpanded = false
-        shortcutSheetSearchQuery = ""
-        shortcutSheetFocusedCommandID = nil
-        primeFinderContextualActionsForSelectionSheet(snapshot)
-        showStandaloneShortcutSheetPanel(appName: shortcutSheetAppName, preserveSelection: true)
-
-        guard let app else { return }
-        Task { @MainActor in
-            await MenuWarmCacheService.shared.warm(app: app, force: true)
-            let warmedItems = MenuWarmCacheService.shared.cachedMenuItems(for: app, maxResults: 180)
-            if !warmedItems.isEmpty {
-                self.liveMenuItems = warmedItems
-                ShortcutSheetPanelPresenter.shared.update(
-                    rootView: self.shortcutSheetPanelRootView(appName: self.shortcutSheetAppName)
-                )
-            }
-        }
-    }
-
-    func primeFinderContextualActionsForSelectionSheet(_ snapshot: SelectionContextSnapshot) {
-        guard snapshot.sourceBundleID == "com.apple.finder",
-            !snapshot.selectedFiles.isEmpty,
-            !FinderContextualMenuActionSource.shared.hasFreshCache(for: snapshot.selectedFiles)
-        else { return }
-
-        _ = FinderContextualMenuActionSource.shared.actions(for: snapshot.selectedFiles)
-    }
-
-    func showStandaloneShortcutSheetPanel(appName: String, preserveSelection: Bool = false) {
-        let preservedSnapshot = preserveSelection ? shortcutSheetSelectionSnapshot : nil
-        closeShortcutSheet(resetSearch: false)
-        if preserveSelection {
-            shortcutSheetSelectionSnapshot = preservedSnapshot
-        }
-        AppDelegate.shared?.launcherWindow?.orderOut(nil)
-        showShortcutSheet = true
-        ShortcutSheetPanelPresenter.shared.show(
-            rootView: shortcutSheetPanelRootView(appName: appName),
-            initialHeight: shortcutSheetSelectionSnapshot != nil ? 132 : 560,
-            onKeyDown: handleShortcutSheetPanelKey
-        )
-    }
-
-    func shortcutSheetPanelRootView(appName: String) -> some View {
-        Group {
-            if let snapshot = shortcutSheetSelectionSnapshot {
-                SelectionCommandSheetView(
-                    snapshot: snapshot,
-                    commands: selectionSheetAllCommands(for: snapshot),
-                    onSelect: executeSelectionSheetCommand,
-                    onClose: { closeShortcutSheet() },
-                    onExpand: { expandSelectionCommandSheet(snapshot) },
-                    onAdd: { addSelectionSheetContextToDock(snapshot) },
-                    chatMessages: shortcutSheetChatMessages,
-                    isChatLoading: shortcutSheetChatLoading,
-                    onAsk: { query in askSelectionSheetAI(query: query, snapshot: snapshot) },
-                    focusedCommandID: shortcutSheetFocusedCommandIDBinding,
-                    searchQuery: shortcutSheetSearchQueryBinding,
-                    isExpanded: shortcutSheetSelectionExpandedBinding
-                )
-            } else {
-                ShortcutSheetView(
-                    commands: shortcutSheetAllCommands,
-                    appName: appName,
-                    onSelect: executeShortcutSheetCommand,
-                    focusedCommandID: shortcutSheetFocusedCommandIDBinding,
-                    searchQuery: shortcutSheetSearchQueryBinding
-                )
-            }
-        }
-        .padding(10)
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.36), .white.opacity(0.08)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
-    }
-
-    func handleShortcutSheetPanelKey(_ event: NSEvent) -> Bool {
-        handleShortcutSheetKey(event) == nil
-    }
-
-    func closeShortcutSheet(resetSearch: Bool = true) {
-        showShortcutSheet = false
-        shortcutSheetFocusedCommandID = nil
-        shortcutSheetSelectionSnapshot = nil
-        shortcutSheetSelectionExpanded = false
-        shortcutSheetChatMessages = []
-        shortcutSheetChatLoading = false
-        if resetSearch {
-            shortcutSheetSearchQuery = ""
-        }
-        ShortcutSheetPanelPresenter.shared.close()
-    }
-
-    func refreshShortcutSheetPanel() {
-        guard showShortcutSheet else { return }
-        ShortcutSheetPanelPresenter.shared.update(
-            rootView: shortcutSheetPanelRootView(appName: shortcutSheetAppName)
-        )
-    }
-
-    /// Send a selection-sheet query directly to the user's selected AI provider
-    /// (no L2 chat pipeline) and show the conversation inline in the sheet.
-    func askSelectionSheetAI(query: String, snapshot: SelectionContextSnapshot) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let provider = settings.selectedAIProvider
-        let rawKey = AppSettings.shared.getAPIKey(for: provider)
-        let apiKey: String? = rawKey.isEmpty ? nil : rawKey
-
-        shortcutSheetChatMessages.append(AIChatMessage(role: .user, content: trimmed))
-        shortcutSheetSearchQuery = ""
-        shortcutSheetSelectionExpanded = true
-        shortcutSheetFocusedCommandID = nil
-
-        if provider.requiresAPIKey && apiKey == nil {
-            shortcutSheetChatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content:
-                        "No API key found for \(provider.shortName). Add it in Settings → AI Provider.",
-                    isError: true
-                ))
-            refreshShortcutSheetPanel()
-            return
-        }
-
-        shortcutSheetChatLoading = true
-        refreshShortcutSheetPanel()
-
-        let history: [ChatMessage] = shortcutSheetChatMessages.dropLast()
-            .filter { $0.role != .tool }
-            .map { ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.content) }
-
-        Task {
-            do {
-                let response = try await AIProviderService.shared.sendMessage(
-                    trimmed,
-                    context: snapshot.userContext,
-                    provider: provider,
-                    apiKey: apiKey,
-                    conversationHistory: history,
-                    additionalContextPrompt: selectionSheetAIContextPrompt(snapshot)
-                )
-                await MainActor.run {
-                    shortcutSheetChatMessages.append(
-                        AIChatMessage(role: .assistant, content: response))
-                    shortcutSheetChatLoading = false
-                    refreshShortcutSheetPanel()
-                }
-            } catch {
-                await MainActor.run {
-                    shortcutSheetChatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "\(provider.shortName) error: \(error.localizedDescription)",
-                            isError: true
-                        ))
-                    shortcutSheetChatLoading = false
-                    refreshShortcutSheetPanel()
-                }
-            }
-        }
-    }
-
-    func selectionSheetAIContextPrompt(_ snapshot: SelectionContextSnapshot) -> String {
-        var parts = [
-            "The user asked this from a selection sheet over \(snapshot.sourceAppName)."
-        ]
-        if let text = snapshot.selectedText, !text.isEmpty {
-            parts.append("Selected text:\n\(String(text.prefix(4000)))")
-        }
-        if !snapshot.selectedFiles.isEmpty {
-            parts.append(
-                "Selected files:\n"
-                    + snapshot.selectedFiles.prefix(20).map(\.path).joined(separator: "\n"))
-        }
-        return parts.joined(separator: "\n\n")
     }
 
     func updateWindowSize(

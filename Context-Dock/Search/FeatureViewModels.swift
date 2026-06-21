@@ -35,15 +35,6 @@ final class LauncherViewModel: ObservableObject {
     @Published var folderPreviewSelectedFile: String?
     @Published var showContactPreview = false
     @Published var contactPreviewData: SearchResult?
-    @Published var showShortcutSheet = false
-    @Published var shortcutSheetFocusedCommandID: String?
-    @Published var shortcutSheetSearchQuery = ""
-    @Published var shortcutSheetSourcePID: pid_t = 0
-    @Published var shortcutSheetAppName = "App"
-    @Published var shortcutSheetSelectionSnapshot: SelectionContextSnapshot?
-    @Published var shortcutSheetSelectionExpanded = false
-    @Published var shortcutSheetChatMessages: [AIChatMessage] = []
-    @Published var shortcutSheetChatLoading = false
     /// Bumped on field-editor selection changes so the inline-scope overlay
     /// re-renders its caret at the real cursor position.
     @Published var searchInputCaretTick = 0

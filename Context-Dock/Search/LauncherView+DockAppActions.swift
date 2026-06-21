@@ -170,6 +170,10 @@ extension LauncherView {
                 }
             }
         }
+        // Bring the window to centre once it's restored/front (after the unminimize above).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            _ = WindowManagementService.shared.execute(.center, sourceApp: app)
+        }
         // Don't steal focus back — the activated app should remain frontmost
     }
 
@@ -759,11 +763,9 @@ extension LauncherView {
             HStack(spacing: 5) {
                 ForEach(apps, id: \.processIdentifier) { app in
                     Button {
-                        if isGlobalContextActive {
-                            _ = switchGlobalContextScope(to: app)
-                        } else {
-                            activateRunningAppFromDock(app)
-                        }
+                        // Running-app pills are app switchers — activate, unminimize, front,
+                        // and centre the window. They do NOT scope to the app's menus.
+                        activateRunningAppFromDock(app)
                     } label: {
                         if let icon = resolvedRunningAppIcon(for: app) {
                             Image(nsImage: icon)
@@ -780,11 +782,7 @@ extension LauncherView {
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
-                    .help(
-                        isGlobalContextActive
-                            ? "Scope to \(app.localizedName ?? "app")"
-                            : "Switch to \(app.localizedName ?? "app")"
-                    )
+                    .help("Switch to \(app.localizedName ?? "app")")
                 }
             }
             .padding(.horizontal, 7)

@@ -2437,6 +2437,9 @@ extension LauncherView {
         }
 
         if let targetApp {
+            // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
+            // target) so its menus actually populate in Global Context scope.
+            crossAppMenuNeedsLiveLoad = true
             seedCrossAppMenuCache(for: targetApp)
             loadCrossAppMenu(for: targetApp)
         } else {
@@ -2974,6 +2977,18 @@ extension LauncherView {
         if lockedFindToken != nil { return [] }
         // Inline Share Sheet: show ONLY the live native share destinations.
         if inlineShareActive { return buildInlineShareDestinationPills(query: q) }
+
+        // Selection Scope FIRST — dedicated to the selection. Runs before the question-style
+        // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
+        // point is to ask the AI about the selection). Never empty → stable result sheet.
+        if isGlobalContextActive && hasActiveDockContextSelection {
+            var sel: [DockPill] = [selectionScopeAskAIPill(query: q)]
+            sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
+            sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
+            sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
+            return sel
+        }
+
         if isQuestionStyleDockQuery(q) { return [] }
         if isContextDockChatRoutingLocked { return [] }
 
@@ -3392,9 +3407,12 @@ extension LauncherView {
         let favs = settings.favouriteMenuPills(for: activeBundleId)
         let isScopedToOtherApp =
             isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmost.bundleID
+        // Selection Scope (Global Context + active selection) is dedicated to the selection —
+        // share + AI actions only. Don't surface the frontmost app's menus there.
+        let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
         let useSeededMenuPills =
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
-            && !isScopedToOtherApp
+            && !isScopedToOtherApp && !inSelectionScope
 
         if isGlobalContextActive && hasActiveDockContextSelection {
             pills.append(contentsOf: crossAppPills)
@@ -3465,6 +3483,16 @@ extension LauncherView {
         // Submenu drill-down: when query matches a non-leaf menu item, surface its leaf
         // children as direct-action pills ranked before everything else.
         if let subCtx = submenuGhostContext {
+            // A Share parent (File ▸ Share ▸ …) NEVER drills into its AX children — show the
+            // live NSSharingService destinations instead (no first-child-opens-AirDrop bug,
+            // no AX timing). The app's own Share children are ignored on purpose.
+            if isShareSheetTitle(subCtx.parent.title) {
+                let shareItems = ShareIntentRouter.shared.shareableItems(
+                    for: effectiveAXContextForConversation())
+                if !shareItems.isEmpty {
+                    return pills + shareDestinationPills(listingItems: shareItems, filter: "")
+                }
+            }
             let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
             let visibleChildren =
                 allowAppleMenuItems

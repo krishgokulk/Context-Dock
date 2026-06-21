@@ -35,7 +35,6 @@ extension LauncherView {
             if self.isHoveringPillRow
                 && self.showContextInDock
                 && self.currentDockSurfaceMode != .generalChat
-                && !self.showShortcutSheet
                 && abs(dx) > abs(dy)  // horizontal-dominant gesture
             {
                 if event.phase == .began { self.pillScrollAccumulator = 0 }

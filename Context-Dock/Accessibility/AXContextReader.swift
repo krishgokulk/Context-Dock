@@ -141,6 +141,21 @@ final class AXContextReader {
         updateIfChanged(ctx)
     }
 
+    /// Reads ONLY the current selection (selected text + Finder file selection) and merges it
+    /// into `current`. Used after the lightweight open-path refresh so Context Dock can show a
+    /// selection chip/button without paying for a full menu/URL read on first paint.
+    func refreshSelectionOnly(from app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        let axApp = AXUIElementCreateApplication(pid)
+        var ctx = current
+        ctx.selectedText = readSelectedText(axApp)
+        if app.bundleIdentifier == "com.apple.finder" {
+            ctx.selectedFilePaths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
+        }
+        ctx.timestamp = Date()
+        updateIfChanged(ctx)
+    }
+
     /// Event-driven entry point — called by AXEventBus subscribers.
     func apply(event: AXEvent) {
         switch event {

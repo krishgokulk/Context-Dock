@@ -821,6 +821,9 @@ class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
+    @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
+    @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
+        true
     /// 0…1 dark tint laid over the Liquid Glass dock shell. 0 = pure glass, 1 = much
     /// darker. User-adjustable in Appearance settings.
     @AppStorage("glassDarkness") var glassDarkness: Double = 0

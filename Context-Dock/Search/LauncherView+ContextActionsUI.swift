@@ -88,6 +88,10 @@ extension LauncherView {
                     aiMode.streamingId = nil
                     aiMode.isLoading = false
                     aiMode.attachments = []
+                    aiMode.selectionText = nil
+                    aiMode.selectionFiles = []
+                    aiMode.selectionURL = nil
+                    aiMode.pendingShare = nil
                     hasUserSentMessageInCurrentSession = false
                     AIProviderService.shared.resetOnDeviceSession()
                 }) {

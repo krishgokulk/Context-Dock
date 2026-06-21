@@ -826,7 +826,6 @@ extension LauncherView {
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
                 inlineShareActive = false
-                showShortcutSheet = false
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 activateSearchField()
             }
@@ -918,11 +917,22 @@ extension LauncherView {
         if let app = AppDelegate.shared?.previousFrontmostApp {
             Task.detached(priority: .utility) {
                 await AXContextReader.shared.refreshLightweight(from: app)
+                // Also read the live selection so Context Dock shows a clickable selection
+                // chip/button (lightweight skips it for first-paint speed).
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
                     self.axContext = newCtx
                     if !self.contextDockIsFrontmostApplication {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
+                    }
+                    // Launched with something selected → open straight into Selection Scope
+                    // (Global Context + selection), not Context Dock — and build the pills so
+                    // the result sheet (Ask AI + actions + share) is visible immediately.
+                    if self.openInSelectionScopeIfSelectionPresent() {
+                        self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                        self.requestWindowSizeUpdate(reason: .modeChanged)
+                        return
                     }
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)

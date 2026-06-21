@@ -32,7 +32,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .frontmostAppAdapters: return "App Adapters"
         case .mediaActions: return "Media Actions"
         case .workflows: return "Automation / Workflows"
-        case .shortcutSheetWorkflows: return "Shortcut Sheet"
+        case .shortcutSheetWorkflows: return "Selection Scope"
         case .permissions: return "Permissions"
         case .appearance: return "Appearance"
         case .hotkeys: return "Hotkeys"
@@ -54,7 +54,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .frontmostAppAdapters: return "App-specific adapters and actions."
         case .mediaActions: return "Image, video, audio, and PDF actions."
         case .workflows: return "Context rules and automation flows."
-        case .shortcutSheetWorkflows: return "Actions shown on long-press Command selection sheet."
+        case .shortcutSheetWorkflows: return "Actions for the Selection Scope — share and act on selected text or files."
         case .permissions: return "Accessibility, automation, files, network, and AI risk."
         case .appearance: return "Visual preferences for dock and panels."
         case .hotkeys: return "Global keyboard shortcuts and launcher bindings."
@@ -166,7 +166,7 @@ extension SettingsSidebarSection {
                     .frontmostAppAdapters
                 ]),
                 SettingsSidebarRow("Media Actions", page: .mediaActions),
-                SettingsSidebarRow("Shortcut Sheet", page: .shortcutSheetWorkflows)
+                SettingsSidebarRow("Selection Scope", page: .shortcutSheetWorkflows)
             ]
         ),
         SettingsSidebarSection(

@@ -71,11 +71,6 @@ struct DataStorageSettingsPage: View {
                     }
                 }
 
-                CardSection(title: "File Index", systemImage: "magnifyingglass.circle") {
-                    FileIndexStatusView()
-                        .padding(.vertical, 12)
-                }
-
                 CardSection(title: "Search Directories", systemImage: "folder.fill") {
                     SearchDirectoriesListView()
                         .padding(.vertical, 12)

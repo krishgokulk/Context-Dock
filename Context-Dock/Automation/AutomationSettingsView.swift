@@ -997,7 +997,7 @@ struct AutomationSettingsView: View {
         case .extensionsCLIToolScope: return "CLI Tool Scope"
         case .frontmostAppAdapters: return "App Adapters"
         case .workflows: return "Workflows"
-        case .shortcutSheetWorkflows: return "Shortcut Sheet"
+        case .shortcutSheetWorkflows: return "Selection Scope"
         case .advanced: return "Menu Cache"
         default: return selectedCategory.rawValue
         }
@@ -4308,7 +4308,7 @@ private struct AppActionSamplesSection: View {
 enum ImportDestination: String, CaseIterable {
     case globalContext = "Global Context"
     case contextDock   = "Context Dock"
-    case shortcutSheet = "Shortcut Sheet"
+    case shortcutSheet = "Selection Scope"
 
     var icon: String {
         switch self {
@@ -4330,7 +4330,7 @@ enum ImportDestination: String, CaseIterable {
         switch self {
         case .globalContext: return "Always-available command from global search"
         case .contextDock:   return "Auto-shows dock pill when URL, app, or file matches"
-        case .shortcutSheet: return "Appears on long-press Command selection sheet"
+        case .shortcutSheet: return "Appears in the Selection Scope for selected text or files"
         }
     }
 
@@ -4338,7 +4338,7 @@ enum ImportDestination: String, CaseIterable {
         switch self {
         case .globalContext: return "→ saved as Script"
         case .contextDock:   return "→ saved as Context Trigger"
-        case .shortcutSheet: return "→ saved as Shortcut Sheet Action"
+        case .shortcutSheet: return "→ saved as Selection Scope Action"
         }
     }
 }

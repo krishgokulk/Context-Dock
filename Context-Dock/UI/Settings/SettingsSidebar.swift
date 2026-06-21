@@ -13,7 +13,7 @@ struct SettingsSidebar: View {
         // floating, system selection highlight) handled by NavigationSplitView.
         List(selection: $selectedPage) {
             ForEach(SettingsSidebarSection.all) { section in
-                Section(section.title) {
+                Section {
                     ForEach(section.rows) { row in
                         if let page = row.page {
                             sidebarLabel(page, title: row.title)
@@ -33,6 +33,18 @@ struct SettingsSidebar: View {
                             }
                         }
                     }
+                } header: {
+                    HStack(spacing: 6) {
+                        Text(section.title)
+                        if section.id == "extensions" {
+                            Text("BETA")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.purple)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.purple.opacity(0.15), in: Capsule())
+                        }
+                    }
                 }
             }
         }
@@ -50,8 +62,18 @@ struct SettingsSidebar: View {
 
     private func sidebarLabel(_ page: SettingsPage, title: String) -> some View {
         Label {
-            Text(title)
-                .font(.system(size: 13))
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13))
+                if page == .aiProviders {
+                    Text("BETA")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.purple)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.purple.opacity(0.15), in: Capsule())
+                }
+            }
         } icon: {
             Image(systemName: page.icon)
                 .foregroundStyle(page.color)

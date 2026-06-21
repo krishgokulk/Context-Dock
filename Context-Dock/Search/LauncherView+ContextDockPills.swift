@@ -1845,14 +1845,11 @@ extension LauncherView {
         guard nq.count >= 2 else { return [] }
         // Only when the app truly has a Share menu, or there's a selection to share.
         guard hasActiveDockContextSelection || frontmostAppHasShareMenu() else { return [] }
-        // If the app exposes its Share destinations as AX menu items (e.g. DuckDuckGo's
-        // File ▸ Share ▸ Notes/Mail/…), DON'T duplicate them with NSSharingService — the
-        // AX items run the app's OWN share, which provides the exact payload (the current
-        // page/selection). NSSharingService only fills the gap for apps whose share menu
-        // has no captured children (Safari/Preview lazy submenus, bare "Share…").
-        if frontmostAppHasShareSubmenuChildren(), !hasActiveDockContextSelection {
-            return []
-        }
+        // Share is ALWAYS sourced from NSSharingService.sharingServices(forItems:) — every
+        // installed Share Extension (LocalSend, Downie, Bridges, Photomator, …), exactly like
+        // the system Share Sheet. We never AX-click an app's Share children (avoids the
+        // first-child-opens-AirDrop bug and AX timing). AX is only used to DETECT that a
+        // Share menu exists; the payload + execution are pure macOS.
         let genericVerbs = ["share", "send", "export"]
         let destinationVerbs = ["airdrop", "mail", "message", "messages", "notes", "reminders"]
         let isGeneric = genericVerbs.contains { $0.hasPrefix(nq) }
@@ -1884,10 +1881,18 @@ extension LauncherView {
                 badge: "Share",
                 execute: {
                     inlineShareActive = false
-                    // Execute THIS exact service object with the live items — object
-                    // identity, never resolved by title (no "always AirDrop" bug).
+                    // Learn the user's preferred destinations — ranks them higher next time.
+                    UsageTracker.shared.recordAccess(for: "share-dest:\(normalizedTitle)")
+                    // Resolve the live payload BEFORE hiding (needs the source app context),
+                    // then dismiss the launcher panel and run the service once the previous
+                    // app is frontmost — NSSharingService can't present its UI (Mail/Messages
+                    // compose, AirDrop sheet) from our background accessory panel.
                     let live = liveShareItems()
-                    dest.perform(withItems: live.isEmpty ? listingItems : live)
+                    let items = live.isEmpty ? listingItems : live
+                    self.forceHideLauncherAfterResultExecution()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        dest.perform(withItems: items)
+                    }
                 }
             )
             pill.menuItemImage = dest.image ?? shareDestinationIcon(forTitle: dest.title)
@@ -1896,27 +1901,103 @@ extension LauncherView {
             pill.menuContext = "Share"
             pill.rankingKind = "submenuChild"
             pill.hasLiveAvailability = true
-            pill.rankingScore = Double(1_000 - index)
+            // Frecency-ranked: destinations you use most float to the top, with the system
+            // order as the tiebreaker.
+            let usage = UsageTracker.shared.getScore(for: "share-dest:\(normalizedTitle)")
+            pill.rankingScore = usage * 1_000 + Double(1_000 - index)
             pill.trackingIdentifier = "share-dest:\(normalizedTitle)"
             pill.searchTerms = [dest.title, "share", "send", "airdrop", "export"]
             return pill
         }
     }
 
+    /// Enter an AI chat grounded in the current selection (text / files / page URL). Every
+    /// message in this session carries the selection, so the AI always answers about the
+    /// user's current work — webpage, document, files. Submits `initialQuery` if given,
+    /// otherwise greets with an open prompt.
+    func enterSelectionChat(initialQuery: String) {
+        let ctx = effectiveAXContextForConversation()
+        let text: String? = {
+            if case .text(let t) = activeSelection, !t.isEmpty { return t }
+            return ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+        aiMode.selectionText = (text?.isEmpty == false) ? text : nil
+        aiMode.selectionFiles = effectiveSelectedFileURLsForConversation()
+        aiMode.selectionURL = ctx.currentURL?.isEmpty == false ? ctx.currentURL : nil
+
+        globalContextActivation = nil
+        aiMode.isActive = true
+        hasUserSentMessageInCurrentSession = true
+        searchState.query = ""
+
+        let q = initialQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            aiMode.messages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content:
+                        "What would you like to do with this? I can summarize or explain it, send it to Notes, Reminders, Mail or Messages, or anything else — just ask."))
+            requestWindowSizeUpdate(reason: .chatChanged)
+        } else {
+            searchState.query = q
+            DispatchQueue.main.async { submitAIQuery() }
+        }
+    }
+
+    /// Always-first Selection Scope suggestion — keeps the result sheet stable (never empty)
+    /// and is the entry point to selection-grounded chat. Adapts to the typed query.
+    func selectionScopeAskAIPill(query q: String) -> DockPill {
+        let typed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = typed.isEmpty ? "Ask AI — what would you like to do?" : "Ask AI: \(typed)"
+        var pill = DockPill(
+            id: "selection-ask-ai",
+            name: title,
+            icon: "sparkles",
+            accentColorName: "purple",
+            badge: "Selection",
+            execute: { enterSelectionChat(initialQuery: typed) }
+        )
+        pill.rankingKind = "selectionAI"
+        pill.rankingScore = 100_000  // always first
+        pill.trackingIdentifier = "selection-ask-ai"
+        pill.searchTerms = ["ask", "ai", "chat", "selection", "what", "do"]
+        return pill
+    }
+
     /// Selection is additive in Context Dock: these AI actions sit beside normal app menus.
+    /// Works for BOTH text and file selections (e.g. "summarize this PDF") — the selection
+    /// chat injects the file content, so the same actions apply.
     func buildContextDockSelectionAIPills(query q: String) -> [DockPill] {
-        guard !isGlobalContextActive, !aiMode.isActive else { return [] }
-        guard case .text(let selectedText) = activeSelection, !selectedText.isEmpty else { return [] }
+        guard !aiMode.isActive else { return [] }
+
+        let badge: String
+        let isText: Bool
+        switch activeSelection {
+        case .text(let t) where !t.isEmpty:
+            badge = "Selection · \(t.count) chars"
+            isText = true
+        case .files(let urls) where !urls.isEmpty:
+            badge = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
+            isText = false
+        default:
+            return []
+        }
 
         let normalizedQuery = normalizedDockPillText(q)
-        let actions: [(name: String, icon: String, prompt: String)] = [
-            ("Explain", "text.magnifyingglass", "Explain the selected text"),
-            ("Summarize", "text.alignleft", "Summarize the selected text"),
-            ("Rewrite", "pencil.line", "Rewrite the selected text clearly"),
-            ("Translate", "character.book.closed", "Translate the selected text"),
+        let textActions: [(name: String, icon: String, prompt: String)] = [
+            ("Explain", "text.magnifyingglass", "Explain this"),
+            ("Summarize", "text.alignleft", "Summarize this"),
+            ("Rewrite", "pencil.line", "Rewrite this clearly"),
+            ("Translate", "character.book.closed", "Translate this"),
         ]
+        let fileActions: [(name: String, icon: String, prompt: String)] = [
+            ("Summarize", "doc.text.magnifyingglass", "Summarize this document"),
+            ("Explain", "text.magnifyingglass", "Explain what this file is about"),
+            ("Key points", "list.bullet", "List the key points of this document"),
+        ]
+        let actions = isText ? textActions : fileActions
 
-        return actions.compactMap { action in
+        return actions.compactMap { action -> DockPill? in
             let searchable = normalizedDockPillText("\(action.name) \(action.prompt)")
             guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
             var pill = DockPill(
@@ -1924,18 +2005,16 @@ extension LauncherView {
                 name: action.name,
                 icon: action.icon,
                 accentColorName: "purple",
-                badge: "Selected text · \(selectedText.count) chars",
-                execute: {
-                    aiMode.isActive = true
-                    searchState.query = action.prompt
-                    DispatchQueue.main.async { submitAIQuery() }
-                }
+                badge: badge,
+                // Enter selection-grounded chat with this instruction — the session keeps the
+                // selection (text or files), so follow-ups ("now send it to mail") still work.
+                execute: { enterSelectionChat(initialQuery: action.prompt) }
             )
             pill.rankingKind = "selectionAI"
             pill.sourceBundleId = axContext.bundleId
             pill.sourceAppName = axContext.appName
             pill.trackingIdentifier = "context-selection-ai:\(action.name.lowercased())"
-            pill.searchTerms = [action.name, action.prompt, "selected text", "ai"]
+            pill.searchTerms = [action.name, action.prompt, "selection", "ai"]
             return pill
         }
     }
