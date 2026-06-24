@@ -32,7 +32,7 @@ final class AppUpdateService: ObservableObject {
     @Published private(set) var downloadProgress: Double = 0
 
     private let manifestURL = URL(
-        string: "https://raw.githubusercontent.com/krishgokulk/Context-Dock/codex-context-dock-polish-fixes/update-manifest.json"
+        string: "https://raw.githubusercontent.com/krishgokulk/Context-Dock/main/update-manifest.json"
     )!
 
     private init() {}
