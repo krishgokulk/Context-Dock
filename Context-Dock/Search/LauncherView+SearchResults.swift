@@ -34,7 +34,7 @@ extension LauncherView {
     // MARK: - List view (Spotlight / Raycast-style vertical result sheet)
 
     func dockPillListView(pills: [DockPill]) -> some View {
-        let visiblePills = Array(pills.prefix(maxListViewDockPills))
+        let visiblePills = clusterPillsByGroup(Array(pills.prefix(maxListViewDockPills)))
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
@@ -97,6 +97,27 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    /// Cluster pills so every pill sharing a group title is contiguous, keeping
+    /// the order each group first appears and the relevance order within a group.
+    /// Without this, score-interleaved results (app, file, app, file…) render a
+    /// repeated "Applications" header instead of one grouped section.
+    /// Pills carrying explicit separators define their own sections, so leave
+    /// those lists untouched.
+    func clusterPillsByGroup(_ pills: [DockPill]) -> [DockPill] {
+        guard !pills.contains(where: { $0.isSeparator }) else { return pills }
+        var order: [String] = []
+        var buckets: [String: [DockPill]] = [:]
+        for pill in pills {
+            let group = dockListGroupTitle(for: pill)
+            if buckets[group] == nil {
+                order.append(group)
+                buckets[group] = []
+            }
+            buckets[group]?.append(pill)
+        }
+        return order.flatMap { buckets[$0] ?? [] }
     }
 
     func dockListGroupTitle(for pill: DockPill) -> String {
