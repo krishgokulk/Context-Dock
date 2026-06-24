@@ -21,5 +21,17 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: .openSettingsPage)) { note in
+            guard let raw = note.userInfo?["page"] as? String,
+                let page = SettingsPage(rawValue: raw)
+            else { return }
+            selectedPage = page
+        }
     }
+}
+
+extension Notification.Name {
+    /// Deep-link request to open the settings window to a specific page.
+    /// userInfo["page"] carries a `SettingsPage` rawValue.
+    static let openSettingsPage = Notification.Name("openSettingsPage")
 }

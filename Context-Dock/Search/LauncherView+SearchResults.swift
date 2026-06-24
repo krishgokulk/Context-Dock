@@ -126,6 +126,9 @@ extension LauncherView {
         let context = (pill.menuContext ?? "").lowercased()
         let name = pill.name.lowercased()
 
+        if kind == "setuphint" {
+            return "Search"
+        }
         if kind == "clipboard" {
             return "Clipboard Items"
         }

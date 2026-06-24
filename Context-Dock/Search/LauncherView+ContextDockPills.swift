@@ -623,7 +623,7 @@ extension LauncherView {
         dockPillBuildGeneration &+= 1
         contextDockViewModel.clearPendingPillBuild(cancelBuild: true)
 
-        let ranked = rankDockPills(
+        var ranked = rankDockPills(
             buildFinderDesktopModePills(query: q),
             rawQuery: q,
             rankingQuery: q,
@@ -632,8 +632,49 @@ extension LauncherView {
             isExplicitAppScope: false,
             includeNonMatching: q.isEmpty
         )
+        // No user folders configured and nothing selected in Finder → there is
+        // nothing to search. Surface a one-tap hint (appended after ranking so it
+        // survives even when the query matches nothing) that opens Settings →
+        // Data & Storage where search directories are added.
+        if finderDesktopHasNoSearchScope {
+            ranked.append(finderAddSearchDirectorySuggestionPill())
+        }
         replaceCachedDockPills(ranked, preserveFocus: preserveFocus)
         lastPillQuery = q
+    }
+
+    /// True when the Finder desktop scope has no folders to search: the user has
+    /// added no search directories and no Finder selection is active.
+    var finderDesktopHasNoSearchScope: Bool {
+        settings.searchDirectories.filter { !$0.path.isEmpty }.isEmpty
+            && effectiveFinderSelectionURLsForPills().isEmpty
+    }
+
+    /// Hint row shown when no search scope exists — opens Settings → Data &
+    /// Storage so the user can add a folder to search.
+    func finderAddSearchDirectorySuggestionPill() -> DockPill {
+        var pill = DockPill(
+            id: "finder-add-search-dir",
+            name: "Add a folder to search files & folders",
+            icon: "folder.badge.plus",
+            accentColorName: "blue",
+            badge: "Settings › Data & Storage",
+            execute: {
+                AppDelegate.shared?.showSettings()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    NotificationCenter.default.post(
+                        name: .openSettingsPage,
+                        object: nil,
+                        userInfo: ["page": SettingsPage.dataStorage.rawValue]
+                    )
+                }
+            }
+        )
+        pill.rankingKind = "setupHint"
+        pill.trackingIdentifier = "finder-setup-hint"
+        pill.searchTerms = ["add", "folder", "search", "directory", "settings"]
+        pill.rankingScore = -1  // keep at the very end of the list
+        return pill
     }
 
     func finderDesktopRecentApplicationPills(query: String) -> [DockPill] {
