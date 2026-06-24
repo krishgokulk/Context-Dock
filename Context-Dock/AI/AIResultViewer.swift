@@ -456,7 +456,9 @@ struct AIResultViewer: View {
             let decoder = JSONDecoder()
             structuredResult = try decoder.decode(StructuredResult.self, from: data)
         } catch {
+            #if DEBUG
             print("JSON Parse Error: \(error)")
+            #endif
             parseError = "Failed to parse results"
         }
     }

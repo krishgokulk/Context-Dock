@@ -12,8 +12,8 @@
 	"argv": [
 		"/opt/homebrew/bin/xcode-build-server"
 	],
-	"workspace": "/Users/gokulakannan/Desktop/Context-Dock/Context-Dock.xcodeproj/project.xcworkspace",
-	"build_root": "/Users/gokulakannan/Library/Developer/Xcode/DerivedData/Context-Dock-flfzqbpkpmlafvhhxwbudvrlitaa",
+	"workspace": "/Users/gokulakannan/Developer/Context-Dock/Context-Dock.xcodeproj/project.xcworkspace",
+	"build_root": "/Users/gokulakannan/Library/Developer/Xcode/DerivedData/Context-Dock-cglrjiojdpilgvgmmcrcodcyucbh",
 	"scheme": "Context-Dock",
 	"kind": "xcode"
 }

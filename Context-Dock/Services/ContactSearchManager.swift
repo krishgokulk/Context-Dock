@@ -18,28 +18,40 @@ final class ContactSearchManager: ObservableObject {
     @MainActor
     func requestPermission() async -> Bool {
         let status = CNContactStore.authorizationStatus(for: .contacts)
+        #if DEBUG
         print("👤 ContactSearchManager: Current status = \(status.rawValue) (.authorized=\(CNAuthorizationStatus.authorized.rawValue), .denied=\(CNAuthorizationStatus.denied.rawValue), .notDetermined=\(CNAuthorizationStatus.notDetermined.rawValue))")
+        #endif
 
         switch status {
         case .authorized:
+            #if DEBUG
             print("👤 ContactSearchManager: Already authorized")
+            #endif
             hasContactsPermission = true
             return true
         case .notDetermined:
+            #if DEBUG
             print("👤 ContactSearchManager: Not determined, requesting...")
+            #endif
             do {
                 try await store.requestAccess(for: .contacts)
                 let newStatus = CNContactStore.authorizationStatus(for: .contacts)
+                #if DEBUG
                 print("👤 ContactSearchManager: After request, status = \(newStatus.rawValue)")
+                #endif
                 hasContactsPermission = (newStatus == .authorized)
                 return hasContactsPermission
             } catch {
+                #if DEBUG
                 print("👤 ContactSearchManager: Request failed with error: \(error)")
+                #endif
                 hasContactsPermission = false
                 return false
             }
         default:
+            #if DEBUG
             print("👤 ContactSearchManager: Status is denied/restricted. User must enable in System Settings.")
+            #endif
             hasContactsPermission = false
             return false
         }
@@ -56,7 +68,9 @@ final class ContactSearchManager: ObservableObject {
                 self.hasContactsPermission = authorized
             }
         }
+        #if DEBUG
         print("👤 ContactSearchManager: checkPermission() = \(authorized) (status=\(status.rawValue))")
+        #endif
         return authorized
     }
 
@@ -137,7 +151,7 @@ final class ContactSearchManager: ObservableObject {
                         }
                     }
                 } catch {
-                    print("⚠️ Failed to enumerate contacts: \(error)")
+                    Swift.print("⚠️ Failed to enumerate contacts: \(error)")
                 }
 
                 continuation.resume(returning: results)

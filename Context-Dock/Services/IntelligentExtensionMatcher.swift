@@ -25,59 +25,87 @@ class IntelligentExtensionMatcher {
     func suggestExtensions(for context: DetectedContext) -> [SuggestedExtension] {
         var suggestions: [SuggestedExtension] = []
 
+        #if DEBUG
         print("🔍 [Matcher] ==========================================")
+        #endif
+        #if DEBUG
         print("🔍 [Matcher] Suggesting extensions for context: \(context.description)")
+        #endif
 
         switch context {
         case .files(let urls):
+            #if DEBUG
             print("🔍 [Matcher] Context type: FILES (\(urls.count) files)")
+            #endif
             suggestions = suggestForFiles(urls)
 
         case .text(let text):
+            #if DEBUG
             print("🔍 [Matcher] Context type: TEXT (\(text.prefix(50))...)")
+            #endif
             suggestions = suggestForText(text)
 
         case .app(let bundleId, let appName):
+            #if DEBUG
             print("🔍 [Matcher] Context type: APP (\(appName))")
+            #endif
             suggestions = suggestForApp(appName: appName, bundleId: bundleId)
 
         case .browserTab(let url, let title):
+            #if DEBUG
             print("🔍 [Matcher] Context type: BROWSER (\(title))")
+            #endif
             suggestions = suggestForBrowser(url: url, title: title)
 
         case .browserTabs(let tabs):
+            #if DEBUG
             print("🔍 [Matcher] Context type: BROWSER TABS (\(tabs.count) tabs)")
+            #endif
             // Use first tab for suggestions, or suggest tab management extensions
             if let firstTab = tabs.first {
                 suggestions = suggestForBrowser(url: firstTab.url, title: firstTab.title)
             }
 
         case .clipboard(let content):
+            #if DEBUG
             print("🔍 [Matcher] Context type: CLIPBOARD (\(content.prefix(50))...)")
+            #endif
             suggestions = suggestForText(content)
 
         case .music(let title, let artist, _):
+            #if DEBUG
             print("🔍 [Matcher] Context type: MUSIC (\(title) by \(artist))")
+            #endif
             suggestions = suggestForText("\(title) \(artist)")
 
         case .podcast(let title, let show):
+            #if DEBUG
             print("🔍 [Matcher] Context type: PODCAST (\(title))")
+            #endif
             suggestions = suggestForText("\(title) \(show)")
 
         case .note(let noteContent):
+            #if DEBUG
             print("🔍 [Matcher] Context type: NOTE")
+            #endif
             suggestions = suggestForText(noteContent)
 
         case .email(let subject, let from, _):
+            #if DEBUG
             print("🔍 [Matcher] Context type: EMAIL (from: \(from))")
+            #endif
             suggestions = suggestForEmail(subject: subject, from: from)
         }
 
         // Sort by relevance score
         suggestions.sort { $0.relevanceScore > $1.relevanceScore }
         
+        #if DEBUG
         print("🔍 [Matcher] Total suggestions: \(suggestions.count)")
+        #endif
+        #if DEBUG
         print("🔍 [Matcher] ==========================================")
+        #endif
         
         return suggestions
     }
@@ -92,8 +120,12 @@ class IntelligentExtensionMatcher {
         // Analyze file types
         let fileTypes = analyzeFileTypes(urls)
 
+        #if DEBUG
         print("📁 [Matcher] File analysis: \(urls.count) files")
+        #endif
+        #if DEBUG
         print("   Images: \(fileTypes.images.count), PDFs: \(fileTypes.pdfs.count), Docs: \(fileTypes.documents.count)")
+        #endif
 
         // PRIORITY 1: Get default app suggestions first
         let appSuggestions = appResolver.getAppSuggestions(for: urls)
@@ -104,7 +136,9 @@ class IntelligentExtensionMatcher {
                 relevanceScore: appSuggestion.score,
                 reason: appSuggestion.description
             ))
+            #if DEBUG
             print("  📱 App: \(appSuggestion.action): score \(appSuggestion.score)")
+            #endif
         }
 
         // PRIORITY 2: Only add terminal suggestions if no apps found OR for specialized operations
@@ -124,7 +158,9 @@ class IntelligentExtensionMatcher {
                 relevanceScore: finalScore,
                 reason: terminalSuggestion.isBuiltIn ? "Built-in command" : (isInstalled ? "Terminal tool installed" : "Requires: \(terminalSuggestion.requiresTool)")
             ))
+            #if DEBUG
             print("  💻 Terminal: \(terminalSuggestion.command): score \(finalScore)")
+            #endif
         }
 
         // Get all available extensions from ExtensionManager
@@ -157,7 +193,9 @@ class IntelligentExtensionMatcher {
             
             if score > 0 {
                 let reason = generateReason(for: scriptExt, context: .files(fileTypes))
+                #if DEBUG
                 print("  ✅ \(scriptExt.displayName): score \(score) - \(reason)")
+                #endif
                 suggestions.append(SuggestedExtension(
                     scriptExtension: scriptExt,
                     relevanceScore: score,
@@ -166,7 +204,9 @@ class IntelligentExtensionMatcher {
             }
         }
 
+        #if DEBUG
         print("📁 [Matcher] File suggestions: \(suggestions.count) found")
+        #endif
         return suggestions
     }
 
@@ -309,7 +349,9 @@ class IntelligentExtensionMatcher {
         let isCode = detectCode(in: text)
         let isLongText = wordCount > 50
 
+        #if DEBUG
         print("📝 [Matcher] Text analysis: \(wordCount) words, \(charCount) chars, longText: \(isLongText)")
+        #endif
 
         for scriptExt in allExtensions {
             let name = scriptExt.name.lowercased()
@@ -376,7 +418,9 @@ class IntelligentExtensionMatcher {
 
             if score > 0 {
                 let reason = generateReason(for: scriptExt, context: .text(text))
+                #if DEBUG
                 print("  ✅ \(scriptExt.displayName): score \(score) - \(reason)")
+                #endif
                 suggestions.append(SuggestedExtension(
                     scriptExtension: scriptExt,
                     relevanceScore: score,
@@ -385,7 +429,9 @@ class IntelligentExtensionMatcher {
             }
         }
 
+        #if DEBUG
         print("📝 [Matcher] Text suggestions: \(suggestions.count) found")
+        #endif
         return suggestions
     }
 
@@ -396,15 +442,21 @@ class IntelligentExtensionMatcher {
 
         let allExtensions = ExtensionManager.shared.getEnabledExtensions()
 
+        #if DEBUG
         print("📱 [Matcher] App context: \(appName) (\(bundleId))")
+        #endif
 
         // Special case: if app is "Unknown", show generic clipboard-based suggestions
         if appName == "Unknown" || bundleId.isEmpty {
+            #if DEBUG
             print("📱 [Matcher] Unknown app context - showing clipboard-based suggestions")
+            #endif
             
             // Check clipboard
             if let clipboardText = NSPasteboard.general.string(forType: .string), !clipboardText.isEmpty {
+                #if DEBUG
                 print("📱 [Matcher] Found clipboard text, treating as text context")
+                #endif
                 return suggestForText(clipboardText)
             }
             
@@ -433,7 +485,9 @@ class IntelligentExtensionMatcher {
                 }
             }
             
+            #if DEBUG
             print("📱 [Matcher] Unknown app: \(suggestions.count) suggestions")
+            #endif
             return suggestions
         }
 
@@ -499,7 +553,9 @@ class IntelligentExtensionMatcher {
             }
         }
 
+        #if DEBUG
         print("📱 [Matcher] App suggestions: \(suggestions.count) found")
+        #endif
         return suggestions
     }
 

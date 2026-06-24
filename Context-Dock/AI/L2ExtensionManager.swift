@@ -280,7 +280,8 @@ class L2ExtensionManager: ObservableObject {
     /// Returns the tool definition dict for a given provider format.
     /// Extensions with `contextApp` are only included when that app is currently frontmost.
     func toolSchemas(for provider: ProviderFormat) -> [[String: Any]] {
-        let frontApp = NSWorkspace.shared.frontmostApplication
+        let frontApp = AppDelegate.shared?.previousFrontmostApp
+            ?? NSWorkspace.shared.frontmostApplication
         let frontBundleId = frontApp?.bundleIdentifier ?? ""
         let frontName = frontApp?.localizedName ?? ""
 

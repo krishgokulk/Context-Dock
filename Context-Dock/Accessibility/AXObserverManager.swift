@@ -42,6 +42,30 @@ final class AXObserverManager {
             self?.attach(to: app)
             AXEventBus.shared.emit(.appActivated(app))
         }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
+    }
+
+    @objc private func systemWillSleep() {
+        clearPool()
+    }
+
+    @objc private func systemDidWake() {
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Bundle.main.bundleIdentifier {
+            attach(to: front)
+        }
+    }
+
+    private func clearPool() {
+        pool.values.forEach { $0.stop() }
+        pool.removeAll()
+        accessOrder.removeAll()
     }
 
     // MARK: - Private

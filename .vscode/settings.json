@@ -2,6 +2,9 @@
     "triggerTaskOnSave.tasks": {
         "sweetpad: build": [
             "**/*.swift"
+        ],
+        "Context-Dock: build and run": [
+            "**/*.swift"
         ]
     },
     "triggerTaskOnSave.on": true,

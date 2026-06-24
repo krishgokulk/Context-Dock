@@ -73,33 +73,47 @@ struct SystemPermissionsSettingsView: View {
         // Calendars
         if #available(macOS 14.0, *) {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
+            #if DEBUG
             print("📅 Calendar auth status (macOS 14+): \(calStatus.rawValue) (.fullAccess=\(EKAuthorizationStatus.fullAccess.rawValue), .writeOnly=\(EKAuthorizationStatus.writeOnly.rawValue))")
+            #endif
             calendarStatus = (calStatus == .fullAccess || calStatus == .writeOnly) ? "Authorized" : "Not Authorized"
 
             let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+            #if DEBUG
             print("✅ Reminders auth status (macOS 14+): \(remStatus.rawValue)")
+            #endif
             remindersStatus = (remStatus == .fullAccess || remStatus == .writeOnly) ? "Authorized" : "Not Authorized"
         } else {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
+            #if DEBUG
             print("📅 Calendar auth status (macOS <14): \(calStatus.rawValue)")
+            #endif
             calendarStatus = calStatus == .authorized ? "Authorized" : "Not Authorized"
 
             let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+            #if DEBUG
             print("✅ Reminders auth status (macOS <14): \(remStatus.rawValue)")
+            #endif
             remindersStatus = remStatus == .authorized ? "Authorized" : "Not Authorized"
         }
         // Photos
         let ph = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        #if DEBUG
         print("📸 Photos auth status: \(ph.rawValue) (.authorized=\(PHAuthorizationStatus.authorized.rawValue))")
+        #endif
         photosStatus = ph == .authorized ? "Authorized" : "Not Authorized"
         // Contacts
         let c = CNContactStore.authorizationStatus(for: .contacts)
+        #if DEBUG
         print("👤 Contacts auth status: \(c.rawValue) (.authorized=\(CNAuthorizationStatus.authorized.rawValue))")
+        #endif
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         // Automation (AppleScript) – there's no direct API, guide user to System Settings
         automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
 
+        #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
+        #endif
     }
 
     private func openAutomationSettings() {
@@ -111,36 +125,52 @@ struct SystemPermissionsSettingsView: View {
 
     // MARK: - Requests
     private func requestCalendar() async {
+        #if DEBUG
         print("📅 Requesting calendar permission...")
+        #endif
         let granted = await ILCalendarRemindersSearchManager.shared.requestCalendarPermission()
+        #if DEBUG
         print("📅 Calendar permission result: \(granted)")
+        #endif
         await MainActor.run {
             calendarStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestReminders() async {
+        #if DEBUG
         print("✅ Requesting reminders permission...")
+        #endif
         let granted = await ILCalendarRemindersSearchManager.shared.requestRemindersPermission()
+        #if DEBUG
         print("✅ Reminders permission result: \(granted)")
+        #endif
         await MainActor.run {
             remindersStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestPhotos() async {
+        #if DEBUG
         print("📸 Requesting photos permission...")
+        #endif
         let granted = await ILPhotosSearchManager.shared.requestPermission()
+        #if DEBUG
         print("📸 Photos permission result: \(granted)")
+        #endif
         await MainActor.run {
             photosStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestContacts() {
+        #if DEBUG
         print("👤 Requesting contacts permission...")
+        #endif
         ILContactsSearchManager.shared.requestPermission { granted in
+            #if DEBUG
             print("👤 Contacts permission result: \(granted)")
+            #endif
             DispatchQueue.main.async {
                 contactsStatus = granted ? "Authorized" : "Not Authorized"
                 refreshStatuses()
@@ -215,30 +245,44 @@ struct SystemPermissionsSection: View {
     private func refreshStatuses() {
         if #available(macOS 14.0, *) {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
+            #if DEBUG
             print("📅 Calendar auth status (macOS 14+): \(calStatus.rawValue) (.fullAccess=\(EKAuthorizationStatus.fullAccess.rawValue), .writeOnly=\(EKAuthorizationStatus.writeOnly.rawValue))")
+            #endif
             calendarStatus = (calStatus == .fullAccess || calStatus == .writeOnly) ? "Authorized" : "Not Authorized"
 
             let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+            #if DEBUG
             print("✅ Reminders auth status (macOS 14+): \(remStatus.rawValue)")
+            #endif
             remindersStatus = (remStatus == .fullAccess || remStatus == .writeOnly) ? "Authorized" : "Not Authorized"
         } else {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
+            #if DEBUG
             print("📅 Calendar auth status (macOS <14): \(calStatus.rawValue)")
+            #endif
             calendarStatus = calStatus == .authorized ? "Authorized" : "Not Authorized"
 
             let remStatus = EKEventStore.authorizationStatus(for: .reminder)
+            #if DEBUG
             print("✅ Reminders auth status (macOS <14): \(remStatus.rawValue)")
+            #endif
             remindersStatus = remStatus == .authorized ? "Authorized" : "Not Authorized"
         }
         let ph = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        #if DEBUG
         print("📸 Photos auth status: \(ph.rawValue) (.authorized=\(PHAuthorizationStatus.authorized.rawValue))")
+        #endif
         photosStatus = ph == .authorized ? "Authorized" : "Not Authorized"
         let c = CNContactStore.authorizationStatus(for: .contacts)
+        #if DEBUG
         print("👤 Contacts auth status: \(c.rawValue) (.authorized=\(CNAuthorizationStatus.authorized.rawValue))")
+        #endif
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
 
+        #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
+        #endif
     }
 
     private func openAutomationSettings() {
@@ -248,36 +292,52 @@ struct SystemPermissionsSection: View {
     }
 
     private func requestCalendar() async {
+        #if DEBUG
         print("📅 Requesting calendar permission...")
+        #endif
         let granted = await ILCalendarRemindersSearchManager.shared.requestCalendarPermission()
+        #if DEBUG
         print("📅 Calendar permission result: \(granted)")
+        #endif
         await MainActor.run {
             calendarStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestReminders() async {
+        #if DEBUG
         print("✅ Requesting reminders permission...")
+        #endif
         let granted = await ILCalendarRemindersSearchManager.shared.requestRemindersPermission()
+        #if DEBUG
         print("✅ Reminders permission result: \(granted)")
+        #endif
         await MainActor.run {
             remindersStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestPhotos() async {
+        #if DEBUG
         print("📸 Requesting photos permission...")
+        #endif
         let granted = await ILPhotosSearchManager.shared.requestPermission()
+        #if DEBUG
         print("📸 Photos permission result: \(granted)")
+        #endif
         await MainActor.run {
             photosStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
         }
     }
     private func requestContacts() {
+        #if DEBUG
         print("👤 Requesting contacts permission...")
+        #endif
         ILContactsSearchManager.shared.requestPermission { granted in
+            #if DEBUG
             print("👤 Contacts permission result: \(granted)")
+            #endif
             DispatchQueue.main.async {
                 contactsStatus = granted ? "Authorized" : "Not Authorized"
                 refreshStatuses()

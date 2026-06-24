@@ -11,7 +11,6 @@ extension Notification.Name {
     static let launcherBackspacePressed  = Notification.Name("launcherBackspacePressed")
     static let focusSearchField          = Notification.Name("focusSearchField")
     static let folderPreviewShouldClose  = Notification.Name("folderPreviewShouldClose")
-    static let persistentDockModifierExpansionChanged = Notification.Name("persistentDockModifierExpansionChanged")
 
     // MARK: - Context / scope activation
     static let activateContextDock       = Notification.Name("activateContextDock")
@@ -48,7 +47,4 @@ extension Notification.Name {
     // MARK: - AI / intent
     static let intentConflictDetected    = Notification.Name("com.ilauncher.intentConflictDetected")
 
-    // MARK: - Overlay
-    // Posted by FileContextOverlay; string kept for Safari extension compatibility.
-    static let overlayAskAboutSelection  = Notification.Name("ContextDockAskAboutSelection")
 }

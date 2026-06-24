@@ -12,6 +12,10 @@ final class DependencyContainer {
     let mediaDockEngine = MediaDockEngine.shared
     let aiChatEngine = AIChatEngine.shared
     let automationEngine = AutomationEngine.shared
+    let aiProviderRouter = AIProviderRouter.shared
+    let capabilityRegistry = CapabilityRegistry.shared
+    let aiResponseParser = AIResponseParser.shared
+    let aiExecutionEngine = AIExecutionEngine.shared
 
     let extensionRegistry = ExtensionRegistry.shared
     let extensionMatcher = ExtensionMatcher.shared

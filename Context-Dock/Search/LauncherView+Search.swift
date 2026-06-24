@@ -22,6 +22,27 @@ extension LauncherView {
         case customApp(String)     // User-added app key — show generic AI panel
     }
 
+    func searchableText(for result: SearchResult) -> String {
+        var terms = [result.title, result.subtitle, result.filePath ?? ""]
+        if result.subtitle.hasPrefix("cli://") {
+            let command = String(result.subtitle.dropFirst("cli://".count))
+            if let package = terminalPackageManager.packages.first(where: { $0.command == command }) {
+                terms += [package.name, package.command, package.description, package.installedPath ?? ""]
+                terms += package.keywords
+                terms += package.subcommands
+            }
+        } else if result.subtitle.hasPrefix("syscmd://") {
+            let id = String(result.subtitle.dropFirst("syscmd://".count))
+            if let uuid = UUID(uuidString: id),
+                let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == uuid })
+            {
+                terms += [command.name, command.description]
+                terms += command.keywords
+            }
+        }
+        return terms.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     // MARK: - Public Entry Point
 
     func performSearch() {
@@ -30,6 +51,8 @@ extension LauncherView {
         // Context is captured once when the launcher shows (showLauncher / onAppear).
 
         let query = searchState.query.trimmingCharacters(in: .whitespaces)
+        let signpostState = SearchPerformanceLog.shared.beginInterval("performSearch", query: query)
+        defer { SearchPerformanceLog.shared.endInterval("performSearch", state: signpostState) }
 
         if isL2ContextActive {
             dismissMediaLayer()
@@ -107,7 +130,6 @@ extension LauncherView {
         // Exit smart mode if the user edited the query away from its trigger
         if searchState.isInSmartMode && query != searchState.lastSmartQuery {
             if detectSmartQuery(query: query) == nil {
-                print("🔄 Exiting smart mode, switching to normal search")
                 searchState.isInSmartMode = false
                 searchState.lastSmartQuery = ""
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -118,7 +140,6 @@ extension LauncherView {
 
         // Smart exact-match detection for folders, contacts, and photos
         if let smartResult = detectSmartQuery(query: query) {
-            print("🎯 Smart query detected: \(smartResult)")
             searchState.isInSmartMode = true
             searchState.lastSmartQuery = query
             let shouldReturn = handleSmartQueryResult(smartResult)
@@ -202,6 +223,72 @@ extension LauncherView {
     // Async implementation: snapshots MainActor state, scores off-thread, applies on MainActor.
     func performSearchAsync() async {
         // ── 1. Snapshot all @State inputs on MainActor ────────────────────────
+        enum SearchCandidateKind: Sendable {
+            case application
+            case shortcut
+            case file
+            case folder
+            case document
+            case contact
+            case calendarEvent
+            case reminder
+            case note
+            case mail
+            case photo
+            case message
+            case extensionCommand
+            case webSearch
+            case cliTool
+
+            init(_ resultType: SearchResult.ResultType) {
+                switch resultType {
+                case .application: self = .application
+                case .shortcut: self = .shortcut
+                case .file: self = .file
+                case .folder: self = .folder
+                case .document: self = .document
+                case .contact: self = .contact
+                case .calendarEvent: self = .calendarEvent
+                case .reminder: self = .reminder
+                case .note: self = .note
+                case .mail: self = .mail
+                case .photo: self = .photo
+                case .message: self = .message
+                case .extensionCommand: self = .extensionCommand
+                case .webSearch: self = .webSearch
+                case .cliTool: self = .cliTool
+                }
+            }
+
+            var priority: Double {
+                switch self {
+                case .extensionCommand: return 20.0
+                case .application:      return 15.0
+                case .folder:           return 14.0
+                case .cliTool:          return 13.0
+                case .shortcut:         return 12.0
+                case .calendarEvent, .reminder: return 10.0
+                case .mail, .message:   return 9.0
+                case .document:         return 7.0
+                case .note:             return 6.0
+                case .contact:          return 5.0
+                case .file:             return 3.0
+                case .photo:            return 2.0
+                case .webSearch:        return 1.0
+                }
+            }
+        }
+
+        struct SearchCandidate: Sendable {
+            let id: String
+            let title: String
+            let titleLower: String
+            let haystackLower: String
+            let trackingIdentifier: String
+            let priority: Double
+            let isSuggestedShortcut: Bool
+        }
+
         struct Snap {
             let query: String
             let isNewQuery: Bool
@@ -209,14 +296,12 @@ extension LauncherView {
             let showContextInDock: Bool
             let showMediaLayer: Bool
             let l2ExtensionResults: [SearchResult]
-            let candidates: [SearchResult]      // apps + CLI tools + pre-filtered indexed
+            let candidates: [SearchCandidate]      // apps + CLI tools + pre-filtered indexed
+            let usageScores: [String: Double]
             let pinnedResults: [SearchResult]
             let pinnedTitle: String?
             let dockAtBottom: Bool
-            let metaCache: [String: ShortcutMetadata]
-            let context: UserContext
-            let selectedIndex: Int?
-            let existingResults: [SearchResult]
+            let oldSelectedID: String?
             let isKeyboardNav: Bool
         }
 
@@ -232,6 +317,27 @@ extension LauncherView {
             if settings.enableSpotlightSearch {
                 candidates += indexedFileResults.filter(includeIndexedSearchResult)
             }
+            let scoringCandidates = candidates.map { item in
+                SearchCandidate(
+                    id: item.id,
+                    title: item.title,
+                    titleLower: item.titleLower,
+                    haystackLower: searchableText(for: item).lowercased(),
+                    trackingIdentifier: item.trackingIdentifier,
+                    priority: SearchCandidateKind(item.type).priority,
+                    isSuggestedShortcut: item.type == .shortcut
+                        && shortcutMetadataCache[item.title]?.matches(context: currentContext) == true
+                )
+            }
+            let usageScores = UsageTracker.shared.snapshotScores(
+                for: scoringCandidates.map(\.trackingIdentifier))
+            let oldSelectedID: String? = {
+                guard let idx = searchState.selectedIndex,
+                      idx >= 0,
+                      idx < searchState.results.count
+                else { return nil }
+                return searchState.results[idx].id
+            }()
 
             return Snap(
                 query: q,
@@ -241,14 +347,12 @@ extension LauncherView {
                 showContextInDock: showContextInDock,
                 showMediaLayer: showMediaLayer,
                 l2ExtensionResults: l2.extensionResults,
-                candidates: candidates,
+                candidates: scoringCandidates,
+                usageScores: usageScores,
                 pinnedResults: searchState.pinnedResults,
                 pinnedTitle: searchState.pinnedTitle,
                 dockAtBottom: settings.effectiveDockAtBottom,
-                metaCache: shortcutMetadataCache,
-                context: currentContext,
-                selectedIndex: searchState.selectedIndex,
-                existingResults: searchState.results,
+                oldSelectedID: oldSelectedID,
                 isKeyboardNav: isKeyboardNavigation
             )
         }
@@ -265,13 +369,14 @@ extension LauncherView {
         }
 
         struct SearchOutput {
-            let grouped: GroupedResults
-            let results: [SearchResult]
-            let oldSelectedID: UUID?
+            let scores: [String: Double]
+            let sortedIDs: [String]
+            let oldSelectedID: String?
         }
 
         // ── 2. Pure scoring — detached so View/MainActor isolation cannot block typing ──
         let output = await Task.detached(priority: .userInitiated) { () -> SearchOutput in
+            SearchPerformanceLog.shared.signpost("search.ranking", query: snap.query) {
             let strippedQuery: String = {
                 let lower = snap.query.lowercased()
                 return lower.hasSuffix(".app")
@@ -281,84 +386,95 @@ extension LauncherView {
             let queryLower = strippedQuery.lowercased()
             let firstChar = queryLower.prefix(1)
 
-            let preFiltered = snap.candidates.filter { $0.titleLower.contains(firstChar) }
-            let usageScores = UsageTracker.shared.snapshotScores(
-                for: preFiltered.map { $0.trackingIdentifier })
+            let preFiltered = snap.candidates.filter { $0.haystackLower.contains(firstChar) }
 
-            var scoredItems: [(item: SearchResult, score: Double)] = []
+            var scoredItems: [(id: String, score: Double)] = []
             scoredItems.reserveCapacity(preFiltered.count)
 
             for item in preFiltered {
                 guard !Task.isCancelled else { break }
-                guard let score = FuzzyMatcher.score(
+                let titleScore = FuzzyMatcher.score(
                     queryLower, againstLower: item.titleLower, original: item.title
-                ) else { continue }
+                )
+                let aliasScore = FuzzyMatcher.score(
+                    queryLower, againstLower: item.haystackLower, original: item.title
+                )
+                guard let score = [titleScore, aliasScore].compactMap({ $0 }).max() else { continue }
 
-                var scoredItem = item
-                scoredItem.score = score
-                let usageScore = usageScores[item.trackingIdentifier] ?? 0.0
-
-                let typePriority: Double
-                switch item.type {
-                case .extensionCommand: typePriority = 20.0
-                case .application:      typePriority = 15.0
-                case .folder:           typePriority = 14.0
-                case .cliTool:          typePriority = 13.0
-                case .shortcut:         typePriority = 12.0
-                case .calendarEvent, .reminder: typePriority = 10.0
-                case .mail, .message:   typePriority = 9.0
-                case .document:         typePriority = 7.0
-                case .note:             typePriority = 6.0
-                case .contact:          typePriority = 5.0
-                case .file:             typePriority = 3.0
-                case .photo:            typePriority = 2.0
-                case .webSearch:        typePriority = 1.0
-                }
-
-                var finalScore = score + typePriority + (usageScore * 8.0)
-                if item.type == .shortcut,
-                   let metadata = snap.metaCache[item.title],
-                   metadata.matches(context: snap.context)
-                { finalScore += 500.0 }
-
-                scoredItems.append((item: scoredItem, score: finalScore))
+                let usageScore = snap.usageScores[item.trackingIdentifier] ?? 0.0
+                var finalScore = score + item.priority + (usageScore * 8.0)
+                if item.isSuggestedShortcut { finalScore += 500.0 }
+                scoredItems.append((id: item.id, score: finalScore))
             }
 
-            let sortedResults = scoredItems
+            let sortedItems = scoredItems
                 .sorted { $0.score > $1.score }
                 .prefix(20)
-                .map { $0.item }
-
-            var grouped = GroupedResults()
-            for result in sortedResults {
-                let isSuggested = result.type == .shortcut
-                    && snap.metaCache[result.title]?.matches(context: snap.context) == true
-                grouped.add(result, isSuggested: isSuggested)
+            var scores: [String: Double] = [:]
+            scores.reserveCapacity(sortedItems.count)
+            for item in sortedItems { scores[item.id] = item.score }
+            return SearchOutput(
+                scores: scores,
+                sortedIDs: sortedItems.map(\.id),
+                oldSelectedID: snap.oldSelectedID
+            )
             }
-            grouped.pinnedResults = snap.pinnedResults
-            grouped.pinnedSectionTitle = snap.pinnedTitle
-
-            let newResults = snap.dockAtBottom
-                ? Array(grouped.allResults.reversed()) : grouped.allResults
-            let oldSelectedID: UUID? = {
-                guard let idx = snap.selectedIndex, idx >= 0, idx < snap.existingResults.count
-                else { return nil }
-                return snap.existingResults[idx].id
-            }()
-            return SearchOutput(grouped: grouped, results: newResults, oldSelectedID: oldSelectedID)
         }.value
 
         guard !Task.isCancelled else { return }
 
         // ── 3. Apply on MainActor ─────────────────────────────────────────────
         await MainActor.run {
+            let commitSignpost = SearchPerformanceLog.shared.beginInterval(
+                "search.stateCommit",
+                query: snap.query
+            )
+            defer { SearchPerformanceLog.shared.endInterval("search.stateCommit", state: commitSignpost) }
+
             // Query freshness guard: if query changed while task ran, discard — a newer
             // task is already in flight. Prevents stale results overwriting fresh UI.
             guard searchState.query.trimmingCharacters(in: .whitespaces) == snap.query else { return }
 
+            var resultByID: [String: SearchResult] = [:]
+            resultByID.reserveCapacity(output.sortedIDs.count)
+            for item in allItems {
+                if output.scores[item.id] != nil { resultByID[item.id] = item }
+            }
+            for item in indexedFileResults {
+                if output.scores[item.id] != nil { resultByID[item.id] = item }
+            }
+
+            let sortedResults = output.sortedIDs.compactMap { id -> SearchResult? in
+                guard var result = resultByID[id] else { return nil }
+                result.score = output.scores[id] ?? 0.0
+                return result
+            }
+            let displayResults: [SearchResult] = {
+                let presets = systemCommandPresetSearchResults(for: snap.query)
+                return presets.isEmpty ? sortedResults : presets
+            }()
+            let suggestedShortcutIDs = Set(
+                snap.candidates.filter(\.isSuggestedShortcut).map(\.id)
+            )
+            var grouped = GroupedResults()
+            for result in displayResults {
+                grouped.add(result, isSuggested: suggestedShortcutIDs.contains(result.id))
+            }
+            grouped.pinnedResults = snap.pinnedResults
+            grouped.pinnedSectionTitle = snap.pinnedTitle
+            let newResults = snap.dockAtBottom
+                ? Array(grouped.allResults.reversed()) : grouped.allResults
+            let fingerprint = newResults.map(\.id).joined(separator: "\u{1F}")
+            if fingerprint == searchState.resultFingerprint,
+                searchState.query.trimmingCharacters(in: .whitespaces) == snap.query
+            {
+                return
+            }
+            searchState.resultFingerprint = fingerprint
+
             withAnimation(.easeInOut(duration: 0.15)) {
-                searchState.results = output.results
-                searchState.grouped = output.grouped
+                searchState.results = newResults
+                searchState.grouped = grouped
 
                 if snap.isKeyboardNav && !snap.isNewQuery,
                    let oldID = output.oldSelectedID,
@@ -382,6 +498,69 @@ extension LauncherView {
 
     func findApplications(matching query: String) -> [SearchResult] {
         allItems.filter { $0.title.lowercased().contains(query) }
+    }
+
+    func systemCommandPresetSearchResults(for query: String) -> [SearchResult] {
+        let normalizedQuery = normalizedDockPillText(query)
+        guard !normalizedQuery.isEmpty else { return [] }
+        guard let command = SystemCommandsRegistry.shared.commands.first(where: { command in
+            guard command.isEnabled else { return false }
+            let terms = ([command.name] + command.keywords).map(normalizedDockPillText)
+            return terms.contains(normalizedQuery)
+        }) else { return [] }
+
+        let terms = ([command.name] + command.keywords).map(normalizedDockPillText)
+        let isVolume = terms.contains { $0.contains("volume") }
+        let dynamicItems = systemCommandDynamicItems(command)
+        if !dynamicItems.isEmpty {
+            return dynamicItems.enumerated().map { index, item in
+                var result = SearchResult(
+                    title: "\(command.name) \(item.title)",
+                    subtitle: "syscmd://\(command.id.uuidString)",
+                    icon: NSImage(systemSymbolName: command.icon, accessibilityDescription: command.name),
+                    action: {
+                        runSystemCommand(command, originalQuery: item.value)
+                        searchState.query = ""
+                        searchState.results = []
+                        searchState.selectedIndex = nil
+                    },
+                    score: 10_200 - Double(index),
+                    type: .extensionCommand,
+                    filePath: nil,
+                    contactData: nil,
+                    displayBadges: [item.subtitle, command.actionTypeLabel],
+                    showsTypeLabel: false,
+                    stableID: "syscmd:\(command.id.uuidString):dynamic:\(item.value)"
+                )
+                result.dismissesLauncher = true
+                return result
+            }
+        }
+        let presets = systemCommandPresetValues(command, fallbackVolume: isVolume)
+        guard !presets.isEmpty else { return [] }
+
+        return presets.enumerated().map { index, value in
+            var result = SearchResult(
+                title: "\(command.name) \(value)",
+                subtitle: "syscmd://\(command.id.uuidString)",
+                icon: NSImage(systemSymbolName: command.icon, accessibilityDescription: command.name),
+                action: {
+                    runSystemCommand(command, originalQuery: value)
+                    searchState.query = ""
+                    searchState.results = []
+                    searchState.selectedIndex = nil
+                },
+                score: 10_000 - Double(index),
+                type: .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                displayBadges: [command.actionTypeLabel],
+                showsTypeLabel: false,
+                stableID: "syscmd:\(command.id.uuidString):preset:\(value)"
+            )
+            result.dismissesLauncher = true
+            return result
+        }
     }
 
     // MARK: - Private Helpers

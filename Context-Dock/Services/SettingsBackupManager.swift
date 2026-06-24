@@ -99,11 +99,15 @@ class SettingsBackupManager {
             }
 
             try data.write(to: url, options: [.atomic])
+            #if DEBUG
             print("✅ Settings exported to: \(url.path)")
+            #endif
 
             return .success(url)
         } catch {
+            #if DEBUG
             print("⚠️ Failed to export settings: \(error)")
+            #endif
             return .failure(error)
         }
     }
@@ -165,14 +169,18 @@ class SettingsBackupManager {
                 settings.addSearchDirectory(path: path, displayName: displayName)
             }
 
+            #if DEBUG
             print("✅ Settings imported from: \(url.path)")
+            #endif
 
             // Notify to reload UI
             NotificationCenter.default.post(name: .settingsImported, object: nil)
 
             return .success(true)
         } catch {
+            #if DEBUG
             print("⚠️ Failed to import settings: \(error)")
+            #endif
             return .failure(error)
         }
     }

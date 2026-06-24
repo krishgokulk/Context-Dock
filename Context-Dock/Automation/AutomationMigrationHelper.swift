@@ -33,11 +33,15 @@ class AutomationMigrationHelper {
     /// Run automatic migration from old structure to new Automation Studio
     func performAutomaticMigration() async throws {
         guard needsMigration() else {
+            #if DEBUG
             print("✅ [Migration] Already migrated to Automation Studio")
+            #endif
             return
         }
         
+        #if DEBUG
         print("🔄 [Migration] Starting automatic migration to Automation Studio...")
+        #endif
         
         // Step 1: Migrate Quick Actions (L1)
         try await migrateQuickActions()
@@ -57,38 +61,56 @@ class AutomationMigrationHelper {
         // Step 6: Mark complete
         markMigrationComplete()
         
+        #if DEBUG
         print("✅ [Migration] Automatic migration completed successfully")
+        #endif
     }
     
     // MARK: - Individual Migrations
     
     private func migrateQuickActions() async throws {
+        #if DEBUG
         print("   Migrating Quick Actions...")
+        #endif
         // Quick actions should already be in L1 layer
         // Just verify and log count
         let l1Extensions = LayeredExtensionManager.shared.extensions(for: .l1_search)
+        #if DEBUG
         print("   ✓ Found \(l1Extensions.count) Quick Actions")
+        #endif
     }
     
     private func migrateContextActions() async throws {
+        #if DEBUG
         print("   Migrating Context Actions...")
+        #endif
         // Context actions should already be in L2 layer
         let l2Extensions = LayeredExtensionManager.shared.extensions(for: .l2_context)
+        #if DEBUG
         print("   ✓ Found \(l2Extensions.count) Context Actions")
+        #endif
     }
     
     private func migrateAITools() async throws {
+        #if DEBUG
         print("   Migrating AI Tools...")
+        #endif
         await L2ExtensionManager.shared.loadExtensions()
         let aiTools = L2ExtensionManager.shared.extensions
+        #if DEBUG
         print("   ✓ Found \(aiTools.count) AI Tools")
+        #endif
     }
     
     private func migrateTerminalPackages() async throws {
+        #if DEBUG
         print("   Migrating Terminal Packages...")
+        #endif
         await TerminalPackageManager.shared.loadPackages()
         let packages = TerminalPackageManager.shared.packages
+        #if DEBUG
         print("   ✓ Found \(packages.count) Terminal Packages")
+        #endif
     }
     
     private func verifyMigration() throws {
@@ -102,7 +124,9 @@ class AutomationMigrationHelper {
             throw MigrationError.noExtensionsFound
         }
         
+        #if DEBUG
         print("   ✓ Verified \(totalExtensions) total extensions")
+        #endif
     }
     
     // MARK: - Manual Migration Tools
@@ -127,7 +151,9 @@ class AutomationMigrationHelper {
             .appendingPathComponent("ilauncher_extensions_backup_\(Int(Date().timeIntervalSince1970)).json")
         try data.write(to: backupURL)
         
+        #if DEBUG
         print("✅ [Backup] Exported extensions to: \(backupURL.path)")
+        #endif
         return backupURL
     }
     
@@ -137,7 +163,9 @@ class AutomationMigrationHelper {
         let decoder = JSONDecoder()
         let backup = try decoder.decode(ExtensionBackup.self, from: data)
         
+        #if DEBUG
         print("🔄 [Import] Restoring extensions from backup dated \(backup.exportDate)...")
+        #endif
         
         // Import each category
         for ext in backup.quickActions {
@@ -153,7 +181,9 @@ class AutomationMigrationHelper {
         await L2ExtensionManager.shared.loadExtensions()
         await TerminalPackageManager.shared.loadPackages()
         
+        #if DEBUG
         print("✅ [Import] Restored extensions successfully")
+        #endif
     }
     
     // MARK: - Statistics

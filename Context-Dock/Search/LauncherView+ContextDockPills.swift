@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PDFKit
 import SwiftUI
 
 extension LauncherView {
@@ -93,6 +94,11 @@ extension LauncherView {
         let appPath: String
         var matchedAlias: String
         var aliasStartIndex: Int
+        /// True for scopes entered explicitly (right-arrow on a running app) rather
+        /// than by typing the app's name. Explicit scopes are sticky — they survive
+        /// alias reconciliation so the user can type an action query without the scope
+        /// (whose alias isn't in the query) being dropped.
+        var isExplicit: Bool = false
     }
 
     struct DockScopeResolution {
@@ -251,11 +257,23 @@ extension LauncherView {
         if selectedURLs.allSatisfy({
             imageExtsForFinderSelection.contains($0.pathExtension.lowercased())
         }) {
+            add("create-pdf", "Create PDF", "doc.richtext", "red") {
+                createPDFFromFinderSelectionImages(selectedURLs)
+            }
+            add("rotate-left", "Rotate Left", "rotate.left", "blue") {
+                executeFinderSelectionMenuAction(titleContains: "rotate left")
+            }
+            add("markup", "Markup", "pencil.tip.crop.circle", "blue") {
+                executeFinderSelectionMenuAction(titleContains: "markup")
+            }
             add("remove-background", "Remove Background", "person.crop.rectangle", "purple") {
                 executeFinderSelectionMenuAction(titleContains: "remove background")
             }
             add("convert-image", "Convert Image", "photo.stack", "purple") {
                 executeFinderSelectionMenuAction(titleContains: "convert image")
+            }
+            add("set-wallpaper", "Set as Wallpaper", "photo.fill", "green") {
+                executeFinderSelectionMenuAction(titleContains: "set as wallpaper")
             }
         }
         add("trash", "Move to Bin", "trash", "red") {
@@ -334,6 +352,74 @@ extension LauncherView {
             }
         }
         return pills
+    }
+
+    func createPDFFromFinderSelectionImages(_ urls: [URL]) {
+        let imageURLs = canonicalExistingURLs(urls).filter { url in
+            ["jpg", "jpeg", "png", "gif", "heic", "tiff", "bmp", "webp"]
+                .contains(url.pathExtension.lowercased())
+        }
+        guard !imageURLs.isEmpty else {
+            AppToast.show("No images selected", icon: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+
+        let document = PDFDocument()
+        for url in imageURLs {
+            guard let image = NSImage(contentsOf: url),
+                let page = PDFPage(image: image)
+            else { continue }
+            document.insert(page, at: document.pageCount)
+        }
+
+        guard document.pageCount > 0 else {
+            AppToast.show("Could not create PDF", icon: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+
+        let baseDirectory = imageURLs[0].deletingLastPathComponent()
+        let baseName =
+            imageURLs.count == 1
+            ? imageURLs[0].deletingPathExtension().lastPathComponent
+            : "Selected Images"
+        let outputURL = uniqueFinderOutputURL(
+            directory: baseDirectory,
+            baseName: baseName,
+            extensionName: "pdf"
+        )
+
+        guard document.write(to: outputURL) else {
+            AppToast.show("Could not save PDF", icon: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+
+        AppToast.show("Created \(outputURL.lastPathComponent)", icon: "doc.richtext", tint: .blue)
+        rememberFinderFollowUpTargets(
+            [outputURL],
+            folderPath: baseDirectory.path,
+            sourceQuery: "create pdf"
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+        searchState.query = ""
+        l2.focusedPillIndex = nil
+    }
+
+    func uniqueFinderOutputURL(directory: URL, baseName: String, extensionName: String) -> URL {
+        let cleanedBaseName =
+            baseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled"
+            : baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidate = directory
+            .appendingPathComponent(cleanedBaseName)
+            .appendingPathExtension(extensionName)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory
+                .appendingPathComponent("\(cleanedBaseName) \(suffix)")
+                .appendingPathExtension(extensionName)
+            suffix += 1
+        }
+        return candidate
     }
 
     func buildFinderHomeFolderPills(query q: String) -> [DockPill] {
@@ -491,6 +577,709 @@ extension LauncherView {
             }
     }
 
+    func buildFinderDesktopModePills(query: String) -> [DockPill] {
+        let selectedURLs = effectiveFinderSelectionURLsForPills()
+        if !selectedURLs.isEmpty {
+            let combinedSelectionPills = buildMacOSExtensionActionPills(query: query)
+            if !combinedSelectionPills.isEmpty {
+                return combinedSelectionPills
+            }
+            if !query.isEmpty {
+                return []
+            }
+        }
+
+        let syncBase: [DockPill]
+        if query.isEmpty {
+            // finderDesktopRecentPills already contains running apps + recent files
+            syncBase = finderDesktopRecentPills
+        } else {
+            // Instant filter:
+            // finderDesktopIndexedPills = all user-folder files (pre-loaded at mode entry)
+            // finderDesktopRecentPills  = running apps + recent files
+            let q = query.lowercased()
+            let runningMatches = finderDesktopRecentApplicationPills(query: query)
+            let allCached = finderDesktopIndexedPills + finderDesktopRecentPills
+            let fileMatches = allCached.filter { pill in
+                pill.rankingKind != "finderRecentApp"
+                    && (pill.name.lowercased().contains(q)
+                        || pill.searchTerms.contains { $0.lowercased().contains(q) })
+            }
+            syncBase = runningMatches + fileMatches
+        }
+        let base =
+            finderDesktopSearchQuery == query && !finderDesktopSearchPills.isEmpty
+            ? syncBase + finderDesktopSearchPills
+            : syncBase
+        // Running apps always above files/folders
+        let deduped = dedupeFinderDesktopPills(base)
+        let apps = deduped.filter { $0.rankingKind == "finderRecentApp" }
+        let files = deduped.filter { $0.rankingKind != "finderRecentApp" }
+        return apps + files
+    }
+
+    func commitFinderDesktopModeSnapshot(query: String, preserveFocus: Bool) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        dockPillBuildGeneration &+= 1
+        contextDockViewModel.clearPendingPillBuild(cancelBuild: true)
+
+        var ranked = rankDockPills(
+            buildFinderDesktopModePills(query: q),
+            rawQuery: q,
+            rankingQuery: q,
+            scopedBundleId: "com.apple.finder",
+            scopedAppName: "Finder",
+            isExplicitAppScope: false,
+            includeNonMatching: q.isEmpty
+        )
+        // No user folders configured and nothing selected in Finder → there is
+        // nothing to search. Surface a one-tap hint (appended after ranking so it
+        // survives even when the query matches nothing) that opens Settings →
+        // Data & Storage where search directories are added.
+        if finderDesktopHasNoSearchScope {
+            ranked.append(finderAddSearchDirectorySuggestionPill())
+        }
+        replaceCachedDockPills(ranked, preserveFocus: preserveFocus)
+        lastPillQuery = q
+    }
+
+    /// True when the Finder desktop scope has no folders to search: the user has
+    /// added no search directories and no Finder selection is active.
+    var finderDesktopHasNoSearchScope: Bool {
+        settings.searchDirectories.filter { !$0.path.isEmpty }.isEmpty
+            && effectiveFinderSelectionURLsForPills().isEmpty
+    }
+
+    /// Hint row shown when no search scope exists — opens Settings → Data &
+    /// Storage so the user can add a folder to search.
+    func finderAddSearchDirectorySuggestionPill() -> DockPill {
+        var pill = DockPill(
+            id: "finder-add-search-dir",
+            name: "Add a folder to search files & folders",
+            icon: "folder.badge.plus",
+            accentColorName: "blue",
+            badge: "Settings › Data & Storage",
+            execute: {
+                AppDelegate.shared?.showSettings()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    NotificationCenter.default.post(
+                        name: .openSettingsPage,
+                        object: nil,
+                        userInfo: ["page": SettingsPage.dataStorage.rawValue]
+                    )
+                }
+            }
+        )
+        pill.rankingKind = "setupHint"
+        pill.trackingIdentifier = "finder-setup-hint"
+        pill.searchTerms = ["add", "folder", "search", "directory", "settings"]
+        pill.rankingScore = -1  // keep at the very end of the list
+        return pill
+    }
+
+    func finderDesktopRecentApplicationPills(query: String) -> [DockPill] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Running apps only — no Apple recent-items list.
+        // Recently-used-but-closed apps clutter the desktop launcher; running apps are immediately actionable.
+        let running = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != "com.apple.finder" }
+        let matching = running.filter { app in
+            guard !q.isEmpty else { return true }
+            let name = app.localizedName ?? ""
+            let bundleId = app.bundleIdentifier ?? ""
+            return name.lowercased().contains(q) || bundleId.lowercased().contains(q)
+        }
+        // Non-empty query → only matching apps; empty → all running.
+        let source = q.isEmpty ? running : matching
+        return source.prefix(10).compactMap { app -> DockPill? in
+            guard let url = app.bundleURL else { return nil }
+            let name = app.localizedName ?? url.deletingPathExtension().lastPathComponent
+            var pill = makeDesktopPill(
+                path: url.path,
+                name: name,
+                badge: "Running",
+                rankingKind: "finderRecentApp",
+                query: nil
+            )
+            pill.menuItemImage = app.icon
+            pill.sourceBundleId = app.bundleIdentifier ?? ""
+            pill.sourceAppName = name
+            pill.trackingIdentifier = "finder-running-app:\(app.bundleIdentifier ?? url.path)"
+            pill.searchTerms = [name, app.bundleIdentifier ?? "", "running", "app"]
+            pill.rankingScore = 1_500
+            return pill
+        }
+    }
+
+    func dedupeFinderDesktopPills(_ pills: [DockPill]) -> [DockPill] {
+        var seen = Set<String>()
+        var deduped: [DockPill] = []
+        for pill in pills {
+            let key: String = {
+                if let path = pill.resolvedURL?.path.lowercased(), !path.isEmpty { return path }
+                if !pill.sourceBundleId.isEmpty { return pill.sourceBundleId.lowercased() }
+                return pill.trackingIdentifier.lowercased()
+            }()
+            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            deduped.append(pill)
+        }
+        return deduped
+    }
+
+    func finderDesktopIndexedCachePills(roots: [String], limit: Int = 2_500) -> [DockPill] {
+        guard !roots.isEmpty else { return [] }
+        var count = 0
+        var pills: [DockPill] = []
+        pills.reserveCapacity(min(limit, fileIndexManager.indexedFiles.count))
+
+        for file in fileIndexManager.indexedFiles {
+            guard count < limit else { break }
+            guard !file.name.hasPrefix(".") else { continue }
+            guard roots.contains(where: { root in
+                file.path == root || file.path.hasPrefix(root + "/")
+            }) else { continue }
+
+            let url = URL(fileURLWithPath: file.path)
+            pills.append(
+                makeDesktopPill(
+                    path: file.path,
+                    name: file.name,
+                    badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                    rankingKind: file.isDirectory ? "finderRecent" : "spotlightSearch",
+                    query: nil,
+                    loadIcon: true,
+                    isDirectoryHint: file.isDirectory
+                )
+            )
+            count += 1
+        }
+        return pills
+    }
+
+    func finderDesktopDirectFallbackPills(roots: [String], limit: Int = 160) -> [DockPill] {
+        var pills: [DockPill] = []
+        let keys: Set<URLResourceKey> = [.isDirectoryKey]
+        for root in roots {
+            guard pills.count < limit else { break }
+            guard
+                let items = try? FileManager.default.contentsOfDirectory(
+                    at: URL(fileURLWithPath: root),
+                    includingPropertiesForKeys: Array(keys),
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+            else { continue }
+
+            for url in items {
+                guard pills.count < limit else { break }
+                let path = url.standardizedFileURL.path
+                let values = try? url.resourceValues(forKeys: keys)
+                let isDirectory = values?.isDirectory ?? url.hasDirectoryPath
+                pills.append(
+                    makeDesktopPill(
+                        path: path,
+                        name: url.lastPathComponent,
+                        badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                        rankingKind: isDirectory ? "finderRecent" : "spotlightSearch",
+                        query: nil,
+                        loadIcon: true,
+                        isDirectoryHint: isDirectory
+                    )
+                )
+            }
+        }
+        return pills
+    }
+
+    func primeFinderDesktopModeCache(commitQuery: String? = nil, preserveFocus: Bool = true) {
+        let roots = finderDesktopSearchRootPaths()
+        let runningAppPills = finderDesktopRecentApplicationPills(query: "")
+        let indexedPills = finderDesktopIndexedCachePills(roots: roots)
+        // Per-root coverage: any root Spotlight returned nothing for (e.g. iCloud Drive under
+        // ~/Library, or a freshly added dir before the index refreshes) gets a direct disk scan.
+        // Previously this only fired when the entire index was empty, so the busy Home root
+        // suppressed the fallback for iCloud forever.
+        let coveredRoots: Set<String> = Set(
+            indexedPills.compactMap { pill -> String? in
+                guard let path = pill.resolvedURL?.path else { return nil }
+                return roots.first { path == $0 || path.hasPrefix($0 + "/") }
+            }
+        )
+        let uncoveredRoots = roots.filter { !coveredRoots.contains($0) }
+        let fallbackPills = uncoveredRoots.isEmpty
+            ? []
+            : finderDesktopDirectFallbackPills(roots: uncoveredRoots)
+        let recentFilePills = finderRecentDocumentPaths(limit: 20).map { path -> DockPill in
+            let url = URL(fileURLWithPath: path)
+            return makeDesktopPill(
+                path: path,
+                name: url.lastPathComponent,
+                badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                rankingKind: "finderRecent",
+                query: nil
+            )
+        }
+
+        finderDesktopIndexedPills = dedupeFinderDesktopPills(indexedPills + fallbackPills)
+        finderDesktopRecentPills = dedupeFinderDesktopPills(runningAppPills + recentFilePills)
+
+        if let commitQuery, isFinderDesktopOnlyMode {
+            commitFinderDesktopModeSnapshot(query: commitQuery, preserveFocus: preserveFocus)
+        }
+    }
+
+    func finderDesktopSearchRootPaths() -> [String] {
+        let fm = FileManager.default
+        var roots: [String] = []
+
+        for url in effectiveFinderSelectionURLsForPills() {
+            let path = url.standardizedFileURL.path
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                roots.append(path)
+            }
+        }
+
+        roots.append(contentsOf: settings.searchDirectories.map(\.path).filter { !$0.isEmpty })
+
+        var seen = Set<String>()
+        return roots.compactMap { rawPath in
+            let path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue
+            else { return nil }
+            return seen.insert(path).inserted ? path : nil
+        }
+    }
+
+    func finderRecentDocumentPaths(limit: Int) -> [String] {
+        var seen = Set<String>()
+        return NSDocumentController.shared.recentDocumentURLs.compactMap { url in
+            let path = url.standardizedFileURL.path
+            guard FileManager.default.fileExists(atPath: path) else { return nil }
+            guard !url.lastPathComponent.hasPrefix(".") else { return nil }
+            return seen.insert(path).inserted ? path : nil
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    func fileIndexPathsForFinderDesktopSearch(query: String, roots: [String], limit: Int) -> [String] {
+        var seen = Set<String>()
+        var paths: [String] = []
+
+        if roots.isEmpty {
+            for result in fileIndexManager.search(query: query, limit: limit) {
+                guard let path = result.filePath else { continue }
+                guard seen.insert(path).inserted else { continue }
+                paths.append(path)
+            }
+            return paths
+        }
+
+        for root in roots {
+            let matches = fileIndexManager.advancedSearch(
+                AdvancedFileSearchQuery(
+                    rootPath: root,
+                    residualQuery: query,
+                    includeDirectories: true,
+                    filesOnly: false,
+                    limit: max(4, limit / max(1, roots.count))
+                ))
+            for file in matches where seen.insert(file.path).inserted {
+                paths.append(file.path)
+                if paths.count >= limit { return paths }
+            }
+        }
+
+        return paths
+    }
+
+    // In-process Spotlight query — no subprocess, directly taps the live index.
+    // NSMetadataQuery must start on the main thread; withCheckedContinuation lets callers
+    // await the result without blocking any thread.
+    @MainActor
+    static func spotlightSearchPaths(
+        predicate: NSPredicate,
+        inDirectories dirs: [String],
+        sortByLastUsed: Bool = false,
+        limit: Int
+    ) async -> [String] {
+        await withCheckedContinuation { continuation in
+            let q = NSMetadataQuery()
+            q.searchScopes = dirs.map { URL(fileURLWithPath: $0) }
+            q.predicate = predicate
+            if sortByLastUsed {
+                q.sortDescriptors = [NSSortDescriptor(key: "kMDItemLastUsedDate", ascending: false)]
+            }
+
+            var observers: [NSObjectProtocol] = []
+            var delivered = false
+
+            func deliver() {
+                guard !delivered else { return }
+                delivered = true
+                q.disableUpdates()
+                let paths = (0..<min(q.resultCount, limit)).compactMap { i in
+                    (q.result(at: i) as? NSMetadataItem)?.value(forAttribute: NSMetadataItemPathKey) as? String
+                }
+                q.stop()
+                observers.forEach { NotificationCenter.default.removeObserver($0) }
+                observers.removeAll()
+                continuation.resume(returning: paths)
+            }
+
+            let nc = NotificationCenter.default
+            observers.append(nc.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: q, queue: .main) { _ in deliver() })
+            // Also handle update (fires when index refreshes results mid-query)
+            observers.append(nc.addObserver(forName: NSNotification.Name.NSMetadataQueryDidUpdate, object: q, queue: .main) { _ in deliver() })
+
+            q.start()
+
+            // 3-second safety timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { deliver() }
+        }
+    }
+
+    // Spotlight search scoped to the whole computer (for app search across /Applications)
+    @MainActor
+    static func spotlightSearchPathsComputerScope(
+        predicate: NSPredicate,
+        sortByLastUsed: Bool = false,
+        limit: Int
+    ) async -> [String] {
+        await withCheckedContinuation { continuation in
+            let q = NSMetadataQuery()
+            q.searchScopes = [NSMetadataQueryLocalComputerScope]
+            q.predicate = predicate
+            if sortByLastUsed {
+                q.sortDescriptors = [NSSortDescriptor(key: "kMDItemLastUsedDate", ascending: false)]
+            }
+
+            var observers: [NSObjectProtocol] = []
+            var delivered = false
+
+            func deliver() {
+                guard !delivered else { return }
+                delivered = true
+                q.disableUpdates()
+                let paths = (0..<min(q.resultCount, limit)).compactMap { i in
+                    (q.result(at: i) as? NSMetadataItem)?.value(forAttribute: NSMetadataItemPathKey) as? String
+                }
+                q.stop()
+                observers.forEach { NotificationCenter.default.removeObserver($0) }
+                observers.removeAll()
+                continuation.resume(returning: paths)
+            }
+
+            let nc = NotificationCenter.default
+            observers.append(nc.addObserver(forName: .NSMetadataQueryDidFinishGathering, object: q, queue: .main) { _ in deliver() })
+            observers.append(nc.addObserver(forName: NSNotification.Name.NSMetadataQueryDidUpdate, object: q, queue: .main) { _ in deliver() })
+
+            q.start()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { deliver() }
+        }
+    }
+
+    // Async loader for recent pills — call from .task
+    func refreshFinderDesktopRecentPills() async {
+        let roots = finderDesktopSearchRootPaths()
+
+        // Spotlight: recently-used files from user folders (last 30 days) — enriches idle view
+        let cutoff = NSDate(timeIntervalSinceNow: -30 * 24 * 3600)
+        let filePaths = roots.isEmpty ? [] : await Self.spotlightSearchPaths(
+            predicate: NSPredicate(
+                format: "kMDItemLastUsedDate >= %@ AND kMDItemContentTypeTree != %@ AND kMDItemContentType != %@",
+                cutoff,
+                "com.apple.application-bundle" as NSString,
+                "public.folder" as NSString
+            ),
+            inDirectories: roots,
+            sortByLastUsed: true,
+            limit: 15
+        )
+
+        let filePills: [DockPill] = filePaths
+            .filter { !URL(fileURLWithPath: $0).lastPathComponent.hasPrefix(".") }
+            .prefix(10)
+            .map { path -> DockPill in
+                let url = URL(fileURLWithPath: path)
+                return makeDesktopPill(path: path, name: url.lastPathComponent,
+                    badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                    rankingKind: "finderRecent", query: nil, loadIcon: true, isDirectoryHint: false)
+        }
+
+        guard isFinderDesktopOnlyMode else { return }
+        finderDesktopRecentPills = dedupeFinderDesktopPills(finderDesktopRecentPills + filePills)
+    }
+
+    func scheduleFinderDesktopSearchEnrichment(query: String) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        contextDockViewModel.finderDesktopSearchGeneration &+= 1
+        let generation = contextDockViewModel.finderDesktopSearchGeneration
+        contextDockViewModel.finderDesktopSearchTask?.cancel()
+
+        guard isFinderDesktopOnlyMode, q.count >= 2 else {
+            contextDockViewModel.finderDesktopSearchTask = nil
+            return
+        }
+
+        contextDockViewModel.finderDesktopSearchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled,
+                contextDockViewModel.finderDesktopSearchGeneration == generation,
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == q
+            else { return }
+            await refreshFinderDesktopSearchPills(query: q, generation: generation)
+        }
+    }
+
+    // Async idle enrichment only. Typing path stays synchronous via finderDesktopIndexedPills.
+    func refreshFinderDesktopSearchPills(query: String) async {
+        await refreshFinderDesktopSearchPills(query: query, generation: nil)
+    }
+
+    func refreshFinderDesktopSearchPills(query: String, generation: Int?) async {
+        guard query.count >= 2 else {
+            finderDesktopSearchQuery = ""
+            finderDesktopSearchPills = []
+            return
+        }
+        let roots = finderDesktopSearchRootPaths()
+
+        let fileSearchPaths = roots.isEmpty ? [] : await Self.spotlightSearchPaths(
+            predicate: NSPredicate(
+                format: "kMDItemDisplayName LIKE[cd] %@",
+                "*\(query)*"
+            ),
+            inDirectories: roots,
+            sortByLastUsed: true,
+            limit: 12
+        )
+
+        var seen = Set<String>()
+        var enriched: [DockPill] = []
+        for path in fileSearchPaths {
+            let url = URL(fileURLWithPath: path)
+            let name = url.lastPathComponent
+            guard !name.hasPrefix("."), seen.insert(path.lowercased()).inserted else { continue }
+            enriched.append(makeDesktopPill(path: path, name: name,
+                badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                rankingKind: "spotlightSearch", query: nil, loadIcon: true, isDirectoryHint: nil))
+        }
+        guard generation == nil || contextDockViewModel.finderDesktopSearchGeneration == generation else {
+            return
+        }
+        guard isFinderDesktopOnlyMode,
+            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query
+        else { return }
+        let existingKeys = Set(finderDesktopIndexedPills.map { pill -> String in
+            if let path = pill.resolvedURL?.path.lowercased(), !path.isEmpty { return path }
+            if !pill.sourceBundleId.isEmpty { return pill.sourceBundleId.lowercased() }
+            return pill.trackingIdentifier.lowercased()
+        })
+        let newEnriched = enriched.filter { pill in
+            let key: String = {
+                if let path = pill.resolvedURL?.path.lowercased(), !path.isEmpty { return path }
+                if !pill.sourceBundleId.isEmpty { return pill.sourceBundleId.lowercased() }
+                return pill.trackingIdentifier.lowercased()
+            }()
+            return !key.isEmpty && !existingKeys.contains(key)
+        }
+        guard !newEnriched.isEmpty else { return }
+        finderDesktopIndexedPills = dedupeFinderDesktopPills(finderDesktopIndexedPills + newEnriched)
+        finderDesktopSearchQuery = ""
+        finderDesktopSearchPills = []
+        commitFinderDesktopModeSnapshot(query: query, preserveFocus: true)
+    }
+
+    func makeDesktopPill(
+        path: String,
+        name: String,
+        badge: String,
+        rankingKind: String,
+        query: String?,
+        loadIcon: Bool = true,
+        isDirectoryHint: Bool? = nil
+    ) -> DockPill {
+        let url = URL(fileURLWithPath: path)
+        let isApp = path.hasSuffix(".app")
+        let isDir = isApp
+            || (isDirectoryHint
+                ?? ((try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false))
+        let effectiveKind = isApp ? "finderRecentApp" : rankingKind
+        // Strip .app suffix from display name — macOS localized name already has no extension,
+        // but when built from path the filename includes it.
+        let displayName = isApp && name.hasSuffix(".app")
+            ? String(name.dropLast(4))
+            : name
+        let icon: String = {
+            if isApp { return "app.badge" }
+            if isDir { return "folder.fill" }
+            return rankingKind == "finderRecent" ? "clock" : "doc.text.magnifyingglass"
+        }()
+        var pill = DockPill(
+            id: "\(effectiveKind)-\(path)",
+            name: displayName,
+            icon: icon,
+            accentColorName: isApp ? "blue" : (isDir ? "blue" : "teal"),
+            badge: badge,
+            execute: { NSWorkspace.shared.open(url) }
+        )
+        if loadIcon {
+            pill.menuItemImage = NSWorkspace.shared.icon(forFile: path)
+        }
+        pill.sourceBundleId = isApp
+            ? (Bundle(url: url)?.bundleIdentifier ?? "com.apple.finder")
+            : "com.apple.finder"
+        pill.sourceAppName = "Finder"
+        pill.rankingKind = effectiveKind
+        pill.resolvedURL = url
+        pill.quickLookURL = isApp ? nil : url
+        pill.trackingIdentifier = "\(effectiveKind):\(path.lowercased())"
+        // searchTerms: name + badge only. Do NOT include the search query — that would make
+        // every result match any query, bypassing dockPillHasQuerySignal.
+        pill.searchTerms = [displayName, badge, effectiveKind == "finderRecentApp" ? "app" : (rankingKind == "finderRecent" ? "recent" : "")]
+            .filter { !$0.isEmpty }
+        return pill
+    }
+
+    static func mdfindSync(predicate: String, inDirectory dir: String, limit: Int) -> [String] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        proc.arguments = ["-onlyin", dir, predicate]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { return [] }
+        // 4-second timeout — content-search predicates can hang without a bound
+        let deadline = DispatchTime.now() + .seconds(4)
+        let sem = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in sem.signal() }
+        if sem.wait(timeout: deadline) == .timedOut { proc.terminate() }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let out = String(data: data, encoding: .utf8) else { return [] }
+        return Array(out.components(separatedBy: "\n").filter { !$0.isEmpty }.prefix(limit))
+    }
+
+    // Legacy stub — kept to avoid breaking callers; remove once fully migrated
+    func buildAppleRecentItemsPills() -> [DockPill] {
+        // Use mdfind sorted by kMDItemLastUsedDate — same source as Spotlight/Apple menu recent items
+        let home = NSHomeDirectory()
+        let searchRoots = settings.searchDirectories.map { $0.path }.filter { !$0.isEmpty }
+        let scope = searchRoots.isEmpty ? [home] : searchRoots
+
+        var paths: [String] = []
+        for root in scope {
+            let result = runMdfind(
+                predicate: "kMDItemLastUsedDate >= $time.today(-30) && kMDItemContentType != 'public.folder'",
+                inDirectory: root,
+                limit: 20
+            )
+            paths.append(contentsOf: result)
+        }
+
+        // Sort by last-used date (most recent first) via MDItem
+        let sorted = paths
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .filter { !URL(fileURLWithPath: $0).lastPathComponent.hasPrefix(".") }
+            .sorted {
+                let d1 = (MDItemCreate(nil, $0 as CFString)).flatMap { MDItemCopyAttribute($0, kMDItemLastUsedDate) as? Date } ?? .distantPast
+                let d2 = (MDItemCreate(nil, $1 as CFString)).flatMap { MDItemCopyAttribute($0, kMDItemLastUsedDate) as? Date } ?? .distantPast
+                return d1 > d2
+            }
+            .prefix(10)
+
+        return sorted.map { path in
+            let url = URL(fileURLWithPath: path)
+            let name = url.lastPathComponent
+            let displayParent = finderDisplayPath(url.deletingLastPathComponent().path)
+            var pill = DockPill(
+                id: "recent-doc-\(path)",
+                name: name,
+                icon: "clock",
+                accentColorName: "blue",
+                badge: displayParent,
+                execute: { NSWorkspace.shared.open(url) }
+            )
+            pill.menuItemImage = NSWorkspace.shared.icon(forFile: path)
+            pill.sourceBundleId = "com.apple.finder"
+            pill.sourceAppName = "Finder"
+            pill.rankingKind = "finderRecent"
+            pill.quickLookURL = url
+            pill.trackingIdentifier = "finder-recent:\(path.lowercased())"
+            pill.searchTerms = [name, "recent", "recents", displayParent]
+            return pill
+        }
+    }
+
+    @discardableResult
+    func runMdfind(predicate: String, inDirectory dir: String, limit: Int = 20) -> [String] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+        proc.arguments = ["-onlyin", dir, predicate]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+        return Array(output.components(separatedBy: "\n").filter { !$0.isEmpty }.prefix(limit))
+    }
+
+    func buildScopedSpotlightPills(query: String) -> [DockPill] {
+        guard query.count >= 2 else { return [] }
+
+        let searchRoots: [String] = {
+            let dirs = settings.searchDirectories.filter { !$0.path.isEmpty }.map { $0.path }
+            return dirs.isEmpty ? [NSHomeDirectory()] : dirs
+        }()
+
+        var seen = Set<String>()
+        var paths: [String] = []
+
+        for root in searchRoots {
+            // mdfind: match filename or content (kMDItemTextContent covers PDF/doc content)
+            let results = runMdfind(
+                predicate: "kMDItemDisplayName == '*\(query)*'cd || kMDItemTextContent == '*\(query)*'cd",
+                inDirectory: root,
+                limit: 20
+            )
+            for p in results {
+                guard seen.insert(p).inserted else { continue }
+                paths.append(p)
+            }
+            if paths.count >= 10 { break }
+        }
+
+        return paths.prefix(10).compactMap { path in
+            let url = URL(fileURLWithPath: path)
+            let name = url.lastPathComponent
+            guard !name.hasPrefix("."), FileManager.default.fileExists(atPath: path) else { return nil }
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            let displayParent = finderDisplayPath(url.deletingLastPathComponent().path)
+            var pill = DockPill(
+                id: "spotlight-\(path)",
+                name: name,
+                icon: isDir ? "folder.fill" : "doc.text.magnifyingglass",
+                accentColorName: isDir ? "blue" : "teal",
+                badge: displayParent,
+                execute: { NSWorkspace.shared.open(url) }
+            )
+            pill.menuItemImage = NSWorkspace.shared.icon(forFile: path)
+            pill.sourceBundleId = "com.apple.finder"
+            pill.sourceAppName = "Finder"
+            pill.rankingKind = "spotlightSearch"
+            pill.quickLookURL = url
+            pill.trackingIdentifier = "spotlight:\(path.lowercased())"
+            pill.searchTerms = [name, query, displayParent, isDir ? "folder" : "file"]
+            return pill
+        }
+    }
+
     func strictFinderHomeSearchScore(query: String, url: URL) -> Double? {
         let normalizedQuery = normalizedDockPillText(query)
         guard normalizedQuery.count >= 2 else { return nil }
@@ -577,17 +1366,33 @@ extension LauncherView {
         AXActionResolver.shared.execute(menuPath: match.path, in: finder)
     }
 
-    func buildFinderSelectionMenuPills(query q: String, excludingTitles: Set<String>)
-        -> [DockPill]
-    {
+    func buildFinderSelectionMenuPills(
+        query q: String,
+        excludingTitles: Set<String>,
+        allowedRootNames: Set<String>? = nil
+    ) -> [DockPill] {
         let selectedURLs = effectiveFinderSelectionURLsForPills()
         guard !selectedURLs.isEmpty else { return [] }
 
         let openWithFilter = openWithChildFilter(from: q)
-        let menuQuery = openWithFilter == nil ? q : "open"
-        let limit = q.isEmpty ? 12 : 10
-        let items = FileContextOverlayController.shared.finderMenuResults(
-            query: menuQuery, limit: limit)
+        let needsRootFilteredMenu = allowedRootNames?.isEmpty == false
+        let menuQuery = needsRootFilteredMenu ? "" : (openWithFilter == nil ? q : "open")
+        let limit = needsRootFilteredMenu ? 120 : (q.isEmpty ? 12 : 10)
+        let queryNeedle = normalizedDockPillText(q)
+        let items = finderSelectionMenuResults(query: menuQuery, limit: limit)
+        let sourceItems = items.filter { item in
+            let rootAllowed: Bool = {
+                guard let allowedRootNames, !allowedRootNames.isEmpty else { return true }
+                return item.path.contains { part in
+                allowedRootNames.contains(normalizedDockPillText(part))
+                }
+            }()
+            guard rootAllowed else { return false }
+            guard needsRootFilteredMenu, !queryNeedle.isEmpty else { return true }
+            let haystack = normalizedDockPillText(([item.title] + item.path).joined(separator: " "))
+            return haystack.contains(queryNeedle)
+                || queryNeedle.contains(normalizedDockPillText(item.title))
+            }
 
         var pills =
             openWithFilter.map {
@@ -596,18 +1401,28 @@ extension LauncherView {
                     filter: $0
                 )
             } ?? []
-        for item in items {
+        for item in sourceItems {
             let normalizedTitle = normalizedDockPillText(item.title)
             guard !excludingTitles.contains(normalizedTitle) else { continue }
+            let isOpenWithMenu =
+                normalizedTitle == "open with"
+                || item.path.contains { normalizedDockPillText($0) == "open with" }
+            if openWithFilter != nil, isOpenWithMenu, normalizedTitle != "open with" {
+                continue
+            }
 
             let path = item.path
             let sourcePID = item.sourcePID
             let shortcutChar = item.shortcutChar
             let shortcutModifiers = item.shortcutModifiers
             let badge = item.shortcutDisplay  // parent menu name dropped — use shortcut only
-            let isShareItem = item.title.lowercased().hasPrefix("share")
+            // Bare "Share"/"Share…" ONLY — never path.contains("share"), which would
+            // mis-mark real children (Mail/AirDrop) as the share trigger and click the
+            // wrong destination. Children fall through and execute their exact path.
+            let isShareItem = isShareSheetTitle(item.title)
 
             let menuImg = resolvedMenuIcon(for: item)
+            let shareItem = item
             var pill = DockPill(
                 id: "finder-menu-\(item.id)",
                 name: item.title,
@@ -616,7 +1431,7 @@ extension LauncherView {
                 badge: badge,
                 execute: {
                     if isShareItem {
-                        showShareSheetForContext()
+                        executeShareAction(item: shareItem)
                         return
                     }
 
@@ -636,16 +1451,13 @@ extension LauncherView {
             pill.sourceAppName = "Finder"
             pill.menuContext = menuContextLabel(from: item.path)
             pill.rankingKind = "finderMenu"
-            pill.isEnabled = item.isEnabled
-            pill.hasLiveAvailability = false
+            pill.isEnabled = isOpenWithMenu && normalizedTitle != "open with" ? true : item.isEnabled
+            pill.hasLiveAvailability = isOpenWithMenu && normalizedTitle != "open with"
             pill.trackingIdentifier =
                 "finder-menu:\(path.joined(separator: " > ").lowercased())"
             pill.searchTerms = item.path + ["finder", "files", "selection"]
             pills.append(pill)
 
-            let isOpenWithMenu =
-                normalizedTitle == "open with"
-                || item.path.contains { normalizedDockPillText($0) == "open with" }
             if false, let openWithFilter, isOpenWithMenu, !item.children.isEmpty {
                 let children = leafOpenWithChildren(for: item, filter: openWithFilter)
                 for child in children {
@@ -686,6 +1498,110 @@ extension LauncherView {
         }
 
         return pills
+    }
+
+    func finderSelectionMenuResults(query: String, limit: Int = 8) -> [AXMenuItem] {
+        guard let finder = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.finder"
+        }) else {
+            return []
+        }
+
+        let pid = finder.processIdentifier
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let fileActionTitles = [
+            "Open", "Open With", "Open in New Tab", "Get Info", "Rename",
+            "Compress", "Duplicate", "Make Alias", "Move to Trash", "Move to Bin",
+            "Copy", "Share", "Tags", "Quick Look", "Customize Folder",
+            "Customise Folder", "Import from iPhone", "Remove Download",
+            "Keep Downloaded",
+        ]
+        let fileActionPaths = ["File", "Services", "Quick Actions", "Open With", "Tags"]
+        let thirdPartyServiceHints = [
+            "Terminal", "Ghostty", "Downie", "Bluetooth", "TeamViewer",
+            "Hammerspoon", "Tuna", "MEGA", "Upload", "Sync", "Backup",
+            "Workflow", "Service",
+        ]
+        let preferredLimit = trimmedQuery.isEmpty ? max(limit, 12) : limit
+        let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+        let items = (liveItems.isEmpty
+            ? AXMenuReader.shared.cachedAllMenuItems(for: pid, maxDepth: 6)
+            : liveItems)
+            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { item -> AXMenuItem in
+                var item = item
+                item.sourcePID = pid
+                item.sourceAppName = "Finder"
+                return item
+            }
+            .filter { item in
+                item.path.contains { part in
+                    fileActionPaths.contains { part.localizedCaseInsensitiveContains($0) }
+                }
+                || fileActionTitles.contains { item.title.localizedCaseInsensitiveContains($0) }
+                || thirdPartyServiceHints.contains { item.title.localizedCaseInsensitiveContains($0) }
+            }
+
+        let matches: [AXMenuItem]
+        if trimmedQuery.isEmpty {
+            matches = items.filter { item in
+                fileActionTitles.contains { needle in
+                    item.title.localizedCaseInsensitiveContains(needle)
+                        || item.pathString.localizedCaseInsensitiveContains(needle)
+                }
+                || item.path.contains { part in
+                    fileActionPaths.contains { part.localizedCaseInsensitiveContains($0) }
+                }
+                || thirdPartyServiceHints.contains { hint in
+                    item.title.localizedCaseInsensitiveContains(hint)
+                }
+            }
+        } else {
+            matches = items.filter { item in
+                item.title.lowercased().contains(trimmedQuery)
+                    || item.path.contains { $0.lowercased().contains(trimmedQuery) }
+            }
+        }
+
+        var seen = Set<String>()
+        let deduped = matches.filter { item in
+            seen.insert(item.pathString.lowercased()).inserted
+        }
+
+        let ordered = deduped.sorted {
+            func priority(_ item: AXMenuItem) -> Int {
+                let title = item.title.lowercased()
+                let pathString = item.pathString.lowercased()
+                if !trimmedQuery.isEmpty {
+                    if title == trimmedQuery { return 0 }
+                    if title.hasPrefix(trimmedQuery) { return 1 }
+                    if pathString.contains(trimmedQuery) { return 2 }
+                }
+                if title == "open" { return 10 }
+                if title.contains("open with") { return 11 }
+                if title.contains("open in new tab") { return 12 }
+                if title.contains("move to bin") || title.contains("move to trash") { return 20 }
+                if title.contains("get info") { return 21 }
+                if title.contains("rename") { return 22 }
+                if title.contains("compress") { return 23 }
+                if title.contains("duplicate") { return 24 }
+                if title.contains("make alias") { return 25 }
+                if title.contains("quick look") { return 26 }
+                if title == "copy" { return 30 }
+                if title.contains("share") { return 31 }
+                if title.contains("tag") { return 32 }
+                if title.contains("quick action") || pathString.contains("quick actions") { return 40 }
+                if title.contains("service") || pathString.contains("services") { return 41 }
+                return 90 + item.path.count
+            }
+
+            let aPriority = priority($0)
+            let bPriority = priority($1)
+            if aPriority != bPriority { return aPriority < bPriority }
+            return $0.path.count < $1.path.count
+        }
+
+        return Array(ordered.prefix(preferredLimit))
     }
 
     func buildLaunchServicesOpenWithPills(
@@ -748,7 +1664,7 @@ extension LauncherView {
             return
         }
 
-        collapseDockAfterResultExecution()
+        hideLauncherAfterResultExecution()
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -843,10 +1759,12 @@ extension LauncherView {
 
     // MARK: - Cross-app / clipboard / session pill helpers
 
-    /// Native share sheet entry for active global selections. This is intentionally
+    /// Native share sheet entry for active selections in either scope. This is intentionally
     /// cache/context based only; it must not trigger live menu or AX reads while typing.
     func buildGlobalSelectionSharePills(query q: String) -> [DockPill] {
-        guard isGlobalContextActive, hasActiveDockContextSelection else { return [] }
+        // Selection-gated, no AppleScript/enumeration here — keep typing instant.
+        // Browser-page sharing is reached via the app's "Share…" menu item instead.
+        guard hasActiveDockContextSelection else { return [] }
         let normalizedQuery = normalizedDockPillText(q)
         if !normalizedQuery.isEmpty {
             let shareTerms = ["share", "send", "airdrop", "export", "message", "mail"]
@@ -856,9 +1774,6 @@ extension LauncherView {
                 })
             else { return [] }
         }
-
-        let context = effectiveAXContextForConversation()
-        guard !ShareIntentRouter.shared.shareItems(for: context).isEmpty else { return [] }
 
         let badge: String = {
             switch activeSelection {
@@ -872,20 +1787,279 @@ extension LauncherView {
                 return "Selection"
             }
         }()
+        // Single "Share Selection" pill. Activating it reveals the native destinations
+        // inline — DoraX never bounces to the system NSSharingServicePicker.
         var pill = DockPill(
-            id: "global-selection-share",
+            id: "selection-share",
             name: "Share Selection",
             icon: "square.and.arrow.up",
             accentColorName: "blue",
             badge: badge,
-            execute: { showShareSheetForContext() }
+            execute: { revealShareDestinations() }
         )
         pill.rankingKind = "payload"
-        pill.trackingIdentifier = "global-selection-share"
+        pill.trackingIdentifier = "selection-share"
         pill.searchTerms = [
             "share", "send", "airdrop", "export", "selection", "files", "text", "url",
         ]
         return [pill]
+    }
+
+    /// True only for the share-SHEET menu title ("Share", "Share…") — NOT incidental
+    /// names like "Share My Screen" / "Shared with You", which are ordinary actions.
+    func isShareSheetTitle(_ title: String) -> Bool {
+        let t = normalizedDockPillText(title)
+        return t == "share" || t == "share…" || t == "share..."
+    }
+
+    /// True when the scoped/frontmost app actually exposes a Share SHEET menu. Used to
+    /// gate DoraX's share destinations so we never invent a Share for apps (e.g.
+    /// Messages) whose menus contain no real Share item.
+    func frontmostAppHasShareMenu() -> Bool {
+        func scan(_ items: [AXMenuItem]) -> Bool {
+            for item in items {
+                if isShareSheetTitle(item.title) { return true }
+                if !item.children.isEmpty, scan(item.children) { return true }
+            }
+            return false
+        }
+        return scan(liveMenuItems)
+    }
+
+    /// True when the app exposes a Share submenu whose CHILDREN are captured by AX
+    /// (e.g. DuckDuckGo's File ▸ Share ▸ Notes/Mail/…). For those apps we let the AX
+    /// menu items run the share — the app provides the exact payload (current page,
+    /// selection) to the extension. Apps whose URL we can't read (privacy browsers)
+    /// only work that way, so NSSharingService (our list) must NOT duplicate them.
+    func frontmostAppHasShareSubmenuChildren() -> Bool {
+        func scan(_ items: [AXMenuItem]) -> Bool {
+            for item in items {
+                if isShareSheetTitle(item.title), !item.children.isEmpty { return true }
+                if !item.children.isEmpty, scan(item.children) { return true }
+            }
+            return false
+        }
+        return scan(liveMenuItems)
+    }
+
+    /// Activate DoraX's inline Share Sheet — the dock then shows ONLY the live
+    /// native share destinations for the current content. Works in any app.
+    func revealShareDestinations() {
+        searchState.query = ""
+        inlineShareActive = true
+        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+    }
+
+    /// Live native macOS share destinations (AirDrop, Mail, Messages, Notes, every
+    /// installed share-extension) for the current page/selection, as DoraX pills.
+    /// This is the inline replacement for NSSharingServicePicker.
+    ///
+    /// Listing uses the cached context (fast, no AppleScript). The real share runs at
+    /// tap time via `liveShareItems()`, which resolves the live browser URL then.
+    func buildInlineShareDestinationPills(query q: String) -> [DockPill] {
+        let listingItems = ShareIntentRouter.shared.shareableItems(
+            for: effectiveAXContextForConversation())
+        guard !listingItems.isEmpty else {
+            var pill = DockPill(
+                id: "share-empty",
+                name: "Nothing to share here",
+                icon: "square.and.arrow.up",
+                accentColorName: "gray",
+                badge: nil,
+                execute: { inlineShareActive = false }
+            )
+            pill.rankingKind = "payload"
+            pill.isEnabled = false
+            return [pill]
+        }
+
+        return shareDestinationPills(listingItems: listingItems, filter: normalizedDockPillText(q))
+    }
+
+    /// Typing "share"/"send"/"airdrop"/… directly surfaces the app's share children —
+    /// the live NSSharingService destinations — for ANY app, no drill-in and without
+    /// depending on AX having captured a lazy Share submenu. Gated to share-term queries
+    /// so the enumeration never runs on ordinary typing. Listing uses cached context
+    /// (no AppleScript); the real share resolves the live URL at tap.
+    func buildShareQueryDestinationPills(query q: String) -> [DockPill] {
+        let nq = normalizedDockPillText(q)
+        guard nq.count >= 2 else { return [] }
+        // Only when the app truly has a Share menu, or there's a selection to share.
+        guard hasActiveDockContextSelection || frontmostAppHasShareMenu() else { return [] }
+        // Share is ALWAYS sourced from NSSharingService.sharingServices(forItems:) — every
+        // installed Share Extension (LocalSend, Downie, Bridges, Photomator, …), exactly like
+        // the system Share Sheet. We never AX-click an app's Share children (avoids the
+        // first-child-opens-AirDrop bug and AX timing). AX is only used to DETECT that a
+        // Share menu exists; the payload + execution are pure macOS.
+        let genericVerbs = ["share", "send", "export"]
+        let destinationVerbs = ["airdrop", "mail", "message", "messages", "notes", "reminders"]
+        let isGeneric = genericVerbs.contains { $0.hasPrefix(nq) }
+        let isDestination = destinationVerbs.contains { $0.hasPrefix(nq) }
+        guard isGeneric || isDestination else { return [] }
+
+        let listingItems = ShareIntentRouter.shared.shareableItems(
+            for: effectiveAXContextForConversation())
+        guard !listingItems.isEmpty else { return [] }
+        // Generic verb → show all destinations; a destination-name query → filter to it.
+        let filter = isGeneric ? "" : nq
+        return shareDestinationPills(listingItems: listingItems, filter: filter)
+    }
+
+    /// Shared builder: one DoraX pill per native share destination. `filter` matches
+    /// destination titles ("" = all). Listing items drive enumeration; the live URL is
+    /// resolved at tap so the correct page/file is shared.
+    func shareDestinationPills(listingItems: [Any], filter normalizedQuery: String) -> [DockPill] {
+        let destinations = ShareActionCoordinator.shared.shareDestinations(items: listingItems)
+        return destinations.enumerated().compactMap { index, dest in
+            let normalizedTitle = normalizedDockPillText(dest.title)
+            guard normalizedQuery.isEmpty || normalizedTitle.contains(normalizedQuery)
+            else { return nil }
+            var pill = DockPill(
+                id: "share-dest-\(normalizedTitle)",
+                name: dest.title,
+                icon: "square.and.arrow.up",
+                accentColorName: "blue",
+                badge: "Share",
+                execute: {
+                    inlineShareActive = false
+                    // Learn the user's preferred destinations — ranks them higher next time.
+                    UsageTracker.shared.recordAccess(for: "share-dest:\(normalizedTitle)")
+                    // Resolve the live payload BEFORE hiding (needs the source app context),
+                    // then dismiss the launcher panel and run the service once the previous
+                    // app is frontmost — NSSharingService can't present its UI (Mail/Messages
+                    // compose, AirDrop sheet) from our background accessory panel.
+                    let live = liveShareItems()
+                    let items = live.isEmpty ? listingItems : live
+                    self.forceHideLauncherAfterResultExecution()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        dest.perform(withItems: items)
+                    }
+                }
+            )
+            pill.menuItemImage = dest.image ?? shareDestinationIcon(forTitle: dest.title)
+            pill.isShareAction = true
+            pill.menuItemName = dest.title
+            pill.menuContext = "Share"
+            pill.rankingKind = "submenuChild"
+            pill.hasLiveAvailability = true
+            // Frecency-ranked: destinations you use most float to the top, with the system
+            // order as the tiebreaker.
+            let usage = UsageTracker.shared.getScore(for: "share-dest:\(normalizedTitle)")
+            pill.rankingScore = usage * 1_000 + Double(1_000 - index)
+            pill.trackingIdentifier = "share-dest:\(normalizedTitle)"
+            pill.searchTerms = [dest.title, "share", "send", "airdrop", "export"]
+            return pill
+        }
+    }
+
+    /// Enter an AI chat grounded in the current selection (text / files / page URL). Every
+    /// message in this session carries the selection, so the AI always answers about the
+    /// user's current work — webpage, document, files. Submits `initialQuery` if given,
+    /// otherwise greets with an open prompt.
+    func enterSelectionChat(initialQuery: String) {
+        let ctx = effectiveAXContextForConversation()
+        let text: String? = {
+            if case .text(let t) = activeSelection, !t.isEmpty { return t }
+            return ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+        aiMode.selectionText = (text?.isEmpty == false) ? text : nil
+        aiMode.selectionFiles = effectiveSelectedFileURLsForConversation()
+        aiMode.selectionURL = ctx.currentURL?.isEmpty == false ? ctx.currentURL : nil
+
+        globalContextActivation = nil
+        aiMode.isActive = true
+        hasUserSentMessageInCurrentSession = true
+        searchState.query = ""
+
+        let q = initialQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            aiMode.messages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content:
+                        "What would you like to do with this? I can summarize or explain it, send it to Notes, Reminders, Mail or Messages, or anything else — just ask."))
+            requestWindowSizeUpdate(reason: .chatChanged)
+        } else {
+            // Submit synchronously: the Enter caller clears searchState.query right after this
+            // returns, so an async submit would read an empty query and do nothing.
+            searchState.query = q
+            submitAIQuery()
+        }
+    }
+
+    /// Always-first Selection Scope suggestion — keeps the result sheet stable (never empty)
+    /// and is the entry point to selection-grounded chat. Adapts to the typed query.
+    func selectionScopeAskAIPill(query q: String) -> DockPill {
+        let typed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = typed.isEmpty ? "Ask AI — what would you like to do?" : "Ask AI: \(typed)"
+        var pill = DockPill(
+            id: "selection-ask-ai",
+            name: title,
+            icon: "sparkles",
+            accentColorName: "purple",
+            badge: "Selection",
+            execute: { enterSelectionChat(initialQuery: typed) }
+        )
+        pill.rankingKind = "selectionAI"
+        pill.rankingScore = 100_000  // always first
+        pill.trackingIdentifier = "selection-ask-ai"
+        pill.searchTerms = ["ask", "ai", "chat", "selection", "what", "do"]
+        return pill
+    }
+
+    /// Selection is additive in Context Dock: these AI actions sit beside normal app menus.
+    /// Works for BOTH text and file selections (e.g. "summarize this PDF") — the selection
+    /// chat injects the file content, so the same actions apply.
+    func buildContextDockSelectionAIPills(query q: String) -> [DockPill] {
+        guard !aiMode.isActive else { return [] }
+
+        let badge: String
+        let isText: Bool
+        switch activeSelection {
+        case .text(let t) where !t.isEmpty:
+            badge = "Selection · \(t.count) chars"
+            isText = true
+        case .files(let urls) where !urls.isEmpty:
+            badge = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
+            isText = false
+        default:
+            return []
+        }
+
+        let normalizedQuery = normalizedDockPillText(q)
+        let textActions: [(name: String, icon: String, prompt: String)] = [
+            ("Explain", "text.magnifyingglass", "Explain this"),
+            ("Summarize", "text.alignleft", "Summarize this"),
+            ("Rewrite", "pencil.line", "Rewrite this clearly"),
+            ("Translate", "character.book.closed", "Translate this"),
+        ]
+        let fileActions: [(name: String, icon: String, prompt: String)] = [
+            ("Summarize", "doc.text.magnifyingglass", "Summarize this document"),
+            ("Explain", "text.magnifyingglass", "Explain what this file is about"),
+            ("Key points", "list.bullet", "List the key points of this document"),
+        ]
+        let actions = isText ? textActions : fileActions
+
+        return actions.compactMap { action -> DockPill? in
+            let searchable = normalizedDockPillText("\(action.name) \(action.prompt)")
+            guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+            var pill = DockPill(
+                id: "context-selection-ai-\(action.name.lowercased())",
+                name: action.name,
+                icon: action.icon,
+                accentColorName: "purple",
+                badge: badge,
+                // Enter selection-grounded chat with this instruction — the session keeps the
+                // selection (text or files), so follow-ups ("now send it to mail") still work.
+                execute: { enterSelectionChat(initialQuery: action.prompt) }
+            )
+            pill.rankingKind = "selectionAI"
+            pill.sourceBundleId = axContext.bundleId
+            pill.sourceAppName = axContext.appName
+            pill.trackingIdentifier = "context-selection-ai:\(action.name.lowercased())"
+            pill.searchTerms = [action.name, action.prompt, "selection", "ai"]
+            return pill
+        }
     }
 
     /// Pills for apps that can receive the current context (URL, text, file).
@@ -1142,7 +2316,7 @@ extension LauncherView {
         }
     }
 
-    func normalizedDockPillText(_ text: String) -> String {
+    nonisolated func normalizedDockPillText(_ text: String) -> String {
         let lowered = text.lowercased()
         let mapped = lowered.unicodeScalars.map { scalar -> Character in
             if CharacterSet.alphanumerics.contains(scalar)
@@ -1188,6 +2362,42 @@ extension LauncherView {
         item.isAppleMenu
             || menuContextLabel(from: item.path) == "Apple Menu"
             || item.path.first == "Apple"
+    }
+
+    /// Apple-menu "Recent Items" submenu (recent apps/documents/servers + Clear Menu).
+    /// Excluded even when the live Apple menu is allowed — these are noise, not actions.
+    nonisolated func isAppleRecentItemsMenuItem(_ item: AXMenuItem) -> Bool {
+        guard isAppleMenuItem(item) else { return false }
+        return item.path.contains { normalizedDockPillText($0).contains("recent") }
+            || normalizedDockPillText(item.title).contains("recent")
+    }
+
+    nonisolated func isApplicationMenuItem(_ item: AXMenuItem, appName: String) -> Bool {
+        let normalizedAppName = normalizedDockPillText(appName)
+        guard !normalizedAppName.isEmpty,
+            let root = item.path.first.map(normalizedDockPillText),
+            !root.isEmpty
+        else { return false }
+        return root == normalizedAppName
+    }
+
+    nonisolated func isRejectedTopMenuItem(_ item: AXMenuItem, appName: String) -> Bool {
+        isAppleMenuItem(item)
+    }
+
+    nonisolated func isGenericAppMenu(_ item: AXMenuItem) -> Bool {
+        let title = normalizedDockPillText(item.title)
+        let genericPatterns = [
+            "about", "help", "quit", "exit", "close",
+            "settings", "preferences", "options",
+            "hide", "show", "reveal",
+            "services", "documentation",
+        ]
+        return genericPatterns.contains { title.contains($0) }
+    }
+
+    func menuItemsVisibleInActiveDockMode(_ items: [AXMenuItem]) -> [AXMenuItem] {
+        items.filter { !isAppleMenuItem($0) }
     }
 
     /// macOS-style dock magnification scale for a pill at `index`.
@@ -1260,6 +2470,8 @@ extension LauncherView {
     func dockPillKindBaseScore(_ pill: DockPill) -> Double {
         switch pill.rankingKind {
         case "appLaunch": return 136
+        case "appSwitch": return 134
+        case "nativeWindow": return 132
         case "semanticIntent": return 128
         case "finderCurrent": return 114
         case "finderSearch": return 104

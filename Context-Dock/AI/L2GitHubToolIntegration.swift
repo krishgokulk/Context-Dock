@@ -757,7 +757,9 @@ final class GitHubToolManager: ObservableObject {
         // Store in UserDefaults for persistence
         saveToolToRegistry(tool)
 
+        #if DEBUG
         print("[L2] Registered GitHub tool: \(tool.name) with capabilities: \(tool.capabilities)")
+        #endif
     }
 
     // MARK: - Persistence

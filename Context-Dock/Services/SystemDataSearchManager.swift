@@ -56,12 +56,12 @@ struct SystemSearchResult {
                 NSWorkspace.shared.open(url)
             }
         case .mail:
-            if let messageId = metadata["messageId"] as? String {
+            if metadata["messageId"] as? String != nil {
                 // Open Mail app
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Mail.app"))
             }
         case .photo:
-            if let localId = metadata["localIdentifier"] as? String {
+            if metadata["localIdentifier"] as? String != nil {
                 // Open Photos app
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Photos.app"))
             }
@@ -117,7 +117,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
     func requestCalendarPermission() async -> Bool {
         // Prevent concurrent permission requests
         if isRequestingCalendarPermission {
+            #if DEBUG
             print("⚠️ Calendar permission request already in progress, waiting...")
+            #endif
             // Wait for the existing request to complete
             while isRequestingCalendarPermission {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -139,7 +141,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
                 return granted
             }
         } catch {
+            #if DEBUG
             print("⚠️ Calendar permission error: \(error)")
+            #endif
             return false
         }
     }
@@ -147,7 +151,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
     func requestRemindersPermission() async -> Bool {
         // Prevent concurrent permission requests
         if isRequestingRemindersPermission {
+            #if DEBUG
             print("⚠️ Reminders permission request already in progress, waiting...")
+            #endif
             // Wait for the existing request to complete
             while isRequestingRemindersPermission {
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -173,7 +179,9 @@ class ILCalendarRemindersSearchManager: ObservableObject {
                 return granted
             }
         } catch {
+            #if DEBUG
             print("⚠️ Reminders permission error: \(error)")
+            #endif
             return false
         }
     }
@@ -190,48 +198,43 @@ class ILCalendarRemindersSearchManager: ObservableObject {
         
         var results: [SystemSearchResult] = []
         
-        // Wrap eventStore access in error handling to prevent crashes
-        do {
-            // Search events from past 12 months to next 12 months
-            let now = Date()
-            let startDate = Calendar.current.date(byAdding: .month, value: -12, to: now) ?? now
-            let endDate = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        // Search events from past 12 months to next 12 months
+        let now = Date()
+        let startDate = Calendar.current.date(byAdding: .month, value: -12, to: now) ?? now
+        let endDate = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        
+        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
+        let events = eventStore.events(matching: predicate)
+        
+        let queryLower = query.lowercased()
+        let isEmptyQuery = queryLower.isEmpty
+        
+        for event in events {
+            let titleMatches = isEmptyQuery || (event.title?.lowercased().contains(queryLower) ?? false)
+            let notesMatches = !isEmptyQuery && (event.notes?.lowercased().contains(queryLower) ?? false)
+            let locationMatches = !isEmptyQuery && (event.location?.lowercased().contains(queryLower) ?? false)
             
-            let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
-            let events = eventStore.events(matching: predicate)
-            
-            let queryLower = query.lowercased()
-            let isEmptyQuery = queryLower.isEmpty
-            
-            for event in events {
-                let titleMatches = isEmptyQuery || (event.title?.lowercased().contains(queryLower) ?? false)
-                let notesMatches = !isEmptyQuery && (event.notes?.lowercased().contains(queryLower) ?? false)
-                let locationMatches = !isEmptyQuery && (event.location?.lowercased().contains(queryLower) ?? false)
+            if titleMatches || notesMatches || locationMatches {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateStyle = .medium
+                dateFormatter.timeStyle = .short
                 
-                if titleMatches || notesMatches || locationMatches {
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateStyle = .medium
-                    dateFormatter.timeStyle = .short
-                    
-                    var subtitle = dateFormatter.string(from: event.startDate)
-                    if let location = event.location, !location.isEmpty {
-                        subtitle += " • \(location)"
-                    }
-                    
-                    results.append(SystemSearchResult(
-                        id: event.eventIdentifier ?? UUID().uuidString,
-                        type: .calendarEvent,
-                        title: event.title ?? "Untitled Event",
-                        subtitle: subtitle,
-                        details: event.notes,
-                        date: event.startDate,
-                        icon: nil,
-                        metadata: ["eventIdentifier": event.eventIdentifier ?? ""]
-                    ))
+                var subtitle = dateFormatter.string(from: event.startDate)
+                if let location = event.location, !location.isEmpty {
+                    subtitle += " • \(location)"
                 }
+                
+                results.append(SystemSearchResult(
+                    id: event.eventIdentifier ?? UUID().uuidString,
+                    type: .calendarEvent,
+                    title: event.title ?? "Untitled Event",
+                    subtitle: subtitle,
+                    details: event.notes,
+                    date: event.startDate,
+                    icon: nil,
+                    metadata: ["eventIdentifier": event.eventIdentifier ?? ""]
+                ))
             }
-        } catch {
-            // Silently handle EventKit errors
         }
         
         return results
@@ -249,19 +252,15 @@ class ILCalendarRemindersSearchManager: ObservableObject {
         }
         
         return await withCheckedContinuation { continuation in
-            var results: [SystemSearchResult] = []
-            let queryLower = query.lowercased()
-            let isEmptyQuery = queryLower.isEmpty
-            
             let predicate = eventStore.predicateForReminders(in: nil)
             
-            eventStore.fetchReminders(matching: predicate) { reminders in
-                guard let reminders = reminders else {
+            eventStore.fetchReminders(matching: predicate) { fetchedReminders in
+                guard fetchedReminders != nil else {
                     continuation.resume(returning: [])
                     return
                 }
                 
-                continuation.resume(returning: results)
+                continuation.resume(returning: [])
             }
         }
     }
@@ -511,14 +510,19 @@ class SystemDataSearchManager: ObservableObject {
     private init() {}
     
     
-    func searchAll(query: String, types: Set<SystemDataType> = [ .photo, .contact, .voiceRecording], perTypeLimit: Int = 10, allowEmptyQuery: Bool = false) async -> [SystemSearchResult] {
+    func searchAll(query: String, types: Set<SystemDataType>? = nil, perTypeLimit: Int = 10, allowEmptyQuery: Bool = false) async -> [SystemSearchResult] {
         guard !query.isEmpty || allowEmptyQuery else {
+            #if DEBUG
             print("⚠️ [SystemDataManager] Empty query, returning no results")
+            #endif
             return []
         }
+        let searchTypes = types ?? [.photo, .contact, .voiceRecording]
         
         let queryLabel = query.isEmpty ? "<all>" : query
-        print("🔍 [SystemDataManager] Starting search for: '\(queryLabel)' across \(types.count) types")
+        #if DEBUG
+        print("🔍 [SystemDataManager] Starting search for: '\(queryLabel)' across \(searchTypes.count) types")
+        #endif
         
         await MainActor.run {
             isSearching = true
@@ -528,39 +532,43 @@ class SystemDataSearchManager: ObservableObject {
         
         // Perform searches in parallel
         await withTaskGroup(of: [SystemSearchResult].self) { group in
-            if types.contains(.photo) {
+            if searchTypes.contains(.photo) {
+                #if DEBUG
                 print("📷 [SystemDataManager] Adding photos search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
-                    let results = await self.photosManager.searchPhotos(query: query)
-                    print("📷 [SystemDataManager] Photos returned \(results.count) results")
-                    return results
+                    await self.photosManager.searchPhotos(query: query)
                 }
             }
             
-            if types.contains(.contact) {
+            if searchTypes.contains(.contact) {
+                #if DEBUG
                 print("👤 [SystemDataManager] Adding contacts search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
-                    let results = await self.contactsManager.searchContacts(query: query)
-                    print("👤 [SystemDataManager] Contacts returned \(results.count) results")
-                    return results
+                    await self.contactsManager.searchContacts(query: query)
                 }
             }
             
-            if types.contains(.voiceRecording) {
+            if searchTypes.contains(.voiceRecording) {
+                #if DEBUG
                 print("🎤 [SystemDataManager] Adding recordings search task")
+                #endif
                 group.addTask(priority: .userInitiated) {
-                    let results = await self.recordingsManager.searchRecordings(query: query)
-                    print("🎤 [SystemDataManager] Recordings returned \(results.count) results")
-                    return results
+                    await self.recordingsManager.searchRecordings(query: query)
                 }
             }
             for await results in group {
+                #if DEBUG
                 print("📦 [SystemDataManager] Received batch of \(results.count) results")
+                #endif
                 allResults.append(contentsOf: results)
             }
         }
         
+        #if DEBUG
         print("✅ [SystemDataManager] Total raw results: \(allResults.count)")
+        #endif
         
         await MainActor.run {
             isSearching = false
@@ -572,7 +580,7 @@ class SystemDataSearchManager: ObservableObject {
             bucketed[r.type, default: []].append(r)
         }
         var merged: [SystemSearchResult] = []
-        for (type, list) in bucketed {
+        for (_, list) in bucketed {
             let sorted = list.sorted { (a, b) in
                 switch (a.date, b.date) {
                 case let (da?, db?): return da > db

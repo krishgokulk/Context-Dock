@@ -10,17 +10,33 @@ struct InstalledApplicationEntry: Identifiable {
     var id: String { bundleId }
 }
 
+private final class InstalledApplicationsCatalogCache: @unchecked Sendable {
+    let lock = NSLock()
+    nonisolated(unsafe) var apps: [InstalledApplicationEntry]?
+}
+
+nonisolated(unsafe) private let installedApplicationsCatalogCache = InstalledApplicationsCatalogCache()
+
 enum InstalledApplicationsCatalog {
-    private static let cacheLock = NSLock()
-    private static var cachedApps: [InstalledApplicationEntry]?
+    nonisolated static func warmUp() {
+        Task.detached(priority: .utility) {
+            _ = discoverInstalledApps()
+        }
+    }
+
+    nonisolated static func cachedInstalledApps() -> [InstalledApplicationEntry] {
+        installedApplicationsCatalogCache.lock.lock()
+        defer { installedApplicationsCatalogCache.lock.unlock() }
+        return installedApplicationsCatalogCache.apps ?? []
+    }
 
     nonisolated static func discoverInstalledApps() -> [InstalledApplicationEntry] {
-        cacheLock.lock()
-        if let cachedApps {
-            cacheLock.unlock()
+        installedApplicationsCatalogCache.lock.lock()
+        if let cachedApps = installedApplicationsCatalogCache.apps {
+            installedApplicationsCatalogCache.lock.unlock()
             return cachedApps
         }
-        cacheLock.unlock()
+        installedApplicationsCatalogCache.lock.unlock()
 
         let searchRoots: [URL] = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
@@ -74,9 +90,9 @@ enum InstalledApplicationsCatalog {
             return lhs < rhs
         }
 
-        cacheLock.lock()
-        cachedApps = sorted
-        cacheLock.unlock()
+        installedApplicationsCatalogCache.lock.lock()
+        installedApplicationsCatalogCache.apps = sorted
+        installedApplicationsCatalogCache.lock.unlock()
         return sorted
     }
 

@@ -9,7 +9,7 @@ import CoreGraphics
 import Foundation
 
 enum MenuShortcutFormatter {
-    static func display(char: String?, modifiers: Int) -> String? {
+    nonisolated static func display(char: String?, modifiers: Int) -> String? {
         guard let raw = char, !raw.isEmpty,
               let scalar = raw.unicodeScalars.first else { return nil }
 
@@ -23,7 +23,7 @@ enum MenuShortcutFormatter {
         return output
     }
 
-    static func keyName(for scalar: UInt32, fallback: String) -> String {
+    nonisolated static func keyName(for scalar: UInt32, fallback: String) -> String {
         switch scalar {
         case 8: return "⌫"
         case 127: return "⌦"

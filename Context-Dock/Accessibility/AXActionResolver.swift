@@ -33,7 +33,7 @@ final class AXActionResolver {
            let mods = record.map({ $0.shortcutModifiers }) {
             // Strategy 1: keyboard shortcut — no AX tree traversal at all.
             // Falls through to Strategy 2 if the key code is unknown (e.g. special keys like ⌫).
-            Task.detached(priority: .userInitiated) {
+            Task(priority: .userInitiated) { @MainActor in
                 _ = app.activate(options: [.activateIgnoringOtherApps])
                 await AXActionResolver.waitForActivation(of: app)
                 let sent = AXMenuReader.shared.executeShortcut(char: char, modifiers: mods, in: pid)
@@ -46,7 +46,7 @@ final class AXActionResolver {
             }
         } else {
             // Strategy 2 → 3 fallback chain
-            Task.detached(priority: .userInitiated) {
+            Task(priority: .userInitiated) { @MainActor in
                 _ = app.activate(options: [.activateIgnoringOtherApps])
                 await AXActionResolver.waitForActivation(of: app)
 
@@ -67,6 +67,7 @@ final class AXActionResolver {
     // is frontmost, or after a 500ms timeout if the notification never fires
     // (e.g. app was already active at the moment of the call).
 
+    @MainActor
     static func waitForActivation(of app: NSRunningApplication) async {
         guard !app.isActive else { return }
 
@@ -81,7 +82,7 @@ final class AXActionResolver {
             var didResume = false
             var token: NSObjectProtocol?
 
-            let finish: @Sendable () -> Void = {
+            let finish = {
                 guard !didResume else { return }
                 didResume = true
                 if let t = token {
@@ -105,9 +106,9 @@ final class AXActionResolver {
             }
 
             // 500ms hard timeout — prevents hanging if notification never fires
-            Task.detached {
+            Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                await MainActor.run { finish() }
+                finish()
             }
         }
     }
@@ -152,8 +153,9 @@ final class AXActionResolver {
             """
         }
 
-        await Task.detached(priority: .userInitiated) {
-            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        await Task.detached(priority: .userInitiated) { () -> Void in
+            var error: NSDictionary?
+            _ = NSAppleScript(source: script)?.executeAndReturnError(&error)
         }.value
     }
 }

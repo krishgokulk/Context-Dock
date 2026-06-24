@@ -24,7 +24,11 @@ final class MenuIconMemoryCache {
 
     private init() {}
 
-    func image(for key: String, load: () -> NSImage?) -> NSImage? {
+    /// - Parameter cacheMisses: when false, a nil result is NOT remembered, so the
+    ///   next call retries. Use for icons that depend on async-loaded state (the app
+    ///   catalog, share context) — otherwise an early nil poisons the cache forever
+    ///   and the row is stuck on a fallback glyph.
+    func image(for key: String, cacheMisses: Bool = true, load: () -> NSImage?) -> NSImage? {
         let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedKey.isEmpty else { return nil }
 
@@ -33,16 +37,18 @@ final class MenuIconMemoryCache {
             lock.unlock()
             return image
         }
-        if misses.contains(normalizedKey) {
+        if cacheMisses, misses.contains(normalizedKey) {
             lock.unlock()
             return nil
         }
         lock.unlock()
 
         guard let image = load() else {
-            lock.lock()
-            misses.insert(normalizedKey)
-            lock.unlock()
+            if cacheMisses {
+                lock.lock()
+                misses.insert(normalizedKey)
+                lock.unlock()
+            }
             return nil
         }
 
@@ -143,15 +149,21 @@ class ShortcutsLinkQuery {
             }
 
             if task.terminationStatus == 0 {
+                #if DEBUG
                 print("✅ Successfully queried shortcuts using CLI tool")
+                #endif
                 return results
             }
         } catch {
+            #if DEBUG
             print("⚠️ Failed to use shortcuts CLI: \(error)")
+            #endif
         }
 
         // Method 2: Fallback to AppleScript
+        #if DEBUG
         print("📝 Trying AppleScript fallback...")
+        #endif
         let script = """
             tell application "Shortcuts Events"
                 get name of every shortcut
@@ -163,7 +175,9 @@ class ShortcutsLinkQuery {
             let output = scriptObject.executeAndReturnError(&error)
 
             if let error = error {
+                #if DEBUG
                 print("AppleScript error: \(error)")
+                #endif
                 throw NSError(
                     domain: "ShortcutsQuery", code: -1,
                     userInfo: [NSLocalizedDescriptionKey: "Failed to query shortcuts: \(error)"])

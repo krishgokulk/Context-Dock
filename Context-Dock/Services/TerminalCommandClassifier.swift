@@ -118,6 +118,13 @@ class TerminalCommandClassifier {
         ("^ping\\s+-c\\s+\\d+\\s", .networkOperation, "Ping host (limited)"),
         ("^curl\\s+https?://wttr\\.in", .networkOperation, "Fetch weather info"),
         ("^curl\\s+https?://(ipinfo\\.io|ifconfig\\.me)", .networkOperation, "Fetch network info"),
+        ("^tailscale\\s+status(\\s|$)", .networkOperation, "Show Tailscale connection status"),
+        ("^tailscale\\s+ip(\\s|$)", .networkOperation, "Show Tailscale IP addresses"),
+        ("^tailscale\\s+netcheck(\\s|$)", .networkOperation, "Check Tailscale network connectivity"),
+        ("^tailscale\\s+lock\\s+status(\\s|$)", .networkOperation, "Show Tailnet Lock status"),
+        ("^tailscale\\s+funnel\\s+status(\\s|$)", .networkOperation, "Show Tailscale Funnel status"),
+        ("^tailscale\\s+serve\\s+status(\\s|$)", .networkOperation, "Show Tailscale Serve status"),
+        ("^tailscale\\s+version(\\s|$)", .networkOperation, "Show Tailscale version"),
 
         // Package info (read-only)
         ("^brew\\s+info\\s", .packageManagement, "Show package information"),
@@ -291,6 +298,10 @@ class TerminalCommandClassifier {
          "Changing file ownership can break system files",
          nil),
 
+        ("^chmod\\s+.*-[rR]|^chmod\\s+-[rR]",
+         "Recursive permission changes can make files inaccessible",
+         "Review affected files and change permissions individually"),
+
         ("^chgrp\\s",
          "Changing file group can affect permissions",
          nil),
@@ -409,19 +420,6 @@ class TerminalCommandClassifier {
                     suggestedAlternative: alternative
                 )
             }
-        }
-
-        // Auto-approve Homebrew commands
-        if matches(trimmedCommand, pattern: "^brew\\s") {
-            return CommandClassification(
-                command: trimmedCommand,
-                category: .packageManagement,
-                riskLevel: .low,
-                explanation: "Homebrew command",
-                requiresApproval: false,
-                blockedReason: nil,
-                suggestedAlternative: nil
-            )
         }
 
         // Check safe patterns

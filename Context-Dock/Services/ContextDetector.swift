@@ -49,6 +49,75 @@ class ContextDetector {
         return paths.map { URL(fileURLWithPath: $0) }
     }
 
+    /// Mail attachments selected/visible in the focused message. Mail caches
+    /// attachments on disk and exposes the cached file URL via the attachment
+    /// element's AXURL — so we can resolve a real path for Open With / Quick
+    /// Look without saving. Prefers the focused/selected attachment; otherwise
+    /// returns every attachment URL in the focused message.
+    ///
+    /// Bounded breadth-first scan (node + depth budget) so it never stalls the
+    /// main thread on Mail's large WebKit message trees.
+    func getMailAttachmentFiles(pid: pid_t) -> [URL] {
+        let app = AXUIElementCreateApplication(pid)
+
+        // Root: focused window, else the app element.
+        var windowRef: CFTypeRef?
+        let root: AXUIElement = {
+            if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &windowRef)
+                == .success, let windowRef
+            {
+                return unsafeBitCast(windowRef, to: AXUIElement.self)
+            }
+            return app
+        }()
+
+        func fileURL(of element: AXUIElement) -> URL? {
+            var urlRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXURLAttribute as CFString, &urlRef)
+                == .success, let urlRef
+            else { return nil }
+            let url = urlRef as? URL ?? (urlRef as? NSURL) as URL?
+            guard let url, url.isFileURL, !url.hasDirectoryPath,
+                FileManager.default.fileExists(atPath: url.path)
+            else { return nil }
+            return url
+        }
+
+        func isSelected(_ element: AXUIElement) -> Bool {
+            var ref: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXSelectedAttribute as CFString, &ref)
+                == .success else { return false }
+            return (ref as? Bool) == true
+        }
+
+        var queue: [(element: AXUIElement, depth: Int)] = [(root, 0)]
+        var visitedBudget = 2500
+        var allURLs: [URL] = []
+        var selectedURLs: [URL] = []
+        var seen = Set<String>()
+
+        while !queue.isEmpty, visitedBudget > 0 {
+            let (element, depth) = queue.removeFirst()
+            visitedBudget -= 1
+            guard depth < 32 else { continue }
+
+            if let url = fileURL(of: element), seen.insert(url.path).inserted {
+                allURLs.append(url)
+                if isSelected(element) { selectedURLs.append(url) }
+            }
+
+            var childrenRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+                let children = childrenRef as? [AXUIElement]
+            {
+                for child in children { queue.append((child, depth + 1)) }
+            }
+        }
+
+        return selectedURLs.isEmpty ? allURLs : selectedURLs
+    }
+
     /// Get current Finder directory (the folder the user is viewing)
     func getCurrentFinderDirectory() -> String? {
         let script = """
@@ -133,26 +202,36 @@ class ContextDetector {
 
             // For PDF files, extract text content
             if fileExtension == "pdf" {
+                #if DEBUG
                 print("📄 [ContextDetector] Attempting to extract text from PDF: \(url.lastPathComponent)")
+                #endif
                 if let pdfDocument = PDFDocument(url: url) {
+                    #if DEBUG
                     print("✅ [ContextDetector] PDF loaded successfully, \(pdfDocument.pageCount) pages")
+                    #endif
                     var pdfText = ""
                     let maxPages = min(5, pdfDocument.pageCount) // Extract first 5 pages max
 
                     for pageIndex in 0..<maxPages {
                         if let page = pdfDocument.page(at: pageIndex) {
                             if let pageContent = page.string {
+                                #if DEBUG
                                 print("✅ [ContextDetector] Extracted \(pageContent.count) chars from page \(pageIndex + 1)")
+                                #endif
                                 pdfText += "--- Page \(pageIndex + 1) ---\n"
                                 pdfText += pageContent + "\n\n"
                             } else {
+                                #if DEBUG
                                 print("⚠️ [ContextDetector] No text content on page \(pageIndex + 1)")
+                                #endif
                             }
                         }
                     }
 
                     if !pdfText.isEmpty {
+                        #if DEBUG
                         print("✅ [ContextDetector] Total PDF text extracted: \(pdfText.count) characters")
+                        #endif
                         if pdfText.count > 5000 {
                             content = String(pdfText.prefix(5000)) + "\n... (PDF content truncated, showing first 5 pages)"
                         } else {
@@ -162,15 +241,21 @@ class ContextDetector {
                             }
                         }
                     } else {
+                        #if DEBUG
                         print("❌ [ContextDetector] PDF has no extractable text (might be scanned/image-based)")
+                        #endif
                         let ocrText = extractTextFromPDFWithOCR(pdfDocument, maxPages: 2)
                         if !ocrText.isEmpty {
                             content = ocrText.count > 5000 ? String(ocrText.prefix(5000)) + "\n... (OCR content truncated)" : ocrText
+                            #if DEBUG
                             print("✅ [ContextDetector] OCR extracted \(ocrText.count) characters from PDF")
+                            #endif
                         }
                     }
                 } else {
+                    #if DEBUG
                     print("❌ [ContextDetector] Failed to load PDF document")
+                    #endif
                 }
             }
 
@@ -181,7 +266,9 @@ class ContextDetector {
                     let ocrText = extractTextFromImage(cgImage)
                     if !ocrText.isEmpty {
                         content = ocrText.count > 5000 ? String(ocrText.prefix(5000)) + "\n... (OCR content truncated)" : ocrText
+                        #if DEBUG
                         print("✅ [ContextDetector] OCR extracted \(ocrText.count) characters from image")
+                        #endif
                     }
                 }
             }
@@ -205,7 +292,9 @@ class ContextDetector {
             let lines = observations.compactMap { $0.topCandidates(1).first?.string }
             return lines.joined(separator: "\n")
         } catch {
+            #if DEBUG
             print("❌ [ContextDetector] OCR failed: \(error)")
+            #endif
             return ""
         }
     }
@@ -369,6 +458,25 @@ class ContextDetector {
         guard parts.count == 2 else { return nil }
 
         return (url: parts[0], title: parts[1])
+    }
+
+    /// Live current-tab URL for the frontmost supported browser. Used at share
+    /// time to override any stale cached `currentURL` (a previously visited page),
+    /// which would otherwise share the wrong link.
+    func liveBrowserURL(bundleId: String) -> String? {
+        let url: String?
+        switch bundleId {
+        case "com.apple.Safari":
+            url = getSafariContext()?.url
+        case "com.google.Chrome":
+            url = getChromeContext()?.url
+        case "company.thebrowser.Browser":
+            url = getArcContext()?.url
+        default:
+            return nil
+        }
+        let trimmed = url?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     /// Returns the user's selected text from the active Safari tab.
@@ -719,20 +827,28 @@ class ContextDetector {
         var contexts: [DetectedContext] = []
         let bundleID = frontmostApp.bundleIdentifier ?? ""
 
+        #if DEBUG
         print("🔍 [ContextDetector] Getting comprehensive context for L2")
+        #endif
 
         // 1. ALWAYS include clipboard if available
         if let clipboard = getClipboardContent() {
+            #if DEBUG
             print("📋 [ContextDetector] Clipboard: \(clipboard.prefix(50))...")
+            #endif
             contexts.append(.clipboard(clipboard))
         }
 
         // 2. Check for currently playing music/podcasts
         if let musicInfo = getMusicInfo() {
+            #if DEBUG
             print("🎵 [ContextDetector] Music: \(musicInfo.title) by \(musicInfo.artist)")
+            #endif
             contexts.append(.music(title: musicInfo.title, artist: musicInfo.artist, album: musicInfo.album))
         } else if let podcastInfo = getPodcastInfo() {
+            #if DEBUG
             print("🎙️ [ContextDetector] Podcast: \(podcastInfo.title)")
+            #endif
             contexts.append(.podcast(title: podcastInfo.title, show: podcastInfo.show))
         }
 
@@ -740,19 +856,25 @@ class ContextDetector {
         if bundleID == "com.apple.Safari" {
             let allTabs = getAllSafariTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Safari: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         } else if bundleID == "com.google.Chrome" {
             let allTabs = getAllChromeTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Chrome: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         } else if bundleID == "company.thebrowser.Browser" {
             let allTabs = getAllArcTabs()
             if !allTabs.isEmpty {
+                #if DEBUG
                 print("🌐 [ContextDetector] Arc: \(allTabs.count) tabs across all windows")
+                #endif
                 contexts.append(.browserTabs(allTabs))
             }
         }
@@ -771,7 +893,9 @@ class ContextDetector {
             }
         }
 
+        #if DEBUG
         print("✅ [ContextDetector] Comprehensive context: \(contexts.count) items")
+        #endif
         return contexts
     }
 
@@ -780,13 +904,10 @@ class ContextDetector {
         let bundleID = frontmostApp.bundleIdentifier ?? ""
         let appName = frontmostApp.localizedName ?? ""
 
-        print("🔍 [ContextDetector] Detecting context for: \(appName) (\(bundleID))")
-
         // 1. Finder - selected files
         if bundleID == "com.apple.finder" {
             let files = getFinderSelectedFiles()
             if !files.isEmpty {
-                print("📁 [ContextDetector] Found \(files.count) selected file(s) in Finder")
                 return .files(files)
             }
         }
@@ -794,7 +915,6 @@ class ContextDetector {
         // 2. Safari - current tab
         if bundleID == "com.apple.Safari" {
             if let context = getSafariContext() {
-                print("🌐 [ContextDetector] Safari tab: \(context.url)")
                 return .browserTab(url: context.url, title: context.title)
             }
         }
@@ -802,7 +922,6 @@ class ContextDetector {
         // 3. Chrome - current tab
         if bundleID == "com.google.Chrome" {
             if let context = getChromeContext() {
-                print("🌐 [ContextDetector] Chrome tab: \(context.url)")
                 return .browserTab(url: context.url, title: context.title)
             }
         }
@@ -810,7 +929,6 @@ class ContextDetector {
         // 4. Arc - current tab
         if bundleID == "company.thebrowser.Browser" {
             if let context = getArcContext() {
-                print("🌐 [ContextDetector] Arc tab: \(context.url)")
                 return .browserTab(url: context.url, title: context.title)
             }
         }
@@ -818,7 +936,6 @@ class ContextDetector {
         // 5. Notes - current note
         if bundleID == "com.apple.Notes" {
             if let noteContent = getNotesContext(), !noteContent.isEmpty {
-                print("📝 [ContextDetector] Notes content detected")
                 return .note(noteContent)
             }
         }
@@ -826,7 +943,6 @@ class ContextDetector {
         // 6. Mail - selected email
         if bundleID == "com.apple.mail" {
             if let context = getMailContext() {
-                print("📧 [ContextDetector] Email: \(context.subject)")
                 return .email(subject: context.subject, from: context.from, content: context.content)
             }
         }
@@ -837,21 +953,16 @@ class ContextDetector {
            selectedText.count > 3 {
             let fileURLs = extractFileURLs(from: selectedText)
             if !fileURLs.isEmpty {
-                print("📁 [ContextDetector] Selected file paths detected (\(fileURLs.count))")
                 return .files(fileURLs)
             }
-
             let words = selectedText.components(separatedBy: .whitespacesAndNewlines)
                 .filter { !$0.isEmpty }
-
             if words.count >= 2 || (words.count == 1 && selectedText.count >= 10) {
-                print("📝 [ContextDetector] Selected text: \(words.count) words")
                 return .text(selectedText)
             }
         }
 
         // 8. No specific context, just app
-        print("🖥️ [ContextDetector] No specific context, just app")
         return .app(bundleID: bundleID, name: appName)
     }
 
@@ -863,14 +974,18 @@ class ContextDetector {
                 var error: NSDictionary?
 
                 guard let scriptObject = NSAppleScript(source: script) else {
+                    #if DEBUG
                     print("❌ [ContextDetector] Failed to create AppleScript")
+                    #endif
                     return nil
                 }
 
                 let output = scriptObject.executeAndReturnError(&error)
 
                 if let error = error {
+                    #if DEBUG
                     print("❌ [ContextDetector] AppleScript error: \(error)")
+                    #endif
                     return nil
                 }
 

@@ -15,6 +15,10 @@
 import FoundationModels
 import AppKit
 import Foundation
+import Vision
+import CoreGraphics
+import ScreenCaptureKit
+import Contacts
 
 // MARK: - AdapterActionTool
 
@@ -800,6 +804,82 @@ struct CLIAdapterTool: Tool {
     }
 }
 
+// MARK: - OCRTool
+
+/// Extracts text from an image file using Vision OCR.
+@available(macOS 26.0, *)
+struct OCRTool: Tool {
+    let name = "read_text_from_image"
+    let description = "Extract all text from an image file using on-device OCR. Use when the user shares a screenshot, photo, or document image and wants the text read out."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "Absolute file path to the image (PNG, JPEG, HEIC, TIFF, etc.).")
+        var imagePath: String
+
+        init() { self.imagePath = "" }
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let path = arguments.imagePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "❌ No image path provided." }
+        let url = URL(fileURLWithPath: path)
+        guard let nsImage = NSImage(contentsOf: url),
+              let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return "❌ Could not load image at \(path)" }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+
+        let lines = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+        return lines.isEmpty ? "No text found in the image." : lines.joined(separator: "\n")
+    }
+}
+
+// Note: BarcodeReaderTool is provided as a built-in by FoundationModels (Apple Intelligence).
+// No custom implementation needed — use BarcodeReaderTool() directly in LanguageModelSession tools.
+
+// MARK: - ScreenCaptureTool
+
+/// Captures the current screen and returns OCR-extracted text from it.
+@available(macOS 26.0, *)
+struct ScreenCaptureTool: Tool {
+    let name = "capture_screen_text"
+    let description = "Take a screenshot of the current screen and extract all visible text using OCR. Use when the user asks what is on screen, to read a UI element, or to analyze visible content."
+
+    @Generable
+    struct Arguments {
+        init() {}
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let shareableContent = try await SCShareableContent.current
+        guard let display = shareableContent.displays.first else {
+            return "❌ No display available for screen capture."
+        }
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = display.width
+        config.height = display.height
+        let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+
+        let lines = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+        guard !lines.isEmpty else { return "No text visible on screen." }
+        return "Screen text:\n" + lines.joined(separator: "\n")
+    }
+}
+
 // MARK: - OnDeviceToolSession
 
 /// Builds a LanguageModelSession with all available tools for the current context,
@@ -922,6 +1002,18 @@ final class OnDeviceToolSession {
             ShellCommandTool(axContext: axContext),
             SpawnWorkerTool(),
             SendKeysTool(),
+            // Vision tools
+            OCRTool(),
+            ScreenCaptureTool(),
+            // EventKit — available in all app contexts and global chat
+            GetCalendarEventsTool(),
+            AddCalendarEventTool(),
+            GetRemindersTool(),
+            AddReminderTool(),
+            SearchContactsTool(),
+            SearchPhotosTool(),
+            SearchNotesTool(),
+            CreateNoteTool(),
         ]
 
         if bundleId == "com.apple.mail" {
@@ -1012,8 +1104,10 @@ final class OnDeviceToolSession {
 
     /// Streaming version — delivers partial tokens via onPartial callback.
     /// Structured extraction queries run non-streaming (result delivered via onComplete at once).
+    /// `imageURLs`: optional image attachments — OCR text is prepended to the prompt for on-device multimodal context.
     func stream(
         to message: String,
+        imageURLs: [URL] = [],
         systemPrompt: String,
         bundleId: String,
         axContext: AXContext,
@@ -1041,16 +1135,40 @@ final class OnDeviceToolSession {
                     )
                 }
 
-                // Tool-based streaming
-                let session = LanguageModelSession(
-                    tools: self.tools(for: bundleId, axContext: axContext),
-                    instructions: fullPrompt
-                )
+                // Dynamic Profile: use tools-capable session for complex queries,
+                // bare session for pure chat to reduce latency.
+                let looksLikeToolQuery = Self.looksLikeToolQuery(message) || !imageURLs.isEmpty
+                let session: LanguageModelSession
+                if looksLikeToolQuery {
+                    session = LanguageModelSession(
+                        tools: self.tools(for: bundleId, axContext: axContext),
+                        instructions: fullPrompt
+                    )
+                } else {
+                    session = LanguageModelSession(instructions: fullPrompt)
+                }
+
+                // Images: OCR-extract text and prepend to message for context
+                var finalMessage = message
+                if !imageURLs.isEmpty {
+                    let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
+                        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                    }.flatMap { cgImage -> [String] in
+                        let req = VNRecognizeTextRequest()
+                        req.recognitionLevel = .accurate
+                        req.usesLanguageCorrection = true
+                        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                        try? handler.perform([req])
+                        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                    }
+                    if !ocrLines.isEmpty {
+                        finalMessage = "Image content:\n\(ocrLines.joined(separator: "\n"))\n\n\(message)"
+                    }
+                }
 
                 var lastLength = 0
                 var finalContent = ""
-                let stream = session.streamResponse(to: message, generating: String.self)
-                for try await snapshot in stream {
+                for try await snapshot in session.streamResponse(to: finalMessage, generating: String.self) {
                     let full = snapshot.content
                     let delta = String(full.dropFirst(lastLength))
                     lastLength = full.count
@@ -1072,6 +1190,16 @@ final class OnDeviceToolSession {
                 onError("Apple Intelligence error: \(error.localizedDescription)")
             }
         }
+    }
+
+    // Heuristic: does the message look like it needs tool execution?
+    private static func looksLikeToolQuery(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        let toolKeywords = ["open ", "run ", "execute ", "close ", "quit ",
+                            "file ", "folder ", "shell ", "terminal ", "git ",
+                            "rename ", "delete ", "copy ", "move ", "create ",
+                            "show me ", "find ", "search for ", "list "]
+        return toolKeywords.contains { lower.hasPrefix($0) || lower.contains(" \($0)") }
     }
 
     private func systemPrompt(

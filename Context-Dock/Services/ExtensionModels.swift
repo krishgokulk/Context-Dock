@@ -1147,6 +1147,11 @@ struct SimpleAIExtensionImport: Codable {
         var name: String
         var description: String
         var icon: String?
+        var sfSymbol: String?
+        var symbol: String?
+        var menuSymbol: String?
+        var accentColor: String?
+        var symbolRenderingMode: String?
         var layer: String
         var tags: [String]?
         var triggers: [TriggerSpec]
@@ -1189,11 +1194,15 @@ struct SimpleAIExtensionImport: Codable {
             let sType    = parseScriptType(spec.scriptType)
             let triggers = spec.triggers.compactMap { parseTrigger($0) }
             let tags     = (spec.tags ?? []).compactMap { ExtensionTag(rawValue: $0) }
+            let icon = SFSymbolResolver.validSymbol(
+                spec.icon ?? spec.sfSymbol ?? spec.symbol ?? spec.menuSymbol,
+                fallback: inferIcon(layer: layer, tags: spec.tags ?? [], scriptType: sType)
+            )
 
             return ILExtension(
                 name:               spec.name,
                 description:        spec.description,
-                icon:               spec.icon ?? "gear",
+                icon:               icon,
                 layer:              layer,
                 tags:               tags,
                 category:           inferCategory(layer: layer, tags: spec.tags ?? []),
@@ -1208,6 +1217,35 @@ struct SimpleAIExtensionImport: Codable {
                 version:            spec.version ?? "1.0",
                 isBuiltIn:          false
             )
+        }
+    }
+
+    private func inferIcon(
+        layer: ExtensionLayer,
+        tags: [String],
+        scriptType: ILExtension.ScriptType
+    ) -> String {
+        let normalizedTags = Set(tags.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        })
+        if normalizedTags.contains("ai") || normalizedTags.contains("ai_powered") {
+            return "sparkles"
+        }
+        if normalizedTags.contains("image") || normalizedTags.contains("image_processing") {
+            return "photo"
+        }
+        if normalizedTags.contains("extraction") { return "arrow.down.doc" }
+        if normalizedTags.contains("calendar") { return "calendar" }
+        if normalizedTags.contains("web") || layer == .l3_browser { return "safari" }
+        if layer == .l1_search { return "magnifyingglass" }
+        if layer == .l2_context { return "rectangle.grid.1x2" }
+        if layer == .crossLayer { return "square.stack.3d.up" }
+        switch scriptType {
+        case .bash: return "terminal"
+        case .javascript: return "curlybraces"
+        case .applescript: return "applescript"
+        case .python: return "chevron.left.forwardslash.chevron.right"
+        case .swift: return "swift"
         }
     }
 

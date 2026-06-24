@@ -96,6 +96,24 @@ final class ShareIntentRouter {
         return items
     }
 
+    /// Returns items the native share sheet can actually consume. Plain selected
+    /// text becomes a temporary UTF-8 text file so AirDrop and file-only
+    /// destinations always receive a concrete payload.
+    func shareableItems(for context: AXContext) -> [Any] {
+        let items = shareItems(for: context)
+        guard !items.isEmpty else { return [] }
+        guard
+            context.selectedFilePaths.isEmpty,
+            (context.currentURL ?? "").isEmpty,
+            let text = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !text.isEmpty,
+            let textFile = temporaryTextShareFile(text)
+        else {
+            return items
+        }
+        return [textFile]
+    }
+
     func execute(
         _ resolution: ShareIntentResolution,
         axContext: AXContext,
@@ -269,7 +287,7 @@ final class ShareIntentRouter {
         successMessage: String,
         subject: String? = nil
     ) -> String {
-        let items = shareItems(for: axContext)
+        let items = shareableItems(for: axContext)
         guard !items.isEmpty else {
             return "❌ Nothing to share — select a file, URL, or text first."
         }
@@ -299,7 +317,7 @@ final class ShareIntentRouter {
         axContext: AXContext,
         presentSharingPicker: (([Any]) -> Void)?
     ) -> String {
-        let items = shareItems(for: axContext)
+        let items = shareableItems(for: axContext)
         guard !items.isEmpty else {
             return "❌ Nothing to share — select a file, URL, or text first."
         }
@@ -333,7 +351,7 @@ final class ShareIntentRouter {
             return nil
         }
 
-        let items = shareItems(for: axContext)
+        let items = shareableItems(for: axContext)
         guard !items.isEmpty else {
             return "❌ Nothing to share — select a file, URL, or text first."
         }
@@ -400,6 +418,38 @@ final class ShareIntentRouter {
             return currentURL
         }
         return "content"
+    }
+
+    private func temporaryTextShareFile(_ text: String) -> URL? {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Context-Dock/Shared Text", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            let formatter = ISO8601DateFormatter()
+            let safeStamp = formatter.string(from: Date())
+                .replacingOccurrences(of: ":", with: "-")
+            let url = directory.appendingPathComponent("Shared Text \(safeStamp).txt")
+            try text.data(using: .utf8)?.write(to: url, options: .atomic)
+            removeExpiredTextShareFiles(in: directory)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private func removeExpiredTextShareFiles(in directory: URL) {
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: Array(keys))
+        else { return }
+        for file in files {
+            let modified = try? file.resourceValues(forKeys: keys).contentModificationDate
+            if let modified, modified < cutoff {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     private func runMessagesAutomation(recipientHandle: String, context: AXContext) -> Bool {

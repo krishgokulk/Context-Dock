@@ -13,6 +13,18 @@ final class FinderActionService {
 
     func executeDirectActionIfNeeded(path: [String]) async -> FinderDirectActionResult {
         let normalizedPath = path.map(Self.normalizedMenuText)
+        if Self.isOpenWithApplicationAction(normalizedPath),
+            let appName = Self.openWithApplicationName(from: path)
+        {
+            let result = await openFinderSelection(withApplicationNamed: appName)
+            return .handled(
+                success: result.success,
+                message: result.success ? "Opening in \(result.displayName ?? appName)" : result.message,
+                icon: result.success ? "arrow.up.right.square" : "exclamationmark.triangle",
+                tint: result.success ? .blue.opacity(0.9) : .orange.opacity(0.9)
+            )
+        }
+
         if Self.isMoveToBinAction(normalizedPath) {
             let result = await moveSelectionToBin()
             return .handled(
@@ -34,6 +46,44 @@ final class FinderActionService {
         }
 
         return .notHandled
+    }
+
+    private func openFinderSelection(
+        withApplicationNamed appName: String
+    ) async -> (success: Bool, message: String, displayName: String?) {
+        let urls = await Self.selectedFinderURLs()
+        guard !urls.isEmpty else {
+            return (false, "No Finder selection", nil)
+        }
+
+        let suggestions = DefaultAppResolver.shared.getOpenWithSuggestions(for: urls)
+        let normalizedTarget = Self.normalizedApplicationName(appName)
+        guard
+            let suggestion = suggestions.first(where: {
+                Self.normalizedApplicationName($0.app.displayName) == normalizedTarget
+                    || Self.normalizedApplicationName($0.app.name) == normalizedTarget
+                    || Self.normalizedApplicationName($0.app.path.lastPathComponent) == normalizedTarget
+            })
+                ?? suggestions.first(where: {
+                    let display = Self.normalizedApplicationName($0.app.displayName)
+                    return display.contains(normalizedTarget) || normalizedTarget.contains(display)
+                })
+        else {
+            return (false, "\(appName) cannot open selection", nil)
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        do {
+            try await NSWorkspace.shared.open(
+                urls,
+                withApplicationAt: suggestion.app.path,
+                configuration: configuration
+            )
+            return (true, "Opening", suggestion.app.displayName)
+        } catch {
+            return (false, error.localizedDescription, suggestion.app.displayName)
+        }
     }
 
     private func emptyBin() async -> (success: Bool, message: String) {
@@ -86,6 +136,57 @@ final class FinderActionService {
     private static func isMoveToBinAction(_ normalizedPath: [String]) -> Bool {
         normalizedPath.contains("move to bin")
             || normalizedPath.contains("move to trash")
+    }
+
+    private static func isOpenWithApplicationAction(_ normalizedPath: [String]) -> Bool {
+        guard normalizedPath.contains("open with"),
+            let leaf = normalizedPath.last,
+            leaf != "open with",
+            leaf != "other",
+            leaf != "app store"
+        else { return false }
+        return true
+    }
+
+    private static func openWithApplicationName(from path: [String]) -> String? {
+        guard let leaf = path.last else { return nil }
+        let cleaned = leaf
+            .replacingOccurrences(of: #"\s*\(default\)\s*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return cleaned
+    }
+
+    private static func selectedFinderURLs() async -> [URL] {
+        await Task.detached(priority: .userInitiated) {
+            let script = """
+                tell application "Finder"
+                    set sel to selection as alias list
+                    set output to ""
+                    repeat with f in sel
+                        set output to output & POSIX path of f & linefeed
+                    end repeat
+                    return output
+                end tell
+                """
+            var error: NSDictionary?
+            guard
+                let value = NSAppleScript(source: script)?.executeAndReturnError(&error)
+                    .stringValue,
+                error == nil
+            else { return [] }
+            return value
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }
+                .map { URL(fileURLWithPath: $0) }
+        }.value
+    }
+
+    private static func normalizedApplicationName(_ value: String) -> String {
+        normalizedMenuText(value)
+            .replacingOccurrences(of: " app", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalizedMenuText(_ text: String) -> String {

@@ -85,9 +85,9 @@ final class AXMenuEnumerator {
             // Version changed — disk cache stale, fall through to live enumeration
         }
 
-        // Tier 3: live AX enumeration on background thread
+        // Tier 3: live AX enumeration — runs on a background thread to avoid blocking the UI
         let pid   = app.processIdentifier
-        let items = await Task.detached(priority: .utility) { [self] in
+        let items = await Task.detached(priority: .userInitiated) { [self] in
             self.enumerateMenuItems(for: pid)
         }.value
 
@@ -160,6 +160,9 @@ final class AXMenuEnumerator {
             guard let title = stringAttr(child, "AXTitle"), !title.isEmpty else { continue }
             let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty || trimmed == "-" || trimmed == "separator" { continue }
+            // Services submenu (app menu > Services) is system-wide and
+            // selection-dependent — don't snapshot it into per-app caches.
+            if trimmed == "Services", currentPath.count == 1 { continue }
             if let role = stringAttr(child, "AXRole"), role == "AXMenuItemRole", trimmed == "-" { continue }
 
             let enabled  = boolAttr(child, "AXEnabled") ?? true

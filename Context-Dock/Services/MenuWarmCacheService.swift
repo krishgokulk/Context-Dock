@@ -15,7 +15,7 @@ final class MenuWarmCacheService {
     private let warmFreshness: TimeInterval = 45
     private let idleWarmFreshness: TimeInterval = 5 * 60
     private let debounceNanoseconds: UInt64 = 350_000_000
-    private let maxRecentApps = 8
+    private let maxRecentApps = 12
 
     private init() {}
 
@@ -27,6 +27,16 @@ final class MenuWarmCacheService {
         warmTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.debounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            await self.warm(app: app, force: false)
+            guard !Task.isCancelled,
+                  let bundleID = app.bundleIdentifier,
+                  self.needsWarm(bundleID: bundleID, freshness: self.warmFreshness)
+            else { return }
+
+            // An idle/background scan may have owned AX when the first request arrived.
+            // Retry once so the newly frontmost app is not left with stale capabilities.
+            try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
             await self.warm(app: app, force: false)
         }
@@ -41,6 +51,74 @@ final class MenuWarmCacheService {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
             await self.warm(app: app, force: false)
+        }
+    }
+
+    /// Called when the launcher window opens. Warms recent apps with a 2-min threshold
+    /// so global context AI and menu pills are fresh without waiting for the 5-min idle cycle.
+    func warmRecentAppsOnLauncherOpen() {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.warmRecentWithFreshness(120)
+        }
+    }
+
+    func warmRunningAppsOnLauncherOpen(_ apps: [NSRunningApplication], maxApps: Int = 6) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.warmRunningApps(apps, maxApps: maxApps, freshness: 120)
+        }
+    }
+
+    private func warmRecentWithFreshness(_ freshness: TimeInterval) async {
+        guard AXIsProcessTrusted(), activeWarmPID == nil,
+              !AXMenuReader.shared.isScanningMenus
+        else { return }
+
+        for bundleID in recentBundleIDs {
+            guard let app = NSWorkspace.shared.runningApplications.first(where: {
+                      $0.bundleIdentifier == bundleID && !$0.isTerminated
+                  }),
+                  shouldWarm(app)
+            else { continue }
+            recentAppsByBundleID[bundleID] = app
+
+            let age = lastWarmDateByBundleID[bundleID].map { Date().timeIntervalSince($0) } ?? .infinity
+            guard age >= freshness else { continue }
+
+            await warm(app: app, force: false)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    private func warmRunningApps(
+        _ apps: [NSRunningApplication],
+        maxApps: Int,
+        freshness: TimeInterval
+    ) async {
+        guard AXIsProcessTrusted(), activeWarmPID == nil,
+              !AXMenuReader.shared.isScanningMenus
+        else { return }
+
+        var seenBundleIDs = Set<String>()
+        let candidates = apps.compactMap { app -> NSRunningApplication? in
+            guard shouldWarm(app),
+                  let bundleID = app.bundleIdentifier,
+                  seenBundleIDs.insert(bundleID).inserted
+            else { return nil }
+            return app
+        }
+
+        for app in candidates.prefix(maxApps) {
+            guard let bundleID = app.bundleIdentifier else { continue }
+            rememberRecent(app)
+            let age = lastWarmDateByBundleID[bundleID].map { Date().timeIntervalSince($0) } ?? .infinity
+            guard age >= freshness else { continue }
+
+            await warm(app: app, force: false)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
         }
     }
 
@@ -75,7 +153,6 @@ final class MenuWarmCacheService {
         }
         guard !AXMenuReader.shared.isScanningMenus else { return }
 
-        lastWarmDateByBundleID[bundleID] = Date()
         activeWarmPID = app.processIdentifier
         defer {
             if activeWarmPID == app.processIdentifier {
@@ -87,7 +164,9 @@ final class MenuWarmCacheService {
         let name = app.localizedName ?? bundleID
         let capturedApp = app
 
-        let items = await Task.detached(priority: .utility) {
+        // Interactive callers await this result. Keep the scan at userInitiated
+        // priority to avoid a user-interactive → utility priority inversion.
+        let items = await Task.detached(priority: .userInitiated) {
             var readItems = await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
             if readItems.isEmpty {
                 try? await Task.sleep(nanoseconds: 160_000_000)
@@ -102,7 +181,13 @@ final class MenuWarmCacheService {
 
         guard !app.isTerminated else { return }
         guard !items.isEmpty else { return }
-        AppMenuCapabilityCache.shared.store(items: items, for: capturedApp)
+        // If this app is frontmost, the live scan is authoritative — REPLACE its cache
+        // so it always mirrors the current menu (drop stale items / outdated state).
+        let isFrontmost =
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        AppMenuCapabilityCache.shared.store(
+            items: items, for: capturedApp, replace: isFrontmost)
+        lastWarmDateByBundleID[bundleID] = Date()
     }
 
     private func warmRecentAppsIfIdle() async {
@@ -111,9 +196,13 @@ final class MenuWarmCacheService {
         else { return }
 
         for bundleID in recentBundleIDs {
-            guard let app = recentAppsByBundleID[bundleID],
+            // Re-fetch from workspace: stored reference may be stale after app restart
+            guard let app = NSWorkspace.shared.runningApplications.first(where: {
+                      $0.bundleIdentifier == bundleID && !$0.isTerminated
+                  }),
                   shouldWarm(app)
             else { continue }
+            recentAppsByBundleID[bundleID] = app  // refresh reference
 
             let age = lastWarmDateByBundleID[bundleID].map { Date().timeIntervalSince($0) } ?? .infinity
             guard age >= idleWarmFreshness else { continue }
@@ -146,5 +235,10 @@ final class MenuWarmCacheService {
             }
             recentBundleIDs.removeLast(recentBundleIDs.count - maxRecentApps)
         }
+    }
+
+    private func needsWarm(bundleID: String, freshness: TimeInterval) -> Bool {
+        guard let lastWarm = lastWarmDateByBundleID[bundleID] else { return true }
+        return Date().timeIntervalSince(lastWarm) >= freshness
     }
 }

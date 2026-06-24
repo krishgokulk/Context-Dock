@@ -361,8 +361,6 @@ extension LauncherView {
                 ANSWER:There are \(visibleFiles.count) visible items in \(fallbackFolderPath).
                 """
 
-            let provider = await MainActor.run { self.settings.selectedAIProvider }
-
             do {
                 let context: [[String: String]] = [
                     ["role": "system", "content": systemPrompt],
@@ -389,12 +387,7 @@ extension LauncherView {
                     }
                 }
 
-                let response: String
-                if provider == .onDevice {
-                    response = try await self.sendToOnDeviceAI(query: query, context: context)
-                } else {
-                    response = try await self.sendToProvider(query: query, context: context)
-                }
+                let response = try await self.sendToProvider(query: query, context: context)
 
                 await MainActor.run {
                     self.l2.isLoading = false
@@ -566,13 +559,51 @@ extension LauncherView {
 
     func refreshCachedFinderCurrentDirectory(for bundleID: String) {
         guard bundleID == "com.apple.finder" else {
-            cachedFinderCurrentDirectoryPath = ""
+            if !cachedFinderCurrentDirectoryPath.isEmpty {
+                cachedFinderCurrentDirectoryPath = ""
+            }
             return
         }
 
-        cachedFinderCurrentDirectoryPath =
+        let now = Date()
+        guard now.timeIntervalSince(contextDockViewModel.lastFinderDirectoryRefresh) >= 0.5 else {
+            return
+        }
+        contextDockViewModel.lastFinderDirectoryRefresh = now
+
+        let refreshedPath =
             ContextDetector.shared.getCurrentFinderDirectory()?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if cachedFinderCurrentDirectoryPath != refreshedPath {
+            let hadPreviousFolder = !cachedFinderCurrentDirectoryPath.isEmpty
+            cachedFinderCurrentDirectoryPath = refreshedPath
+            // Finder's Edit/File menu titles bake the current folder/selection name
+            // (e.g. Copy "Pictures" as Pathname, Slideshow "Pictures"). Those titles go stale the
+            // moment the user navigates to another folder, but the menu snapshot is keyed only by
+            // app — so a query keeps matching the old folder's baked name. Drop the Finder menu
+            // snapshot on every folder change so the next query re-reads the live menus.
+            if hadPreviousFolder {
+                invalidateFinderMenuSnapshot()
+            }
+        }
+    }
+
+    /// Clears every cached Finder menu snapshot so dynamic, folder/selection-dependent menu
+    /// titles are re-read live on the next dock query.
+    func invalidateFinderMenuSnapshot() {
+        let finderBundleId = "com.apple.finder"
+        AppMenuCapabilityCache.shared.purge(bundleIdentifiers: [finderBundleId])
+        if let finder = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == finderBundleId && !$0.isTerminated
+        }) {
+            let pid = finder.processIdentifier
+            AXMenuReader.shared.invalidateCache(for: pid)
+            crossAppMenuItems.removeAll { $0.sourcePID == pid }
+        }
+        if frontmost.bundleID == finderBundleId || axContext.bundleId == finderBundleId {
+            liveMenuItems = []
+        }
+        cachedDockPills = []
     }
 
     func isFinderFrontmostWindowContext() -> Bool {
@@ -581,41 +612,62 @@ extension LauncherView {
         return axContext.bundleId == "com.apple.finder"
     }
 
-    /// Returns true when Finder is frontmost AND has at least one real Finder window
-    /// (folder/file browser), distinguishing it from the "desktop-only" state where
-    /// Finder is active but the user clicked the wallpaper (no window open).
+    /// Returns true when Finder has at least one real folder/browser window visible.
+    /// Checks CGWindowList for Finder-owned, layer-0, titled, non-tiny windows.
+    /// Does NOT require Finder to be the frontmost app (works while dock is active).
     func finderHasActiveWindow() -> Bool {
-        guard frontmost.bundleID == "com.apple.finder" || axContext.bundleId == "com.apple.finder"
-        else { return false }
         guard
             let finderApp = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == "com.apple.finder"
             })
         else { return false }
-        let axApp = AXUIElementCreateApplication(finderApp.processIdentifier)
-        var windowsRef: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-                == .success,
-            let windows = windowsRef as? [AXUIElement], !windows.isEmpty
-        else { return false }
-        // A window is "real" if it has a non-empty title that isn't the desktop pseudo-window
-        for win in windows {
-            var titleRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                == .success,
-                let title = titleRef as? String, !title.isEmpty, title.lowercased() != "desktop"
-            {
-                return true
-            }
+
+        let pid = Int(finderApp.processIdentifier)
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+
+        for info in list {
+            guard let wpid = info[kCGWindowOwnerPID as String] as? Int, wpid == pid,
+                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0
+            else { continue }
+            // Service/background windows have no title; real folder windows do.
+            guard let name = info[kCGWindowName as String] as? String, !name.isEmpty else { continue }
+            // Require meaningful size to exclude 0×0 service windows.
+            if let bounds = info[kCGWindowBounds as String] as? [String: Any],
+               let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
+               w > 50 && h > 50 { return true }
         }
         return false
     }
 
-    /// True when Finder is frontmost but only the desktop is visible (no folder window).
+    /// True when Finder is frontmost (or scoped via chip) but only the desktop is visible (no folder window).
     /// In this state the dock behaves like a "no-app" global context.
     var isFinderDesktopOnlyMode: Bool {
-        (frontmost.bundleID == "com.apple.finder") && !finderHasActiveWindow()
+        let finderBundleId = "com.apple.finder"
+        // An explicit inline app scope (e.g. typing "xcode" in global context) means the user is
+        // asking for THAT app's menus — it must win over Finder's desktop file search even though
+        // Finder is the frontmost app. Without this guard the desktop-mode early-return in
+        // buildDockPills hijacks the scoped query and shows Files & Folders under the wrong chip.
+        let hasNonFinderInlineScope =
+            (globalInlineAppScope.map { $0.bundleId != finderBundleId } ?? false)
+            || additionalGlobalInlineAppScopes.contains { $0.bundleId != finderBundleId }
+        // Right-arrow scoping a running app stores it in l2.targetApp — same intent:
+        // show THAT app's menus, not Finder's desktop files, even though Finder is the
+        // real frontmost app behind the dock.
+        let hasNonFinderTargetApp =
+            (l2.targetApp?.bundleId).map { $0 != finderBundleId } ?? false
+        guard !hasNonFinderInlineScope, !hasNonFinderTargetApp else { return false }
+        // Use l2.targetApp for explicit chip pin — avoids resolveDockScope which is
+        // query-dependent and returns wrong results when query matches menu items in other apps.
+        let explicitFinderScope = l2.targetApp?.bundleId == finderBundleId
+        let isFinderContext = frontmost.bundleID == finderBundleId
+            || axContext.bundleId == finderBundleId
+            || explicitFinderScope
+        // Explicitly scoping Finder (strip icon / right-arrow) always means "search files" —
+        // desktop file-search regardless of whether a Finder window is open.
+        return isFinderContext && (explicitFinderScope || !finderHasActiveWindow())
     }
 
     func isFinderCurrentWindowSearchAttached(currentFolderPath: String? = nil) -> Bool {
@@ -860,13 +912,13 @@ extension LauncherView {
             Task.detached(priority: .userInitiated) {
                 var err: NSDictionary?
                 NSAppleScript(source: script)?.executeAndReturnError(&err)
-                if let e = err {
+                if let err {
+                    let message = err["NSAppleScriptErrorMessage"] as? String ?? "Script error"
                     await MainActor.run {
                         self.l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
-                                content:
-                                    "⚠️ \(e["NSAppleScriptErrorMessage"] as? String ?? "Script error")",
+                                content: "⚠️ \(message)",
                                 isError: true))
                     }
                 }
@@ -899,7 +951,8 @@ extension LauncherView {
                     ?? ""
                 let createdURL =
                     process.terminationStatus == 0
-                    ? self.detectCreatedFile(command: cmd, output: output) : nil
+                    ? await MainActor.run { self.detectCreatedFile(command: cmd, output: output) }
+                    : nil
                 await MainActor.run {
                     let status =
                         process.terminationStatus == 0

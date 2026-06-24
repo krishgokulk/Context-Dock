@@ -285,7 +285,177 @@ final class AppAdapterManager: ObservableObject {
         }
 
         adapters = userAdapters
+        mirrorVirtualScopeAdaptersIntoGlobalCommands(userAdapters)
         loadErrors = errors
+        DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
+    }
+
+    @discardableResult
+    func mirrorVirtualScopeAdapterIntoGlobalCommands(_ adapter: AppAdapter) -> Int {
+        let scopeId = adapter.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let adapterId = adapter.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard scopeId.hasPrefix("scope://") || adapterId.hasPrefix("scope.") else { return 0 }
+
+        var mirroredCount = 0
+        let childCommands = adapter.actions.compactMap {
+            globalSystemCommand(from: $0, adapter: adapter, scopeId: scopeId)
+        }
+        if let parent = globalScopeParentCommand(
+            for: adapter,
+            scopeId: scopeId,
+            childCommands: childCommands
+        ) {
+            upsertMirroredSystemCommand(parent, importKey: adapterScopeParentImportKey(adapter, scopeId: scopeId))
+            mirroredCount += 1
+        }
+        for command in childCommands {
+            if let importKey = command.keywords.first(where: { $0.hasPrefix("adapter-action:") }) {
+                upsertMirroredSystemCommand(command, importKey: importKey)
+                mirroredCount += 1
+            }
+        }
+        return mirroredCount
+    }
+
+    private func mirrorVirtualScopeAdaptersIntoGlobalCommands(_ adapters: [AppAdapter]) {
+        for adapter in adapters {
+            _ = mirrorVirtualScopeAdapterIntoGlobalCommands(adapter)
+        }
+    }
+
+    private func globalSystemCommand(
+        from action: AdapterAction,
+        adapter: AppAdapter,
+        scopeId: String
+    ) -> SystemCommand? {
+        let name = action.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+
+        let scriptType: String
+        let script: String
+        switch action.type {
+        case .shell, .cliTool:
+            scriptType = "bash"
+            script = (action.script ?? action.cliToolCommand ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        case .applescript:
+            scriptType = "applescript"
+            script = (action.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .shortcut:
+            scriptType = "applescript"
+            guard let shortcutName = action.shortcutName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !shortcutName.isEmpty
+            else { return nil }
+            script = #"tell application "Shortcuts Events" to run shortcut "\#(shortcutName)""#
+        case .jxa:
+            scriptType = "jxa"
+            script = (action.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .urlScheme:
+            scriptType = "url"
+            script = (action.urlScheme ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .openItem:
+            scriptType = "file"
+            script = (action.urlScheme ?? action.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .scriptFile:
+            scriptType = "scriptFile"
+            script = (action.scriptFile ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .aiPrompt:
+            scriptType = "aiPrompt"
+            script = (action.aiPromptTemplate ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        case .menubar, .pageJS:
+            return nil
+        }
+        guard !script.isEmpty else { return nil }
+
+        let importKey = adapterActionImportKey(action, adapter: adapter, scopeId: scopeId)
+        var keywords = ([name, adapter.appName, adapter.id, scopeId, importKey] + action.triggers)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        keywords = Array(NSOrderedSet(array: keywords)) as? [String] ?? keywords
+
+        return SystemCommand(
+            name: name,
+            icon: action.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? adapter.icon
+                : action.icon,
+            keywords: keywords + ["adapter-child:\(scopeId.isEmpty ? adapter.id : scopeId)"],
+            scriptType: scriptType,
+            script: script,
+            description: action.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "\(adapter.appName) action"
+                : action.description,
+            successTitle: name,
+            successMessage: ""
+        )
+    }
+
+    private func globalScopeParentCommand(
+        for adapter: AppAdapter,
+        scopeId: String,
+        childCommands: [SystemCommand]
+    ) -> SystemCommand? {
+        let name = adapter.appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !childCommands.isEmpty else { return nil }
+        let normalizedScopeId = scopeId.isEmpty ? adapter.id : scopeId
+        let first = childCommands[0]
+        let childTerms = childCommands.flatMap { [$0.name, $0.description] + $0.keywords }
+        var keywords = ([name, adapter.id, normalizedScopeId,
+                         adapterScopeParentImportKey(adapter, scopeId: scopeId),
+                         "adapter-scope:\(normalizedScopeId)"] + childTerms)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("adapter-action:") && !$0.hasPrefix("adapter-child:") }
+        keywords = Array(NSOrderedSet(array: keywords)) as? [String] ?? keywords
+
+        return SystemCommand(
+            name: name,
+            icon: adapter.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? first.icon
+                : adapter.icon,
+            keywords: keywords,
+            scriptType: first.scriptType,
+            script: first.script,
+            description: "\(childCommands.count) \(childCommands.count == 1 ? "action" : "actions")",
+            successTitle: name,
+            successMessage: ""
+        )
+    }
+
+    private func upsertMirroredSystemCommand(_ command: SystemCommand, importKey: String) {
+        if let existing = SystemCommandsRegistry.shared.commands.first(where: {
+            $0.keywords.contains(importKey)
+        }) {
+            var updated = existing
+            updated.name = command.name
+            updated.icon = command.icon
+            updated.keywords = command.keywords
+            updated.scriptType = command.scriptType
+            updated.script = command.script
+            updated.description = command.description
+            updated.successTitle = command.successTitle
+            updated.successMessage = command.successMessage
+            updated.interaction = command.interaction
+            updated.sliderMin = command.sliderMin
+            updated.sliderMax = command.sliderMax
+            updated.sliderStep = command.sliderStep
+            updated.valueScript = command.valueScript
+            if updated != existing {
+                SystemCommandsRegistry.shared.update(updated)
+            }
+        } else {
+            SystemCommandsRegistry.shared.add(command)
+        }
+    }
+
+    private func adapterActionImportKey(
+        _ action: AdapterAction,
+        adapter: AppAdapter,
+        scopeId: String
+    ) -> String {
+        "adapter-action:\(scopeId.isEmpty ? adapter.id : scopeId):\(action.id)"
+    }
+
+    private func adapterScopeParentImportKey(_ adapter: AppAdapter, scopeId: String) -> String {
+        "adapter-parent:\(scopeId.isEmpty ? adapter.id : scopeId)"
     }
 
     /// Create a user adapter JSON file for the given app if one does not already exist.
@@ -328,6 +498,26 @@ final class AppAdapterManager: ObservableObject {
             actions: []
         )
         persistAdapter(adapter, to: fileURL)
+        await loadUserAdapters()
+    }
+
+    func importAdapter(_ adapter: AppAdapter) async {
+        let safeName = adapter.appName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+        let fallback = adapter.id
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+        let fileName = (safeName.isEmpty ? fallback : safeName).isEmpty ? "ImportedAdapter" : (safeName.isEmpty ? fallback : safeName)
+        let fileURL = adaptersDirectory.appendingPathComponent("\(fileName).json")
+        var export = adapter
+        export.id = export.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.bundleId : export.id
+        export.appName = export.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.id : export.appName
+        export.bundleId = export.bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.id : export.bundleId
+        export.icon = export.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "app.fill" : export.icon
+        export.isEnabled = true
+        export.isBuiltIn = false
+        persistAdapter(export, to: fileURL)
         await loadUserAdapters()
     }
 
@@ -872,6 +1062,10 @@ final class AppAdapterManager: ObservableObject {
     /// If the frontmost app has no adapter, build a synthetic one from its live menu tree.
     /// Stored only in memory (not on disk) — vanishes on app restart, which is intentional.
     func autoGenerateAdapterIfNeeded(for app: NSRunningApplication) async {
+        // Disabled: DoraX ships NO default adapter actions. Apps surface their commands
+        // through the live menu pipeline; App Adapters only hold user-added actions.
+        return
+
         guard let bundleId = app.bundleIdentifier, !bundleId.isEmpty,
               let appName  = app.localizedName,    !appName.isEmpty else { return }
         guard adapter(for: bundleId) == nil,
@@ -880,9 +1074,9 @@ final class AppAdapterManager: ObservableObject {
         autoGeneratedBundleIds.insert(bundleId)
 
         let pid = app.processIdentifier
-        let menuItems = await Task.detached(priority: .background) {
+        let menuItems = await MainActor.run {
             AXMenuReader.shared.allMenuItems(for: pid, maxDepth: 5)
-        }.value
+        }
 
         guard !menuItems.isEmpty else { return }
 
@@ -892,8 +1086,14 @@ final class AppAdapterManager: ObservableObject {
 
     private func buildSyntheticAdapter(appName: String, bundleId: String,
                                        menuItems: [AXMenuItem]) -> AppAdapter {
-        // Build one AdapterAction per menu leaf — limit to 40 most useful items
-        let actions: [AdapterAction] = menuItems.prefix(40).compactMap { item in
+        // Build one AdapterAction per menu leaf — limit to 40 most useful items.
+        // Filter out recent-files / Open-Recent / reveal entries first: the Apple menu's
+        // "Recent Items" (and apps' "Open Recent") list documents/apps/folders that are
+        // NOT real actions (e.g. "Visual Studio Code.app", ".hammerspoon",
+        // "Show "X" in Finder") and were polluting every adapter with garbage.
+        let actions: [AdapterAction] = menuItems
+            .filter { Self.isUsefulAdapterMenuItem($0) }
+            .prefix(40).compactMap { item in
             guard !item.title.isEmpty else { return nil }
             let words = item.title.lowercased()
                 .components(separatedBy: .init(charactersIn: " /…-"))
@@ -916,6 +1116,33 @@ final class AppAdapterManager: ObservableObject {
             icon: "square.grid.2x2", isEnabled: true, isBuiltIn: false,
             actions: actions
         )
+    }
+
+    /// True for genuine action menu items; false for recent-files / file-path / reveal
+    /// entries that pollute auto-generated adapters.
+    static func isUsefulAdapterMenuItem(_ item: AXMenuItem) -> Bool {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return false }
+        let lower = title.lowercased()
+        // Reveal companions and app/dotfile/path-looking titles.
+        if lower.contains(" in finder") { return false }
+        if lower.hasSuffix(".app") { return false }
+        if title.hasPrefix(".") || title.hasPrefix("~") || title.contains("/") { return false }
+        // file.ext-looking titles (short trailing extension), e.g. "report.pdf".
+        if let dot = title.lastIndex(of: "."), dot != title.startIndex {
+            let ext = title[title.index(after: dot)...]
+            if (2...5).contains(ext.count), ext.allSatisfy({ $0.isLetter || $0.isNumber }) {
+                return false
+            }
+        }
+        // Anything living under a Recent/Open-Recent submenu.
+        let pathLower = item.path.map { $0.lowercased() }
+        if pathLower.contains(where: {
+            $0.contains("recent") || $0 == "open recent" || $0.contains("recently")
+        }) {
+            return false
+        }
+        return true
     }
 
     private func syntheticMenuIcon(for title: String) -> String {

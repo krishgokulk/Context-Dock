@@ -5,6 +5,62 @@
 
 import SwiftUI
 
+// MARK: - Shortcut picker (inline, for .shortcut pills)
+
+/// Dropdown that lets the user pick one of their macOS Shortcuts. Writes the
+/// chosen name into the pill's `actionValue`. The selection is passed as the
+/// shortcut's input at run time (file → text → URL).
+struct ShortcutPickerInline: View {
+    @Binding var selectedName: String
+    @ObservedObject private var catalog = ShortcutsCatalog.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                if catalog.shortcuts.isEmpty {
+                    Text(catalog.isLoading ? "Loading…" : "No shortcuts found").disabled(true)
+                }
+                ForEach(catalog.shortcuts) { sc in
+                    Button {
+                        selectedName = sc.name
+                    } label: {
+                        Label(sc.name, systemImage: sc.iconName)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    ShortcutTileIcon(name: selectedName.isEmpty ? nil : selectedName, size: 20, corner: 5)
+                    Text(selectedName.isEmpty ? "Choose a Shortcut…" : selectedName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(selectedName.isEmpty ? .secondary : .primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .frame(maxWidth: 280, alignment: .leading)
+
+            Button {
+                catalog.refresh()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Reload shortcuts")
+
+            Text("Runs with your selection (file/text/URL) as input.")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .onAppear { catalog.loadIfNeeded() }
+    }
+}
+
 // MARK: - AXRuleEditSheet
 
 struct AXRuleEditSheet: View {
@@ -248,6 +304,7 @@ struct AXRuleEditSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                 Picker("", selection: pill.actionType) {
+                    Text("Shortcut").tag(AppShortcut.ActionType.shortcut)
                     Text("Open URL").tag(AppShortcut.ActionType.openURL)
                     Text("Shell").tag(AppShortcut.ActionType.shellCommand)
                     Text("AppleScript").tag(AppShortcut.ActionType.appleScript)
@@ -263,6 +320,8 @@ struct AXRuleEditSheet: View {
             }
 
             switch pill.wrappedValue.actionType {
+            case .shortcut:
+                ShortcutPickerInline(selectedName: pill.actionValue)
             case .shellCommand, .appleScript, .jxa:
                 TextEditor(text: pill.actionValue)
                     .font(.system(.caption, design: .monospaced))

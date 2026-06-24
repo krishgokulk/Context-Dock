@@ -4,7 +4,7 @@ import Foundation
 // MARK: - Search Result Model
 
 struct SearchResult: Identifiable {
-    let id = UUID()
+    let id: String
     let title: String
     let titleLower: String      // cached — avoids repeated lowercased() in hot path
     let subtitle: String
@@ -26,8 +26,10 @@ struct SearchResult: Identifiable {
         displayBadges: [String] = [],
         showsTypeLabel: Bool = true,
         dismissesLauncher: Bool = true,
-        dragProvider: (() -> NSItemProvider?)? = nil
+        dragProvider: (() -> NSItemProvider?)? = nil,
+        stableID: String? = nil
     ) {
+        self.id = stableID ?? UUID().uuidString
         self.title = title
         self.titleLower = title.lowercased()
         self.subtitle = subtitle
@@ -73,6 +75,26 @@ struct SearchResult: Identifiable {
         case .cliTool:
             return "cli:\(title)"
         }
+    }
+
+    func replacingIcon(_ newIcon: NSImage?) -> SearchResult {
+        var copy = SearchResult(
+            title: title,
+            subtitle: subtitle,
+            icon: newIcon,
+            action: action,
+            score: score,
+            type: type,
+            filePath: filePath,
+            contactData: contactData,
+            displayBadges: displayBadges,
+            showsTypeLabel: showsTypeLabel,
+            dismissesLauncher: dismissesLauncher,
+            dragProvider: dragProvider,
+            stableID: id
+        )
+        copy.score = score
+        return copy
     }
 
     enum ResultType: Sendable {
@@ -176,7 +198,7 @@ struct GroupedResults {
         allResults.isEmpty
     }
 
-    nonisolated mutating func add(_ result: SearchResult, isSuggested: Bool = false) {
+    mutating func add(_ result: SearchResult, isSuggested: Bool = false) {
         if isSuggested && result.type == .shortcut {
             suggestedShortcuts.append(result)
             return

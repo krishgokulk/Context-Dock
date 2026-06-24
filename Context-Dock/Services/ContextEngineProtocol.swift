@@ -58,8 +58,8 @@ final class ContextDockEnvironment: ObservableObject {
     let userContextUpdates = PassthroughSubject<UserContext, Never>()
     let frontmostAppUpdates = PassthroughSubject<FrontmostAppInfo, Never>()
 
-    init(engine: any ContextEngineProtocol = ContextDetector.shared) {
-        self.engine = engine
+    init(engine: (any ContextEngineProtocol)? = nil) {
+        self.engine = engine ?? ContextDetector.shared
     }
 
     func userContextDidDetect(_ context: UserContext) {

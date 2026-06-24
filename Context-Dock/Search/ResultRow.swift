@@ -10,6 +10,8 @@ struct ResultRow: View {
     var usesDockCapsuleSelection: Bool = false
     var selectionNamespace: Namespace.ID? = nil
     var selectionEffectID: String = "dock-result-focus"
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDark: Bool { colorScheme == .dark }
 
     private var typeLabel: String? {
         guard result.showsTypeLabel else { return nil }
@@ -36,27 +38,42 @@ struct ResultRow: View {
         HStack(spacing: 12) {
             // Icon
             ZStack {
-                if let icon = result.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .renderingMode(.original)
-                        .interpolation(.medium)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 25, height: 25)
+                if let symbol = coloredSymbolName {
+                    Image(systemName: symbol)
+                        .font(.system(size: symbolIconSize, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(coloredIconTint)
+                        .frame(width: iconImageSize, height: iconImageSize)
+                } else if let icon = result.icon {
+                    FileThumbnailImage(
+                        filePath: result.filePath,
+                        fallbackImage: icon,
+                        systemName: fallbackIconName,
+                        tint: iconTint,
+                        size: iconImageSize,
+                        cornerRadius: result.type == .application ? 10 : 5,
+                        isApplication: result.type == .application
+                            || (result.filePath?.hasSuffix(".app") ?? false)
+                    )
                 } else {
-                    Image(systemName: fallbackIconName)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(iconTint)
-                        .frame(width: 25, height: 25)
+                    FileThumbnailImage(
+                        filePath: result.filePath,
+                        fallbackImage: nil,
+                        systemName: fallbackIconName,
+                        tint: iconTint,
+                        size: iconImageSize,
+                        cornerRadius: 5,
+                        isApplication: result.type == .application
+                    )
                 }
             }
-            .frame(width: 34, height: 34)
+            .frame(width: iconBoxSize, height: iconBoxSize)
 
             // Text
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(result.title)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: titleFontSize, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
@@ -85,13 +102,21 @@ struct ResultRow: View {
                     }
                 }
 
-                Text(result.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !result.subtitle.hasPrefix("syscmd://") && !result.subtitle.hasPrefix("cli://") {
+                    Text(result.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
+
+            // Live control for interactive system commands (volume slider, Wi-Fi toggle)
+            if let interactive = interactiveSystemCommand {
+                SystemCommandAccessoryView(command: interactive)
+                    .padding(.trailing, 6)
+            }
 
             // Tab hint when selected
             if isSelected {
@@ -158,56 +183,23 @@ struct ResultRow: View {
             selectionBackground
                 .padding(.horizontal, usesDockCapsuleSelection ? 2 : 6)
         )
-        .animation(.spring(response: 0.18, dampingFraction: 0.82), value: isSelected)
+        .animation(.easeOut(duration: 0.07), value: isSelected)
     }
 
     @ViewBuilder
     private var selectionBackground: some View {
-        if usesDockCapsuleSelection, isSelected {
-            ZStack {
-                if let selectionNamespace {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .matchedGeometryEffect(
-                            id: selectionEffectID,
-                            in: selectionNamespace,
-                            properties: .frame,
-                            isSource: false
-                        )
-                } else {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.18),
-                                Color.white.opacity(0.055)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.34),
-                                Color.white.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
-                Capsule(style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.38), lineWidth: 1.0)
-                    .blur(radius: 2.2)
-            }
+        if isSelected {
+            UnifiedDockRowBackground(
+                isFocused: true,
+                isHovered: false,
+                isEnabled: true,
+                isDark: isDark,
+                selectionNamespace: selectionNamespace,
+                selectionEffectID: selectionEffectID,
+                usesMatchedGeometry: usesDockCapsuleSelection
+            )
         } else {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.13) : Color.clear)
+            Color.clear
         }
     }
 
@@ -230,6 +222,26 @@ struct ResultRow: View {
         }
     }
 
+    private var iconBoxSize: CGFloat {
+        result.type == .application ? 48 : 34
+    }
+
+    private var iconImageSize: CGFloat {
+        result.type == .application ? 42 : 25
+    }
+
+    private var symbolIconSize: CGFloat {
+        result.type == .application ? 28 : 22
+    }
+
+    private var fallbackIconSize: CGFloat {
+        result.type == .application ? 24 : 17
+    }
+
+    private var titleFontSize: CGFloat {
+        result.type == .application ? 16 : 14
+    }
+
     private var fallbackIconName: String {
         switch result.type {
         case .application: return "app"
@@ -247,6 +259,48 @@ struct ResultRow: View {
         case .webSearch: return "globe"
         case .cliTool: return "terminal.fill"
         }
+    }
+
+    private var interactiveSystemCommand: SystemCommand? {
+        guard result.subtitle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(result.subtitle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.isEnabled,
+            command.interactionType != .none
+        else { return nil }
+        return command
+    }
+
+    private var coloredSymbolName: String? {
+        if result.subtitle.hasPrefix("cli://") { return "terminal.fill" }
+        if result.subtitle.hasPrefix("syscmd://") {
+            let raw = String(result.subtitle.dropFirst("syscmd://".count))
+            if let id = UUID(uuidString: raw),
+                let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id })
+            {
+                return command.icon
+            }
+            return fallbackIconName
+        }
+        // Extension-style rows (incl. "Quit <App>") carry a real app icon —
+        // show it. Only fall back to an SF symbol when there's no icon.
+        guard result.type == .extensionCommand, result.icon == nil else { return nil }
+        return fallbackIconName
+    }
+
+    private var coloredIconTint: SwiftUI.Color {
+        if result.subtitle.hasPrefix("syscmd://") {
+            let name = result.title.lowercased()
+            if name.contains("wi-fi") || name.contains("wifi") { return .blue }
+            if name.contains("bluetooth") { return .cyan }
+            if name.contains("volume") { return .orange }
+            if name.contains("sleep") { return .indigo }
+            if name.contains("lock") { return .purple }
+            if name.contains("restart") { return .green }
+            if name.contains("shut") || name.contains("quit") || name.contains("log out") { return .red }
+            if name.contains("app store") { return .blue }
+        }
+        return iconTint
     }
 
     private var iconTint: SwiftUI.Color {

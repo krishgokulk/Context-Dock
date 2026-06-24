@@ -52,6 +52,35 @@ extension AppShortcut {
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             proc.arguments = type == .jxa ? ["-l", lang, "-e", script] : ["-e", script]
             try? proc.run()
+
+        case .shortcut:
+            // `value` is the macOS Shortcut name. Feed the current selection as
+            // input: file (path) → text → URL. Falls back to running with no input.
+            var name = value
+            for (k, v) in envVars { name = name.replacingOccurrences(of: "{\(k)}", with: v) }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            let escaped = name.replacingOccurrences(of: "\"", with: "\\\"")
+            let file = envVars["CD_FILE"] ?? ""
+            let text = envVars["CD_SELECTED_TEXT"] ?? ""
+            let url  = envVars["CD_URL"] ?? ""
+            let cmd: String
+            if !file.isEmpty {
+                cmd = "/usr/bin/shortcuts run \"\(escaped)\" --input-path \"$CD_FILE\""
+            } else if !text.isEmpty {
+                cmd = "printf '%s' \"$CD_SELECTED_TEXT\" | /usr/bin/shortcuts run \"\(escaped)\""
+            } else if !url.isEmpty {
+                cmd = "printf '%s' \"$CD_URL\" | /usr/bin/shortcuts run \"\(escaped)\""
+            } else {
+                cmd = "/usr/bin/shortcuts run \"\(escaped)\""
+            }
+            var env = ProcessInfo.processInfo.environment
+            for (k, v) in envVars { env[k] = v }
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+            proc.arguments = ["-c", cmd]
+            proc.environment = env
+            try? proc.run()
         }
     }
 

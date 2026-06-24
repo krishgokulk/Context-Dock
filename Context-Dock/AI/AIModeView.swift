@@ -90,6 +90,90 @@ struct AIModeView: View {
         }
     }
 
+    // MARK: - Context attachments (image/file/url) for the chat
+
+    /// Attachments derived from the current context, sent to the AI so it can
+    /// actually see images/files/URLs instead of replying "I can't see it".
+    private var chatAttachments: [AIAttachment] {
+        switch currentContext {
+        case .filesSelected(let urls):
+            return urls.map { AIAttachment.inferred(from: $0) }
+        case .url(let string):
+            guard let u = URL(string: string) else { return [] }
+            return [AIAttachment(kind: .url, url: u)]
+        default:
+            return []
+        }
+    }
+
+    private var hasImageAttachment: Bool {
+        chatAttachments.contains { $0.kind == .image }
+    }
+
+    private var providerSupportsImages: Bool {
+        AIProviderRouter.shared.selectedModelSupportsVision(for: settings.selectedAIProvider)
+    }
+
+    @ViewBuilder private var contextChipsRow: some View {
+        if !chatAttachments.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(chatAttachments) { att in
+                        contextChip(for: att)
+                    }
+                    if hasImageAttachment {
+                        if providerSupportsImages {
+                            visionStatusChip(
+                                text: "\(settings.selectedAIProvider.displayName) · vision",
+                                symbol: "eye.fill", color: .green)
+                        } else {
+                            visionStatusChip(
+                                text: "No vision — switch model",
+                                symbol: "eye.slash.fill", color: .orange)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder private func contextChip(for att: AIAttachment) -> some View {
+        let symbol: String = {
+            switch att.kind {
+            case .image: return "photo"
+            case .pdf: return "doc.richtext"
+            case .file: return "doc"
+            case .url: return "link"
+            }
+        }()
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .semibold))
+            Text(att.kind == .url ? att.url.absoluteString : att.url.lastPathComponent)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: 200)
+        .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.30), lineWidth: 0.8))
+        .foregroundStyle(Color.accentColor)
+    }
+
+    @ViewBuilder private func visionStatusChip(text: String, symbol: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 9, weight: .bold))
+            Text(text).font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(color.opacity(0.15)))
+        .foregroundStyle(color)
+    }
+
     @ViewBuilder private var inputRow: some View {
         HStack(spacing: 8) {
             TextField(getPlaceholder(), text: $userInput)
@@ -139,6 +223,7 @@ struct AIModeView: View {
             )
             chatHistorySection
             quickActionsSection
+            contextChipsRow
             inputRow
             ContextAppSuggestionsRow(
                 context: currentContext,
@@ -174,9 +259,13 @@ struct AIModeView: View {
             configuration: config
         ) { _, error in
             if let error = error {
+                #if DEBUG
                 print("Error opening files: \(error.localizedDescription)")
+                #endif
             } else {
+                #if DEBUG
                 print("Opened \(urls.count) file(s) with \(app.displayName)")
+                #endif
             }
         }
     }
@@ -186,9 +275,13 @@ struct AIModeView: View {
             do {
                 let input = getInputFromContext()
                 let result = try await ext.execute(with: input)
+                #if DEBUG
                 print("Extension result: \(result)")
+                #endif
             } catch {
+                #if DEBUG
                 print("Extension error: \(error)")
+                #endif
             }
         }
     }
@@ -303,7 +396,8 @@ struct AIModeView: View {
                     context: currentContext,
                     provider: settings.selectedAIProvider,
                     apiKey: settings.getAPIKey(for: settings.selectedAIProvider),
-                    conversationHistory: chatHistoryAsChatMessages()
+                    conversationHistory: chatHistoryAsChatMessages(),
+                    attachments: chatAttachments
                 )
 
                 await MainActor.run {
@@ -349,6 +443,7 @@ struct AIModeView: View {
 
         aiService.streamOnDeviceResponse(
             message: message,
+            imageURLs: chatAttachments.filter { $0.kind == .image }.map(\.url),
             context: currentContext,
             history: chatHistoryAsChatMessages(),
             onPartial: { token in
@@ -380,14 +475,20 @@ struct AIModeView: View {
     }
 
     private func autoDetectContext() {
+        #if DEBUG
         print("🔍 [AIModeView] Auto-detecting context...")
+        #endif
         
         Task {
             let detectedContext = await detectContext()
-            
+            // Avoid publishing through the parent binding in the same SwiftUI
+            // update transaction that presented this view.
+            await Task.yield()
             // Update context and load suggestions
             currentContext = detectedContext
+            #if DEBUG
             print("📊 [AIModeView] Context updated to: \(detectedContext.description)")
+            #endif
             loadSuggestions()
         }
     }
@@ -398,53 +499,77 @@ struct AIModeView: View {
         // Respect ANY non-.none context, not just .filesSelected
         switch currentContext {
         case .filesSelected(let urls) where !urls.isEmpty:
+            #if DEBUG
             print("✅ [AIModeView] Using existing file context: \(urls.count) files")
+            #endif
             return currentContext
         case .appFocused(let name, _):
+            #if DEBUG
             print("✅ [AIModeView] Using existing app context: \(name)")
+            #endif
             return currentContext
         case .textSelected(let text) where !text.isEmpty:
+            #if DEBUG
             print("✅ [AIModeView] Using existing text context: \(text.prefix(50))...")
+            #endif
             return currentContext
         case .url(let url) where !url.isEmpty:
+            #if DEBUG
             print("✅ [AIModeView] Using existing URL context: \(url.prefix(50))...")
+            #endif
             return currentContext
         case .contactSelected:
+            #if DEBUG
             print("✅ [AIModeView] Using existing contact context")
+            #endif
             return currentContext
         default:
+            #if DEBUG
             print("🔍 [AIModeView] No existing context (.none), running detection...")
+            #endif
         }
 
         // PRIORITY 2: Try to get Finder selection directly (works even if ILauncher is frontmost)
         let finderSelection = ContextDetector.shared.getFinderSelectedFiles()
         if !finderSelection.isEmpty {
+            #if DEBUG
             print("📁 [AIModeView] Got Finder selection directly: \(finderSelection.count) files")
+            #endif
             for url in finderSelection.prefix(5) {
+                #if DEBUG
                 print("   - \(url.lastPathComponent)")
+                #endif
             }
             return .filesSelected(finderSelection)
         }
 
         // PRIORITY 3: Try frontmost app detection (but skip if ILauncher)
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
+            #if DEBUG
             print("⚠️ [AIModeView] No frontmost application found")
+            #endif
             return checkClipboard()
         }
 
         // Skip ILauncher itself - can't detect context from ourselves
         if frontmostApp.bundleIdentifier?.contains("ILauncher") == true {
+            #if DEBUG
             print("⚠️ [AIModeView] Frontmost app is ILauncher, checking clipboard...")
+            #endif
             return checkClipboard()
         }
 
         // Try ContextDetector with the frontmost app
         guard let detected = ContextDetector.shared.detectContext(frontmostApp: frontmostApp) else {
+            #if DEBUG
             print("⚠️ [AIModeView] ContextDetector returned nil")
+            #endif
             return checkClipboard()
         }
 
+        #if DEBUG
         print("✅ [AIModeView] ContextDetector detected: \(detected.description)")
+        #endif
 
         switch detected {
         case .files(let urls):
@@ -454,7 +579,9 @@ struct AIModeView: View {
         case .app(let bundleID, let name):
             return .appFocused(name: name, bundleID: bundleID)
         default:
+            #if DEBUG
             print("⚠️ [AIModeView] Unsupported DetectedContext case: \(detected)")
+            #endif
             return checkClipboard()
         }
     }
@@ -464,7 +591,9 @@ struct AIModeView: View {
         if let fileURLs = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
             let validFileURLs = fileURLs.filter { $0.isFileURL }
             if !validFileURLs.isEmpty {
+                #if DEBUG
                 print("📋 [AIModeView] Found \(validFileURLs.count) file(s) in clipboard")
+                #endif
                 return .filesSelected(validFileURLs)
             }
         }
@@ -475,25 +604,39 @@ struct AIModeView: View {
             if !trimmed.isEmpty && trimmed.count >= 3 {
                 // Check if it looks like a URL
                 if let url = URL(string: trimmed), url.scheme != nil {
+                    #if DEBUG
                     print("🔗 [AIModeView] Found URL in clipboard: \(trimmed.prefix(50))")
+                    #endif
                     return .url(trimmed)
                 }
+                #if DEBUG
                 print("📝 [AIModeView] Found text in clipboard: \(trimmed.prefix(50))...")
+                #endif
                 return .textSelected(trimmed)
             }
         }
 
+        #if DEBUG
         print("⚪ [AIModeView] No context detected")
+        #endif
         return .none
     }
     
     
     private func loadSuggestions() {
         isLoading = true
+        #if DEBUG
         print("🤖 [AIModeView] ==========================================")
+        #endif
+        #if DEBUG
         print("🤖 [AIModeView] Starting to load suggestions...")
+        #endif
+        #if DEBUG
         print("🤖 [AIModeView] Current context: \(currentContext)")
+        #endif
+        #if DEBUG
         print("🤖 [AIModeView] Current context description: \(currentContext.description)")
+        #endif
 
         Task {
             // Add delay to ensure UI is ready
@@ -502,21 +645,35 @@ struct AIModeView: View {
             let matcher = IntelligentExtensionMatcher.shared
             let detectedContext = convertToDetectedContext(currentContext)
 
+            #if DEBUG
             print("🤖 [AIModeView] Converted to DetectedContext: \(detectedContext)")
+            #endif
 
             // Get suggestions from matcher (which now includes built-in extensions via ExtensionManager)
             var newSuggestions = matcher.suggestExtensions(for: detectedContext)
+            #if DEBUG
             print("🤖 [AIModeView] Got \(newSuggestions.count) suggestions from matcher")
+            #endif
             
             if newSuggestions.isEmpty {
+                #if DEBUG
                 print("❌ [AIModeView] ERROR: No suggestions returned from matcher!")
+                #endif
+                #if DEBUG
                 print("❌ [AIModeView] Checking if extensions are enabled in settings...")
+                #endif
+                #if DEBUG
                 print("❌ [AIModeView] enableContextAIExtensions: \(AppSettings.shared.enableContextAIExtensions)")
+                #endif
                 
                 // FALLBACK: Always show default built-in extensions if nothing matches
+                #if DEBUG
                 print("⚠️ [AIModeView] Loading default built-in extensions as fallback...")
+                #endif
                 let allExtensions = ExtensionManager.shared.getEnabledExtensions()
+                #if DEBUG
                 print("📦 [AIModeView] Found \(allExtensions.count) total extensions")
+                #endif
                 
                 // Create suggestions from all built-in extensions with default scores
                 newSuggestions = allExtensions.map { ext in
@@ -539,28 +696,40 @@ struct AIModeView: View {
                         reason: "General purpose action"
                     )
                 }
+                #if DEBUG
                 print("✅ [AIModeView] Created \(newSuggestions.count) fallback suggestions")
+                #endif
             }
             
             // Sort by relevance
             newSuggestions.sort { $0.relevanceScore > $1.relevanceScore }
             
+            #if DEBUG
             print("🤖 [AIModeView] Total suggestions after sorting: \(newSuggestions.count)")
+            #endif
             for (index, suggestion) in newSuggestions.prefix(10).enumerated() {
+                #if DEBUG
                 print("🤖 [AIModeView]   \(index + 1). \(suggestion.scriptExtension.displayName) (score: \(suggestion.relevanceScore)) - \(suggestion.reason)")
+                #endif
             }
 
             let description = describeContext(currentContext)
+            #if DEBUG
             print("🤖 [AIModeView] Context description: \(description)")
+            #endif
 
             await MainActor.run {
                 suggestions = newSuggestions
                 contextDescription = description
                 isLoading = false
+                #if DEBUG
                 print("🤖 [AIModeView] ✅ FINAL: UI updated with \(newSuggestions.count) suggestions")
+                #endif
             }
             
+            #if DEBUG
             print("🤖 [AIModeView] ==========================================")
+            #endif
         }
     }
     
@@ -584,12 +753,16 @@ struct AIModeView: View {
         case .none:
             // When no context, try to get clipboard text
             if let clipboardText = NSPasteboard.general.string(forType: .string), !clipboardText.isEmpty {
+                #if DEBUG
                 print("🤖 [AIModeView] No context, but found clipboard text (\(clipboardText.count) chars)")
+                #endif
                 return .text(clipboardText)
             }
             
             // Otherwise, return generic app context
+            #if DEBUG
             print("🤖 [AIModeView] No context and empty clipboard - using Unknown app context")
+            #endif
             return .app(bundleID: "", name: "Unknown")
         }
     }
@@ -956,8 +1129,12 @@ struct EmptySuggestionsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)
         .onAppear {
+            #if DEBUG
             print("❌ [EmptySuggestionsView] Showing empty state - no suggestions found!")
+            #endif
+            #if DEBUG
             print("❌ [EmptySuggestionsView] Context AI Extensions enabled: \(AppSettings.shared.enableContextAIExtensions)")
+            #endif
         }
     }
 }

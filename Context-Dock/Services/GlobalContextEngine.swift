@@ -97,6 +97,19 @@ final class GlobalContextEngine {
         AppMenuCapabilityCache.shared.allCachedBundleIdentifiers()
     }
 
+    /// "Quit"/"Quit <App>" from the app menu. "Quit and Keep Windows" (⌥⌘Q) has
+    /// different semantics and stays on the regular menu-click path.
+    nonisolated static func isPlainQuitAction(path: [String]) -> Bool {
+        guard
+            let last = path.last?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+            last == "quit" || last.hasPrefix("quit "),
+            !last.contains("keep")
+        else { return false }
+        return true
+    }
+
     nonisolated func verifyAndExecuteCachedMenu(
         _ request: GlobalMenuExecutionRequest
     ) async -> GlobalMenuExecutionResult {
@@ -107,6 +120,35 @@ final class GlobalContextEngine {
                 app: nil,
                 liveItem: nil,
                 message: "Menu action unavailable"
+            )
+        }
+
+        let wasRunning = NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
+        }
+
+        // Plain "Quit" needs no menu interaction: a graceful terminate() quits the
+        // app in the background without activating it, so the launcher keeps key
+        // focus instead of hiding when the target app would come frontmost.
+        if Self.isPlainQuitAction(path: request.path) {
+            guard wasRunning,
+                let runningApp = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
+                })
+            else {
+                return GlobalMenuExecutionResult(
+                    status: .unavailable,
+                    app: nil,
+                    liveItem: nil,
+                    message: "\(request.appName) isn't running"
+                )
+            }
+            _ = await MainActor.run { runningApp.terminate() }
+            return GlobalMenuExecutionResult(
+                status: .executed,
+                app: nil,
+                liveItem: nil,
+                message: "Quit \(request.appName)"
             )
         }
 
@@ -126,34 +168,78 @@ final class GlobalContextEngine {
         let pid = app.processIdentifier
         await prepareAppForMenuExecution(app)
         await AXActionResolver.waitForActivation(of: app)
+        await MenuExecutionCoordinator.restoreWindowIfAllMinimized(app)
         await waitForAppShortcutReadiness(app)
-        try? await Task.sleep(nanoseconds: 120_000_000)
+        // Only wait for app to settle menus when it was just launched; already-running apps are ready
+        if !wasRunning {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+        }
 
         let isWindowMenuAction = isWindowMenuPath(request.path)
+        let isCloseDocumentAction = isVolatileCloseDocumentPath(request.path)
+        let shouldTryCachedShortcutFallback =
+            isWindowMenuAction
+            || isStopMenuPath(request.path)
+            || isCloseDocumentAction
+            || (request.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+
+        if isWindowMenuAction,
+            await MainActor.run(body: {
+                WindowManagementService.shared.executeIfSupported(
+                    path: request.path,
+                    sourceApp: app
+                )
+            })
+        {
+            await forceRefreshCache(for: app)
+            return GlobalMenuExecutionResult(
+                status: .executed,
+                app: app,
+                liveItem: nil,
+                message: "\(request.appName) window updated"
+            )
+        }
 
         guard let liveMatch = await waitForExecutableMenuItem(
             path: request.path,
             app: app,
             pid: pid,
-            attempts: 16,
+            attempts: wasRunning ? 6 : 16,
             pauseNanoseconds: 120_000_000
         ) else {
-            if isWindowMenuAction {
-                let executed = executeMenuAction(
+            if shouldTryCachedShortcutFallback {
+                if isCloseDocumentAction {
+                    let executed = await executeCloseWindowFallback(pid: pid, app: app)
+                    await MainActor.run {
+                        AXMenuReader.shared.invalidateCache(for: pid)
+                    }
+                    await forceRefreshCache(for: app)
+                    return GlobalMenuExecutionResult(
+                        status: executed ? .executed : .unavailable,
+                        app: app,
+                        liveItem: nil,
+                        message: executed
+                            ? "Closed \(request.appName) window"
+                            : "\(request.appName) action is not available right now"
+                    )
+                }
+                let executed = await executeMenuAction(
                     path: request.path,
                     shortcutChar: request.shortcutChar,
                     shortcutModifiers: request.shortcutModifiers,
                     pid: pid,
                     app: app
                 )
-                AXMenuReader.shared.invalidateCache(for: pid)
+                await MainActor.run {
+                    AXMenuReader.shared.invalidateCache(for: pid)
+                }
                 await forceRefreshCache(for: app)
                 return GlobalMenuExecutionResult(
                     status: executed ? .executionFallback : .unavailable,
                     app: app,
                     liveItem: nil,
                     message: executed
-                        ? "Tried \(request.path.last ?? "Window action")"
+                        ? "Tried \(request.path.last ?? "Menu action")"
                         : "\(request.appName) action is not available right now"
                 )
             }
@@ -166,7 +252,62 @@ final class GlobalContextEngine {
             )
         }
 
-        guard liveMatch.isEnabled || isWindowMenuAction else {
+        let isStopMenuAction = isStopMenuPath(liveMatch.path)
+        let liveCloseDocumentAction = isVolatileCloseDocumentPath(liveMatch.path)
+        if liveCloseDocumentAction && !liveMatch.isEnabled {
+            let executed = await executeCloseWindowFallback(pid: pid, app: app)
+            await MainActor.run {
+                AXMenuReader.shared.invalidateCache(for: pid)
+            }
+            await forceRefreshCache(for: app)
+            return GlobalMenuExecutionResult(
+                status: executed ? .executed : .unavailable,
+                app: app,
+                liveItem: liveMatch,
+                message: executed
+                    ? "Closed \(request.appName) window"
+                    : "\(request.appName) action is not available right now"
+            )
+        }
+
+        guard liveMatch.isEnabled || isWindowMenuAction || isStopMenuAction || liveCloseDocumentAction else {
+            let shortcut = (request.shortcutChar ?? liveMatch.shortcutChar)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let shortcutModifiers = request.shortcutModifiers != 0
+                ? request.shortcutModifiers
+                : liveMatch.shortcutModifiers
+            let shortcutSent: Bool
+            if !shortcut.isEmpty {
+                shortcutSent = await MainActor.run {
+                    AXMenuReader.shared.executeShortcut(
+                        char: shortcut,
+                        modifiers: shortcutModifiers,
+                        in: pid
+                    )
+                }
+            } else {
+                shortcutSent = false
+            }
+            let menuClicked: Bool
+            if !shortcutSent {
+                menuClicked = await MainActor.run {
+                    AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid)
+                }
+            } else {
+                menuClicked = false
+            }
+            if shortcutSent || menuClicked {
+                await MainActor.run {
+                    AXMenuReader.shared.invalidateCache(for: pid)
+                }
+                await forceRefreshCache(for: app)
+                return GlobalMenuExecutionResult(
+                    status: .executionFallback,
+                    app: app,
+                    liveItem: liveMatch,
+                    message: "Tried \(liveMatch.title)"
+                )
+            }
             await forceRefreshCache(for: app)
             return GlobalMenuExecutionResult(
                 status: .unavailable,
@@ -176,13 +317,35 @@ final class GlobalContextEngine {
             )
         }
 
+        if isStopMenuAction {
+            let executed = await executeMenuAction(
+                path: liveMatch.path,
+                shortcutChar: request.shortcutChar ?? liveMatch.shortcutChar,
+                shortcutModifiers: request.shortcutModifiers != 0
+                    ? request.shortcutModifiers
+                    : liveMatch.shortcutModifiers,
+                pid: pid,
+                app: app
+            )
+            await MainActor.run {
+                AXMenuReader.shared.invalidateCache(for: pid)
+            }
+            await forceRefreshCache(for: app)
+            return GlobalMenuExecutionResult(
+                status: executed ? .executed : .executionFallback,
+                app: app,
+                liveItem: liveMatch,
+                message: executed ? "Executed \(liveMatch.title)" : "Tried \(liveMatch.title)"
+            )
+        }
+
         let preferredShortcut = (request.shortcutChar ?? liveMatch.shortcutChar)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let preferredModifiers = request.shortcutModifiers != 0
             ? request.shortcutModifiers
             : liveMatch.shortcutModifiers
 
-        let executed = executeMenuAction(
+        let executed = await executeMenuAction(
             path: liveMatch.path,
             shortcutChar: preferredShortcut,
             shortcutModifiers: preferredModifiers,
@@ -190,7 +353,9 @@ final class GlobalContextEngine {
             app: app
         )
 
-        AXMenuReader.shared.invalidateCache(for: pid)
+        await MainActor.run {
+            AXMenuReader.shared.invalidateCache(for: pid)
+        }
         await forceRefreshCache(for: app)
 
         if executed {
@@ -202,7 +367,9 @@ final class GlobalContextEngine {
             )
         }
 
-        AXActionResolver.shared.execute(menuPath: liveMatch.path, in: app)
+        await MainActor.run {
+            AXActionResolver.shared.execute(menuPath: liveMatch.path, in: app)
+        }
         return GlobalMenuExecutionResult(
             status: .executionFallback,
             app: app,
@@ -218,10 +385,13 @@ final class GlobalContextEngine {
         includeCachedNonRunning: Bool = true,
         limit: Int = 12
     ) -> [GlobalMenuDescriptorGroup] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = normalizedGlobalMenuQuery(query)
         guard !q.isEmpty else { return [] }
 
-        let perAppCap = q.count == 1 ? 3 : (q.count == 2 ? 4 : 6)
+        // Fetch more per app than the global cap so the flat sort has enough
+        // candidates to pick from — a tight per-app cap would starve apps whose
+        // second-best item scores higher than another app's first-best.
+        let perAppFetch = q.count == 1 ? 4 : (q.count == 2 ? 6 : 10)
         let runningBundleIDs = Set(runningApps.map(\.bundleID))
         let sortedRunning = runningApps
             .filter { !excludedBundleIDs.contains($0.bundleID) }
@@ -240,22 +410,97 @@ final class GlobalContextEngine {
             candidateApps.append(contentsOf: nonRunning)
         }
 
-        var groups: [GlobalMenuDescriptorGroup] = []
-        var total = 0
+        let scopedQuery = scopedGlobalMenuQuery(query: q, candidateApps: candidateApps)
+
+        // Collect all matching descriptors across every app, then sort globally.
+        // This ensures the top-N results are the highest-scoring items worldwide,
+        // not just the top item from each app group.
+        var allDescriptors: [GlobalMenuDescriptor] = []
         for app in candidateApps {
-            guard total < limit else { break }
-            let remaining = min(perAppCap, limit - total)
-            let descriptors = menuDescriptors(for: app, query: q, limit: remaining)
-            guard !descriptors.isEmpty else { continue }
-            groups.append(GlobalMenuDescriptorGroup(
-                bundleID: app.bundleID,
+            if let appFilter = scopedQuery.appFilter,
+                !globalMenuAppNameMatches(appFilter, app: app)
+            {
+                continue
+            }
+            let descriptors = menuDescriptors(
+                for: app, query: scopedQuery.actionQuery, limit: perAppFetch)
+            allDescriptors.append(contentsOf: descriptors)
+        }
+
+        // Flat global sort: best item worldwide wins, regardless of which app it's from.
+        let topDescriptors = allDescriptors
+            .sorted {
+                if $0.rankingScore != $1.rankingScore { return $0.rankingScore > $1.rankingScore }
+                // Tie-break: running app items before non-running
+                let lhsRunning = runningBundleIDs.contains($0.bundleID)
+                let rhsRunning = runningBundleIDs.contains($1.bundleID)
+                if lhsRunning != rhsRunning { return lhsRunning }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            .prefix(limit)
+
+        // Re-group by app preserving the global ranking order within each group.
+        var seenBundleIDs: [String] = []
+        var byBundleID: [String: [GlobalMenuDescriptor]] = [:]
+        for descriptor in topDescriptors {
+            if byBundleID[descriptor.bundleID] == nil {
+                seenBundleIDs.append(descriptor.bundleID)
+            }
+            byBundleID[descriptor.bundleID, default: []].append(descriptor)
+        }
+
+        return seenBundleIDs.compactMap { bundleID -> GlobalMenuDescriptorGroup? in
+            guard let descriptors = byBundleID[bundleID], !descriptors.isEmpty,
+                  let app = candidateApps.first(where: { $0.bundleID == bundleID })
+            else { return nil }
+            return GlobalMenuDescriptorGroup(
+                bundleID: bundleID,
                 appName: app.name,
                 icon: app.icon,
                 descriptors: descriptors
-            ))
-            total += descriptors.count
+            )
         }
-        return groups
+    }
+
+    nonisolated private func scopedGlobalMenuQuery(
+        query: String,
+        candidateApps: [GlobalMenuAppSnapshot]
+    ) -> (actionQuery: String, appFilter: String?) {
+        let tokens = query.split(separator: " ").map(String.init)
+        guard tokens.count > 1, globalMenuActionPrefixes.contains(tokens[0]) else {
+            return (query, nil)
+        }
+
+        let appFilter = tokens.dropFirst().joined(separator: " ")
+        guard candidateApps.contains(where: { globalMenuAppNameMatches(appFilter, app: $0) }) else {
+            return (query, nil)
+        }
+        return (tokens[0], appFilter)
+    }
+
+    nonisolated private func globalMenuAppNameMatches(
+        _ appFilter: String,
+        app: GlobalMenuAppSnapshot
+    ) -> Bool {
+        ([app.name] + app.name.split(separator: " ").map(String.init))
+            .map(normalizedGlobalMenuQuery)
+            .contains(where: { $0.hasPrefix(appFilter) || $0.contains(appFilter) })
+    }
+
+    nonisolated private var globalMenuActionPrefixes: Set<String> {
+        [
+            "close", "copy", "cut", "find", "hide", "minimize", "open", "paste",
+            "print", "quit", "redo", "save", "select", "undo", "zoom",
+        ]
+    }
+
+    nonisolated private func normalizedGlobalMenuQuery(_ query: String) -> String {
+        let normalized = AppMenuCapabilityCache.normalize(query)
+        if normalized == "minimise" { return "minimize" }
+        if normalized.hasPrefix("minimise ") {
+            return "minimize " + normalized.dropFirst("minimise ".count)
+        }
+        return normalized
     }
 
     nonisolated private func menuDescriptors(
@@ -272,16 +517,24 @@ final class GlobalContextEngine {
         )
 
         let descriptors = rawItems.compactMap { item -> GlobalMenuDescriptor? in
+            guard AppMenuCapabilityCache.shouldExposeInGlobalContext(
+                title: item.title,
+                path: item.path
+            ) else { return nil }
+
             let nameLower = item.title.lowercased()
-            guard nameLower.hasPrefix(query) || nameLower.contains(query),
-                  item.title.count >= query.count
+            let contextLower = (item.path.dropLast().last ?? "").lowercased()
+            let pathLower = item.path.joined(separator: " ").lowercased()
+            guard nameLower.hasPrefix(query) || nameLower.contains(query)
+                    || contextLower.hasPrefix(query) || contextLower.contains(query)
+                    || pathLower.contains(query)
             else { return nil }
 
             return GlobalMenuDescriptor(
-                id: "xapp-\(app.bundleID)-\(item.title)",
+                id: "xapp-\(app.bundleID)-\(item.path.joined(separator: ">"))",
                 name: item.title,
                 badge: shortcutDisplay(char: item.shortcutChar, modifiers: item.shortcutModifiers),
-                statusBadge: app.isRunning ? "Cached" : "Needs launch",
+                statusBadge: app.isRunning ? nil : "Needs launch",
                 bundleID: app.bundleID,
                 appName: app.name,
                 appIcon: app.icon,
@@ -421,14 +674,20 @@ final class GlobalContextEngine {
         pauseNanoseconds: UInt64
     ) async -> AXMenuItem? {
         for attempt in 0..<attempts {
-            let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+            let liveItems = await MainActor.run {
+                AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+            }
             if !liveItems.isEmpty {
-                AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
+                await MainActor.run {
+                    AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
+                }
             }
             if let match = liveItems.first(where: { menuPathMatches($0, targetPath: path) }) {
                 return match
             }
-            AXMenuReader.shared.invalidateCache(for: pid)
+            await MainActor.run {
+                AXMenuReader.shared.invalidateCache(for: pid)
+            }
             if attempt < attempts - 1 {
                 try? await Task.sleep(nanoseconds: pauseNanoseconds)
             }
@@ -438,11 +697,17 @@ final class GlobalContextEngine {
 
     nonisolated private func forceRefreshCache(for app: NSRunningApplication) async {
         let pid = app.processIdentifier
-        AXMenuReader.shared.invalidateCache(for: pid)
+        await MainActor.run {
+            AXMenuReader.shared.invalidateCache(for: pid)
+        }
         await MenuWarmCacheService.shared.warm(app: app, force: true)
-        let liveItems = AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
+        let liveItems = await MainActor.run {
+            AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
+        }
         if !liveItems.isEmpty {
-            AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
+            await MainActor.run {
+                AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
+            }
         }
     }
 
@@ -474,29 +739,79 @@ final class GlobalContextEngine {
         normalizedMenuPathForMatching(path).first == "window"
     }
 
+    nonisolated private func isVolatileCloseDocumentPath(_ path: [String]) -> Bool {
+        let normalized = normalizedMenuPathForMatching(path)
+        guard normalized.first == "file", let last = normalized.last else { return false }
+        return last == "close selected"
+            || last.hasPrefix("close selected ")
+            || last.hasPrefix("close current ")
+    }
+
+    nonisolated private func isStopMenuPath(_ path: [String]) -> Bool {
+        let normalized = normalizedMenuPathForMatching(path)
+        guard normalized.last == "stop" else { return false }
+        return normalized.contains("product") || normalized.contains("run")
+    }
+
+    nonisolated private func executeCloseWindowFallback(
+        pid: pid_t,
+        app: NSRunningApplication
+    ) async -> Bool {
+        await MainActor.run {
+            if !app.isActive {
+                _ = app.activate(options: [.activateIgnoringOtherApps])
+            }
+        }
+        await AXActionResolver.waitForActivation(of: app)
+
+        let candidates = [
+            ["File", "Close Window"],
+            ["File", "Close"],
+        ]
+        for path in candidates {
+            if await MainActor.run(body: { AXMenuReader.shared.clickMenuItem(path: path, in: pid) }) {
+                return true
+            }
+        }
+        if await MainActor.run(body: {
+            AXMenuReader.shared.executeShortcut(char: "w", modifiers: 0, in: pid)
+        }) {
+            return true
+        }
+        return await MainActor.run(body: {
+            AXMenuReader.shared.executeShortcutToFrontmost(char: "w", modifiers: 0)
+        })
+    }
+
     nonisolated private func executeMenuAction(
         path: [String],
         shortcutChar: String?,
         shortcutModifiers: Int,
         pid: pid_t,
         app: NSRunningApplication
-    ) -> Bool {
+    ) async -> Bool {
         let shortcut = shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let normalizedTitle = path.last?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        if normalizedTitle == "paste",
-           AXMenuReader.shared.clickMenuItem(path: path, in: pid) {
+        if isStopMenuPath(path), shortcut == ".",
+           await MainActor.run(body: {
+               AXMenuReader.shared.executeShortcutToFrontmost(
+                   char: shortcut,
+                   modifiers: shortcutModifiers
+               )
+           }) {
             return true
         }
         if !shortcut.isEmpty,
-           AXMenuReader.shared.executeShortcut(char: shortcut, modifiers: shortcutModifiers, in: pid) {
+           await MainActor.run(body: {
+               AXMenuReader.shared.executeShortcut(char: shortcut, modifiers: shortcutModifiers, in: pid)
+           }) {
             return true
         }
-        if AXMenuReader.shared.clickMenuItem(path: path, in: pid) {
+        if await MainActor.run(body: { AXMenuReader.shared.clickMenuItemReliably(path: path, in: pid) }) {
             return true
         }
-        AXActionResolver.shared.execute(menuPath: path, in: app)
+        await MainActor.run {
+            AXActionResolver.shared.execute(menuPath: path, in: app)
+        }
         return true
     }
 

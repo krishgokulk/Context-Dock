@@ -455,7 +455,9 @@ struct L2AIIntegrationView: View {
                     let context: UserContext = selectedFiles.isEmpty ? .none : .filesSelected(selectedFiles)
                     let response = await L2UnifiedAssistant.shared.process(query, context: context)
                     // The response is now available via L2UnifiedAssistant.shared.lastResponse
+                    #if DEBUG
                     print("L2 Response: \(response.message)")
+                    #endif
 
                 case .edit:
                     // Process file editing request
@@ -476,10 +478,14 @@ struct L2AIIntegrationView: View {
                 case .learn:
                     // Analyze patterns using workflow engine
                     let workflows = L2WorkflowEngine.shared.findMatchingWorkflows(query: query)
+                    #if DEBUG
                     print("Found \(workflows.count) matching workflows")
+                    #endif
                 }
             } catch {
+                #if DEBUG
                 print("Error: \(error)")
+                #endif
             }
         }
     }

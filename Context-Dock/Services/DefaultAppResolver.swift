@@ -659,7 +659,9 @@ class DefaultAppResolver {
             configuration: config
         ) { _, error in
             if let error = error {
+                #if DEBUG
                 print("Error opening file: \(error.localizedDescription)")
+                #endif
             }
         }
 

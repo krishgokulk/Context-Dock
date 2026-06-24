@@ -10,6 +10,7 @@ import Foundation
 import AppKit
 import Combine
 import PDFKit
+import Vision
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -186,12 +187,19 @@ class AIProviderService: ObservableObject {
         provider: AIProvider,
         apiKey: String? = nil,
         conversationHistory: [ChatMessage] = [],
-        additionalContextPrompt: String = ""
+        additionalContextPrompt: String = "",
+        attachments: [AIAttachment] = []
     ) async throws -> String {
 
+        #if DEBUG
         print("🤖 [AIProviderService] Sending message to \(provider.displayName)")
+        #endif
+        #if DEBUG
         print("🤖 [AIProviderService] Message: \(message)")
+        #endif
+        #if DEBUG
         print("🤖 [AIProviderService] Context: \(context.description)")
+        #endif
 
         isProcessing = true
         error = nil
@@ -227,68 +235,23 @@ class AIProviderService: ObservableObject {
             additionalContextPrompt: additionalContextPrompt
         )
 
+        #if DEBUG
         print("🤖 [AIProviderService] Context prompt built (\(contextPrompt.count) chars)")
+        #endif
 
-        // Route to appropriate provider
-        let response: String
+        let response = try await AIProviderRouter.shared.sendPrepared(
+            provider: provider,
+            message: message,
+            context: context,
+            contextPrompt: contextPrompt,
+            apiKeyOverride: apiKey,
+            conversationHistory: conversationHistory,
+            attachments: attachments
+        )
 
-        switch provider {
-        case .openAI:
-            guard let key = apiKey, !key.isEmpty else {
-                throw AIServiceError.missingAPIKey("OpenAI API key is required")
-            }
-            response = try await sendToOpenAI(
-                message: message,
-                contextPrompt: contextPrompt,
-                apiKey: key,
-                history: conversationHistory
-            )
-
-        case .anthropic:
-            guard let key = apiKey, !key.isEmpty else {
-                throw AIServiceError.missingAPIKey("Anthropic API key is required")
-            }
-            response = try await sendToAnthropic(
-                message: message,
-                contextPrompt: contextPrompt,
-                apiKey: key,
-                history: conversationHistory
-            )
-
-        case .googleGemini:
-            guard let key = apiKey, !key.isEmpty else {
-                throw AIServiceError.missingAPIKey("Google Gemini API key is required")
-            }
-            response = try await sendToGemini(
-                message: message,
-                contextPrompt: contextPrompt,
-                apiKey: key,
-                history: conversationHistory
-            )
-
-        case .ollama:
-            let settings = AppSettings.shared
-            let model = settings.selectedOllamaModel.isEmpty ? "llama2" : settings.selectedOllamaModel
-            response = try await sendToOllama(
-                message: message,
-                contextPrompt: contextPrompt,
-                endpoint: settings.ollamaEndpoint,
-                model: model,
-                history: conversationHistory
-            )
-
-        case .onDevice:
-            response = try await sendToOnDevice(
-                message: message,
-                contextPrompt: contextPrompt,
-                history: conversationHistory
-            )
-
-        case .shortcuts:
-            throw AIServiceError.unsupportedProvider("Shortcuts-based chat is not yet implemented. Please select OpenAI, Anthropic, Gemini, or Ollama.")
-        }
-
+        #if DEBUG
         print("✅ [AIProviderService] Response received (\(response.count) chars)")
+        #endif
 
         currentResponse = response
 
@@ -299,8 +262,15 @@ class AIProviderService: ObservableObject {
         switch provider {
         case .onDevice:
             return true
-        case .ollama:
-            guard let components = URLComponents(string: AppSettings.shared.ollamaEndpoint),
+        case .ollama, .openAICompatible, .claudeBridge, .chatGPTBridge:
+            let endpoint: String
+            switch provider {
+            case .ollama: endpoint = AppSettings.shared.ollamaEndpoint
+            case .claudeBridge: endpoint = AppSettings.shared.claudeBridgeEndpoint
+            case .chatGPTBridge: endpoint = AppSettings.shared.chatGPTBridgeEndpoint
+            default: endpoint = AppSettings.shared.openAICompatibleEndpoint
+            }
+            guard let components = URLComponents(string: endpoint),
                   let host = components.host?.lowercased()
             else { return false }
             return host == "localhost" || host == "127.0.0.1" || host == "::1"
@@ -449,7 +419,7 @@ class AIProviderService: ObservableObject {
                     prompt += snap.text
                     prompt += "\n\nAnswer ONLY using this content — it is the ACTUAL live text on screen.\n"
                 } else {
-                    Task.detached(priority: .background) {
+                    Task { @MainActor in
                         AXWebReader.shared.refresh(pid: pid, currentURL: urlString)
                     }
                     prompt += "(Page content loading — answer from URL context for now)\n"
@@ -488,7 +458,7 @@ class AIProviderService: ObservableObject {
                     prompt += "\n\nAnswer ONLY using the page content above — this is the actual live text on screen.\n"
                 } else {
                     // Cache cold — kick off a background read for next query
-                    Task.detached(priority: .background) {
+                    Task { @MainActor in
                         AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
                     }
                     // If research session has the URL but no text, show what we have
@@ -725,7 +695,9 @@ class AIProviderService: ObservableObject {
             }
 
         } catch {
+            #if DEBUG
             print("⚠️ [AIProviderService] Error analyzing file: \(error)")
+            #endif
         }
 
         return analysis
@@ -782,13 +754,31 @@ class AIProviderService: ObservableObject {
     private func sendToOnDevice(
         message: String,
         contextPrompt: String,
-        history: [ChatMessage]
+        history: [ChatMessage],
+        imageURLs: [URL] = []
     ) async throws -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             do {
+                // OCR-extract image content and prepend so the model can reason about it
+                var finalMessage = message
+                if !imageURLs.isEmpty {
+                    let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
+                        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                    }.flatMap { cgImage -> [String] in
+                        let req = VNRecognizeTextRequest()
+                        req.recognitionLevel = .accurate
+                        req.usesLanguageCorrection = true
+                        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                        try? handler.perform([req])
+                        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                    }
+                    if !ocrLines.isEmpty {
+                        finalMessage = "Image content:\n\(ocrLines.joined(separator: "\n"))\n\nUser request: \(message)"
+                    }
+                }
                 let session = try await onDeviceSession(for: contextPrompt)
-                let response = try await session.respond(to: message)
+                let response = try await session.respond(to: finalMessage)
                 return response.content
             } catch {
                 return "Apple Intelligence error: \(error.localizedDescription)\n\nMake sure Apple Intelligence is enabled in System Settings > Apple Intelligence."
@@ -872,6 +862,7 @@ class AIProviderService: ObservableObject {
     /// Accepts UserContext so it can build the full file-aware system prompt (same as cloud AI).
     func streamOnDeviceResponse(
         message: String,
+        imageURLs: [URL] = [],
         context: UserContext,
         history: [ChatMessage],
         additionalContextPrompt: String = "",
@@ -939,6 +930,7 @@ class AIProviderService: ObservableObject {
                     if #available(macOS 26.0, *), useTools, let toolContext = self.onDeviceToolContext(for: context) {
                         await OnDeviceToolSession.shared.stream(
                             to: message,
+                            imageURLs: imageURLs,
                             systemPrompt: contextPrompt,
                             bundleId: toolContext.bundleId,
                             axContext: toolContext.axContext,
@@ -1034,6 +1026,20 @@ class AIProviderService: ObservableObject {
         _onDeviceSessionSystemPrompt = ""
     }
 
+    func sendPreparedOnDevice(
+        message: String,
+        contextPrompt: String,
+        history: [ChatMessage],
+        imageURLs: [URL] = []
+    ) async throws -> String {
+        try await sendToOnDevice(
+            message: message,
+            contextPrompt: contextPrompt,
+            history: history,
+            imageURLs: imageURLs
+        )
+    }
+
     // MARK: - Pure Chat Session (AI chat mode — no instructions, no context overhead)
 
     /// Sends a message to Apple Foundation Models — no system prompt, no context injection.
@@ -1047,24 +1053,38 @@ class AIProviderService: ObservableObject {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             Task {
+                #if DEBUG
                 print("🤖 [FoundationModels] Checking availability...")
+                #endif
                 let model = SystemLanguageModel.default
+                #if DEBUG
                 print("🤖 [FoundationModels] Availability: \(model.availability)")
+                #endif
                 guard case .available = model.availability else {
+                    #if DEBUG
                     print("🤖 [FoundationModels] Not available — aborting")
+                    #endif
                     onError("Apple Intelligence is not available. Enable it in System Settings > Apple Intelligence.")
                     return
                 }
+                #if DEBUG
                 print("🤖 [FoundationModels] Creating fresh session...")
+                #endif
                 let session = LanguageModelSession()
+                #if DEBUG
                 print("🤖 [FoundationModels] Calling respond(to:)...")
+                #endif
                 do {
                     let response = try await session.respond(to: message)
                     let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    #if DEBUG
                     print("🤖 [FoundationModels] Got response (\(text.count) chars)")
+                    #endif
                     onComplete(text.isEmpty ? "…" : text)
                 } catch {
+                    #if DEBUG
                     print("🤖 [FoundationModels] ERROR: \(error)")
+                    #endif
                     onError("Apple Intelligence error: \(error.localizedDescription)")
                 }
             }
@@ -1076,533 +1096,12 @@ class AIProviderService: ObservableObject {
         #endif
     }
 
-    // MARK: - OpenAI Integration
-
-    private func sendToOpenAI(
-        message: String,
-        contextPrompt: String,
-        apiKey: String,
-        history: [ChatMessage]
-    ) async throws -> String {
-
-        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var messages: [[String: String]] = [
-            ["role": "system", "content": contextPrompt]
-        ]
-
-        // Add conversation history (limit to last 10 messages)
-        let recentHistory = history.suffix(10).filter { $0.role != .system }
-        for msg in recentHistory {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-
-        // Add current message
-        messages.append(["role": "user", "content": message])
-
-        let body: [String: Any] = [
-            "model": "gpt-4o-mini",  // Fast and cost-effective
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 1000
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid response")
-        }
-
-        if httpResponse.statusCode == 401 {
-            throw AIServiceError.authenticationFailed("Invalid OpenAI API key")
-        } else if httpResponse.statusCode != 200 {
-            throw AIServiceError.networkError("HTTP \(httpResponse.statusCode)")
-        }
-
-        let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
-
-        guard let content = openAIResponse.choices.first?.message.content else {
-            throw AIServiceError.emptyResponse("No response from OpenAI")
-        }
-
-        return content
-    }
-
-    struct OpenAIResponse: Codable {
-        let choices: [Choice]
-
-        struct Choice: Codable {
-            let message: Message
-        }
-
-        struct Message: Codable {
-            let content: String
-        }
-    }
-
-    // MARK: - Anthropic Integration
-
-    private func sendToAnthropic(
-        message: String,
-        contextPrompt: String,
-        apiKey: String,
-        history: [ChatMessage]
-    ) async throws -> String {
-
-        let url = URL(string: "https://api.anthropic.com/v1/messages")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-        var messages: [[String: String]] = []
-
-        // Add conversation history (limit to last 10 messages)
-        let recentHistory = history.suffix(10).filter { $0.role != .system }
-        for msg in recentHistory {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-
-        // Add current message
-        messages.append(["role": "user", "content": message])
-
-        let body: [String: Any] = [
-            "model": "claude-3-5-haiku-20241022",  // Fast and cost-effective
-            "system": contextPrompt,
-            "messages": messages,
-            "max_tokens": 1024
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid response")
-        }
-
-        if httpResponse.statusCode == 401 {
-            throw AIServiceError.authenticationFailed("Invalid Anthropic API key")
-        } else if httpResponse.statusCode != 200 {
-            throw AIServiceError.networkError("HTTP \(httpResponse.statusCode)")
-        }
-
-        let anthropicResponse = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-
-        guard let content = anthropicResponse.content.first?.text else {
-            throw AIServiceError.emptyResponse("No response from Anthropic")
-        }
-
-        return content
-    }
-
-    struct AnthropicResponse: Codable {
-        let content: [Content]
-
-        struct Content: Codable {
-            let text: String
-        }
-    }
-
-    // MARK: - Google Gemini Integration
-
-    private func sendToGemini(
-        message: String,
-        contextPrompt: String,
-        apiKey: String,
-        history: [ChatMessage]
-    ) async throws -> String {
-
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-
-        var contents: [[String: Any]] = []
-
-        // Add system prompt as first user message
-        contents.append([
-            "role": "user",
-            "parts": [["text": contextPrompt]]
-        ])
-
-        // Add placeholder model response
-        contents.append([
-            "role": "model",
-            "parts": [["text": "Understood. I'll help with the context you've provided."]]
-        ])
-
-        // Add conversation history (limit to last 10 messages)
-        let recentHistory = history.suffix(10).filter { $0.role != .system }
-        for msg in recentHistory {
-            let role = msg.role == .assistant ? "model" : "user"
-            contents.append([
-                "role": role,
-                "parts": [["text": msg.content]]
-            ])
-        }
-
-        // Add current message
-        contents.append([
-            "role": "user",
-            "parts": [["text": message]]
-        ])
-
-        let body: [String: Any] = [
-            "contents": contents,
-            "generationConfig": [
-                "temperature": 0.7,
-                "maxOutputTokens": 1000
-            ]
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid response")
-        }
-
-        if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-            throw AIServiceError.authenticationFailed("Invalid Google Gemini API key. Check Settings → Gemini API Key.")
-        } else if httpResponse.statusCode == 429 {
-            throw AIServiceError.networkError("Gemini free tier quota exceeded. Wait a minute and try again, or use a different AI provider.")
-        } else if httpResponse.statusCode != 200 {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw AIServiceError.networkError("Gemini error \(httpResponse.statusCode): \(body.prefix(200))")
-        }
-
-        let geminiResponse = try JSONDecoder().decode(GeminiResponse.self, from: data)
-
-        guard let content = geminiResponse.candidates.first?.content.parts.first?.text else {
-            throw AIServiceError.emptyResponse("No response from Gemini")
-        }
-
-        return content
-    }
-
-    struct GeminiResponse: Codable {
-        let candidates: [Candidate]
-
-        struct Candidate: Codable {
-            let content: Content
-        }
-
-        struct Content: Codable {
-            let parts: [Part]
-        }
-
-        struct Part: Codable {
-            let text: String
-        }
-    }
-
-    // MARK: - Ollama Integration
-
-    private func sendToOllama(
-        message: String,
-        contextPrompt: String,
-        endpoint: String,
-        model: String,
-        history: [ChatMessage]
-    ) async throws -> String {
-
-        let url = URL(string: "\(endpoint)/api/chat")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60 // Longer timeout for local models
-
-        var messages: [[String: String]] = [
-            ["role": "system", "content": contextPrompt]
-        ]
-
-        // Add conversation history (limit to last 10 messages)
-        let recentHistory = history.suffix(10).filter { $0.role != .system }
-        for msg in recentHistory {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-
-        // Add current message
-        messages.append(["role": "user", "content": message])
-
-        let body: [String: Any] = [
-            "model": model,
-            "messages": messages,
-            "stream": false,
-            "options": [
-                "temperature": 0.7,
-                "num_predict": 1000
-            ]
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid response from Ollama")
-        }
-
-        if httpResponse.statusCode != 200 {
-            throw AIServiceError.networkError("Ollama error: HTTP \(httpResponse.statusCode). Make sure Ollama is running at \(endpoint)")
-        }
-
-        let ollamaResponse = try JSONDecoder().decode(OllamaResponse.self, from: data)
-
-        return ollamaResponse.message.content
-    }
-
-    struct OllamaResponse: Codable {
-        let message: Message
-
-        struct Message: Codable {
-            let content: String
-        }
-    }
-
-    // MARK: - AnyCodable (for Anthropic tool input decoding)
-
-    struct AnyCodable: Codable {
-        let value: Any
-
-        init(_ value: Any) { self.value = value }
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.singleValueContainer()
-            if let v = try? c.decode(Bool.self)                    { value = v; return }
-            if let v = try? c.decode(Int.self)                     { value = v; return }
-            if let v = try? c.decode(Double.self)                  { value = v; return }
-            if let v = try? c.decode(String.self)                  { value = v; return }
-            if let v = try? c.decode([String: AnyCodable].self)    { value = v; return }
-            if let v = try? c.decode([AnyCodable].self)            { value = v; return }
-            value = ()
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var c = encoder.singleValueContainer()
-            switch value {
-            case let v as Bool:                  try c.encode(v)
-            case let v as Int:                   try c.encode(v)
-            case let v as Double:                try c.encode(v)
-            case let v as String:                try c.encode(v)
-            case let v as [String: AnyCodable]:  try c.encode(v)
-            case let v as [AnyCodable]:          try c.encode(v)
-            default:                             try c.encodeNil()
-            }
-        }
-    }
-
-    // MARK: - Tool-Use Response Models
-
-    struct OpenAIToolResponse: Codable {
-        let choices: [Choice]
-        struct Choice: Codable {
-            let message: Message
-            let finish_reason: String?
-        }
-        struct Message: Codable {
-            let role: String
-            let content: String?
-            let tool_calls: [ToolCall]?
-        }
-        struct ToolCall: Codable {
-            let id: String
-            let type: String
-            let function: FunctionCall
-        }
-        struct FunctionCall: Codable {
-            let name: String
-            let arguments: String
-        }
-    }
-
-    struct AnthropicToolResponse: Codable {
-        let content: [ContentBlock]
-        let stop_reason: String?
-        struct ContentBlock: Codable {
-            let type: String
-            let text: String?
-            let id: String?
-            let name: String?
-            let input: [String: AnyCodable]?
-        }
-    }
-
-    struct GeminiToolResponse: Codable {
-        let candidates: [Candidate]
-        struct Candidate: Codable {
-            let content: Content
-            let finishReason: String?
-        }
-        struct Content: Codable {
-            let parts: [Part]
-            let role: String?
-        }
-        struct Part: Codable {
-            let text: String?
-            let functionCall: FunctionCall?
-        }
-        struct FunctionCall: Codable {
-            let name: String
-            let args: [String: AnyCodable]
-        }
-    }
-
     // MARK: - Executed Command Record
 
     struct ExecutedCommand {
         let command: String
         let output: String
         let success: Bool
-    }
-
-    // MARK: - Tool Definitions
-
-    private enum ToolDefinitions {
-
-        // run_command — blocking, returns output
-        // spawn_worker — non-blocking, starts in background, returns worker_id immediately
-
-        static let openAI: [[String: Any]] = [
-            [
-                "type": "function",
-                "function": [
-                    "name": "run_command",
-                    "description": "Execute a terminal command on the user's Mac and return its output. Use for quick commands that complete fast (ls, git status, find, etc.). For long-running tools like music players or downloads, use spawn_worker instead.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command":           ["type": "string",  "description": "The exact shell command to run"],
-                            "purpose":           ["type": "string",  "description": "One-line explanation of what this command does"],
-                            "requires_approval": ["type": "boolean", "description": "True when the command modifies files, installs software, or has irreversible effects"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running command in the background without waiting for it to finish. Use for music players (ymc, ncspot), downloaders, timers, and any process that should keep running while you do other things. Returns a worker_id you can reference later.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to start in background"],
-                            "purpose": ["type": "string", "description": "What this background process is doing"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes directly into the active TUI app running in the live terminal panel. Use this AFTER spawn_worker has launched a TUI app to navigate its menus, press buttons, or send input. Supports: plain text, \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), \\u{1B}[A/B/C/D (arrow keys).",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "The keystroke sequence to inject. Use \\r for Enter, \\u{1B}[A for up-arrow, etc."],
-                            "purpose": ["type": "string", "description": "What action this keystroke performs in the TUI"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ]
-        ]
-
-        static let anthropic: [[String: Any]] = [
-            [
-                "name": "run_command",
-                "description": "Execute a terminal command and return its output. For quick commands. For music players or long downloads, use spawn_worker.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command":           ["type": "string",  "description": "The shell command to run"],
-                        "purpose":           ["type": "string",  "description": "Why this command is being run"],
-                        "requires_approval": ["type": "boolean", "description": "True for destructive or write operations"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "spawn_worker",
-                "description": "Start a long-running command in the background. Returns immediately with a worker_id. Use for music players, downloads, timers.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command": ["type": "string", "description": "The command to run in background"],
-                        "purpose": ["type": "string", "description": "What this process is doing"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "send_keys",
-                "description": "Inject keystrokes into the active TUI app in the live terminal panel. Use after spawn_worker to navigate menus, select options, or send input. Supports \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), arrow keys.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "keys":    ["type": "string", "description": "Keystroke sequence to inject into the TUI"],
-                        "purpose": ["type": "string", "description": "What this keystroke does"]
-                    ],
-                    "required": ["keys", "purpose"]
-                ]
-            ]
-        ]
-
-        static let gemini: [String: Any] = [
-            "function_declarations": [
-                [
-                    "name": "run_command",
-                    "description": "Execute a terminal command and return its output.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to run"],
-                            "purpose": ["type": "string", "description": "Why this command is being run"],
-                            "requires_approval": ["type": "boolean"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running background command. Returns a worker_id immediately.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "Command to run in background"],
-                            "purpose": ["type": "string", "description": "What the process does"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes into the active TUI app in the live terminal. Use after spawn_worker.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "Keystroke sequence to inject"],
-                            "purpose": ["type": "string", "description": "What this keystroke does"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ]
-        ]
     }
 
     // MARK: - Tool-Use Dispatcher
@@ -1619,14 +1118,21 @@ class AIProviderService: ObservableObject {
         conversationHistory: [ChatMessage],
         commandExecutor: @escaping (String, String) async -> (Bool, String),
         maxIterations: Int = 5,
-        systemPromptOverride: String? = nil
+        systemPromptOverride: String? = nil,
+        additionalSystemPrompt: String? = nil,
+        simulateAllTools: Bool = false
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
-        let contextPrompt: String
+        var contextPrompt: String
         if let override = systemPromptOverride {
             contextPrompt = override
         } else {
             contextPrompt = await buildContextPrompt(for: context, originalQuery: message, forToolUse: true)
+        }
+        if let additional = additionalSystemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !additional.isEmpty
+        {
+            contextPrompt += "\n\n" + additional
         }
         let extManager = L2ExtensionManager.shared
 
@@ -1641,7 +1147,9 @@ class AIProviderService: ObservableObject {
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations, endpoint: "https://api.openai.com/v1/chat/completions",
-                model: "gpt-4o-mini"
+                model: "gpt-4o-mini",
+                transport: OpenAIToolProviderAdapter(),
+                simulateAllTools: simulateAllTools
             )
 
         case .anthropic:
@@ -1653,7 +1161,8 @@ class AIProviderService: ObservableObject {
                 message: message, contextPrompt: contextPrompt, apiKey: key,
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
-                maxIterations: maxIterations
+                maxIterations: maxIterations,
+                simulateAllTools: simulateAllTools
             )
 
         case .googleGemini:
@@ -1665,7 +1174,8 @@ class AIProviderService: ObservableObject {
                 message: message, contextPrompt: contextPrompt, apiKey: key,
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
-                maxIterations: maxIterations
+                maxIterations: maxIterations,
+                simulateAllTools: simulateAllTools
             )
 
         case .ollama:
@@ -1682,7 +1192,82 @@ class AIProviderService: ObservableObject {
                 endpoint: "\(endpoint)/v1/chat/completions",
                 model: model,
                 timeout: 120,
-                extraHeaders: [:]
+                extraHeaders: [:],
+                transport: OllamaToolProviderAdapter(),
+                simulateAllTools: simulateAllTools
+            )
+
+        case .openAICompatible:
+            let settings = AppSettings.shared
+            let endpoint = settings.openAICompatibleEndpoint
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !endpoint.isEmpty, !settings.openAICompatibleModelID.isEmpty else {
+                throw AIServiceError.networkError("OpenAI-compatible endpoint and model ID are required")
+            }
+            let key = apiKey ?? settings.openAICompatibleAPIKey
+            let customTools = extManager.toolSchemas(for: .openAI)
+            return try await sendOpenAIWithTools(
+                message: message, contextPrompt: contextPrompt,
+                apiKey: key.isEmpty ? nil : key,
+                history: conversationHistory, commandExecutor: commandExecutor,
+                customTools: customTools, maxIterations: maxIterations,
+                endpoint: endpoint.hasSuffix("chat/completions")
+                    ? endpoint : "\(endpoint)/chat/completions",
+                model: settings.openAICompatibleModelID,
+                timeout: 120,
+                extraHeaders: [:],
+                transport: OpenAICompatibleToolProviderAdapter(),
+                simulateAllTools: simulateAllTools
+            )
+
+        case .claudeBridge:
+            let settings = AppSettings.shared
+            let endpoint = settings.claudeBridgeEndpoint
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !endpoint.isEmpty, !settings.claudeBridgeModelID.isEmpty else {
+                throw AIServiceError.networkError("Claude bridge endpoint and model ID are required")
+            }
+            let customTools = extManager.toolSchemas(for: .openAI)
+            return try await sendOpenAIWithTools(
+                message: message,
+                contextPrompt: contextPrompt,
+                apiKey: nil,
+                history: conversationHistory,
+                commandExecutor: commandExecutor,
+                customTools: customTools,
+                maxIterations: maxIterations,
+                endpoint: endpoint.hasSuffix("chat/completions")
+                    ? endpoint : "\(endpoint)/chat/completions",
+                model: settings.claudeBridgeModelID,
+                timeout: 120,
+                extraHeaders: [:],
+                transport: OpenAICompatibleToolProviderAdapter(),
+                simulateAllTools: simulateAllTools
+            )
+
+        case .chatGPTBridge:
+            let settings = AppSettings.shared
+            let endpoint = settings.chatGPTBridgeEndpoint
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !endpoint.isEmpty, !settings.chatGPTBridgeModelID.isEmpty else {
+                throw AIServiceError.networkError("ChatGPT bridge endpoint and model ID are required")
+            }
+            let customTools = extManager.toolSchemas(for: .openAI)
+            return try await sendOpenAIWithTools(
+                message: message,
+                contextPrompt: contextPrompt,
+                apiKey: nil,
+                history: conversationHistory,
+                commandExecutor: commandExecutor,
+                customTools: customTools,
+                maxIterations: maxIterations,
+                endpoint: endpoint.hasSuffix("chat/completions")
+                    ? endpoint : "\(endpoint)/chat/completions",
+                model: settings.chatGPTBridgeModelID,
+                timeout: 120,
+                extraHeaders: [:],
+                transport: OpenAICompatibleToolProviderAdapter(),
+                simulateAllTools: simulateAllTools
             )
 
         default:
@@ -1690,329 +1275,6 @@ class AIProviderService: ObservableObject {
         }
     }
 
-    /// Dispatch a custom L2 extension tool call. Returns (success, output).
-    private func dispatchCustomTool(name: String, arguments: [String: Any]) async -> (Bool, String) {
-        let (success, output) = await L2ExtensionManager.shared.execute(toolName: name, arguments: arguments)
-        return (success, output)
-    }
-
-    // MARK: - OpenAI / Ollama Tool Loop
-
-    private func sendOpenAIWithTools(
-        message: String,
-        contextPrompt: String,
-        apiKey: String?,
-        history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
-        customTools: [[String: Any]] = [],
-        maxIterations: Int,
-        endpoint: String,
-        model: String,
-        timeout: TimeInterval = 60,
-        extraHeaders: [String: String] = [:]
-    ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
-
-        guard let url = URL(string: endpoint) else {
-            throw AIServiceError.networkError("Invalid endpoint: \(endpoint)")
-        }
-        var executedCommands: [ExecutedCommand] = []
-
-        var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-        messages.append(["role": "user", "content": message])
-
-        let allTools = ToolDefinitions.openAI + customTools
-
-        for _ in 0..<maxIterations {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = timeout
-            if let key = apiKey { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-            for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
-
-            var body: [String: Any] = [
-                "model": model,
-                "messages": messages,
-                "tools": allTools,
-                "tool_choice": "auto",
-                "temperature": 0.7,
-                "max_tokens": 1000
-            ]
-            if apiKey == nil { body["stream"] = false; body.removeValue(forKey: "max_tokens") }
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let (data, response) = try await AIProviderService.directSession.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw AIServiceError.networkError("Invalid response") }
-            if http.statusCode == 401 { throw AIServiceError.authenticationFailed("Invalid API key") }
-            if http.statusCode != 200 { throw AIServiceError.networkError("HTTP \(http.statusCode)") }
-
-            let decoded = try JSONDecoder().decode(OpenAIToolResponse.self, from: data)
-            guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
-
-            if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
-                var assistantMsg: [String: Any] = ["role": "assistant"]
-                if let content = choice.message.content { assistantMsg["content"] = content }
-                assistantMsg["tool_calls"] = toolCalls.map { tc -> [String: Any] in
-                    ["id": tc.id, "type": tc.type, "function": ["name": tc.function.name, "arguments": tc.function.arguments]]
-                }
-                messages.append(assistantMsg)
-
-                for tc in toolCalls {
-                    guard let argsData = tc.function.arguments.data(using: .utf8),
-                          let args = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                    else { continue }
-
-                    var (success, output): (Bool, String) = (false, "")
-                    if tc.function.name == "run_command",
-                       let command = args["command"] as? String,
-                       let purpose = args["purpose"] as? String {
-                        (success, output) = await commandExecutor(command, purpose)
-                        executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(command))", output: output, success: success))
-                    } else if tc.function.name == "spawn_worker",
-                              let command = args["command"] as? String,
-                              let purpose = args["purpose"] as? String {
-                        let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
-                        output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\", \"message\": \"'\(command)' started in background.\"}"
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                    } else if tc.function.name == "send_keys",
-                              let keys = args["keys"] as? String {
-                        let purpose = args["purpose"] as? String ?? ""
-                        output = await TerminalAIBridge.shared.sendKeys(keys)
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                        // Small delay after key injection so TUI can react before next tool call
-                        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                        _ = purpose
-                    } else {
-                        // Custom L2 extension tool call
-                        (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
-                        executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
-                    }
-                    messages.append(["role": "tool", "tool_call_id": tc.id,
-                                     "content": output.isEmpty ? "(no output)" : output])
-                }
-            } else {
-                return (choice.message.content ?? "(no response)", executedCommands)
-            }
-        }
-        return ("Commands completed.", executedCommands)
-    }
-
-    // MARK: - Anthropic Tool Loop
-
-    private func sendAnthropicWithTools(
-        message: String,
-        contextPrompt: String,
-        apiKey: String,
-        history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
-        customTools: [[String: Any]] = [],
-        maxIterations: Int
-    ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
-
-        let url = URL(string: "https://api.anthropic.com/v1/messages")!
-        var executedCommands: [ExecutedCommand] = []
-
-        var messages: [[String: Any]] = []
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
-            messages.append(["role": msg.role.rawValue, "content": msg.content])
-        }
-        messages.append(["role": "user", "content": message])
-
-        for _ in 0..<maxIterations {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-            let body: [String: Any] = [
-                "model": "claude-3-5-haiku-20241022",
-                "system": contextPrompt,
-                "messages": messages,
-                "tools": ToolDefinitions.anthropic + customTools,
-                "max_tokens": 1024
-            ]
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let (data, response) = try await AIProviderService.directSession.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw AIServiceError.networkError("Invalid response") }
-            if http.statusCode == 401 { throw AIServiceError.authenticationFailed("Invalid Anthropic API key") }
-            if http.statusCode != 200 { throw AIServiceError.networkError("HTTP \(http.statusCode)") }
-
-            let decoded = try JSONDecoder().decode(AnthropicToolResponse.self, from: data)
-            let textBlocks   = decoded.content.filter { $0.type == "text" }
-            let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
-
-            if toolUseBlocks.isEmpty {
-                let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
-                return (text.isEmpty ? "(no response)" : text, executedCommands)
-            }
-
-            // Echo full assistant content block array back
-            let assistantBlocks: [[String: Any]] = decoded.content.map { block in
-                var d: [String: Any] = ["type": block.type]
-                if let t = block.text  { d["text"] = t }
-                if let id = block.id   { d["id"] = id }
-                if let n = block.name  { d["name"] = n }
-                if let input = block.input { d["input"] = input.mapValues { $0.value } }
-                return d
-            }
-            messages.append(["role": "assistant", "content": assistantBlocks])
-
-            var resultBlocks: [[String: Any]] = []
-            for block in toolUseBlocks {
-                guard let toolId = block.id,
-                      let toolName = block.name,
-                      let inputDict = block.input
-                else { continue }
-
-                let args = inputDict.mapValues { $0.value }
-                var (success, output): (Bool, String) = (false, "")
-
-                if toolName == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if toolName == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if toolName == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalAIBridge.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                } else {
-                    (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
-                    executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
-                }
-
-                resultBlocks.append([
-                    "type": "tool_result",
-                    "tool_use_id": toolId,
-                    "content": output.isEmpty ? "(no output)" : output
-                ])
-            }
-            messages.append(["role": "user", "content": resultBlocks])
-        }
-        return ("Commands completed.", executedCommands)
-    }
-
-    // MARK: - Gemini Tool Loop
-
-    private func sendGeminiWithTools(
-        message: String,
-        contextPrompt: String,
-        apiKey: String,
-        history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
-        customTools: [[String: Any]] = [],
-        maxIterations: Int
-    ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
-
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent")!
-        var executedCommands: [ExecutedCommand] = []
-
-        var contents: [[String: Any]] = [
-            ["role": "user",  "parts": [["text": contextPrompt]]],
-            ["role": "model", "parts": [["text": "Understood. I'll help with the context provided."]]]
-        ]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
-            let role = msg.role == .assistant ? "model" : "user"
-            contents.append(["role": role, "parts": [["text": msg.content]]])
-        }
-        contents.append(["role": "user", "parts": [["text": message]]])
-
-        for _ in 0..<maxIterations {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-
-            let body: [String: Any] = [
-                "contents": contents,
-                "tools": [ToolDefinitions.gemini] + customTools.map { ["function_declarations": [$0]] },
-                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000]
-            ]
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let (data, response) = try await AIProviderService.directSession.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw AIServiceError.networkError("Invalid response") }
-            if http.statusCode == 401 || http.statusCode == 403 {
-                throw AIServiceError.authenticationFailed("Invalid Google Gemini API key")
-            }
-            if http.statusCode != 200 { throw AIServiceError.networkError("HTTP \(http.statusCode)") }
-
-            let decoded = try JSONDecoder().decode(GeminiToolResponse.self, from: data)
-            guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
-
-            let textParts     = candidate.content.parts.filter { $0.text != nil }
-            let functionParts = candidate.content.parts.filter { $0.functionCall != nil }
-
-            if functionParts.isEmpty {
-                let text = textParts.compactMap { $0.text }.joined(separator: "\n")
-                return (text.isEmpty ? "(no response)" : text, executedCommands)
-            }
-
-            // Echo model turn
-            let modelParts: [[String: Any]] = candidate.content.parts.map { part in
-                if let fc = part.functionCall {
-                    return ["functionCall": ["name": fc.name, "args": fc.args.mapValues { $0.value }]]
-                }
-                return ["text": part.text ?? ""]
-            }
-            contents.append(["role": "model", "parts": modelParts])
-
-            var functionResultParts: [[String: Any]] = []
-            for part in functionParts {
-                guard let fc = part.functionCall else { continue }
-                let args = fc.args.mapValues { $0.value }
-
-                var (success, output): (Bool, String) = (false, "")
-                if fc.name == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if fc.name == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if fc.name == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalAIBridge.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                } else {
-                    (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)
-                    executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
-                }
-
-                functionResultParts.append([
-                    "functionResponse": [
-                        "name": fc.name,
-                        "response": ["content": output.isEmpty ? "(no output)" : output]
-                    ]
-                ])
-            }
-            contents.append(["role": "function", "parts": functionResultParts])
-        }
-        return ("Commands completed.", executedCommands)
-    }
 }
 
 // MARK: - AI Service Errors

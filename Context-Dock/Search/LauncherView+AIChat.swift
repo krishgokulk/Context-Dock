@@ -11,7 +11,302 @@ import UniformTypeIdentifiers
 import Vision
 
 extension LauncherView {
-    // MARK: - Inline Dock Terminal (shown below l2ChatSection for CLI-linked apps)
+    var shouldShowContextDockChatButton: Bool {
+        showContextInDock
+            && !showMediaLayer
+            && !aiMode.isActive
+            && !isCompactSmartScope
+            && (l2.chatArmed || l2.showChatPopover || frontmost.bundleID != "com.apple.finder")
+    }
+
+    var isContextDockChatConnected: Bool {
+        l2.chatArmed || l2.showChatPopover
+    }
+
+    /// Stores the measured intrinsic height of the active chat conversation and re-fits the window
+    /// so the sheet exactly matches the content (no clipped messages, no empty box).
+    func updateMeasuredChatContentHeight(_ height: CGFloat) {
+        let clamped = max(0, height)
+        // Ignore the transient ~0 the geometry reader emits while the chat view unmounts
+        // (e.g. leaving general chat for Global Context). Resetting to 0 makes a later
+        // re-entry size to the 60px floor first, then jump to the real height. The
+        // message-count gate in DockHeightResolver still collapses the window on Clear.
+        guard clamped > 1 else { return }
+        guard abs(measuredChatContentHeight - clamped) > 1 else { return }
+        // Animate the chat-area frame with the SAME curve/duration the window resize
+        // uses (easeOut 0.18) so the sheet and window grow/shrink as one motion — not a
+        // snap-then-resize. The measured value is the messages' intrinsic height, so
+        // animating the frame can't feed back into the measurement.
+        withAnimation(.easeOut(duration: 0.18)) {
+            measuredChatContentHeight = clamped
+        }
+        requestWindowSizeUpdate(reason: .chatChanged, animated: true)
+    }
+
+    var isContextDockChatRoutingLocked: Bool {
+        showContextInDock
+            && !showMediaLayer
+            && !aiMode.isActive
+            && (l2.chatArmed || l2.showChatPopover)
+    }
+
+    var shouldShowContextDockChatSheet: Bool {
+        showContextInDock
+            && !showMediaLayer
+            && !l2.chatDismissed
+            && (l2.showChatPopover || l2.isLoading || !l2.chatMessages.isEmpty)
+    }
+
+    var contextDockBrowserBundleIDs: Set<String> {
+        [
+            "com.apple.Safari",
+            "com.google.Chrome",
+            "com.brave.Browser",
+            "org.chromium.Chromium",
+            "com.microsoft.edgemac",
+        ]
+    }
+
+    var currentContextDockChatScope: (bundleId: String, appName: String) {
+        let targetBundle = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let targetName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !targetBundle.isEmpty {
+            return (targetBundle, targetName.isEmpty ? contextDockChatDraftAppName : targetName)
+        }
+
+        let draftBundle = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !draftBundle.isEmpty {
+            return (draftBundle, draftName.isEmpty ? contextDockChatDraftAppName : draftName)
+        }
+
+        return (frontmost.bundleID, frontmost.name.isEmpty ? "this app" : frontmost.name)
+    }
+
+    func isContextDockBrowserBundle(_ bundleId: String) -> Bool {
+        contextDockBrowserBundleIDs.contains(bundleId.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func sanitizedConversationContextForScope(
+        _ context: UserContext,
+        scopedBundleId: String,
+        scopedAppName: String
+    ) -> UserContext {
+        guard !scopedBundleId.isEmpty, !isContextDockBrowserBundle(scopedBundleId) else {
+            return context
+        }
+        if case .url = context {
+            return .appFocused(
+                name: scopedAppName.isEmpty ? contextDockChatDraftAppName : scopedAppName,
+                bundleID: scopedBundleId
+            )
+        }
+        return context
+    }
+
+    func sanitizedAXContextForScope(_ context: AXContext, scopedBundleId: String) -> AXContext {
+        guard !scopedBundleId.isEmpty, !isContextDockBrowserBundle(scopedBundleId) else {
+            return context
+        }
+        var sanitized = context
+        sanitized.currentURL = nil
+        return sanitized
+    }
+
+    func currentScopedConversationContext() -> UserContext {
+        let scope = currentContextDockChatScope
+        return sanitizedConversationContextForScope(
+            effectiveConversationUserContext,
+            scopedBundleId: scope.bundleId,
+            scopedAppName: scope.appName
+        )
+    }
+
+    var shouldShowContextDockAIQueryFallback: Bool {
+        guard showContextInDock,
+            !isGlobalContextActive,
+            !showMediaLayer,
+            !aiMode.isActive,
+            !isCompactSmartScope,
+            !l2.chatArmed,
+            !l2.showChatPopover,
+            !l2.isLoading,
+            lockedFindToken == nil
+        else { return false }
+
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !shouldUseFinderSearchPopover(for: q) else { return false }
+        if !finderSemanticResults.isEmpty { return false }
+
+        let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
+        let pillQuery = finderSearchPopoverActive ? "" : q
+        let pills = currentVisibleDockPills(for: pillQuery)
+        return !pills.contains { !$0.isSeparator }
+    }
+
+    var contextDockChatDraftAppName: String {
+        let stored = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stored.isEmpty { return stored }
+        let scoped = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !scoped.isEmpty { return scoped }
+        let name = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "this app" : name
+    }
+
+    func armContextDockChat() {
+        let existingName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingBundleId = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty),
+            !existingName.isEmpty,
+            !existingBundleId.isEmpty
+        {
+            l2.chatArmed = true
+            l2.chatDismissed = false
+            requestWindowSizeUpdate(reason: .panelChanged)
+            return
+        }
+        let scopedName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let scopedBundleId = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fallbackName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackBundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        l2.chatArmed = true
+        l2.chatDismissed = false
+        l2.chatDraftAppName = scopedName.isEmpty ? fallbackName : scopedName
+        l2.chatDraftBundleId = scopedBundleId.isEmpty ? fallbackBundleId : scopedBundleId
+        requestWindowSizeUpdate(reason: .panelChanged)
+    }
+
+    func disarmContextDockChat() {
+        l2.showChatPopover = false
+        l2.chatArmed = false
+        l2.chatDismissed = true
+        l2.chatDraftAppName = ""
+        l2.chatDraftBundleId = ""
+        requestWindowSizeUpdate(reason: .panelChanged)
+    }
+
+    func exitContextDockChatSheet() {
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+        }
+        l2.showChatPopover = false
+        l2.chatArmed = false
+        l2.chatDismissed = true
+        l2.chatDraftAppName = ""
+        l2.chatDraftBundleId = ""
+        l2.appCompletion = nil
+        l2.showResultsPopover = false
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        focusedAppPillIndex = nil
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
+        livePanelVisible = false
+        contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+        requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    func exitContextDockChatAndScope() {
+        exitContextDockChatSheet()
+        clearSearchContext()
+        remPanelIsProcessing = false
+        remIsInstalled = nil
+        systemDataResults = []
+        searchState.lastSmartQuery = ""
+        globalContextActivation = GlobalContextActivation(autoActivated: false)
+        isSearchFieldFocused = true
+    }
+
+    var contextDockChatButton: some View {
+        Button {
+            toggleInlineAIChatPanel()
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: (isContextDockChatConnected || l2.isLoading)
+                    ? "bubble.left.and.bubble.right.fill"
+                    : "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.72))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.07), in: Circle())
+
+                if isContextDockChatConnected && !l2.chatMessages.isEmpty
+                    && !shouldShowContextDockChatSheet
+                {
+                    Text("\(min(l2.chatMessages.count, 9))")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 13, minHeight: 13)
+                        .background(Color.accentColor, in: Circle())
+                        .offset(x: 3, y: -3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(isContextDockChatConnected ? "AI conversation connected" : "Connect AI conversation")
+    }
+
+    var contextDockChatCloseButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                exitContextDockChatAndScope()
+            }
+            isSearchFieldFocused = true
+        } label: {
+            Image(systemName: "minus")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary.opacity(0.70))
+                .frame(width: 22, height: 22)
+                .background(Color.white.opacity(0.07), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Close AI conversation")
+    }
+
+    func toggleInlineAIChatPanel() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            if l2.showChatPopover {
+                exitContextDockChatAndScope()
+            } else {
+                if l2.chatArmed {
+                    exitContextDockChatAndScope()
+                } else {
+                    armContextDockChat()
+                }
+            }
+            if l2.chatArmed {
+                livePanelVisible = false
+                showFolderPreview = false
+                l2.focusedPillIndex = nil
+                focusedAppPillIndex = nil
+            }
+        }
+        isSearchFieldFocused = true
+    }
+
+    func openInlineAIChatPanel() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            armContextDockChat()
+            livePanelVisible = false
+            showFolderPreview = false
+            l2.focusedPillIndex = nil
+            focusedAppPillIndex = nil
+        }
+        // Auto-attach mail context when the user explicitly opens a Mail-scoped chat
+        // (right arrow, pin, or any direct invocation). The deliberate scope choice
+        // is the consent signal — no separate + button press needed.
+        let mailBundleId = "com.apple.mail"
+        if frontmost.bundleID == mailBundleId
+            || l2.targetApp?.bundleId == mailBundleId
+            || l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines) == mailBundleId
+        {
+            isMailContextAttached = true
+        }
+        isSearchFieldFocused = true
+    }
+
+    // MARK: - Inline Dock Terminal
     @ViewBuilder
     func inlineDockTerminalView(term: TerminalHostController) -> some View {
         VStack(spacing: 0) {
@@ -56,55 +351,105 @@ extension LauncherView {
     }
 
     // MARK: - L2 Chat Section
+    /// One-line "Using: <app> · <cli tools> · <N shortcuts>" summary shown under the
+    /// Context Dock Chat header so the user sees the conversation's tool scope.
+    func contextDockChatUsingSummary(bundleId: String, appName: String) -> String {
+        if isContextDockBrowserBundle(bundleId), connectedBrowserPageGhostTitle != nil {
+            return "Using: \(appName) · current page"
+        }
+        var parts: [String] = [appName]
+        let cli = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
+        }
+        if !cli.isEmpty {
+            parts.append(cli.map(\.command).joined(separator: ", "))
+        }
+        let shortcutCount = adapterManager.adapter(for: bundleId)?
+            .actions.filter { $0.type == .shortcut }.count ?? 0
+        if shortcutCount > 0 {
+            parts.append("\(shortcutCount) shortcut\(shortcutCount == 1 ? "" : "s")")
+        }
+        return "Using: " + parts.joined(separator: " · ")
+    }
+
+    func contextDockChatTitle(appName: String, bundleId: String) -> String {
+        guard isContextDockBrowserBundle(bundleId),
+            let pageTitle = connectedBrowserPageGhostTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !pageTitle.isEmpty
+        else { return appName }
+        return pageTitle
+    }
+
     @ViewBuilder
     var l2ChatSection: some View {
         let hasConversation = !l2.chatMessages.isEmpty || l2.isLoading
         let scopedTarget = l2.targetApp
-        if hasConversation {
+        if hasConversation || l2.showChatPopover {
             VStack(spacing: 0) {
-                // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
-                HStack(spacing: 8) {
-                    if let scopedTarget {
-                        Text(scopedTarget.name)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Button {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            l2.chatMessages = []
-                            if let key = l2.activeDockSessionKey {
-                                AppPanelChatStore.shared.clear(for: key)
+                if hasConversation {
+                    // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
+                    HStack(spacing: 8) {
+                        if let scopedTarget {
+                            AppBundleIconView(
+                                bundleId: scopedTarget.bundleId,
+                                fallbackSymbol: "bubble.left.and.text.bubble.right",
+                                size: 18, cornerRadius: 4
+                            )
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Chat with \(contextDockChatTitle(appName: scopedTarget.name, bundleId: scopedTarget.bundleId))")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Text(contextDockChatUsingSummary(
+                                    bundleId: scopedTarget.bundleId, appName: scopedTarget.name))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                             }
-                            l2.isLoading = false
-                            l2.activeRequestID = nil
-                            l2.currentTask?.cancel()
-                            l2.currentTask = nil
-                            updateL2Results([])
                         }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("Clear")
-                                .font(.system(size: 10, weight: .medium))
+                        Spacer()
+                        Button {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                l2.chatMessages = []
+                                if let key = l2.activeDockSessionKey {
+                                    AppPanelChatStore.shared.clear(for: key)
+                                }
+                                l2.isLoading = false
+                                l2.activeRequestID = nil
+                                l2.currentTask?.cancel()
+                                l2.currentTask = nil
+                                updateL2Results([])
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 9, weight: .medium))
+                                Text("Clear")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundStyle(.secondary.opacity(0.6))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(.regularMaterial, in: Capsule())
                         }
-                        .foregroundStyle(.secondary.opacity(0.6))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(.regularMaterial, in: Capsule())
+                        .buttonStyle(.plain)
+                        if scopedTarget != nil {
+                            Button("Exit Scope") {
+                                exitContextDockChatAndScope()
+                            }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    if scopedTarget != nil {
-                        Button("Exit Scope") { clearSearchContext() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                    // Leading 20 aligns the header app icon under the input scope-chip icon
+                    // (input pad 12 + chip leading 8) so the surface doesn't visually jump.
+                    .padding(.leading, 20)
+                    .padding(.trailing, 14)
+                    .padding(.vertical, 6)
 
-                Divider().opacity(0.15)
+                    Divider().opacity(0.15)
+                }
 
                 if hasConversation {
                     ScrollViewReader { proxy in
@@ -144,8 +489,13 @@ extension LauncherView {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
+                            // Measure intrinsic message height (independent of the scroll frame).
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                updateMeasuredChatContentHeight(height)
+                            }
                         }
-                        .frame(maxHeight: 460)
+                        // Hug short chats, scroll long ones — frame to the measured height, capped.
+                        .frame(height: min(max(measuredChatContentHeight, 1), 400))
                         .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
                                 if let last = l2.chatMessages.last {
@@ -159,27 +509,45 @@ extension LauncherView {
                             }
                         }
                     }
-                } else if let scopedTarget {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("\(scopedTarget.name) workspace ready")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Text(
-                            "Use the pills above to trigger app-specific actions, menu items, or approved CLI tools without switching to a separate panel."
-                        )
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
                 }
             }
-            .padding(.top, 4)
-            .padding(.bottom, 4)
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
+    }
+
+    /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
+    /// destination before the native Share fires.
+    @ViewBuilder
+    func selectionShareConfirmCard(_ pending: PendingSelectionShare) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Send via \(pending.destination)?")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(aiMode.selectionFiles.isEmpty
+                    ? "Sends the result text" : "Sends the result + \(aiMode.selectionFiles.count) file(s)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") { aiMode.pendingShare = nil }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Send") {
+                let p = pending
+                aiMode.pendingShare = nil
+                shareSelectionResult(text: p.text, destination: p.destination)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.blue.opacity(0.25)))
     }
 
     // MARK: - AI Chat Section
@@ -208,11 +576,21 @@ extension LauncherView {
                             .padding(.horizontal, 4)
                             .id("loading")
                         }
+                        if let pending = aiMode.pendingShare {
+                            selectionShareConfirmCard(pending)
+                                .id("pending-share")
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                     .padding(.bottom, 8)
+                    // Measure intrinsic conversation height (independent of the scroll frame).
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        updateMeasuredChatContentHeight(height)
+                    }
                 }
+                // Hug short chats, scroll long ones — frame to the measured height, capped at 450.
+                .frame(height: min(max(measuredChatContentHeight, 1), 450))
                 .onChange(of: aiMode.messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) {
                         if let lastMessage = aiMode.messages.last {
@@ -235,24 +613,36 @@ extension LauncherView {
 
     // MARK: - AI Extension Suggestions Loading
     func loadAIExtensionSuggestions() {
+        #if DEBUG
         print("🔧 [ContentView] Loading AI extension suggestions...")
+        #endif
+        #if DEBUG
         print("🔧 [ContentView] Current context: \(currentContext.description)")
+        #endif
 
         Task {
             let matcher = IntelligentExtensionMatcher.shared
             let detectedContext = convertUserContextToDetectedContext(currentContext)
 
+            #if DEBUG
             print("🔧 [ContentView] Converted to DetectedContext: \(detectedContext)")
+            #endif
 
             // Get suggestions from matcher
             var newSuggestions = matcher.suggestExtensions(for: detectedContext)
+            #if DEBUG
             print("🔧 [ContentView] Got \(newSuggestions.count) suggestions from matcher")
+            #endif
 
             // If no suggestions from matcher, load default built-in extensions
             if newSuggestions.isEmpty {
+                #if DEBUG
                 print("⚠️ [ContentView] No suggestions from matcher, loading defaults...")
+                #endif
                 let allExtensions = ExtensionManager.shared.getEnabledExtensions()
+                #if DEBUG
                 print("📦 [ContentView] Found \(allExtensions.count) total extensions")
+                #endif
 
                 newSuggestions = allExtensions.map { ext in
                     let score: Double = {
@@ -279,7 +669,9 @@ extension LauncherView {
             // Sort by relevance
             newSuggestions.sort { $0.relevanceScore > $1.relevanceScore }
 
+            #if DEBUG
             print("🔧 [ContentView] Sorted suggestions: \(newSuggestions.count)")
+            #endif
             for (index, suggestion) in newSuggestions.prefix(6).enumerated() {
                 print(
                     "🔧 [ContentView]   \(index + 1). \(suggestion.scriptExtension.displayName) (score: \(suggestion.relevanceScore))"
@@ -288,7 +680,9 @@ extension LauncherView {
 
             await MainActor.run {
                 aiExtensionSuggestions = newSuggestions
+                #if DEBUG
                 print("✅ [ContentView] AI extension suggestions updated!")
+                #endif
             }
         }
     }
@@ -316,6 +710,32 @@ extension LauncherView {
         }
     }
 
+    // MARK: - Clipboard Image Paste for AI Chat
+    /// Checks if the clipboard contains an image. If so, saves to a temp file,
+    /// appends to aiMode.attachments, and returns true so the caller can show a confirmation.
+    @discardableResult
+    func pasteClipboardImageToChat() -> Bool {
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.tiff.rawValue,
+                                                                   NSPasteboard.PasteboardType.png.rawValue])
+        else { return false }
+        guard let image = NSImage(pasteboard: pasteboard) else { return false }
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:])
+        else { return false }
+
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("paste-\(UUID().uuidString).png")
+        do {
+            try pngData.write(to: tmpURL)
+            aiMode.attachments.append(tmpURL)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Get Context Extensions for AI Chat Mode
     func getContextExtensions() -> [SuggestedExtension] {
         let detectedContext = convertUserContextToDetectedContext(currentContext)
@@ -334,89 +754,101 @@ extension LauncherView {
 
         hasUserSentMessageInCurrentSession = true
 
+        let pendingAttachments = aiMode.attachments
+
         withAnimation {
-            aiMode.messages.append(AIChatMessage(role: .user, content: query))
+            aiMode.messages.append(
+                AIChatMessage(role: .user, content: query, attachments: pendingAttachments))
         }
         searchState.query = ""
 
-        let pendingAttachments = aiMode.attachments
         aiMode.attachments = []
 
         aiMode.isLoading = true
         aiMode.currentTask?.cancel()
 
-        if settings.selectedAIProvider == .onDevice {
-            // Direct Foundation Models — fresh session per message, zero hidden context
-            AIProviderService.shared.sendPureChat(
-                message: query,
-                onComplete: { text in
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            self.aiMode.messages.append(
-                                AIChatMessage(role: .assistant, content: text))
-                            self.aiMode.isLoading = false
-                        }
-                        self.updateWindowSize()
+        // Every provider, including on-device, uses the same context-aware router pipeline.
+        aiMode.currentTask = Task {
+            do {
+                let response: String
+                response = try await sendToAIProvider(
+                    query: query,
+                    attachments: pendingAttachments
+                )
+                let launches = self.referencedAppLaunches(for: query)
+                // SHARE_VIA directive → send the AI result (+ any selected files) through the
+                // native Share service. Strip the directive line from the visible message.
+                let shareDest = self.parseShareViaDirective(response)
+                let cleaned = self.stripShareViaDirective(response)
+                await MainActor.run {
+                    withAnimation {
+                        self.aiMode.messages.append(
+                            AIChatMessage(
+                                role: .assistant, content: cleaned, appLaunches: launches))
+                        self.aiMode.isLoading = false
                     }
-                },
-                onError: { errorText in
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            self.aiMode.messages.append(
-                                AIChatMessage(role: .assistant, content: errorText, isError: true))
-                            self.aiMode.isLoading = false
-                        }
-                        self.updateWindowSize()
+                    // Two-step: don't send yet — show a confirm card so the user approves the
+                    // destination first.
+                    if let shareDest {
+                        self.aiMode.pendingShare = PendingSelectionShare(
+                            text: cleaned, destination: shareDest)
                     }
+                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
-            )
-        } else {
-            // Cloud provider — include any attached images/files in the request
-            aiMode.currentTask = Task {
-                do {
-                    let response: String
-                    if !pendingAttachments.isEmpty {
-                        // Build plain context without AX overhead, include image attachments
-                        let history = self.aiMode.messages.map { msg in
-                            [
-                                "role": msg.role == .user ? "user" : "assistant",
-                                "content": msg.content,
-                            ]
-                        }
-                        let systemMsg: [String: String] = [
-                            "role": "system", "content": "You are a helpful AI assistant.",
-                        ]
-                        var ctx = [systemMsg] + history
-                        let imageFiles = pendingAttachments.filter {
-                            ["jpg", "jpeg", "png", "gif", "heic", "webp"].contains(
-                                $0.pathExtension.lowercased())
-                        }
-                        response = try await sendToProvider(
-                            query: query, context: ctx, imageFiles: imageFiles)
-                    } else {
-                        response = try await sendToAIProvider(query: query)
+            } catch {
+                await MainActor.run {
+                    withAnimation {
+                        self.aiMode.messages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: "Error: \(error.localizedDescription)",
+                                isError: true))
+                        self.aiMode.isLoading = false
                     }
-                    await MainActor.run {
-                        withAnimation {
-                            self.aiMode.messages.append(
-                                AIChatMessage(role: .assistant, content: response))
-                            self.aiMode.isLoading = false
-                        }
-                        self.updateWindowSize()
-                    }
-                } catch {
-                    await MainActor.run {
-                        withAnimation {
-                            self.aiMode.messages.append(
-                                AIChatMessage(
-                                    role: .assistant,
-                                    content: "Error: \(error.localizedDescription)",
-                                    isError: true))
-                            self.aiMode.isLoading = false
-                        }
-                        self.updateWindowSize()
-                    }
+                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
+            }
+        }
+    }
+
+    /// Extract `SHARE_VIA: <dest>` from an AI reply (the model emits it when the user asked to
+    /// send/share the result). Returns the destination name, or nil.
+    func parseShareViaDirective(_ response: String) -> String? {
+        guard let range = response.range(of: "SHARE_VIA:") else { return nil }
+        let tail = response[range.upperBound...]
+            .prefix(while: { $0 != "\n" })
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .<>"))
+        return tail.isEmpty ? nil : tail
+    }
+
+    func stripShareViaDirective(_ response: String) -> String {
+        response
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.contains("SHARE_VIA:") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Share the AI result (plus any selected files) through the native macOS Share service
+    /// matching `destination` (Mail / Messages / Notes / …) — DoraX's NSSharingService path.
+    func shareSelectionResult(text: String, destination: String) {
+        var items: [Any] = []
+        if !aiMode.selectionFiles.isEmpty { items.append(contentsOf: aiMode.selectionFiles) }
+        if !text.isEmpty { items.append(text) }
+        guard !items.isEmpty else { return }
+
+        let dests = ShareActionCoordinator.shared.shareDestinations(items: items)
+        let nd = destination.lowercased()
+        let match = dests.first {
+            let t = $0.title.lowercased()
+            return t.contains(nd) || nd.contains(t)
+        }
+        forceHideLauncherAfterResultExecution()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if let match {
+                match.perform(withItems: items)
+            } else {
+                self.presentSharingPicker(items: items)
             }
         }
     }
@@ -610,11 +1042,17 @@ extension LauncherView {
         let scopedQuery = resolvedScope.scopedSearchQuery.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        let scopedPackages = terminalPackageManager.packages(
+        let matchedScopedPackages = terminalPackageManager.packages(
             forContextBundleId: scopedBundleId,
             query: scopedQuery,
             maxResults: scopedQuery.isEmpty ? 6 : 4
         )
+        let allScopedPackages = terminalPackageManager.packages(
+            forContextBundleId: scopedBundleId,
+            query: "",
+            maxResults: 6
+        )
+        let scopedPackages = matchedScopedPackages.isEmpty ? allScopedPackages : matchedScopedPackages
         let scopedAdapterActions =
             scopedQuery.isEmpty
             ? adapterManager.actions(for: scopedBundleId)
@@ -671,6 +1109,8 @@ extension LauncherView {
         var lines: [String] = [
             "## Scoped CLI Context",
             "The user is scoped to \(scopedAppName) in the current dock.",
+            "Answer only for \(scopedAppName)'s app context unless the user explicitly asks to leave this scope.",
+            "Use only the CLI tools listed in this scoped block for command execution. Do not use unrelated app actions, Finder actions, or global trigger rules for this scoped chat.",
             "Keep CLI guidance and execution in this dock terminal. Do not switch to or mention a separate CLI or app panel.",
             "",
             documentationBlocks.joined(separator: "\n\n"),
@@ -689,6 +1129,53 @@ extension LauncherView {
             "IMPORTANT: When the user's request warrants running one or more CLI commands, output each exact ready-to-run command on its own line prefixed with CMD: (example: CMD: pear list-orphaned). Do not put CMD: lines inside code blocks. Emit only real actionable commands the user should approve and run, never informational examples."
         )
         return lines.joined(separator: "\n")
+    }
+
+    func runtimeAppCLIContextPrompt(
+        bundleId: String,
+        appName: String,
+        query: String
+    ) async -> String {
+        let normalizedApp = "\(bundleId) \(appName)".lowercased()
+        guard normalizedApp.contains("tailscale") else { return "" }
+
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wantsNetworkDiagnostics =
+            q.contains("why") || q.contains("connect") || q.contains("network")
+            || q.contains("status") || q.contains("ip") || q.contains("tailnet")
+            || q.contains("lock") || q.contains("funnel") || q.contains("serve")
+
+        var commands: [(String, String)] = [
+            ("tailscale status", "Read Tailscale connection and peer status"),
+            ("tailscale ip", "Read Tailscale IP addresses"),
+        ]
+        if wantsNetworkDiagnostics {
+            commands.append(("tailscale netcheck", "Read Tailscale network diagnostics"))
+            commands.append(("tailscale lock status", "Read Tailnet Lock status"))
+        }
+
+        var blocks: [String] = []
+        for (command, purpose) in commands {
+            let result = await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
+            let status = result.success ? "success" : "failed"
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            blocks.append(
+                """
+                $ \(command) [\(status)]
+                \(String(output.prefix(2000)))
+                """
+            )
+        }
+
+        guard !blocks.isEmpty else { return "" }
+        return """
+        ## Live Tailscale CLI Snapshot
+        Read-only commands were run because the frontmost/scoped app is Tailscale.
+        Use this as factual app state. Do not claim GUI-only state when CLI output disagrees.
+        State-changing Tailscale commands such as `tailscale up`, `tailscale down`, `tailscale logout`, or `tailscale set ...` still require explicit user approval.
+
+        \(blocks.joined(separator: "\n\n"))
+        """
     }
 
     /// Scans AI response for `CMD: <command>` lines, strips them from the displayed message,
@@ -823,1211 +1310,6 @@ extension LauncherView {
                 AIChatMessage(role: .assistant, content: message)
             )
         }
-    }
-
-    // MARK: - rem-powered Reminders panel chat
-
-    /// Appends a message to the panel chat and immediately persists it to disk.
-    func appendPanelMessage(_ msg: AIChatMessage) {
-        remPanelChatMessages.append(msg)
-        if let key = searchState.activeSmartQueryKey ?? searchState.contextApp?.key {
-            AppPanelChatStore.shared.save(remPanelChatMessages, for: key)
-        }
-    }
-
-    func handleRemPanelQuery() {
-        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
-
-        remPanelAITask?.cancel()
-        appendPanelMessage(AIChatMessage(role: .user, content: query))
-        remPanelIsProcessing = true
-        // Add a separator between query sessions so history is readable
-        let ck = prepareScopedWorkspaceTerminal()
-        if !(panelConsoleLinesMap[ck]?.isEmpty ?? true) {
-            panelConsoleLinesMap[ck, default: []].append(
-                (line: "────────────────────", isCommand: false))
-        }
-        searchState.query = ""
-
-        // Wire live streaming into this panel's terminal drawer
-        TerminalAIBridge.shared.streamLineHandler = { line in
-            DispatchQueue.main.async {
-                // Streaming lines go into the drawer live as they arrive
-                self.panelConsoleLinesMap[ck, default: []].append((line: line, isCommand: false))
-                self.panelShowConsoleMap[ck] = true
-            }
-        }
-
-        let provider = settings.selectedAIProvider
-        let rawKey = AppSettings.shared.getAPIKey(for: provider)
-        let apiKey: String? = rawKey.isEmpty ? nil : rawKey
-
-        if provider == .shortcuts {
-            remPanelChatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content:
-                        "This panel doesn't support the Shortcuts provider. Select On-Device, OpenAI, Anthropic, Gemini, or Ollama in Settings → AI Provider.",
-                    isError: true))
-            remPanelIsProcessing = false
-            return
-        }
-
-        // Only OpenAI / Anthropic / Gemini require an API key (Ollama is local)
-        let requiresKey = provider == .openAI || provider == .anthropic || provider == .googleGemini
-        if requiresKey && apiKey == nil {
-            remPanelChatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content:
-                        "No API key found for \(provider.displayName). Add your key in Settings → AI Provider.",
-                    isError: true))
-            remPanelIsProcessing = false
-            return
-        }
-
-        // Build system prompt dynamically — Reminders uses hard-coded rem knowledge,
-        // Build system prompt — covers reminders, apps, files, contacts, etc.
-        // searchState.activeSmartQueryKey is set when user explicitly opens an app panel;
-        // fall back to autoDetectedAppKey (set from NSWorkspace app-switch observer).
-        let activeKey =
-            searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey ?? "reminders"
-
-        let ctx = searchState.contextApp
-        let appLabel =
-            ctx?.name ?? settings.customAppEntries.first(where: { $0.key == activeKey })?.label
-            ?? activeKey.capitalized
-        if executeScopedMenuIntentIfAvailable(
-            query: query,
-            activeKey: activeKey,
-            contextApp: ctx,
-            appLabel: appLabel
-        ) {
-            return
-        }
-        // For file/folder contexts, also include "Files & Folders" (finder) extensions
-        let isFileContext =
-            ctx?.resultType == .folder || ctx?.resultType == .file || ctx?.resultType == .document
-        // Use scored + installed-only extensions (top 5 most relevant to the query)
-        let _userQuery = query  // captured before closures
-        let toolExts =
-            settings.topExtensions(for: activeKey, query: _userQuery, maxCount: 5)
-            + (isFileContext
-                ? settings.topExtensions(for: "finder", query: _userQuery, maxCount: 3).filter {
-                    ext in
-                    !settings.topExtensions(for: activeKey, query: _userQuery, maxCount: 5)
-                        .contains(where: { $0.toolName == ext.toolName })
-                } : [])
-        let contextualCliPackages = contextualCLIPackages(for: ctx, query: _userQuery)
-
-        // AI Prompt extensions — always active. For file/folder contexts also include "finder" prompts.
-        let promptExts: [AppToolExtension] = {
-            var exts = settings.activePromptExtensions(for: activeKey)
-            if isFileContext && activeKey != "finder" {
-                let finderPrompts = settings.activePromptExtensions(for: "finder")
-                    .filter { fp in !exts.contains(where: { $0.id == fp.id }) }
-                exts += finderPrompts
-            }
-            return exts
-        }()
-
-        let systemPrompt: String
-        // Generic context for non-app results (files, folders, contacts, etc.)
-        let isGenericContext =
-            ctx != nil && ctx?.resultType != .application && activeKey != "reminders"
-        // Core tool rules — appended to every system prompt
-        let toolRules = """
-
-            ══ EXECUTION RULES — READ CAREFULLY ══
-            You have exactly THREE callable tools: run_command, spawn_worker, send_keys.
-            DO NOT invent other tool names. DO NOT call "reminders", "remind", "notes", or any
-            tool name from the AVAILABLE TOOLS section — those are shell commands to run INSIDE run_command.
-
-            ✅ CORRECT — silently invoke the tool:
-               run_command(command: "osascript -l JavaScript /path/script.js \\"list today\\"")
-            ❌ WRONG — writing JSON or describing what you'll do:
-               {"name": "reminders", "parameters": {...}}
-               "I will call the reminders tool with..."
-               "Here is the function call: ..."
-
-            RULE: ACT FIRST, EXPLAIN AFTER. Never explain a tool call before making it.
-            RULE: run_command for any non-interactive shell command or script.
-            RULE: For DESTRUCTIVE actions (delete/remove/overwrite) — preview first, confirm, then execute.
-            RULE: Summarise output in plain English. Never dump raw output at the user.
-            RULE: STAY ON TOPIC — politely decline unrelated requests.
-
-            ══ ERROR DETECTION — CRITICAL ══
-            After EVERY run_command, read the output before responding.
-            A command FAILED if its output contains ANY of: "Error:", "error:", "Unknown option",
-            "Unknown subcommand", "Missing expected", "Invalid", "not found", "Usage:", "USAGE:".
-            ▸ NEVER claim an operation succeeded when the output shows an error.
-            ▸ NEVER fabricate results — only report what the actual output says.
-            ▸ If a command fails with "Unknown subcommand" or similar, IMMEDIATELY run
-              run_command("<tool> --help") to get the real subcommand list, then pick the correct one.
-            ▸ NEVER guess or invent subcommands from general knowledge — only use what --help shows.
-            ▸ If the error output shows a correct usage line, retry with that exact syntax.
-            ▸ Only after 2 failed retries should you report the error to the user verbatim.
-            """
-
-        // CLI tool panel — build system prompt from the tool's --help text and subcommands
-        if ctx?.resultType == .cliTool, let ctx = ctx {
-            let toolCmd = ctx.name
-            let toolPath = ctx.filePath ?? ctx.appPath
-            let pkg = TerminalPackageManager.shared.packages.first(where: {
-                $0.name == ctx.name || $0.command == ctx.name
-            })
-            let isTUI = TerminalAIBridge.shared.isTUICommand(toolCmd)
-            // Inject the FULL scanned help tree — this is what prevents hallucination.
-            // The AI must only use commands that appear here.
-            let helpSnippet: String = {
-                guard let ht = pkg?.helpText, !ht.isEmpty else { return "" }
-                return
-                    "\n\n══ TOOL REFERENCE (exact output of \(toolCmd) --help) ══\n\(String(ht.prefix(4000)))\n══ END TOOL REFERENCE ══"
-            }()
-            let subcommandList: String = {
-                guard let subs = pkg?.subcommands, !subs.isEmpty else { return "" }
-                let list = subs.prefix(30).joined(separator: ", ")
-                return
-                    "\n\n⚠️ VERIFIED SUBCOMMANDS (from --help scan): \(list)\nDO NOT use any subcommand not in this list. If unsure, run `\(toolCmd) --help` first."
-            }()
-            let launchNote =
-                isTUI
-                ? """
-
-                This is a full-screen TUI app (ncurses). The embedded terminal panel on the right is where it runs.
-
-                HOW TO CONTROL THIS TUI:
-                1. Launch: spawn_worker(command="\(toolCmd)", purpose="Launch TUI")
-                2. After launching, wait ~1s for the TUI to draw its first screen, then navigate using send_keys.
-                3. Menu selection: send_keys(keys="5\\r") sends key "5" then Enter.
-                4. Arrow keys: "\\u{1B}[A"=up, "\\u{1B}[B"=down, "\\u{1B}[C"=right, "\\u{1B}[D"=left, "\\r"=Enter.
-                5. Exit: send_keys(keys="q") or send_keys(keys="\\u{03}") for Ctrl-C.
-
-                RULES:
-                - NEVER call run_command('\(toolCmd)') — requires PTY, will fail.
-                - NEVER call run_command('\(toolCmd) --help') — same reason.
-                - Use ONLY the stored TOOL REFERENCE below to know menus/options.
-                - Chain: spawn_worker → (brief pause) → send_keys to automate the TUI for the user.
-                """
-                : "\nUse run_command for all operations. Pass flags and subcommands as part of the command string."
-            // Always inject real home directory — prevents AI from using placeholder /Users/username
-            let homeDir = NSHomeDirectory()
-            let folderAccessEnabled = settings.isFolderAccessEnabled(for: toolCmd)
-            let folderSection: String = {
-                if folderAccessEnabled {
-                    return """
-
-                        FOLDER ACCESS: Granted by user.
-                        HOME: \(homeDir)
-                        Downloads: \(homeDir)/Downloads
-                        Documents: \(homeDir)/Documents
-                        Desktop:   \(homeDir)/Desktop
-                        Pictures:  \(homeDir)/Pictures
-                        Movies:    \(homeDir)/Movies
-                        Music:     \(homeDir)/Music
-                        ALWAYS use these exact absolute paths. NEVER use /Users/username or placeholder paths.
-                        """
-                } else {
-                    return """
-
-                        HOME DIRECTORY: \(homeDir)
-                        ALWAYS use this exact home path in commands. NEVER use /Users/username or placeholder paths.
-                        NOTE: User has not granted folder access for \(toolCmd). Avoid reading or writing ~/Documents, ~/Downloads etc. unless the user explicitly asks.
-                        """
-                }
-            }()
-            systemPrompt = """
-                You are an expert AI assistant for the TUI app '\(toolCmd)' inside ILauncher.
-                The embedded terminal on the right is where '\(toolCmd)' runs.\(folderSection)\(launchNote)\(helpSnippet)\(subcommandList)
-                \(toolRules)
-                """
-        } else if isGenericContext, let ctx = ctx {
-            // Build the explicit path line so AI always knows exactly where to look
-            let contextPath: String = ctx.filePath ?? ctx.subtitle
-            let isFolder = ctx.resultType == .folder
-            let pathDirective: String = {
-                if isFolder && !contextPath.isEmpty {
-                    return
-                        "\nCURRENT FOLDER: \(contextPath)\nALWAYS use this absolute path in every command. Never use relative paths like './' or '~' — use the full path above."
-                } else if let fp = ctx.filePath, !fp.isEmpty {
-                    return
-                        "\nFILE PATH: \(fp)\nAlways reference this exact absolute path in commands."
-                }
-                return ""
-            }()
-
-            let fileToolDocs: String = {
-                guard !toolExts.isEmpty else { return "" }
-                let pkgs = TerminalPackageManager.shared.packages
-                let docs = toolExts.map { ext -> String in
-                    if ext.kind == .script, let lang = ext.scriptLanguage, !ext.toolPath.isEmpty {
-                        let runCmd = lang.runCommand(scriptPath: ext.toolPath)
-                        var doc = "### \(ext.toolName) [SCRIPT – \(lang.rawValue)]"
-                        doc +=
-                            "\nInvoke: run_command(\"\(runCmd) \\\"<full user query>\\\"\") — pass entire query as one arg"
-                        let cap = ext.effectiveHint.isEmpty ? ext.aiHint : ext.effectiveHint
-                        if !cap.isEmpty { doc += "\n" + String(cap.prefix(400)) }
-                        return doc
-                    }
-                    let pkg = pkgs.first(where: { $0.command == ext.toolName })
-                    var doc = "### \(ext.toolName) [CLI]"
-                    if let helpText = pkg?.helpText, !helpText.isEmpty {
-                        doc += "\n" + String(helpText.prefix(600))
-                    } else if !ext.aiHint.isEmpty {
-                        doc += "\n" + ext.aiHint
-                    }
-                    return doc
-                }.joined(separator: "\n\n")
-                return "\n\nAvailable tools (use via run_command):\n\(docs)"
-            }()
-            // Inject file-type tool registry snippet for file/folder contexts
-            let registrySnippet: String = {
-                guard isFileContext else { return "" }
-                let registry = FileTypeToolRegistry.shared
-                var snippet = ""
-                if !isFolder, let filePath = ctx.filePath {
-                    let ext = (filePath as NSString).pathExtension
-                    snippet = registry.systemPromptSnippet(for: ext)
-                    // If no installed tool handles this file type, suggest what to install
-                    if snippet.isEmpty {
-                        let missing = registry.suggestMissingTools(
-                            for: _userQuery.isEmpty ? ext : _userQuery, maxCount: 2)
-                        if !missing.isEmpty {
-                            let suggestions = missing.map { "brew install \($0.toolName)" }.joined(
-                                separator: "  or  ")
-                            snippet =
-                                "\n\nNo installed tool found for .\(ext) files. Tell the user to install one: \(suggestions)"
-                        }
-                    }
-                } else if isFolder, !contextPath.isEmpty {
-                    let fm = FileManager.default
-                    var seenExts = Set<String>()
-                    if let contents = try? fm.contentsOfDirectory(atPath: contextPath) {
-                        for name in contents {
-                            let e = (name as NSString).pathExtension.lowercased()
-                            if !e.isEmpty { seenExts.insert(e) }
-                        }
-                    }
-                    snippet = registry.systemPromptSnippet(forAnyOf: Array(seenExts))
-                    // Suggest missing tools based on query intent (e.g. "compress video" → ffmpeg)
-                    if snippet.isEmpty {
-                        let missing = registry.suggestMissingTools(for: _userQuery, maxCount: 2)
-                        if !missing.isEmpty {
-                            let suggestions = missing.map {
-                                "  brew install \($0.toolName)  — \($0.description)"
-                            }.joined(separator: "\n")
-                            snippet =
-                                "\n\nNo installed tool matches this request. Suggest the user install:\n\(suggestions)"
-                        }
-                    }
-                }
-                return snippet
-            }()
-            systemPrompt = """
-                You are a focused macOS assistant inside ILauncher. \
-                The user is working with: \(ctx.aiContextDescription).\(pathDirective)
-                Answer ONLY questions about this specific item. \
-                Use run_command to inspect or act on it. Be concise.\(fileToolDocs)\(registrySnippet)
-                \(toolRules)
-                """
-        } else if activeKey == "homebrew" {
-            let brewBin =
-                FileManager.default.fileExists(atPath: "/opt/homebrew/bin/brew")
-                ? "/opt/homebrew/bin/brew" : "/usr/local/bin/brew"
-            systemPrompt = """
-                You are a Homebrew package manager assistant inside ILauncher.
-                Homebrew is installed at: \(brewBin)
-                Always run brew commands via run_command. Chain multiple commands when needed.
-
-                PACKAGE MANAGEMENT:
-                - Install:      brew install <formula>
-                - Install cask: brew install --cask <app>        (GUI apps like Chrome, VS Code)
-                - Uninstall:    brew uninstall <formula>
-                - Upgrade one:  brew upgrade <formula>
-                - Upgrade all:  brew upgrade
-                - Update brew:  brew update
-                - Search:       brew search <term>
-                - Info:         brew info <formula>
-                - List all:     brew list
-                - Top-level:    brew leaves                      (installed, not as deps)
-                - Outdated:     brew outdated
-
-                CASK (GUI APPS):
-                - List casks:   brew list --cask
-                - Outdated:     brew outdated --cask
-                - Info:         brew info --cask <app>
-
-                SERVICES (daemons):
-                - List:         brew services list
-                - Start:        brew services start <formula>
-                - Stop:         brew services stop <formula>
-                - Restart:      brew services restart <formula>
-
-                MAINTENANCE:
-                - Doctor:       brew doctor                       (diagnose issues)
-                - Cleanup:      brew cleanup                      (remove old versions, free disk)
-                - Cleanup dry:  brew cleanup -n                   (preview what would be removed)
-                - Cache size:   du -sh $(brew --cache)
-                - Disk usage:   brew list | xargs brew info --json | jq '.[].installed[].installed_on_request'
-
-                TAPS (third-party repos):
-                - Add tap:      brew tap <user/repo>
-                - Remove tap:   brew untap <user/repo>
-                - List taps:    brew tap
-
-                VERSIONS & PINNING:
-                - Pin version:  brew pin <formula>               (stops auto-upgrade)
-                - Unpin:        brew unpin <formula>
-                - Dependencies: brew deps <formula>
-                - What uses it: brew uses --installed <formula>
-
-                BREWFILE (backup/restore):
-                - Export:       brew bundle dump --file=~/Brewfile --force
-                - Restore:      brew bundle install --file=~/Brewfile
-                - List:         brew bundle list --file=~/Brewfile
-
-                WORKFLOW RULES:
-                - Always run brew update before major installs/upgrades.
-                - Use run_command for each brew step; show output to user.
-                - For multi-step tasks (update + upgrade + cleanup), chain with &&.
-                - When user asks to "install X", first run brew search X to confirm exact name.
-                - When listing packages, use brew list --versions for cleaner output.
-                - For disk cleanup suggestions, run brew cleanup -n first so user can approve.
-                \(toolRules)
-                """
-        } else if activeKey == "amphetamine" {
-            systemPrompt = """
-                You are an Amphetamine assistant inside ILauncher.
-                Amphetamine is a macOS app that prevents the Mac from sleeping.
-                Control it using osascript (AppleScript) via run_command. Never use caffeinate.
-
-                FULL APPLESCRIPT API (always wrap with: osascript -e '...'):
-
-                START SESSION:
-                - Default: osascript -e 'tell application "Amphetamine" to start new session'
-                - Timed:   osascript -e 'tell application "Amphetamine" to start new session with options {duration:30, interval:minutes, displaySleepAllowed:false}'
-                - Hours:   osascript -e 'tell application "Amphetamine" to start new session with options {duration:2, interval:hours, displaySleepAllowed:true}'
-                - interval is either: minutes  OR  hours
-
-                END SESSION:
-                - osascript -e 'tell application "Amphetamine" to end session'
-
-                DISPLAY SLEEP:
-                - osascript -e 'tell application "Amphetamine" to allow display sleep'
-                - osascript -e 'tell application "Amphetamine" to prevent display sleep'
-
-                SCREEN SAVER:
-                - osascript -e 'tell application "Amphetamine" to allow screen saver'
-                - osascript -e 'tell application "Amphetamine" to prevent screen saver'
-
-                CLOSED DISPLAY MODE:
-                - osascript -e 'tell application "Amphetamine" to enable closed display mode'
-                - osascript -e 'tell application "Amphetamine" to disable closed display mode'
-
-                QUERY STATUS (run_command, read the output):
-                - Is active?:       osascript -e 'tell application "Amphetamine" to return session is active'
-                - Time remaining:   osascript -e 'tell application "Amphetamine" to return session time remaining'
-                  (returns seconds; 0=infinite, -1=trigger, -2=app/date-based, -3=no session)
-                - Display sleep?:   osascript -e 'tell application "Amphetamine" to return display sleep allowed'
-                - Is trigger?:      osascript -e 'tell application "Amphetamine" to return session is Trigger'
-
-                RULES:
-                - ALWAYS use osascript -e '...' via run_command. Never use caffeinate.
-                - To check if Amphetamine is running: run_command(command="pgrep -x Amphetamine")
-                - If not running, tell user to open it first (open -a Amphetamine).
-                - After "notify when ends": after starting a timed session, also call:
-                  run_command(command="osascript -e 'tell application \\"Amphetamine\\" to start new session with options {duration:N, interval:minutes, displaySleepAllowed:false}' && sleep Ns && osascript -e 'display notification \\"Amphetamine session ended\\" with title \\"Amphetamine\\"'")
-                - Convert natural language time: "1 hour" → duration:1, interval:hours; "45 minutes" → duration:45, interval:minutes
-                - Give a short friendly confirmation after each action.
-                \(toolRules)
-                """
-        } else if !promptExts.isEmpty && toolExts.isEmpty && contextualCliPackages.isEmpty {
-            // ── PURE PROMPT EXTENSION — no CLI/script tools, AI answers directly ──
-            // Render the first prompt's template; subsequent prompts are appended.
-            let rendered = promptExts.map { ext in
-                PromptRunner.shared.render(
-                    template: ext.promptTemplate, query: query, appLabel: appLabel)
-            }.joined(separator: "\n\n---\n\n")
-            systemPrompt = rendered
-
-        } else if !toolExts.isEmpty || !contextualCliPackages.isEmpty {
-            // USER-SET AI EXTENSIONS — always take priority over built-in hardcoded prompts.
-            // Supports CLI tools (binaries on $PATH) AND user scripts (JXA, bash, Python, AppleScript, Lua).
-            // If prompt extensions also exist, their rendered template becomes the persona/intro.
-            let pkgs = TerminalPackageManager.shared.packages
-
-            let extensionDocs = toolExts.map { ext -> String in
-                if ext.kind == .script, let lang = ext.scriptLanguage, !ext.toolPath.isEmpty {
-                    // ── SCRIPT EXTENSION ───────────────────────────────────────
-                    let runCmd = lang.runCommand(scriptPath: ext.toolPath)
-                    var doc = "### \(ext.toolName) [SCRIPT – \(lang.rawValue)]"
-                    if ext.profile.isDestructive { doc += " ⚠️ DESTRUCTIVE" }
-                    doc +=
-                        "\nInvoke with: run_command(\"\(runCmd) \\\"<full user query as one arg>\\\"\")"
-                    doc +=
-                        "\nPASS THE ENTIRE user query as a single quoted argument — the script handles all parsing internally."
-                    // Capability description from aiHint / profile
-                    let cap = ext.effectiveHint.isEmpty ? ext.aiHint : ext.effectiveHint
-                    if !cap.isEmpty { doc += "\nCapabilities: " + String(cap.prefix(500)) }
-                    if !ext.profile.exampleCommands.isEmpty {
-                        doc += "\nExamples: " + ext.profile.exampleCommands.joined(separator: " | ")
-                    }
-                    return doc
-                } else {
-                    // ── CLI TOOL EXTENSION ─────────────────────────────────────
-                    let cmd = ext.effectiveCommand  // "memo notes" or "memo rem" — scoped per app
-                    let base = ext.toolName  // "memo" — binary name for package lookup
-                    let pkg = pkgs.first(where: { $0.command == base })
-                    var doc = "### \(cmd) [CLI]"
-                    if cmd != base { doc += "  (binary: \(base))" }
-                    if let path = pkg?.installedPath ?? (ext.toolPath.isEmpty ? nil : ext.toolPath)
-                    {
-                        doc += " at \(path)"
-                    }
-                    if ext.profile.isDestructive { doc += " ⚠️ DESTRUCTIVE" }
-                    doc += "\n"
-                    // Prefer scoped subcommand help; fall back to full help or hints
-                    let scopedHelp = TerminalPackageManager.shared.helpText(
-                        for: cmd, baseCommand: base)
-                    let helpSource: String
-                    if let sh = scopedHelp, !sh.isEmpty {
-                        helpSource = String(sh.prefix(1000))
-                    } else if ext.aiHint.contains("--help output:") {
-                        helpSource = String(ext.aiHint.prefix(1000))
-                    } else if !ext.effectiveHint.isEmpty {
-                        helpSource = ext.effectiveHint
-                    } else {
-                        helpSource = ""
-                    }
-                    if !helpSource.isEmpty {
-                        doc += helpSource
-                    } else {
-                        doc +=
-                            "UNKNOWN: Call run_command(\"\(cmd) --help\") first, read output, then answer."
-                    }
-                    // Context flag — always append this flag to every command for this app panel
-                    if !ext.appContextFlag.isEmpty {
-                        doc +=
-                            "\n⚑ CONTEXT FLAG: You MUST append `\(ext.appContextFlag)` to EVERY \(base) command for \(appLabel)."
-                        doc += "\n  Example: run_command(\"\(cmd) list \(ext.appContextFlag)\")"
-                        doc +=
-                            "\n  Example: run_command(\"\(cmd) add \(ext.appContextFlag) \\\"Buy milk\\\"\")"
-                    }
-                    if !ext.profile.exampleCommands.isEmpty {
-                        doc += "\nExamples: " + ext.profile.exampleCommands.joined(separator: " | ")
-                    }
-                    return doc
-                }
-            }
-            let packageDocs = contextualCliPackages.map(appPanelCLIDocumentation(for:))
-            let toolDocs = (extensionDocs + packageDocs).joined(separator: "\n\n---\n\n")
-
-            // Intent → invocation hints per tool
-            let extensionIntentLines = toolExts.map { ext -> String in
-                if ext.kind == .script, let lang = ext.scriptLanguage, !ext.toolPath.isEmpty {
-                    let runCmd = lang.runCommand(scriptPath: ext.toolPath)
-                    return "• \(ext.toolName): run_command(\"\(runCmd) \\\"<full user query>\\\"\")"
-                }
-                let cmd = ext.effectiveCommand
-                let ctxFlag = ext.appContextFlag.isEmpty ? "" : " \(ext.appContextFlag)"
-                if !ext.profile.capabilities.isEmpty {
-                    return "• \(cmd): "
-                        + ext.profile.capabilities.prefix(4).joined(separator: " | ")
-                        + (ctxFlag.isEmpty ? "" : "  [always append \(ext.appContextFlag)]")
-                }
-                return
-                    "• \(cmd): list → \(cmd) list\(ctxFlag)  |  add → \(cmd) add\(ctxFlag) \"<title>\"  |  delete → \(cmd) delete\(ctxFlag) <id>"
-            }
-            let packageIntentLines = contextualCliPackages.map(appPanelCLIIntentLine(for:))
-            let intentLines = (extensionIntentLines + packageIntentLines).joined(separator: "\n")
-
-            let hasDestructiveTool =
-                toolExts.contains { $0.profile.isDestructive }
-                || contextualCliPackages.contains {
-                    let warningWords = ["delete", "remove", "uninstall", "erase", "purge"]
-                    let corpus =
-                        ($0.taskCategories + $0.subcommands + $0.usageExamples + [$0.description])
-                        .joined(separator: " ")
-                        .lowercased()
-                    return warningWords.contains(where: { corpus.contains($0) })
-                }
-            let destructiveWarning =
-                hasDestructiveTool
-                ? "\n- ⚠️ One or more tools are DESTRUCTIVE. Always confirm with the user before running delete/remove/overwrite operations."
-                : ""
-
-            // If user has a prompt extension too, its rendered template becomes the persona intro.
-            // Strip any "User's question: {{query}}" lines — the query is already the user message.
-            let promptPersona: String =
-                promptExts.isEmpty
-                ? ""
-                : {
-                    let rendered = promptExts.map { ext in
-                        var t = PromptRunner.shared.render(
-                            template: ext.promptTemplate, query: query, appLabel: appLabel)
-                        // Remove lines that redundantly embed the query — causes AI to answer in text instead of tool-calling
-                        t = t.split(separator: "\n", omittingEmptySubsequences: false).filter {
-                            line in
-                            let l = line.lowercased()
-                            return !l.hasPrefix("user's question:")
-                                && !l.hasPrefix("user question:")
-                                && !l.contains(query.lowercased().prefix(20))
-                        }.joined(separator: "\n")
-                        return t.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }.joined(separator: "\n\n")
-                    return rendered.isEmpty ? "" : rendered + "\n\n"
-                }()
-
-            systemPrompt = """
-                \(promptPersona)You are an AI assistant for \(appLabel) inside ILauncher.
-                Only help with tasks related to \(appLabel).
-                Use run_command for attached CLI/script tools. The embedded terminal drawer may appear for live output when commands run.
-                Their output is returned to you; always summarise it in plain English.
-
-                AVAILABLE TOOLS (user-configured for \(appLabel)):
-                \(toolDocs)
-
-                HOW TO INVOKE EACH TOOL:
-                \(intentLines)
-
-                RULES:
-                - For SCRIPT tools: always pass the user's FULL original query as a single argument in quotes.
-                - For CLI tools: use ONLY the exact flags and subcommands documented in AVAILABLE TOOLS above.
-                  Never guess flags. If you're unsure of exact syntax, run "<tool> help <subcommand>" first.
-                - The AVAILABLE TOOLS section contains the full --help tree (all subcommand levels).
-                  Always check the relevant subcommand section before forming a command.
-                - For "find/search X": use the search or list subcommand as shown in help.
-                - For "create/add X": always check the correct add subcommand syntax before running.
-                - Never dump raw output — always give a clean plain-English summary.\(destructiveWarning)
-                \(toolRules)
-                """
-        } else if activeKey == "safari" {
-            let safariTab = AppleAppsAPI.shared.getCurrentTab()
-            let pageURL =
-                (safariTab["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let pageTitle =
-                (safariTab["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                ?? ""
-            let pageText = fetchSafariPageText() ?? ""
-            let pageLinks = fetchSafariPageLinks()
-            let pageImages = fetchSafariPageImages()
-            let lowerQuery = query.lowercased()
-            let selectedText =
-                AXContextReader.shared.current.selectedText?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let shouldIncludeLinks =
-                lowerQuery.contains("link")
-                || lowerQuery.contains("url")
-                || lowerQuery.contains("href")
-            let shouldIncludeImages =
-                lowerQuery.contains("image")
-                || lowerQuery.contains("photo")
-                || lowerQuery.contains("picture")
-                || lowerQuery.contains("logo")
-            let pageTextSection =
-                pageText.isEmpty
-                ? "\nPAGE TEXT: (unavailable — Safari page content could not be read)"
-                : "\nPAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))"
-            let selectedTextSection =
-                selectedText.isEmpty
-                ? ""
-                : "\nSELECTED TEXT:\n\(String(selectedText.prefix(1500)))"
-            let linksSection =
-                shouldIncludeLinks && !pageLinks.isEmpty
-                ? "\nPAGE LINKS:\n"
-                    + pageLinks.prefix(40).map { "  • \($0)" }.joined(separator: "\n")
-                : ""
-            let imagesSection =
-                shouldIncludeImages && !pageImages.isEmpty
-                ? "\nPAGE IMAGE URLS:\n"
-                    + pageImages.prefix(40).map { "  • \($0)" }.joined(separator: "\n")
-                : ""
-            systemPrompt = """
-                You are a Safari page assistant inside ILauncher.
-                Answer questions about the CURRENT Safari page using the provided page context.
-                Do not say you cannot see the page if page context is present below.
-                If the user asks what the page is about, summarize the page text.
-                If the user asks for images or links, use the provided PAGE IMAGE URLS or PAGE LINKS sections.
-                If the requested data is unavailable, say exactly what is missing.
-
-                CURRENT TAB TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
-                CURRENT TAB URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedTextSection)\(pageTextSection)\(linksSection)\(imagesSection)
-
-                RULES:
-                - Stay focused on the current Safari page.
-                - Prefer the page text and tab metadata over generic guesses.
-                - If the user asks for a list of images or links, return the actual URLs you were given.
-                - Be concise and directly answer the question.
-                """
-        } else if activeKey == "finder" {
-            let finderDir = ContextDetector.shared.getCurrentFinderDirectory() ?? NSHomeDirectory()
-            let selectedFiles = ContextDetector.shared.getFinderSelectedFiles()
-            let selectedNote =
-                selectedFiles.isEmpty
-                ? ""
-                : "\nSELECTED FILES:\n"
-                    + selectedFiles.prefix(5).map { "  • \($0)" }.joined(separator: "\n")
-            let toolContext = FinderToolkit.shared.systemPromptContext()
-            systemPrompt = """
-                You are a Finder file management assistant inside ILauncher.
-                You help users organize, find, rename, and manage files using shell commands and installed scripts.
-
-                CURRENT FINDER DIRECTORY: \(finderDir)\(selectedNote)
-
-                \(toolContext)
-
-                CRITICAL RULES:
-                - You are a FILE MANAGER assistant. Do NOT search contacts, photos, or calendars.
-                - ALWAYS use run_command to execute operations — never just describe what to do.
-                - For destructive operations (sort/organize/rename/delete): ALWAYS run the --dry-run version first,
-                  show the output to the user, and ask "Shall I proceed?" before running for real.
-                - When user asks "show all PDFs" / "list files": run a find command immediately.
-                - When user asks "how do I X": use the Find Cmd script to search for the right command.
-                - Summarize command output in plain English — never dump raw terminal output.
-                - Home directory is: \(NSHomeDirectory())
-                \(toolRules)
-                """
-
-        } else if activeKey == "clipboard" {
-            let clipboardContext = relevantClipboardHistory().prefix(20).enumerated().map {
-                index, entry in
-                "\(index + 1). \(entry.preview) — \(clipboardEntrySubtitle(entry))\n\(String(entry.text.prefix(600)))"
-            }.joined(separator: "\n\n")
-            systemPrompt = """
-                You are a Clipboard assistant inside ILauncher.
-                The user is asking about their recent clipboard history. Use ONLY the clipboard entries below.
-                You can summarize, compare, find, explain, or tell the user which item to paste/open.
-                Do not claim to know clipboard items not shown here.
-
-                CLIPBOARD HISTORY:
-                \(clipboardContext.isEmpty ? "No clipboard items stored." : clipboardContext)
-                \(toolRules)
-                """
-        } else if activeKey == "reminders" {
-            // Fallback: no user extensions set — use built-in rem CLI if installed
-            let remPath = ["/opt/homebrew/bin/rem", "/usr/local/bin/rem"]
-                .first { FileManager.default.fileExists(atPath: $0) }
-            let remNote =
-                remPath != nil
-                ? "rem is installed at \(remPath!)."
-                : "The `rem` CLI is not installed. Tell the user to run: brew install rem"
-            systemPrompt = """
-                You are a Reminders assistant inside ILauncher.
-                \(remNote)
-                You manage macOS Reminders using the `rem` CLI via run_command (runs silently, no terminal).
-
-                rem examples:
-                - rem add "call mom" --due "tomorrow at 5pm"
-                - rem list
-                - rem complete "call mom"
-                - rem delete "call mom"
-                - rem search "mom"
-
-                Natural language dates work: "tomorrow at 3pm", "next friday", "in 2 hours".
-                TIP: User can assign a different CLI (e.g. memo) in Settings → App Shortcuts → Reminders → AI Extensions.
-                After actions, give a short friendly confirmation. Summarise lists — don't dump raw JSON.
-                \(toolRules)
-                """
-        } else {
-            // Generic fallback — no user extensions, no built-in CLI known
-            systemPrompt = """
-                You are an AI assistant for \(appLabel) inside ILauncher.
-                Only help with tasks related to \(appLabel).
-                Run shell commands via run_command (runs silently in the background — no terminal shown).
-                TIP: Assign CLI tools in Settings → App Shortcuts → \(appLabel) → AI Extensions to unlock more actions.
-                \(toolRules)
-                """
-        }
-
-        // Build history from chat for multi-turn context (exclude .tool command chips — visual only)
-        let history: [ChatMessage] = remPanelChatMessages.dropLast()
-            .filter { $0.role != .tool }
-            .map { ChatMessage(role: $0.role == .user ? .user : .assistant, content: $0.content) }
-
-        // Capture folder path for command fixup (folder panel context)
-        let contextFolderPath: String? = {
-            guard let ctx = ctx, ctx.resultType == .folder else { return nil }
-            let p = ctx.filePath ?? ctx.subtitle
-            return p.isEmpty ? nil : p
-        }()
-
-        // Check prompt extension cache — if we get a hit, skip the full AI round-trip
-        if let cacheHit = promptExts.first.flatMap({
-            PromptRunner.shared.cachedResponse(for: $0, query: query)
-        }) {
-            remPanelChatMessages.append(AIChatMessage(role: .assistant, content: cacheHit))
-            remPanelIsProcessing = false
-            return
-        }
-
-        if provider == .onDevice {
-            guard let scopedIdentity = scopedWorkspaceIdentity() else {
-                remPanelChatMessages.append(
-                    AIChatMessage(
-                        role: .assistant,
-                        content:
-                            "I couldn't resolve a scoped app context for on-device execution. Re-open the app scope and try again.",
-                        isError: true
-                    ))
-                remPanelIsProcessing = false
-                return
-            }
-
-            let placeholder = AIChatMessage(role: .assistant, content: "")
-            remPanelChatMessages.append(placeholder)
-            let messageID = placeholder.id
-
-            remPanelAITask = Task { @MainActor in
-                await withCheckedContinuation { continuation in
-                    #if canImport(FoundationModels)
-                        if #available(macOS 26.0, *) {
-                            OnDeviceToolSession.shared.stream(
-                                to: query,
-                                systemPrompt: systemPrompt,
-                                bundleId: scopedIdentity.bundleId,
-                                axContext: scopedIdentity.axContext,
-                                onPartial: { token in
-                                    DispatchQueue.main.async {
-                                        if let index = self.remPanelChatMessages.firstIndex(where: {
-                                            $0.id == messageID
-                                        }) {
-                                            self.remPanelChatMessages[index] = AIChatMessage(
-                                                id: messageID,
-                                                role: .assistant,
-                                                content: self.remPanelChatMessages[index].content
-                                                    + token
-                                            )
-                                        }
-                                    }
-                                },
-                                onComplete: { response in
-                                    DispatchQueue.main.async {
-                                        if let index = self.remPanelChatMessages.firstIndex(where: {
-                                            $0.id == messageID
-                                        }), self.remPanelChatMessages[index].content.isEmpty {
-                                            self.remPanelChatMessages[index] = AIChatMessage(
-                                                id: messageID,
-                                                role: .assistant,
-                                                content: response
-                                            )
-                                        }
-                                        self.remPanelIsProcessing = false
-                                    }
-                                    continuation.resume()
-                                },
-                                onError: { errorText in
-                                    DispatchQueue.main.async {
-                                        if let index = self.remPanelChatMessages.firstIndex(where: {
-                                            $0.id == messageID
-                                        }) {
-                                            self.remPanelChatMessages[index] = AIChatMessage(
-                                                id: messageID,
-                                                role: .assistant,
-                                                content: errorText,
-                                                isError: true
-                                            )
-                                        }
-                                        self.remPanelIsProcessing = false
-                                    }
-                                    continuation.resume()
-                                }
-                            )
-                        } else {
-                            DispatchQueue.main.async {
-                                if let index = self.remPanelChatMessages.firstIndex(where: {
-                                    $0.id == messageID
-                                }) {
-                                    self.remPanelChatMessages[index] = AIChatMessage(
-                                        id: messageID,
-                                        role: .assistant,
-                                        content:
-                                            "On-device AI requires macOS 26.0 or later with Apple Silicon.",
-                                        isError: true
-                                    )
-                                }
-                                self.remPanelIsProcessing = false
-                            }
-                            continuation.resume()
-                        }
-                    #else
-                        DispatchQueue.main.async {
-                            if let index = self.remPanelChatMessages.firstIndex(where: {
-                                $0.id == messageID
-                            }) {
-                                self.remPanelChatMessages[index] = AIChatMessage(
-                                    id: messageID,
-                                    role: .assistant,
-                                    content: "On-device AI is not available in this build.",
-                                    isError: true
-                                )
-                            }
-                            self.remPanelIsProcessing = false
-                        }
-                        continuation.resume()
-                    #endif
-                }
-            }
-            return
-        }
-
-        remPanelAITask = Task {
-            do {
-                let (response, executedCommands) = try await AIProviderService.shared.sendWithTools(
-                    query,
-                    context: .none,
-                    provider: provider,
-                    apiKey: apiKey,
-                    conversationHistory: history,
-                    commandExecutor: { cmd, purpose in
-                        // Fix relative paths: if AI used "find . ..." or "ls" without absolute path
-                        // and we're in a folder context, rewrite to use the folder's absolute path
-                        let fixedCmd: String = {
-                            guard let folderPath = contextFolderPath else { return cmd }
-                            var c = cmd
-                            // find . → find /absolute/path
-                            if c.hasPrefix("find . ") || c == "find ." {
-                                c = "find " + folderPath + c.dropFirst(6)
-                            } else if c.hasPrefix("find ./ ") {
-                                c = "find " + folderPath + "/" + c.dropFirst(8)
-                            }
-                            // ls (no args or just flags) → ls folderPath
-                            if c == "ls"
-                                || c.range(of: #"^ls\s+-[a-zA-Z]+$"#, options: .regularExpression)
-                                    != nil
-                            {
-                                c = c + " " + folderPath
-                            }
-                            // du . → du folderPath
-                            if c.hasPrefix("du . ") || c == "du ." {
-                                c = "du " + folderPath + c.dropFirst(4)
-                            }
-                            return c
-                        }()
-                        // Show command chip in chat + open embedded panel terminal
-                        await MainActor.run {
-                            self.remPanelChatMessages.append(
-                                AIChatMessage(
-                                    role: .tool,
-                                    content: "$ \(fixedCmd)"
-                                ))
-                            let ck = self.activeConsoleKey
-                            self.panelShowConsoleMap[ck] = true
-                            // Ensure panel PTY exists before command fires
-                            _ = self.panelTerminal(for: ck)
-                        }
-                        let result = await TerminalAIBridge.shared.processAICommand(
-                            fixedCmd, purpose: purpose)
-                        // Also send approved command to the panel's embedded PTY for live display
-                        await MainActor.run {
-                            let ck = self.activeConsoleKey
-                            self.panelTerminalControllers[ck]?.sendCommand(fixedCmd)
-                        }
-                        // Post-execution: file detection / live panel (streaming already filled output lines)
-                        await MainActor.run {
-                            let ck = self.activeConsoleKey
-                            // If the command created a file, auto-show its preview
-                            if result.success,
-                                let createdURL = self.detectCreatedFile(
-                                    command: fixedCmd, output: result.output)
-                            {
-                                self.showLivePanel(.filePreview(url: createdURL))
-                            } else if result.success || !result.output.isEmpty {
-                                // Parse output → right panel results (files, tasks, processes, events, etc.)
-                                let resultEntries = self.parseCommandOutputForPanel(
-                                    command: fixedCmd,
-                                    output: result.output,
-                                    panelKey: activeKey
-                                )
-                                if !resultEntries.isEmpty {
-                                    self.showLivePanel(.results(resultEntries))
-                                }
-                            }
-                        }
-                        return result
-                    },
-                    systemPromptOverride: systemPrompt
-                )
-                await MainActor.run {
-                    // Strip any leaked raw tool-call syntax the AI accidentally included in its text reply
-                    let cleanResponse = Self.stripLeakedToolCalls(response)
-                    if !cleanResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        remPanelChatMessages.append(
-                            AIChatMessage(role: .assistant, content: cleanResponse))
-                        // Cache the response for pure-prompt extensions (no commands were run)
-                        if executedCommands.isEmpty, let pExt = promptExts.first {
-                            PromptRunner.shared.cacheResponse(
-                                cleanResponse, for: pExt, query: query)
-                        }
-                    }
-                    remPanelIsProcessing = false
-                    searchState.appPanelAllItems = []
-                    reloadAppPanelData(for: "reminders")
-                    // Auto-switch live panel to terminal if spawn_worker was used
-                    let spawnedTUI = executedCommands.contains {
-                        $0.command.hasPrefix("spawn_worker")
-                    }
-                    if spawnedTUI { showLivePanel(.terminal) }
-                }
-            } catch AIServiceError.unsupportedProvider(_) {
-                // Ollama: ask AI to output the rem command as plain text, then run it
-                await handleRemPanelQueryLegacy(
-                    query: query, systemPrompt: systemPrompt, provider: provider, apiKey: apiKey)
-            } catch {
-                await MainActor.run {
-                    remPanelChatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "⚠️ \(error.localizedDescription)", isError: true))
-                    remPanelIsProcessing = false
-                }
-            }
-        }
-    }
-
-    func executeScopedMenuIntentIfAvailable(
-        query: String,
-        activeKey: String,
-        contextApp: SearchContextApp?,
-        appLabel: String
-    ) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return false }
-        let looksLikeQuestion =
-            q.hasSuffix("?")
-            || q.hasPrefix("what") || q.hasPrefix("how") || q.hasPrefix("why")
-            || q.hasPrefix("tell") || q.hasPrefix("explain") || q.hasPrefix("describe")
-            || q.hasPrefix("summarize") || q.hasPrefix("who") || q.hasPrefix("when")
-            || q.hasPrefix("where") || q.hasPrefix("is ") || q.hasPrefix("can ")
-            || q.hasPrefix("does ") || q.hasPrefix("do ")
-        guard !looksLikeQuestion else { return false }
-
-        let target: (bundleId: String, appName: String)? = {
-            if let contextApp, contextApp.resultType == .application {
-                let bundleIdFromPath =
-                    contextApp.appPath.isEmpty
-                    ? nil
-                    : Bundle(path: contextApp.appPath)?.bundleIdentifier
-                let bundleIdFromRunning = NSWorkspace.shared.runningApplications.first(where: {
-                    !$0.isTerminated && $0.localizedName == contextApp.name
-                })?.bundleIdentifier
-                if let bundleId = bundleIdFromPath ?? bundleIdFromRunning, !bundleId.isEmpty {
-                    return (bundleId, contextApp.name)
-                }
-            }
-            let meta = smartQueryMeta
-            if !meta.appPath.isEmpty,
-                let bundleId = Bundle(path: meta.appPath)?.bundleIdentifier,
-                !bundleId.isEmpty
-            {
-                return (bundleId, meta.label)
-            }
-            if let entry = settings.customAppEntries.first(where: { $0.key == activeKey }),
-                let bundleId = Bundle(path: entry.appPath)?.bundleIdentifier,
-                !bundleId.isEmpty
-            {
-                return (bundleId, entry.label)
-            }
-            return nil
-        }()
-
-        guard let target,
-            target.bundleId != "scope://clipboard",
-            GlobalContextEngine.shared.hasMenuSnapshot(bundleIdentifier: target.bundleId)
-        else { return false }
-
-        let matches = GlobalContextEngine.shared.cachedMenuItems(
-            bundleIdentifier: target.bundleId,
-            appName: target.appName,
-            processIdentifier: 0,
-            query: query,
-            maxResults: 8
-        )
-        guard let picked = highConfidenceMenuCandidate(from: matches, query: query) else {
-            return false
-        }
-
-        Task {
-            let app = await activateOrLaunchSemanticApp(
-                bundleIdentifier: target.bundleId,
-                appName: target.appName
-            )
-            guard let app else {
-                await MainActor.run {
-                    remPanelChatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "I couldn't open \(target.appName) to run that menu action.",
-                            isError: true
-                        )
-                    )
-                    remPanelIsProcessing = false
-                }
-                return
-            }
-            AXActionResolver.shared.execute(menuPath: picked.path, in: app)
-            await MainActor.run {
-                remPanelChatMessages.append(
-                    AIChatMessage(role: .assistant, content: "✅ \(picked.pathString)")
-                )
-                remPanelIsProcessing = false
-                searchState.query = ""
-            }
-        }
-        return true
-    }
-
-    func highConfidenceMenuCandidate(from items: [AXMenuItem], query: String) -> AXMenuItem?
-    {
-        let q = AppMenuCapabilityCache.normalize(query)
-        let tokens = q.split(separator: " ").map(String.init).filter { $0.count > 2 }
-        let scored = items.compactMap { item -> (AXMenuItem, Int)? in
-            let title = AppMenuCapabilityCache.normalize(item.title)
-            let path = AppMenuCapabilityCache.normalize(item.pathString)
-            var score = 0
-            if title == q {
-                score += 100
-            } else if title.hasPrefix(q) {
-                score += 75
-            } else if title.contains(q) {
-                score += 55
-            } else if path.contains(q) {
-                score += 35
-            }
-            for token in tokens {
-                if title == token {
-                    score += 40
-                } else if title.hasPrefix(token) {
-                    score += 28
-                } else if title.contains(token) {
-                    score += 18
-                } else if path.contains(token) {
-                    score += 10
-                }
-            }
-            if !item.isEnabled { score = max(0, score - 20) }
-            guard score >= 40 else { return nil }
-            return (item, score)
-        }.sorted { $0.1 > $1.1 }
-        return scored.first?.0
-    }
-
-    /// Fallback for Ollama (no tool_use): ask AI to output a rem command, then run it directly.
-    func handleRemPanelQueryLegacy(
-        query: String, systemPrompt: String, provider: AIProvider, apiKey: String?
-    ) async {
-        let legacySystemMsg =
-            systemPrompt
-            + "\n\nIMPORTANT: Respond with ONLY the exact shell command to run (starting with `rem`), nothing else.\nExample: rem add \"buy milk\" --due \"tomorrow at 9am\""
-        let historyWithSystem: [ChatMessage] = [
-            ChatMessage(role: .system, content: legacySystemMsg)
-        ]
-        do {
-            let response = try await AIProviderService.shared.sendMessage(
-                query,
-                context: .none,
-                provider: provider,
-                apiKey: apiKey,
-                conversationHistory: historyWithSystem
-            )
-            // Extract the rem command from the AI response
-            let lines = response.components(separatedBy: .newlines)
-            let cmd =
-                lines.first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("rem ") })
-                ?? lines.first(where: { $0.contains("rem ") })
-                ?? ""
-            let remCmd = cmd.trimmingCharacters(in: .init(charactersIn: "`\" "))
-            if remCmd.isEmpty {
-                await MainActor.run {
-                    remPanelChatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content:
-                                "I couldn't figure out the right rem command. Try being more specific, e.g. \"add buy milk tomorrow at 9am\""
-                        ))
-                    remPanelIsProcessing = false
-                }
-                return
-            }
-            let (success, output) = await TerminalAIBridge.shared.processAICommand(
-                remCmd, purpose: "rem")
-            await MainActor.run {
-                let reply =
-                    success
-                    ? "✅ Done! Ran: `\(remCmd)`\n\(output.isEmpty ? "" : output)"
-                    : "❌ Failed: `\(remCmd)`\n\(output)"
-                remPanelChatMessages.append(
-                    AIChatMessage(role: .assistant, content: reply, isError: !success))
-                remPanelIsProcessing = false
-                searchState.appPanelAllItems = []
-                reloadAppPanelData(for: "reminders")
-            }
-        } catch {
-            await MainActor.run {
-                remPanelChatMessages.append(
-                    AIChatMessage(
-                        role: .assistant,
-                        content: "⚠️ \(error.localizedDescription)", isError: true))
-                remPanelIsProcessing = false
-            }
-        }
-    }
-
-    func checkRemInstalled() {
-        Task {
-            // Check known install paths directly — app doesn't inherit shell PATH
-            let home = NSHomeDirectory()
-            let knownPaths = [
-                "/usr/local/bin/rem",
-                "/opt/homebrew/bin/rem",
-                "\(home)/.local/bin/rem",
-                "\(home)/go/bin/rem",
-                "\(home)/.cargo/bin/rem",
-                "\(home)/bin/rem",
-            ]
-            let fm = FileManager.default
-            if knownPaths.contains(where: { fm.fileExists(atPath: $0) }) {
-                await MainActor.run { remIsInstalled = true }
-                return
-            }
-            // Fallback: login shell which — loads user's full PATH
-            let proc = Process()
-            proc.launchPath = "/bin/bash"
-            proc.arguments = ["-l", "-c", "which rem"]
-            proc.standardOutput = Pipe()
-            proc.standardError = Pipe()
-            try? proc.run()
-            proc.waitUntilExit()
-            await MainActor.run { remIsInstalled = proc.terminationStatus == 0 }
-        }
-    }
-
-    func installRem() {
-        // Copy install command to clipboard — user runs it in their own terminal
-        // (curl|bash is blocked by TerminalAIBridge security policy, correctly so)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(
-            "curl -fsSL https://rem.sidv.dev/install | bash", forType: .string)
-        remPanelChatMessages.append(
-            AIChatMessage(
-                role: .assistant,
-                content:
-                    "📋 Install command copied to clipboard!\n\nPaste it in Terminal:\n```\ncurl -fsSL https://rem.sidv.dev/install | bash\n```\nAnswer **n** when asked about the AI agent skill — ILauncher uses your selected provider (\(AppSettings.shared.selectedAIProvider.shortName)) instead.\n\nAlternatively: open ILauncher terminal → type \"install rem\" → AI will handle it."
-            ))
-    }
-
-    func isAffirmativeResponse(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let positives = [
-            "yes", "y", "ok", "okay", "sure", "do it", "go ahead", "run it", "execute", "confirm",
-        ]
-        return positives.contains(where: { normalized == $0 })
-    }
-
-    func isNegativeResponse(_ text: String) -> Bool {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let negatives = ["no", "n", "stop", "cancel", "don't", "do not", "nah"]
-        return negatives.contains(where: { normalized == $0 })
     }
 
     func beginL2AIRequest() -> UUID {
@@ -2192,6 +1474,27 @@ extension LauncherView {
         handleL2Query(query, skipMenuRouter: false)
     }
 
+    func isExplicitAppFindCommand(_ query: String, rawScopedQuery: String) -> Bool {
+        let candidates = [query, rawScopedQuery]
+            .map { normalizedDockPillText($0) }
+            .filter { !$0.isEmpty }
+
+        let explicitPatterns = [
+            #"^(open|show|use)\s+(app\s+)?find\b"#,
+            #"^(open|show|use)\s+(app\s+)?search\b"#,
+            #"^(find|search|lookup|look\s+for)\s+.+\s+(in|inside|within)\s+(this\s+)?(app|application|window)\b"#,
+            #"^(find|search|lookup|look\s+for)\s+(in|inside|within)\s+(this\s+)?(app|application|window)\b"#,
+            #"^(app|application|window)\s+(find|search)\b"#,
+            #"^(find|search)\s+(menu|menus|command|commands)\b"#,
+        ]
+
+        return candidates.contains { candidate in
+            explicitPatterns.contains { pattern in
+                candidate.range(of: pattern, options: .regularExpression) != nil
+            }
+        }
+    }
+
     /// Fuzzy-match query against Context Trigger rule names. If a rule matches:
     ///   - conditions pass  → execute its first pill, show "Running…" in chat
     ///   - conditions fail  → show a contextual hint about what's needed
@@ -2204,14 +1507,27 @@ extension LauncherView {
         let rules = AppSettings.shared.axTriggerRules.filter { $0.isEnabled && !$0.pills.isEmpty }
         guard !rules.isEmpty else { return false }
 
+        func triggerTokens(_ text: String) -> [String] {
+            text.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { token in
+                    token.count >= 3
+                        && !["the", "and", "for", "with", "from", "this", "that", "into", "what", "when", "where", "how", "why"].contains(token)
+                }
+        }
+
         func matchScore(_ ruleName: String) -> Int {
             let n = ruleName.lowercased()
             if n == q { return 100 }
-            if q.contains(n) || n.contains(q) { return 80 }
-            let nameWords = n.components(separatedBy: " ").filter { !$0.isEmpty }
-            let queryWords = q.components(separatedBy: " ").filter { !$0.isEmpty }
+            if q.count >= 8, q.contains(n) || n.contains(q) { return 80 }
+            let nameWords = triggerTokens(n)
+            let queryWords = triggerTokens(q)
+            guard !nameWords.isEmpty, !queryWords.isEmpty else { return 0 }
             let hits = nameWords.filter { nw in
-                queryWords.contains { qw in qw.contains(nw) || nw.contains(qw) }
+                queryWords.contains { qw in
+                    qw == nw || (qw.count >= 4 && nw.hasPrefix(qw)) || (nw.count >= 4 && qw.hasPrefix(nw))
+                }
             }.count
             return hits > 0 ? hits * 20 : 0
         }
@@ -2278,34 +1594,25 @@ extension LauncherView {
     /// Match query against SystemCommandsRegistry. Execute immediately if found.
     @discardableResult
     func trySystemCommand(_ query: String) -> Bool {
+        guard isGlobalContextActive,
+            !aiMode.isActive,
+            searchState.activeSmartQueryKey == nil,
+            !isCompactSmartScope,
+            !l2.chatArmed,
+            !l2.showChatPopover
+        else { return false }
         guard let cmd = SystemCommandsRegistry.shared.bestMatch(for: query) else { return false }
-        AppToast.show(
-            "Running \(cmd.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0,
-            centered: true)
         searchState.query = ""
-        let ctx = AXContextReader.shared.current
-        let envVars: [String: String] = [
-            "CD_QUERY": query,
-            "CD_URL": ctx.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
-            "CD_TEXT": ctx.selectedText ?? "",
-            "CD_APP": ctx.appName,
-        ]
-        switch cmd.scriptType.lowercased() {
-        case "applescript":
-            AXTriggerRuleEngine.shared.run(type: .appleScript, value: cmd.script, envVars: envVars)
-        default:
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("syscmd_\(UUID().uuidString).sh")
-            try? cmd.script.write(to: tmp, atomically: true, encoding: .utf8)
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
-            AXTriggerRuleEngine.shared.run(type: .scriptFile, value: tmp.path, envVars: envVars)
-        }
+        runSystemCommand(cmd, originalQuery: query)
         return true
     }
 
     func handleL2Query(_ query: String, skipMenuRouter: Bool) {
         guard !query.isEmpty else { return }
+        let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
+        armContextDockChat()
+        l2.showChatPopover = true
+        l2.chatDismissed = false
         if handleL2TaskControlQueryIfNeeded(query) {
             return
         }
@@ -2313,7 +1620,53 @@ extension LauncherView {
             executeFindToken(findToken, userMessage: "find \(query)")
             return
         }
-        if tryExecuteTriggerRuleByName(query) { return }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let dockScope = resolveDockScope(for: query)
+        let rawScopedSearchQuery = rawScopedActionQuery(for: query, scope: dockScope)
+        let scopedBundleId = dockScope.scopedBundleId.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let scopedAppName = dockScope.scopedAppName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let isExplicitScopedApp =
+            dockScope.isExplicitAppScope
+            && !scopedBundleId.isEmpty
+            && !scopedAppName.isEmpty
+        // Global context + live selection or clipboard → query is about the content; skip app routing
+        let globalSelectionActive =
+            dockScope.isGlobalScope
+            && (activeSelection != nil || (showGlobalClipboardPill && !globalClipboardText.isEmpty))
+
+        // Does the user have meaningful selected content to talk about?
+        let hasActiveSelection = activeSelection != nil
+
+        // ── Detect question-style queries ─────────────────────────────────────
+        let looksLikeQuestion: Bool = {
+            let q = normalizedQuery
+            return q.hasSuffix("?")
+                || q.hasPrefix("what") || q.hasPrefix("how") || q.hasPrefix("why")
+                || q.hasPrefix("tell") || q.hasPrefix("explain") || q.hasPrefix("describe")
+                || q.hasPrefix("show me") || q.hasPrefix("summarize") || q.hasPrefix("who")
+                || q.hasPrefix("when") || q.hasPrefix("where") || q.hasPrefix("is ")
+                || q.hasPrefix("can ") || q.hasPrefix("does ") || q.hasPrefix("do ")
+                || q.hasPrefix("translate") || q.hasPrefix("write") || q.hasPrefix("give me")
+        }()
+
+        let scopedHasLinkedCLI =
+            !dockScope.isGlobalScope
+            && !scopedBundleId.isEmpty
+            && !terminalPackageManager.packages(
+                forContextBundleId: scopedBundleId,
+                query: "",
+                maxResults: 1
+            ).isEmpty
+        let shouldStayInScopedAIChat =
+            wasContextDockChatActive
+            && !dockScope.isGlobalScope
+            && !isGlobalContextActive
+
+        if !looksLikeQuestion && !scopedHasLinkedCLI, tryExecuteTriggerRuleByName(query) { return }
         if trySystemCommand(query) { return }
         if let existingTask = l2.currentTask {
             existingTask.cancel()
@@ -2328,49 +1681,10 @@ extension LauncherView {
             l2.chatContextKey = currentKey == "none" ? l2.chatContextKey : currentKey
         }
 
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let dockScope = resolveDockScope(for: query)
-        let rawScopedSearchQuery = rawScopedActionQuery(for: query, scope: dockScope)
-        let scopedBundleId = dockScope.scopedBundleId.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let scopedAppName = dockScope.scopedAppName.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let isExplicitScopedApp =
-            dockScope.isExplicitAppScope
-            && !scopedBundleId.isEmpty
-            && !scopedAppName.isEmpty
-
-        // Global context + live selection or clipboard → query is about the content; skip app routing
-        let globalSelectionActive =
-            dockScope.isGlobalScope
-            && (activeSelection != nil || (showGlobalClipboardPill && !globalClipboardText.isEmpty))
-
-        // Does the user have meaningful selected content to talk about?
-        let hasActiveSelection = activeSelection != nil
-
-        // ── Route to global context when user has a selection ─────────────────
-        // Text selected, files selected, folders selected → user wants to TALK
-        // about that content, not trigger a menu action. Activate global context
-        // so the AI gets the selection as its primary subject.
-        if hasActiveSelection && !isGlobalContextActive && !isExplicitAppScopeLocked {
-            globalContextActivation = GlobalContextActivation(autoActivated: true)
-        }
-
-        // ── Detect question-style queries ─────────────────────────────────────
-        let looksLikeQuestion: Bool = {
-            let q = normalizedQuery
-            return q.hasSuffix("?")
-                || q.hasPrefix("what") || q.hasPrefix("how") || q.hasPrefix("why")
-                || q.hasPrefix("tell") || q.hasPrefix("explain") || q.hasPrefix("describe")
-                || q.hasPrefix("show me") || q.hasPrefix("summarize") || q.hasPrefix("who")
-                || q.hasPrefix("when") || q.hasPrefix("where") || q.hasPrefix("is ")
-                || q.hasPrefix("can ") || q.hasPrefix("does ") || q.hasPrefix("do ")
-                || q.hasPrefix("translate") || q.hasPrefix("write") || q.hasPrefix("give me")
-        }()
-
-        if let findIntent = resolvedFindIntent(
+        let findIntentMustBeExplicit =
+            wasContextDockChatActive || scopedHasLinkedCLI || looksLikeQuestion
+        if (!findIntentMustBeExplicit || isExplicitAppFindCommand(query, rawScopedQuery: rawScopedSearchQuery)),
+            let findIntent = resolvedFindIntent(
             for: query,
             dockScope: dockScope,
             rawScopedQuery: rawScopedSearchQuery
@@ -2382,14 +1696,13 @@ extension LauncherView {
         // ── Menu Intent Router ────────────────────────────────────────────────
         // Only runs when:
         //   • Not explicitly skipped (recursion guard)
-        //   • User has NO active selection (selection → global context chat, not menu click)
-        //   • Query does NOT look like a question (questions → AI answer, not menu click)
+        //   • Query does NOT look like a question (selection-oriented questions → AI answer)
         //   • App has a cached menu snapshot to search
         let menuRouteEligible =
             !skipMenuRouter
-            && !hasActiveSelection  // selection = user wants to chat, not click menus
             && !looksLikeQuestion  // question  = user wants an AI answer
             && !isGlobalContextActive  // global context already active = chat mode
+            && !shouldStayInScopedAIChat  // continued scoped chat stays AI, not menu scan
         let menuRouteTarget: (bundleId: String, appName: String)? = {
             if isExplicitScopedApp {
                 return (scopedBundleId, scopedAppName)
@@ -2457,7 +1770,7 @@ extension LauncherView {
             return
         }
 
-        if let transformIntent = transformShareIntent(for: query) {
+        if !shouldStayInScopedAIChat, let transformIntent = transformShareIntent(for: query) {
             executeTransformShareIntent(transformIntent, userMessage: query)
             return
         }
@@ -2535,7 +1848,8 @@ extension LauncherView {
             dockScope.scopedBundleId == "com.apple.mail"
             && isQuestionStyleMailQuery(rawScopedSearchQuery)
 
-        if !shouldSkipCrossAppMailRouting,
+        if !shouldStayInScopedAIChat,
+            !shouldSkipCrossAppMailRouting,
             let intent = CrossAppNLHandler.shared.parse(normalizedQuery)
         {
             executeCrossAppIntent(intent, userMessage: query)
@@ -2630,8 +1944,9 @@ extension LauncherView {
 
         let l2RequestID = beginL2AIRequest()
 
-        detectAndUpdateContext()
-
+        // Do not run the full context detector while SwiftUI is handling submit.
+        // AX/context lifecycle updates remain authoritative; this bounded live read
+        // only fills a missing selection for the request being submitted.
         if case .none = currentContext {
             if let frontmostApp = contextTargetApp(),
                 let selectedText = ContextDetector.shared.getSelectedText(from: frontmostApp),
@@ -2683,6 +1998,12 @@ extension LauncherView {
             : (dockCLIContextPrompt.isEmpty
                 ? proposalAppendix : dockCLIContextPrompt + "\n\n" + proposalAppendix)
 
+        let scopedConversationContext = sanitizedConversationContextForScope(
+            effectiveConversationUserContext,
+            scopedBundleId: scopedBundleId,
+            scopedAppName: scopedAppName
+        )
+
         // Store original query for potential re-execution after extension install
         originalUserQuery = query
         l2.lastRunnableQuery = query
@@ -2695,7 +2016,7 @@ extension LauncherView {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 isSearchBarExpanded = true
             }
-            updateWindowSize()
+            requestWindowSizeUpdate(reason: .rowLayoutChanged)
         }
 
         let frontmostName: String? = {
@@ -2712,7 +2033,7 @@ extension LauncherView {
         }()
 
         let selectedFiles: [URL] = {
-            if case .filesSelected(let urls) = effectiveConversationUserContext {
+            if case .filesSelected(let urls) = scopedConversationContext {
                 return urls
             }
             return []
@@ -2743,7 +2064,7 @@ extension LauncherView {
             || queryLower.contains("highlight") || queryLower.contains("overview")
             || queryLower.contains("analyse") || queryLower.contains("analyze")
         if isFileContentQuery,
-            case .filesSelected(let urls) = effectiveConversationUserContext,
+            case .filesSelected(let urls) = scopedConversationContext,
             let pdf = ContextDetector.shared.analyzeFiles(urls).first(where: { $0.type == "pdf" }),
             let pdfContent = pdf.content,
             !pdfContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2785,7 +2106,7 @@ extension LauncherView {
 
         if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
             l2.currentTask = Task {
-                await executeL2Extension(top.ilExtension, context: effectiveConversationUserContext)
+                await executeL2Extension(top.ilExtension, context: scopedConversationContext)
                 await MainActor.run { finishL2AIRequest(l2RequestID) }
             }
             return
@@ -2795,15 +2116,11 @@ extension LauncherView {
 
         // ── Ensure browser context is set correctly for Safari / Chrome ──────
         // If frontmost app is a browser but currentContext isn't .url yet, fix it now.
-        let browserBundles = [
-            "com.apple.Safari", "com.google.Chrome", "com.brave.Browser",
-            "org.chromium.Chromium", "com.microsoft.edgemac",
-        ]
         let shouldUseFrontmostBrowserContext =
-            !isExplicitScopedApp || browserBundles.contains(scopedBundleId)
+            scopedBundleId.isEmpty ? !isExplicitScopedApp : isContextDockBrowserBundle(scopedBundleId)
         if shouldUseFrontmostBrowserContext,
             !dockScope.isGlobalScope,
-            browserBundles.contains(frontmost.bundleID)
+            isContextDockBrowserBundle(frontmost.bundleID)
         {
             let liveURL = axContext.currentURL ?? frontmost.bundleID
             if case .url = currentContext { /* already set */
@@ -2814,7 +2131,7 @@ extension LauncherView {
             if let browser = AppDelegate.shared?.previousFrontmostApp, !liveURL.isEmpty {
                 let pid = browser.processIdentifier
                 if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
-                    Task.detached(priority: .userInitiated) {
+                    Task { @MainActor in
                         AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
                     }
                 }
@@ -2822,8 +2139,11 @@ extension LauncherView {
         }
 
         // Fast-path: Safari NL commands ("search youtube for X", "close tab", etc.) skip AI entirely
-        if frontmost.bundleID == "com.apple.Safari"
-            || SafariBrowserBridge.shared.safariContextIfFresh() != nil,
+        let safariCommandScopeAllowed =
+            scopedBundleId == "com.apple.Safari"
+            || (!isExplicitScopedApp && frontmost.bundleID == "com.apple.Safari")
+        if !shouldStayInScopedAIChat,
+            safariCommandScopeAllowed,
             let directCmd = SafariCommandBridge.shared.parseIntent(query)
         {
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
@@ -2844,15 +2164,19 @@ extension LauncherView {
 
         // Use the user's selected AI provider in L2 context dock (respects Settings → AI Provider).
         let provider: AIProvider = settings.selectedAIProvider
-        let rawKey = AppSettings.shared.getAPIKey(for: provider)
+        let rawKey = provider.requiresAPIKey ? AppSettings.shared.getAPIKey(for: provider) : ""
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
-        // Guard: if a cloud provider is selected but has no key, show guidance now — don't wait for a network error
-        if provider != .onDevice && provider != .shortcuts && apiKey == nil {
+        // Guard: bridge/local providers use endpoint/model, not API keys.
+        if provider != .onDevice && provider != .shortcuts
+            && !settings.isProviderConfigured(provider)
+        {
             l2.isLoading = false
-            let guide = QueryFailureGuide.shared.instant(
-                for: .noAPIKey(provider: provider.shortName), originalQuery: query
-            )
+            let guide = provider.requiresAPIKey
+                ? QueryFailureGuide.shared.instant(
+                    for: .noAPIKey(provider: provider.shortName), originalQuery: query
+                )
+                : "\(provider.displayName) is not configured. Check endpoint and model in Settings -> AI Provider."
             l2.chatMessages.append(AIChatMessage(role: .assistant, content: guide, isError: true))
             finishL2AIRequest(l2RequestID)
             return
@@ -2865,33 +2189,86 @@ extension LauncherView {
 
         l2.currentTask = Task {
             do {
-                print("🧠 [L2 AI] Provider: \(provider.shortName), direct message path")
+                #if DEBUG
+                print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
+                #endif
+
+                let runtimeCLIContextPrompt = await self.runtimeAppCLIContextPrompt(
+                    bundleId: scopedBundleId,
+                    appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName,
+                    query: query
+                )
+                // Real Apple-apps data + weather, so Context Dock chat answers these like
+                // General Chat does (alongside its menu/AX/terminal-tool capabilities).
+                let appleData = await self.appleAppsAndWeatherContext(for: query)
+                // Live MCP tools linked to this app (App Adapters → Linked MCP).
+                let mcpBlock = await MCPRuntime.shared.toolPromptBlock(forBundleId: scopedBundleId)
+                let activeContextPrompt = [
+                    finalContextPrompt, runtimeCLIContextPrompt, appleData, mcpBlock,
+                ]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n\n")
 
                 if provider != .onDevice && provider != .shortcuts {
-                    let finalResponse = try await AIProviderService.shared.sendMessage(
-                        query,
-                        context: effectiveConversationUserContext,
+                    // Collects MCP tools the model invokes via the tool loop, for the chip.
+                    let mcpRan = MCPRunCollector()
+                    let commandExecutor: (String, String) async -> (Bool, String) = {
+                        command, purpose in
+                        // The model often wraps an mcp_call inside a TERMINAL_COMMAND tag — route
+                        // it to the MCP server instead of running it as a shell command (which
+                        // would open Safari / do the wrong thing).
+                        if let call = self.parseMCPCall(from: command) {
+                            let result = (try? await MCPRuntime.shared.callTool(
+                                bundleId: scopedBundleId, server: call.server, tool: call.tool,
+                                arguments: call.arguments)) ?? "MCP tool failed"
+                            await mcpRan.add(
+                                "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+                            return (true, result)
+                        }
+                        return await TerminalAIBridge.shared.processAICommand(
+                            command, purpose: purpose)
+                    }
+                    let toolQuery = activeContextPrompt.isEmpty
+                        ? query
+                        : "\(activeContextPrompt)\n\nUser request: \(query)"
+                    var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
+                        toolQuery,
+                        context: scopedConversationContext,
                         provider: provider,
                         apiKey: apiKey,
                         conversationHistory: chatHistory,
-                        additionalContextPrompt: finalContextPrompt
+                        commandExecutor: commandExecutor,
+                        additionalSystemPrompt: activeContextPrompt.isEmpty ? nil : activeContextPrompt
                     )
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
+                    var toolsRan = await mcpRan.tools
+                    // Fallback: model emitted a raw mcp_call as its final text (not via the loop).
+                    if let resolved = await self.resolveMCPToolCall(
+                        in: finalResponse, bundleId: scopedBundleId, userQuery: query,
+                        provider: provider, apiKey: apiKey, history: chatHistory,
+                        systemPrompt: activeContextPrompt)
+                    {
+                        finalResponse = resolved.answer
+                        toolsRan += resolved.toolsRan
+                    }
                     await MainActor.run {
-                        var msg = AIChatMessage(role: .assistant, content: finalResponse)
+                        var msg = AIChatMessage(
+                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan)
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
-                        if !finalContextPrompt.isEmpty {
+                        if !activeContextPrompt.isEmpty {
                             extractAndInsertDockApprovalCards(
                                 from: msg.content, intoMessageAt: msg.id)
                         }
                         finishL2AIRequest(l2RequestID)
                     }
                     // Dispatch any Safari browser control tags embedded in the response
-                    if case .safariCommand(let cmd) = parseL2AIResponse(finalResponse) {
+                    if safariCommandScopeAllowed,
+                        case .safariCommand(let cmd) = parseL2AIResponse(finalResponse)
+                    {
                         let result = await SafariCommandBridge.shared.execute(cmd)
                         if !result.isEmpty {
                             await MainActor.run {
@@ -2911,10 +2288,15 @@ extension LauncherView {
                     // all file/app/text context via the `context` parameter. Passing a pre-built
                     // context string as message would double the context and overflow Foundation Models.
                     let onDeviceContext: UserContext = {
+                        if let page = webResearch.pages.last,
+                            isContextDockBrowserBundle(scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId)
+                        {
+                            return .url(page.url)
+                        }
                         if isExplicitScopedApp && !scopedBundleId.isEmpty {
                             return .appFocused(name: scopedAppName, bundleID: scopedBundleId)
                         }
-                        return effectiveConversationUserContext
+                        return scopedConversationContext
                     }()
                     // Prepend date/time as a lightweight header so the model knows current time
                     let dateHeader = await MainActor.run { self.currentDateTimeContextBlock() }
@@ -2926,7 +2308,7 @@ extension LauncherView {
                             message: onDeviceMessage,
                             context: onDeviceContext,
                             history: onDeviceHistory,
-                            additionalContextPrompt: finalContextPrompt,
+                            additionalContextPrompt: activeContextPrompt,
                             onPartial: { token in
                                 DispatchQueue.main.async {
                                     if let idx = self.l2.chatMessages.firstIndex(where: {
@@ -2963,7 +2345,7 @@ extension LauncherView {
                                         )
                                         self.l2.chatMessages[idx] = tagged
                                         let finalContent = tagged.content
-                                        if !finalContextPrompt.isEmpty {
+                                        if !activeContextPrompt.isEmpty {
                                             self.extractAndInsertDockApprovalCards(
                                                 from: finalContent, intoMessageAt: msgId)
                                         }
@@ -3005,6 +2387,24 @@ extension LauncherView {
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
+                    }
+                    // On-device MCP: if the streamed reply was a tool-call directive, run the
+                    // tool and replace the message with a grounded answer.
+                    let onDeviceReply = await MainActor.run {
+                        self.l2.chatMessages.first(where: { $0.id == msgId })?.content ?? ""
+                    }
+                    if let resolved = await self.resolveMCPToolCall(
+                        in: onDeviceReply, bundleId: scopedBundleId, userQuery: query,
+                        provider: provider, apiKey: apiKey, history: onDeviceHistory,
+                        systemPrompt: activeContextPrompt)
+                    {
+                        await MainActor.run {
+                            if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
+                                self.l2.chatMessages[idx] = AIChatMessage(
+                                    id: msgId, role: .assistant, content: resolved.answer,
+                                    mcpToolsRan: resolved.toolsRan)
+                            }
+                        }
                     }
                     await MainActor.run {
                         finishL2AIRequest(l2RequestID)
@@ -3049,24 +2449,391 @@ extension LauncherView {
         }
     }
 
-    func sendToAIProvider(query: String) async throws -> String {
+    /// Real data from the user's Apple apps (Calendar, Reminders, Contacts, Photos) injected
+    /// into General Chat when the query is about them — otherwise on-device AI guesses
+    /// ("This week is currently ongoing") because it has no actual data. Empty when the query
+    /// isn't about an Apple app or nothing is found.
+    func appleAppsContextBlock(for query: String) -> String {
+        let q = query.lowercased()
+        let api = AppleAppsAPI.shared
+        var blocks: [String] = []
+
+        let iso = ISO8601DateFormatter()
+        let human = DateFormatter()
+        human.dateFormat = "EEE d MMM yyyy, h:mm a"
+        func fmt(_ isoString: Any?) -> String {
+            guard let s = isoString as? String, let d = iso.date(from: s) else { return "" }
+            return human.string(from: d)
+        }
+
+        let wantsEvents =
+            ["event", "calendar", "meeting", "appointment", "schedule", "agenda", "busy",
+             "free time", "plan", "tomorrow", "today", "this week", "next week", "coming week",
+             "weekend"].contains { q.contains($0) }
+        if wantsEvents {
+            // Span the whole current month (incl. earlier days) through the next ~2 months so
+            // "this month", "this week", and specific-date questions all resolve accurately.
+            let cal = Calendar.current
+            let monthStart =
+                cal.date(from: cal.dateComponents([.year, .month], from: Date()))
+                ?? cal.startOfDay(for: Date())
+            let start = min(monthStart, cal.date(byAdding: .day, value: -7, to: Date()) ?? monthStart)
+            let end = cal.date(byAdding: .day, value: 60, to: cal.startOfDay(for: Date())) ?? Date()
+            let events = api.getEvents(from: start, to: end)
+            if events.isEmpty {
+                blocks.append("## Calendar (this month → next 60 days): no events.")
+            } else {
+                // Cap at 30 — on-device Foundation Models has a small context window; a huge
+                // event dump overflows it and the model returns nothing.
+                let lines = events.prefix(30).map { ev -> String in
+                    let title = (ev["title"] as? String) ?? "(untitled)"
+                    let when =
+                        (ev["isAllDay"] as? Bool ?? false)
+                        ? "All day \(fmt(ev["startDate"]))" : fmt(ev["startDate"])
+                    let loc = (ev["location"] as? String).map { " @ \($0)" } ?? ""
+                    return "- \(when): \(title)\(loc)"
+                }.joined(separator: "\n")
+                blocks.append(
+                    "## Calendar (this month → next 60 days) — real events:\n\(lines)")
+            }
+        }
+
+        if ["reminder", "task", "todo", "to-do", "to do", "due"].contains(where: q.contains) {
+            let reminders = api.getReminders(limit: 30)
+            if reminders.isEmpty {
+                blocks.append("## Reminders: none open.")
+            } else {
+                let lines = reminders.prefix(30).map { r -> String in
+                    let title = (r["title"] as? String) ?? "(untitled)"
+                    let due = fmt(r["dueDate"])
+                    return due.isEmpty ? "- \(title)" : "- \(title) (due \(due))"
+                }.joined(separator: "\n")
+                blocks.append("## Reminders — open items:\n\(lines)")
+            }
+        }
+
+        if ["contact", "phone number", "email of", "number of", "call ", "phone of"]
+            .contains(where: q.contains)
+        {
+            // Use the longest capitalized token as the name to search.
+            let nameGuess = query.split(separator: " ").map(String.init)
+                .filter { $0.first?.isUppercase ?? false }
+                .max(by: { $0.count < $1.count }) ?? ""
+            let contacts =
+                nameGuess.isEmpty ? api.getContacts(limit: 20) : api.searchContacts(query: nameGuess)
+            if !contacts.isEmpty {
+                let lines = contacts.prefix(10).map { c -> String in
+                    let name = (c["fullName"] as? String)?.trimmingCharacters(
+                        in: .whitespaces) ?? ""
+                    let phone = (c["phone"] as? String) ?? ""
+                    let email = (c["email"] as? String) ?? ""
+                    var parts = [name.isEmpty ? "(no name)" : name]
+                    if !phone.isEmpty { parts.append("📞 \(phone)") }
+                    if !email.isEmpty { parts.append("✉️ \(email)") }
+                    return "- " + parts.joined(separator: " — ")
+                }.joined(separator: "\n")
+                blocks.append("## Contacts — matches:\n\(lines)")
+            }
+        }
+
+        if ["photo", "picture", "screenshot"].contains(where: q.contains) {
+            let photos = api.getRecentPhotos(limit: 10)
+            if !photos.isEmpty {
+                blocks.append("## Photos — \(photos.count) recent items in the library.")
+            }
+        }
+
+        if ["note", "notes"].contains(where: q.contains) {
+            let nameGuess = query.split(separator: " ").map(String.init)
+                .filter { $0.first?.isUppercase ?? false }
+                .max(by: { $0.count < $1.count }) ?? ""
+            let notes =
+                nameGuess.isEmpty ? api.getNotes(limit: 15) : api.searchNotes(query: nameGuess)
+            if !notes.isEmpty {
+                let lines = notes.prefix(15).map { n -> String in
+                    let title = (n["title"] as? String) ?? "(untitled)"
+                    let body = ((n["body"] as? String) ?? "").prefix(120)
+                    return body.isEmpty ? "- \(title)" : "- \(title): \(body)"
+                }.joined(separator: "\n")
+                blocks.append("## Notes — matches:\n\(lines)")
+            }
+        }
+
+        if ["email", "mail", "inbox", "message from"].contains(where: q.contains) {
+            let emails = api.getRecentEmails(limit: 12)
+            if !emails.isEmpty {
+                let lines = emails.prefix(12).map { e -> String in
+                    let subject = (e["subject"] as? String) ?? "(no subject)"
+                    let sender = (e["sender"] as? String) ?? ""
+                    let unread = (e["read"] as? Bool ?? true) ? "" : " [unread]"
+                    return "- \(subject) — \(sender)\(unread)"
+                }.joined(separator: "\n")
+                blocks.append("## Mail — recent inbox:\n\(lines)")
+            }
+        }
+
+        if ["playing", "song", "music", "track", "now playing"].contains(where: q.contains) {
+            let music = api.getMusicInfo()
+            let title = (music["title"] as? String) ?? ""
+            if !title.isEmpty {
+                let artist = (music["artist"] as? String) ?? ""
+                let state = (music["state"] as? String) ?? ""
+                blocks.append(
+                    "## Music — \(state.isEmpty ? "" : "\(state): ")\(title)"
+                        + (artist.isEmpty ? "" : " by \(artist)"))
+            }
+        }
+
+        if ["tab", "tabs", "safari"].contains(where: q.contains) {
+            let tabs = api.getAllTabs()
+            if !tabs.isEmpty {
+                let lines = tabs.prefix(20).map { t -> String in
+                    let title = (t["title"] as? String) ?? ""
+                    let url = (t["url"] as? String) ?? ""
+                    return "- \(title.isEmpty ? url : title) (\(url))"
+                }.joined(separator: "\n")
+                blocks.append("## Safari — open tabs:\n\(lines)")
+            }
+        }
+
+        guard !blocks.isEmpty else { return "" }
+        return blocks.joined(separator: "\n\n")
+            + "\n\nAnswer the user's question directly and concisely from this real data. Do NOT"
+            + " add text telling the user to open an app — the UI shows an 'Open in <App>' button"
+            + " automatically."
+    }
+
+    /// Combined Apple-apps data + live weather for a query, ready to append to any chat
+    /// system prompt. Used by both General Chat and Context Dock chat so both answer with
+    /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
+    func appleAppsAndWeatherContext(for query: String) async -> String {
+        var block = appleAppsContextBlock(for: query)
+        let ql = query.lowercased()
+        if ["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
+            "how hot", "how cold", "degrees"].contains(where: ql.contains)
+        {
+            let place: String? = {
+                guard let range = ql.range(of: " in ") else { return nil }
+                let tail = query[range.upperBound...]
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " ?.!,"))
+                return tail.isEmpty ? nil : tail
+            }()
+            if let weather = await WeatherService.currentSummary(place: place) {
+                let w = "## Weather — real current conditions:\n\(weather)"
+                block = block.isEmpty ? w : block + "\n\n" + w
+            }
+        }
+        return block
+    }
+
+    /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.
+    actor MCPRunCollector {
+        private(set) var tools: [String] = []
+        func add(_ label: String) { tools.append(label) }
+    }
+
+    /// If the model's reply is an MCP tool-call directive, run the tool — then let the model
+    /// chain further tool calls (keeping the MCP block in context) until it answers in plain
+    /// language or the step cap is hit. Returns nil when the first reply isn't a tool call.
+    func resolveMCPToolCall(
+        in response: String, bundleId: String, userQuery: String,
+        provider: AIProvider, apiKey: String?, history: [ChatMessage], systemPrompt: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        guard parseMCPCall(from: response) != nil else { return nil }
+
+        let maxSteps = 5
+        var transcript = history
+        var current = response
+        var toolsRan: [String] = []
+
+        for _ in 0..<maxSteps {
+            guard let call = parseMCPCall(from: current) else {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+            }
+            let result: String
+            do {
+                result = try await MCPRuntime.shared.callTool(
+                    bundleId: bundleId, server: call.server, tool: call.tool,
+                    arguments: call.arguments)
+            } catch {
+                return (
+                    answer: "MCP tool “\(call.tool)” failed: \(error.localizedDescription)",
+                    toolsRan: toolsRan)
+            }
+            toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+            transcript.append(ChatMessage(role: .assistant, content: current))
+            let followup =
+                "Tool \"\(call.tool)\" returned:\n\(result)\n\n"
+                + "If you need another MCP tool, reply with the same single-line JSON. "
+                + "Otherwise answer the user's request in plain language: \(userQuery)"
+            transcript.append(ChatMessage(role: .user, content: followup))
+            let next = (try? await AIProviderService.shared.sendWithTools(
+                followup, context: .none, provider: provider, apiKey: apiKey,
+                conversationHistory: transcript,
+                commandExecutor: { _, _ in (false, "") },
+                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
+            ))?.finalResponse ?? ""
+            if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (answer: "MCP tool “\(call.tool)” result:\n\(result)", toolsRan: toolsRan)
+            }
+            current = next
+        }
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+    }
+
+    /// Parse a `{"mcp_call": {"server","tool","arguments"}}` directive out of an AI reply —
+    /// even when the model wraps it in a ```json fence or a [TERMINAL_COMMAND: …] tag. Finds
+    /// the balanced JSON object that encloses the "mcp_call" key.
+    func parseMCPCall(from response: String)
+        -> (server: String, tool: String, arguments: [String: Any])?
+    {
+        guard let keyRange = response.range(of: "\"mcp_call\"") else { return nil }
+        // Nearest '{' before the key opens the wrapper object.
+        guard let open = response[..<keyRange.lowerBound].lastIndex(of: "{") else { return nil }
+        // Balance-match to its closing '}'.
+        var depth = 0
+        var end: String.Index?
+        var i = open
+        while i < response.endIndex {
+            switch response[i] {
+            case "{": depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 { end = response.index(after: i) }
+            default: break
+            }
+            if end != nil { break }
+            i = response.index(after: i)
+        }
+        guard let endIdx = end else { return nil }
+        let slice = String(response[open..<endIdx])
+        guard let data = slice.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let call = root["mcp_call"] as? [String: Any],
+            let tool = call["tool"] as? String
+        else { return nil }
+        let server = (call["server"] as? String) ?? ""
+        let args = (call["arguments"] as? [String: Any]) ?? [:]
+        return (server: server, tool: tool, arguments: args)
+    }
+
+    /// "Open in <App>" buttons to attach to an answer, derived from the Apple-app data the
+    /// query touched — lets the user jump straight to Calendar, Reminders, etc.
+    func referencedAppLaunches(for query: String) -> [AppLaunchAction] {
+        let q = query.lowercased()
+        var launches: [AppLaunchAction] = []
+        func add(_ keys: [String], _ label: String, _ icon: String, _ bundleId: String) {
+            guard keys.contains(where: q.contains) else { return }
+            launches.append(AppLaunchAction(label: label, systemIcon: icon, bundleId: bundleId))
+        }
+        add(
+            ["event", "calendar", "meeting", "appointment", "schedule", "agenda", "tomorrow",
+             "today", "this week", "next week", "coming week", "weekend"],
+            "Open Calendar", "calendar", "com.apple.iCal")
+        add(["reminder", "task", "todo", "to-do", "to do", "due"],
+            "Open Reminders", "checklist", "com.apple.reminders")
+        add(["contact", "phone number", "email of", "number of", "call ", "phone of"],
+            "Open Contacts", "person.crop.circle", "com.apple.AddressBook")
+        add(["photo", "picture", "screenshot"], "Open Photos", "photo", "com.apple.Photos")
+        add(["note", "notes"], "Open Notes", "note.text", "com.apple.Notes")
+        add(["email", "mail", "inbox", "message from"], "Open Mail", "envelope", "com.apple.mail")
+        add(["playing", "song", "music", "track", "now playing"],
+            "Open Music", "music.note", "com.apple.Music")
+        add(["tab", "tabs", "safari"], "Open Safari", "safari", "com.apple.Safari")
+        add(["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
+             "how hot", "how cold", "degrees"],
+            "Open Weather", "cloud.sun", "com.apple.weather")
+        return launches
+    }
+
+    func sendToAIProvider(query: String, attachments: [URL] = []) async throws -> String {
         // Build context from previous messages (uses aiMode.messages for global AI mode)
-        var context = aiMode.messages.map { msg in
-            ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
+        let history = aiMode.messages.map { msg in
+            ChatMessage(
+                role: msg.role == .user ? .user : .assistant,
+                content: msg.content
+            )
         }
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead
-        let sysContent = """
+        var sysContent = """
             You are a helpful AI assistant. Provide concise, accurate answers.
             Keep responses brief and to the point.
+            This is General Chat mode. Do not use frontmost app, browser page, Finder selection, menu commands, or Context Dock scope unless the user explicitly attached that item in this chat.
             \(currentDateTimeContextBlock())
             """
-        let systemMessage: [String: String] = ["role": "system", "content": sysContent]
+        if !attachments.isEmpty {
+            // Extract the actual content (PDF text, text/code/markdown) so on-device AI can
+            // answer about the file — passing only the filename gave the model nothing to
+            // read ("Unable to determine PDF content"). Images flow through as vision payload
+            // via the request attachments below.
+            let analyzed = ContextDetector.shared.analyzeFiles(Array(attachments.prefix(20)))
+            let listLines = analyzed.map { "- \($0.url.lastPathComponent) (\($0.type))" }
+                .joined(separator: "\n")
+            sysContent += "\n\nExplicit user attachments for this message:\n\(listLines)"
+            let contentBlocks = analyzed.compactMap { item -> String? in
+                guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !content.isEmpty
+                else { return nil }
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(content)"
+            }
+            if !contentBlocks.isEmpty {
+                sysContent +=
+                    "\n\nAttachment contents — use these to answer the user's question:\n\n"
+                    + contentBlocks.joined(separator: "\n\n")
+            }
+        }
 
-        // Insert system message at the beginning
-        context.insert(systemMessage, at: 0)
+        // Inject real Apple-apps data + live weather when the query is about them.
+        let appleData = await appleAppsAndWeatherContext(for: query)
+        if !appleData.isEmpty {
+            sysContent += "\n\n" + appleData
+        }
 
-        return try await sendToProvider(query: query, context: context)
+        // Selection Scope: ground the whole conversation in the user's current selection
+        // (text / page URL / files) so every turn answers about their actual content.
+        if let selText = aiMode.selectionText, !selText.isEmpty {
+            sysContent +=
+                "\n\nThe user is working with this SELECTED CONTENT — base your answers on it:\n"
+                + "\"\"\"\n\(String(selText.prefix(8000)))\n\"\"\""
+        }
+        if let pageURL = aiMode.selectionURL, !pageURL.isEmpty {
+            sysContent += "\n\nThe selection is from this page: \(pageURL)"
+        }
+        if !aiMode.selectionFiles.isEmpty {
+            let analyzed = ContextDetector.shared.analyzeFiles(aiMode.selectionFiles)
+            let blocks = analyzed.compactMap { item -> String? in
+                guard let c = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !c.isEmpty
+                else { return nil }
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(c)"
+            }
+            if !blocks.isEmpty {
+                sysContent +=
+                    "\n\nSelected file contents — use these:\n\n" + blocks.joined(separator: "\n\n")
+            }
+        }
+        // The model can send results through macOS Share (Mail/Messages/Notes/…) — when the
+        // user asks to send/share/email, finish with: SHARE_VIA: <destination>.
+        if aiMode.selectionText != nil || !aiMode.selectionFiles.isEmpty {
+            sysContent +=
+                "\n\nIf the user asks to send/share/email/message the result (e.g. \"summarize this"
+                + " and send to mail\"), produce the content, then append a final line exactly:"
+                + " SHARE_VIA: <Mail|Messages|Notes|Reminders|AirDrop|Freeform>."
+        }
+
+        let request = AIRequestBuilder.aiChat(
+            text: query,
+            history: history,
+            attachments: attachments
+        )
+        return try await AIProviderRouter.shared.sendPrepared(
+            request: request,
+            provider: settings.selectedAIProvider,
+            contextPrompt: sysContent
+        )
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
@@ -3099,7 +2866,11 @@ extension LauncherView {
                 """
         }
         sysL2 += "\n\n" + currentDateTimeContextBlock()
-        let axL2 = effectiveAXContextForConversation()
+        let scoped = currentContextDockChatScope
+        let axL2 = sanitizedAXContextForScope(
+            effectiveAXContextForConversation(),
+            scopedBundleId: scoped.bundleId
+        )
         if !axL2.isEmpty {
             sysL2 +=
                 "\n\n## Live App Context (use this to ground your answers)\n" + axL2.contextSummary
@@ -3125,7 +2896,6 @@ extension LauncherView {
         let safariCommandsAvailable =
             frontmost.bundleID == "com.apple.Safari"
             || l2.targetApp?.bundleId == "com.apple.Safari"
-            || SafariBrowserBridge.shared.safariContextIfFresh() != nil
         let isCloudProvider = settings.selectedAIProvider != .onDevice
         if safariCommandsAvailable && isCloudProvider {
             sysL2 += "\n\n" + SafariCommandBridge.compactSystemPromptBlock
@@ -3137,7 +2907,7 @@ extension LauncherView {
 
         // Check if we have image files selected (for vision support)
         var imageFiles: [URL] = []
-        if case .filesSelected(let urls) = effectiveConversationUserContext {
+        if case .filesSelected(let urls) = currentScopedConversationContext() {
             imageFiles = urls.filter { url in
                 let ext = url.pathExtension.lowercased()
                 return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"].contains(ext)
@@ -3157,492 +2927,69 @@ extension LauncherView {
     func sendToProvider(query: String, context: [[String: String]], imageFiles: [URL])
         async throws -> String
     {
-        switch settings.selectedAIProvider {
-        case .onDevice:
-            // Pass raw query — buildContextPrompt inside sendOnDevice builds context via the `context` parameter.
-            // Pre-building context here would double it and overflow Foundation Models' context window.
-            let dateHeader = currentDateTimeContextBlock()
-            let onDeviceMsg = dateHeader.isEmpty ? query : "\(dateHeader)\n\nUser request: \(query)"
-            return try await AIProviderService.shared.sendOnDevice(
-                onDeviceMsg,
-                context: effectiveConversationUserContext
+        var systemPrompt = context
+            .filter { $0["role"] == "system" }
+            .compactMap { $0["content"] }
+            .joined(separator: "\n\n")
+        // Context Dock chat answers with real Apple-apps data + weather too (same as General
+        // Chat), on top of its menu/AX/terminal-tool capabilities.
+        let appleData = await appleAppsAndWeatherContext(for: query)
+        if !appleData.isEmpty {
+            systemPrompt += "\n\n" + appleData
+        }
+        let history = context.compactMap { item -> ChatMessage? in
+            guard let roleValue = item["role"],
+                  roleValue != "system",
+                  let role = ChatMessage.MessageRole(rawValue: roleValue),
+                  let content = item["content"]
+            else { return nil }
+            return ChatMessage(role: role, content: content)
+        }
+        let capabilityPlanningRequested = !isGlobalQueryModeActive
+            && ["run ", "execute ", "rename ", "reveal ", "open ", "close ", "summarize this page"]
+                .contains(where: query.lowercased().contains)
+        let request = isGlobalQueryModeActive
+            ? AIRequestBuilder.globalContext(
+                text: query,
+                context: effectiveConversationUserContext,
+                history: history,
+                attachments: imageFiles
             )
-        case .openAI:
-            return try await sendToOpenAI(query: query, context: context, imageFiles: imageFiles)
-        case .googleGemini:
-            return try await sendToGemini(query: query, context: context, imageFiles: imageFiles)
-        case .anthropic:
-            return try await sendToAnthropic(query: query, context: context, imageFiles: imageFiles)
-        case .ollama:
-            return try await sendToOllama(query: query, context: context)
-        case .shortcuts:
-            return try await sendToShortcuts(query: query, context: context)
+            : AIRequestBuilder.contextDock(
+                text: query,
+                context: currentScopedConversationContext(),
+                history: history,
+                attachments: imageFiles,
+                mode: capabilityPlanningRequested ? .plan : .answer,
+                capabilityPrompt: capabilityPlanningRequested
+                    ? AIActionPlanner.shared.capabilityPlanningPrompt(
+                        bundleID: AXContextReader.shared.current.bundleId
+                    )
+                    : ""
+            )
+        let response = try await AIProviderRouter.shared.sendPrepared(
+            request: request,
+            provider: settings.selectedAIProvider,
+            contextPrompt: systemPrompt
+        )
+        guard capabilityPlanningRequested else { return response }
+        do {
+            let plan = try AIResponseParser.shared.parseActionPlan(response)
+            let result = try await AIExecutionEngine.shared.executeWithApproval(
+                plan,
+                context: currentScopedConversationContext()
+            )
+            return await AIResultExplanationService.shared.explain(
+                plan: plan,
+                result: result,
+                context: currentScopedConversationContext(),
+                provider: settings.selectedAIProvider
+            )
+        } catch AICapabilityError.invalidPlan {
+            return response
         }
     }
 
-    // MARK: - Process AI Response (Simplified for quick queries only)
-
-    // MARK: - AI Provider Implementations
-
-    func sendToOnDeviceAI(query: String, context: [[String: String]]) async throws -> String
-    {
-        // On-device AI using Apple's Foundation Models framework
-        // This requires macOS 26.0+ (macOS Tahoe) and Apple Silicon
-
-        #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
-                do {
-                    print("🤖 On-Device AI: Starting request...")
-
-                    // Import at runtime to avoid compilation issues on older macOS
-                    let session = LanguageModelSession()
-
-                    // Build the prompt with context, using custom system prompt
-                    var fullPrompt = ""
-
-                    // Add custom system prompt if not empty, otherwise use context system message
-                    let useCustomPrompt = !settings.onDeviceSystemPrompt.isEmpty
-                    if useCustomPrompt {
-                        print(
-                            "🤖 Using custom system prompt (\(settings.onDeviceSystemPrompt.count) chars)"
-                        )
-                        fullPrompt += "system: \(settings.onDeviceSystemPrompt)\n"
-                    }
-
-                    // Add conversation history (skip system message from context if we used custom)
-                    for msg in context {
-                        let role = msg["role"] ?? "user"
-                        let content = msg["content"] ?? ""
-
-                        // Skip system message if we already added custom prompt
-                        if useCustomPrompt && role == "system" {
-                            continue
-                        }
-
-                        fullPrompt += "\(role): \(content)\n"
-                    }
-
-                    fullPrompt += "user: \(query)\nassistant:"
-
-                    print("🤖 On-Device AI: Sending prompt (length: \(fullPrompt.count))")
-
-                    let response = try await session.respond(to: fullPrompt)
-                    print("🤖 On-Device AI: Response received successfully")
-                    return response.content
-                } catch {
-                    print("❌ On-Device AI Error: \(error.localizedDescription)")
-                    print("❌ Full error: \(error)")
-                    // Return user-friendly error instead of throwing
-                    return
-                        "On-Device AI encountered an error: \(error.localizedDescription)\n\nPlease try:\n1. Checking your internet connection (may be needed for initial model download)\n2. Ensuring Apple Intelligence is enabled in System Settings\n3. Using a different AI provider in Settings"
-                }
-            } else {
-                return
-                    "On-device AI requires macOS 26.0 (Tahoe) or later with Apple Silicon. Your current macOS version does not support this feature. Please select a different AI provider in Settings."
-            }
-        #else
-            // Foundation Models framework not available
-            return
-                "On-device AI (Apple Intelligence) is not available on this version of macOS. This feature requires macOS 26.0 (Tahoe) or later with Apple Silicon. Please select a different AI provider in Settings, such as:\n\n• **Ollama** - Free, runs locally on your Mac\n• **Google Gemini** - Requires API key\n• **OpenAI ChatGPT** - Requires API key\n• **Anthropic Claude** - Requires API key"
-        #endif
-    }
-
-    func sendToOpenAI(query: String, context: [[String: String]]) async throws -> String {
-        return try await sendToOpenAI(query: query, context: context, imageFiles: [])
-    }
-
-    func sendToOpenAI(query: String, context: [[String: String]], imageFiles: [URL])
-        async throws -> String
-    {
-        guard !settings.openAIAPIKey.isEmpty else {
-            throw AIError.noAPIKey
-        }
-
-        // TODO: Add vision support for OpenAI (gpt-4-vision-preview)
-        // For now, just use text-only
-
-        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(settings.openAIAPIKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var messages = context
-        messages.append(["role": "user", "content": query])
-
-        let body: [String: Any] = [
-            "model": "gpt-4o-mini",
-            "messages": messages,
-            "max_tokens": 1000,
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw AIError.requestFailed
-        }
-
-        struct OpenAIResponse: Codable {
-            struct Choice: Codable {
-                struct Message: Codable {
-                    let content: String
-                }
-                let message: Message
-            }
-            let choices: [Choice]
-        }
-
-        let result = try JSONDecoder().decode(OpenAIResponse.self, from: data)
-        return result.choices.first?.message.content ?? "No response received."
-    }
-
-    func sendToGemini(query: String, context: [[String: String]]) async throws -> String {
-        return try await sendToGemini(query: query, context: context, imageFiles: [])
-    }
-
-    func sendToGemini(query: String, context: [[String: String]], imageFiles: [URL])
-        async throws -> String
-    {
-        guard !settings.googleGeminiAPIKey.isEmpty else {
-            throw AIError.noAPIKey
-        }
-
-        let url = URL(
-            string:
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        )!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(settings.googleGeminiAPIKey, forHTTPHeaderField: "x-goog-api-key")
-
-        // Build conversation history
-        var parts: [[String: Any]] = []
-        for msg in context {
-            parts.append(["text": msg["content"] ?? ""])
-        }
-        parts.append(["text": query])
-
-        let body: [String: Any] = [
-            "contents": [["parts": parts]]
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIError.requestFailed
-        }
-        if httpResponse.statusCode == 429 {
-            throw AIError.rateLimited
-        } else if httpResponse.statusCode != 200 {
-            let errBody = String(data: data, encoding: .utf8) ?? "no body"
-            print("❌ Gemini error \(httpResponse.statusCode): \(errBody)")
-            throw AIError.requestFailed
-        }
-
-        struct GeminiResponse: Codable {
-            struct Candidate: Codable {
-                struct Content: Codable {
-                    struct Part: Codable {
-                        let text: String
-                    }
-                    let parts: [Part]
-                }
-                let content: Content
-            }
-            let candidates: [Candidate]
-        }
-
-        let result = try JSONDecoder().decode(GeminiResponse.self, from: data)
-        return result.candidates.first?.content.parts.first?.text ?? "No response received."
-    }
-
-    func sendToAnthropic(query: String, context: [[String: String]], imageFiles: [URL] = [])
-        async throws -> String
-    {
-        guard !settings.anthropicAPIKey.isEmpty else {
-            throw AIError.noAPIKey
-        }
-
-        let url = URL(string: "https://api.anthropic.com/v1/messages")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(settings.anthropicAPIKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var messages: [[String: Any]] = []
-        for msg in context {
-            messages.append(["role": msg["role"] ?? "user", "content": msg["content"] ?? ""])
-        }
-
-        // Build the final user message with images if provided
-        var finalMessageContent: [[String: Any]] = []
-
-        // Add images first
-        for imageFile in imageFiles {
-            if let imageData = try? Data(contentsOf: imageFile) {
-                let base64Image = imageData.base64EncodedString()
-                let ext = imageFile.pathExtension.lowercased()
-                let mediaType: String
-                switch ext {
-                case "png": mediaType = "image/png"
-                case "jpg", "jpeg": mediaType = "image/jpeg"
-                case "gif": mediaType = "image/gif"
-                case "webp": mediaType = "image/webp"
-                default: mediaType = "image/jpeg"
-                }
-
-                finalMessageContent.append([
-                    "type": "image",
-                    "source": [
-                        "type": "base64",
-                        "media_type": mediaType,
-                        "data": base64Image,
-                    ],
-                ])
-            }
-        }
-
-        // Add text query
-        finalMessageContent.append([
-            "type": "text",
-            "text": query,
-        ])
-
-        messages.append(["role": "user", "content": finalMessageContent])
-
-        // Use a vision-capable model if images are present
-        let model = imageFiles.isEmpty ? "claude-3-haiku-20240307" : "claude-3-5-sonnet-20241022"
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": imageFiles.isEmpty ? 1000 : 2000,
-            "messages": messages,
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            if let httpResponse = response as? HTTPURLResponse {
-                print("❌ Anthropic API error: \(httpResponse.statusCode)")
-                if let errorString = String(data: data, encoding: .utf8) {
-                    print("Error response: \(errorString)")
-                }
-            }
-            throw AIError.requestFailed
-        }
-
-        struct AnthropicResponse: Codable {
-            struct Content: Codable {
-                let text: String
-            }
-            let content: [Content]
-        }
-
-        let result = try JSONDecoder().decode(AnthropicResponse.self, from: data)
-        return result.content.first?.text ?? "No response received."
-    }
-
-    func sendToOllama(query: String, context: [[String: String]]) async throws -> String {
-        guard !settings.ollamaEndpoint.isEmpty else {
-            throw AIError.noEndpoint
-        }
-        guard !settings.selectedOllamaModel.isEmpty else {
-            throw AIError.noModel
-        }
-
-        let endpoint = settings.ollamaEndpoint.trimmingCharacters(in: .whitespaces)
-        let url = URL(string: "\(endpoint)/api/chat")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var messages: [[String: String]] = []
-        for msg in context {
-            messages.append(["role": msg["role"] ?? "user", "content": msg["content"] ?? ""])
-        }
-        messages.append(["role": "user", "content": query])
-
-        let body: [String: Any] = [
-            "model": settings.selectedOllamaModel,
-            "messages": messages,
-            "stream": false,
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw AIError.requestFailed
-        }
-
-        struct OllamaResponse: Codable {
-            struct Message: Codable {
-                let content: String
-            }
-            let message: Message
-        }
-
-        let result = try JSONDecoder().decode(OllamaResponse.self, from: data)
-        return result.message.content
-    }
-
-    func sendToShortcuts(query: String, context: [[String: String]]) async throws -> String
-    {
-        // Check if a shortcut is configured
-        guard !settings.shortcutsProviderShortcut.isEmpty else {
-            return
-                "⚠️ No shortcut configured for Shortcuts provider.\n\nPlease select a shortcut in Settings → AI Provider to use this feature."
-        }
-
-        // Run the shortcut on a background thread to avoid blocking
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                // First, ensure Shortcuts app is running and ready
-                let workspace = NSWorkspace.shared
-                let isRunning = workspace.runningApplications.contains(where: {
-                    $0.bundleIdentifier == "com.apple.shortcuts"
-                })
-
-                if !isRunning {
-                    print("⚠️ Shortcuts app not running, launching and activating...")
-
-                    // Use AppleScript to launch and activate the app, which ensures it's ready
-                    let launchScript = """
-                        tell application "Shortcuts"
-                            launch
-                            activate
-                        end tell
-                        """
-
-                    var launchError: NSDictionary?
-                    if let launchScriptObject = NSAppleScript(source: launchScript) {
-                        launchScriptObject.executeAndReturnError(&launchError)
-
-                        if launchError != nil {
-                            print("⚠️ Failed to launch Shortcuts app via AppleScript")
-                        } else {
-                            print("✅ Shortcuts app launched and activated")
-                            // Wait for app to be fully ready
-                            Thread.sleep(forTimeInterval: 2.0)
-                        }
-                    }
-                } else {
-                    print("✅ Shortcuts app already running")
-                }
-
-                // Escape the query for AppleScript - more thorough escaping
-                let escapedQuery =
-                    query
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                    .replacingOccurrences(of: "\n", with: "\\n")
-                    .replacingOccurrences(of: "\r", with: "\\r")
-
-                print(
-                    "🔵 Running shortcut: '\(self.settings.shortcutsProviderShortcut)' with input: '\(query)'"
-                )
-
-                // Try using the direct Shortcuts app scripting (not Shortcuts Events)
-                let script = """
-                    tell application "Shortcuts"
-                        set theResult to run shortcut "\(self.settings.shortcutsProviderShortcut)" with input "\(escapedQuery)"
-                        return theResult as text
-                    end tell
-                    """
-
-                var error: NSDictionary?
-                guard let scriptObject = NSAppleScript(source: script) else {
-                    continuation.resume(returning: "⚠️ Failed to create AppleScript object")
-                    return
-                }
-
-                print("⏳ Executing AppleScript...")
-                let output = scriptObject.executeAndReturnError(&error)
-
-                if let error = error {
-                    print("❌ AppleScript error: \(error)")
-                    let errorMessage =
-                        error["NSAppleScriptErrorMessage"] as? String ?? "Unknown error"
-                    let errorNumber = error["NSAppleScriptErrorNumber"] as? Int ?? 0
-
-                    // If we get error -600, try one more time with a longer delay
-                    if errorNumber == -600 {
-                        print("⚠️ Got error -600, waiting longer and retrying...")
-                        Thread.sleep(forTimeInterval: 2.0)
-
-                        // Retry
-                        var retryError: NSDictionary?
-                        let retryOutput = scriptObject.executeAndReturnError(&retryError)
-                        if let retryErr = retryError {
-                            let retryErrorMsg =
-                                retryErr["NSAppleScriptErrorMessage"] as? String ?? "Unknown error"
-                            let result = """
-                                ⚠️ Error running shortcut '\(self.settings.shortcutsProviderShortcut)' (Error \(errorNumber)):
-
-                                \(retryErrorMsg)
-
-                                Make sure:
-                                • The shortcut exists in your Shortcuts app
-                                • It accepts text input
-                                • It returns a text result
-                                • Automation permission is granted in System Settings → Privacy & Security → Automation
-                                • ILauncher has permission to control Shortcuts
-                                """
-                            continuation.resume(returning: result)
-                            return
-                        } else if let result = retryOutput.stringValue, !result.isEmpty {
-                            print("✅ Shortcut returned (after retry): \(result.prefix(100))...")
-                            continuation.resume(returning: result)
-                            return
-                        }
-                    }
-
-                    let result = """
-                        ⚠️ Error running shortcut '\(self.settings.shortcutsProviderShortcut)' (Error \(errorNumber)):
-
-                        \(errorMessage)
-
-                        Make sure:
-                        • The shortcut exists in your Shortcuts app
-                        • It accepts text input
-                        • It returns a text result
-                        • Automation permission is granted in System Settings → Privacy & Security → Automation
-                        """
-                    continuation.resume(returning: result)
-                    return
-                }
-
-                // Get the result from the AppleScript output
-                if let result = output.stringValue, !result.isEmpty {
-                    print("✅ Shortcut returned: \(result.prefix(100))...")
-                    continuation.resume(returning: result)
-                } else {
-                    print("⚠️ Shortcut returned empty or nil result")
-                    print("⚠️ Output descriptor: \(output)")
-                    let result = """
-                        ⚠️ Shortcut '\(self.settings.shortcutsProviderShortcut)' ran but returned no output.
-
-                        Make sure your shortcut:
-                        • Returns a text result
-                        • Uses 'Stop and Output' or 'Return' action with text
-                        • Doesn't just show an alert or notification
-                        """
-                    continuation.resume(returning: result)
-                }
-            }
-        }
-    }
-
-    // Meta info for the active smart query app panel
     var smartQueryMeta: (icon: String, label: String, appPath: String) {
         switch searchState.activeSmartQueryKey ?? "" {
         case "calendar": return ("calendar", "Calendar", "/System/Applications/Calendar.app")
