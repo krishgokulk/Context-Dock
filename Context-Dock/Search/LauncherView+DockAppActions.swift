@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -145,35 +146,15 @@ extension LauncherView {
             "Switching to", subject: name, icon: "arrow.up.right.circle", tint: .white.opacity(0.8))
         if app.isHidden { app.unhide() }
         app.activate(options: [.activateIgnoringOtherApps])
-        let pid = app.processIdentifier
         // Dismiss the "Switching to" toast once the app has had time to become frontmost
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             DockActionFeedback.complete(switchId)
         }
-        // Un-minimize any minimized windows
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let axApp = AXUIElementCreateApplication(pid)
-            var windowsRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
-                == .success,
-                let windows = windowsRef as? [AXUIElement]
-            {
-                for win in windows {
-                    var minimized: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(
-                        win, kAXMinimizedAttribute as CFString, &minimized) == .success,
-                        (minimized as? Bool) == true
-                    {
-                        AXUIElementSetAttributeValue(
-                            win, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-                    }
-                }
-            }
-        }
-        // Bring the window to centre once it's restored/front (after the unminimize above).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            _ = WindowManagementService.shared.execute(.center, sourceApp: app)
-        }
+        // Un-minimize the app's windows and centre once restored. Minimized windows
+        // animate back in asynchronously, so this polls until a real window appears
+        // instead of firing one premature attempt that finds only a minimized frame
+        // (which used to surface a spurious "No window found" toast and skip centring).
+        WindowManagementService.shared.centerAfterActivate(app)
         // Don't steal focus back — the activated app should remain frontmost
     }
 
@@ -264,13 +245,29 @@ extension LauncherView {
 
     func terminateRunningAppFromDock(_ app: NSRunningApplication) {
         let name = app.localizedName ?? "App"
+        let bundleID = app.bundleIdentifier ?? ""
         hoveredDockAppKey = nil
-        app.terminate()
+        if !bundleID.isEmpty {
+            launcherViewModel.appQuitFeedbackPhases[bundleID] = .progress
+        }
         let feedbackID = DockActionFeedback.start(
-            "Quit", subject: name, icon: "xmark.circle.fill", tint: .red.opacity(0.85))
+            "Quitting",
+            subject: name,
+            icon: "xmark.circle.fill",
+            tint: .red.opacity(0.85),
+            bundleID: bundleID.isEmpty ? nil : bundleID
+        )
+        app.terminate()
         refocusLauncherWindowAfterAppAction(delay: 0.06)
         scheduleDockRefreshAfterTerminationAttempt(for: app, feedbackID: feedbackID)
         refreshGlobalSearchAfterRunningAppMutation()
+    }
+
+    func appQuitFeedbackPhase(bundleID: String?) -> DockInlineFeedback.Phase? {
+        guard let bundleID = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !bundleID.isEmpty
+        else { return nil }
+        return launcherViewModel.appQuitFeedbackPhases[bundleID]
     }
 
     func refreshGlobalSearchAfterRunningAppMutation() {
@@ -572,7 +569,21 @@ extension LauncherView {
 
                 guard !stillRunning else { continue }
                 if let feedbackID {
-                    DockActionFeedback.complete(feedbackID)
+                    let appName = app.localizedName ?? "App"
+                    DockActionFeedback.complete(
+                        feedbackID,
+                        label: "\(appName) quit",
+                        subject: appName,
+                        bundleID: targetBundleId
+                    )
+                }
+                if let targetBundleId, !targetBundleId.isEmpty {
+                    launcherViewModel.appQuitFeedbackPhases[targetBundleId] = .success
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                        if self.launcherViewModel.appQuitFeedbackPhases[targetBundleId] == .success {
+                            self.launcherViewModel.appQuitFeedbackPhases[targetBundleId] = nil
+                        }
+                    }
                 }
                 reconcileDockAfterTermination(of: app)
                 return
@@ -581,6 +592,9 @@ extension LauncherView {
             runningRegularApps = currentRegularRunningApps()
             if let feedbackID {
                 DockActionFeedback.dismiss(feedbackID)
+            }
+            if let targetBundleId, !targetBundleId.isEmpty {
+                launcherViewModel.appQuitFeedbackPhases[targetBundleId] = nil
             }
         }
     }
@@ -599,10 +613,24 @@ extension LauncherView {
                 shortcutModifiers: shortcutModifiers,
                 knownMenuItems: liveMenuItems + crossAppMenuItems,
                 isGlobalContextActive: isGlobalContextActive,
-                hasActiveDockContextSelection: hasActiveDockContextSelection
+                hasActiveDockContextSelection: hasActiveDockContextSelection,
+                keepsDockFloating: settings.alwaysFloatDock
+                    || (settings.effectiveDockAtBottom && showContextInDock)
             ),
             callbacks: .init(
-                hideBeforeExecution: { hideLauncherAfterResultExecution() },
+                hideBeforeExecution: {
+                    if settings.alwaysFloatDock
+                        || (settings.effectiveDockAtBottom && showContextInDock)
+                    {
+                        searchState.query = ""
+                        focusedAppPillIndex = nil
+                        l2.focusedPillIndex = nil
+                        l2.pillNavViaKeyboard = false
+                        reclaimSearchInputFocus()
+                    } else {
+                        hideLauncherAfterResultExecution()
+                    }
+                },
                 refreshRunningApps: {
                     runningRegularApps = currentRegularRunningApps()
                 },
@@ -614,6 +642,9 @@ extension LauncherView {
                 },
                 clearLiveDockMenuState: {
                     clearLiveDockMenuState()
+                },
+                refocusDockInput: {
+                    refocusLauncherWindowAfterAppAction(delay: 0.06)
                 }
             )
         )
@@ -624,6 +655,47 @@ extension LauncherView {
             return preparedDockIcon(NSWorkspace.shared.icon(forFile: bundleURL.path))
         }
         return preparedDockIcon(app.icon)
+    }
+
+    func currentBrowserPageURL() -> URL? {
+        guard showContextInDock,
+            !isGlobalContextActive
+        else { return nil }
+
+        let liveRaw = liveBrowserPageURLString()
+        let attachedRaw = isContextDockChatConnected ? webResearch.pages.last?.url : nil
+        guard attachedRaw != nil || AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID) else {
+            return nil
+        }
+        let raw = isContextDockChatConnected ? (attachedRaw ?? liveRaw) : liveRaw
+        guard let raw,
+            let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+            url.host != nil
+        else { return nil }
+        return url
+    }
+
+    func liveBrowserPageURLString() -> String? {
+        let pid = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+        return (SafariBrowserBridge.shared.isFresh ? SafariBrowserBridge.shared.latestContext?.url : nil)
+            ?? AXWebReader.shared.cachedSnapshot(for: pid)?.url
+            ?? axContext.currentURL
+            ?? AXContextReader.shared.current.currentURL
+            ?? SafariTabManager.shared.lastSelectedTab()?.url
+    }
+
+    func currentBrowserPageIcon() -> NSImage? {
+        guard let url = currentBrowserPageURL() else { return nil }
+        if let favicon = FaviconStore.shared.icon(for: url) {
+            return preparedDockIcon(favicon)
+        }
+        FaviconStore.shared.fetchIfNeeded(for: url)
+        let symbol = SafariTab(title: "", url: url.absoluteString, windowIndex: 0, tabIndex: 0).icon
+        return preparedDockIcon(NSImage(systemSymbolName: symbol, accessibilityDescription: nil))
+    }
+
+    var currentBrowserPageIconIdentity: String? {
+        currentBrowserPageURL()?.absoluteString
     }
 
     var shouldShowGlobalRunningAppStrip: Bool {
@@ -660,6 +732,7 @@ extension LauncherView {
             source
             .filter { app in
                 guard !app.isTerminated else { return false }
+                guard app.bundleURL != nil || app.executableURL != nil else { return false }
                 guard let bundleID = app.bundleIdentifier else { return true }
                 return bundleID != "com.apple.finder"
                     && bundleID != frontmostBundle
@@ -795,6 +868,223 @@ extension LauncherView {
                         lineWidth: 0.7)
             )
             .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+        }
+    }
+
+    var shouldShowSafariTabStrip: Bool {
+        showContextInDock
+            && !isGlobalContextActive
+            && !aiMode.isActive
+            && !showMediaLayer
+            && !isCompactSmartScope
+            && searchState.contextApp == nil
+            && searchState.selectedIndex == nil
+            && l2.targetApp == nil
+            && currentDockSurfaceMode != .generalChat
+            && AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
+    }
+
+    var visibleSafariTabStripTabs: [SafariTab] {
+        let tabs = safariTabPickerTabs.isEmpty
+            ? SafariTabManager.shared.cachedTabs(maxAge: 45)
+            : safariTabPickerTabs
+        guard !tabs.isEmpty else { return [] }
+        let currentURLKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
+        let ordered = tabs.sorted { lhs, rhs in
+            if let currentURLKey {
+                let lhsIsCurrent = normalizedBrowserTabURLKey(lhs.url) == currentURLKey
+                let rhsIsCurrent = normalizedBrowserTabURLKey(rhs.url) == currentURLKey
+                if lhsIsCurrent != rhsIsCurrent { return lhsIsCurrent }
+            }
+            if lhs.windowIndex != rhs.windowIndex { return lhs.windowIndex < rhs.windowIndex }
+            return lhs.tabIndex < rhs.tabIndex
+        }
+        let visible = ordered.filter { tab in
+            guard isContextDockChatConnected else { return true }
+            guard let currentURLKey else { return true }
+            return normalizedBrowserTabURLKey(tab.url) != currentURLKey
+        }
+        return Array(visible.prefix(5))
+    }
+
+    func normalizedBrowserTabURLKey(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty,
+            let url = URL(string: raw)
+        else { return nil }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        var key = (components?.url ?? url).absoluteString.lowercased()
+        while key.hasSuffix("/") { key.removeLast() }
+        return key
+    }
+
+    var connectedBrowserPageGhostTitle: String? {
+        guard showContextInDock,
+            isContextDockChatConnected
+        else { return nil }
+        guard let page = webResearch.pages.last else { return nil }
+        let title = page.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        return URL(string: page.url)?.host ?? currentBrowserPageURL()?.host
+    }
+
+    func syncSafariTabStrip(force: Bool = false) {
+        let cached = SafariTabManager.shared.cachedTabs(maxAge: 45)
+        if !cached.isEmpty,
+            cached.map(\.id) != safariTabPickerTabs.map(\.id)
+        {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                safariTabPickerTabs = cached
+            }
+        }
+        SafariTabManager.shared.refreshCachedTabsIfNeeded(force: force) { tabs in
+            guard tabs.map(\.id) != safariTabPickerTabs.map(\.id) else { return }
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                safariTabPickerTabs = tabs
+            }
+        }
+    }
+
+    func syncCurrentSafariTabForStrip() {
+        guard shouldShowSafariTabStrip else { return }
+        Task {
+            guard let tab = await SafariTabManager.shared.currentTab() else { return }
+            await MainActor.run {
+                let currentKey = normalizedBrowserTabURLKey(tab.url)
+                let oldKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
+                guard currentKey != nil, currentKey != oldKey else { return }
+                SafariTabManager.shared.rememberSelectedTab(tab)
+
+                var tabs = safariTabPickerTabs.isEmpty
+                    ? SafariTabManager.shared.cachedTabs(maxAge: 45)
+                    : safariTabPickerTabs
+                if let idx = tabs.firstIndex(where: {
+                    normalizedBrowserTabURLKey($0.url) == currentKey
+                }) {
+                    tabs[idx] = tab
+                } else {
+                    tabs.insert(tab, at: 0)
+                }
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                    safariTabPickerTabs = tabs
+                    if isContextDockChatConnected {
+                        attachBrowserPageSnapshotToCurrentChat(
+                            PageSnapshot(
+                                url: tab.url, text: "", title: tab.title,
+                                timestamp: Date()))
+                    } else {
+                        searchState.revision += 1
+                    }
+                }
+                if let url = URL(string: tab.url) {
+                    FaviconStore.shared.fetchIfNeeded(for: url)
+                }
+            }
+        }
+    }
+
+    func safariTabStripIcon(for tab: SafariTab) -> NSImage? {
+        guard let url = URL(string: tab.url) else { return nil }
+        if let favicon = FaviconStore.shared.icon(for: url) {
+            return preparedDockIcon(favicon)
+        }
+        FaviconStore.shared.fetchIfNeeded(for: url)
+        return nil
+    }
+
+    func selectSafariTabFromStrip(_ tab: SafariTab) {
+        SafariTabManager.shared.switchTo(tab)
+        if isContextDockChatConnected {
+            attachSafariTabToCurrentChat(tab)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            syncSafariTabStrip(force: true)
+            searchState.revision += 1
+        }
+    }
+
+    func attachSafariTabToCurrentChat(_ tab: SafariTab) {
+        attachBrowserPageSnapshotToCurrentChat(
+            PageSnapshot(url: tab.url, text: "", title: tab.title, timestamp: Date()))
+
+        let capturedTab = tab
+        Task { @MainActor in
+            let js = """
+                (function(){
+                    var el = document.querySelector('article')
+                             || document.querySelector('main')
+                             || document.body;
+                    return el ? el.innerText.trim().substring(0, 8000) : '';
+                })()
+                """
+            let text = await SafariTabManager.shared.executeJS(
+                js,
+                windowIndex: capturedTab.windowIndex,
+                tabIndex: capturedTab.tabIndex
+            ) ?? ""
+            if !text.isEmpty {
+                WebResearchSession.shared.updateText(url: capturedTab.url, text: text)
+            }
+        }
+    }
+
+    func attachBrowserPageSnapshotToCurrentChat(_ snapshot: PageSnapshot) {
+        let snapshotKey = normalizedBrowserTabURLKey(snapshot.url)
+        if let idx = webResearch.pages.firstIndex(where: {
+            normalizedBrowserTabURLKey($0.url) == snapshotKey
+        }) {
+            WebResearchSession.shared.remove(at: idx)
+        }
+        WebResearchSession.shared.addPage(snapshot)
+        searchState.revision += 1
+    }
+
+    @ViewBuilder
+    var safariTabStrip: some View {
+        let tabs = visibleSafariTabStripTabs
+        if !tabs.isEmpty {
+            HStack(spacing: 5) {
+                ForEach(tabs) { tab in
+                    Button {
+                        selectSafariTabFromStrip(tab)
+                    } label: {
+                        if let icon = safariTabStripIcon(for: tab) {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 17, height: 17)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        } else {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.blue.opacity(0.86))
+                                .frame(width: 17, height: 17)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .help(tab.title.isEmpty ? tab.domain : tab.title)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.regularMaterial, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
+                        lineWidth: 0.7)
+            )
+            .onAppear { syncSafariTabStrip() }
+            .onReceive(Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()) { _ in
+                syncCurrentSafariTabForStrip()
+            }
+            .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+        } else {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .onAppear { syncSafariTabStrip(force: true) }
         }
     }
 

@@ -4,6 +4,21 @@ import Darwin
 import Foundation
 import SwiftUI
 
+struct DockInlineFeedback: Identifiable, Equatable {
+    enum Phase: String {
+        case progress
+        case success
+        case failure
+    }
+
+    let id: String
+    var title: String
+    var icon: String
+    var phase: Phase
+    var subject: String?
+    var bundleID: String?
+}
+
 @MainActor
 final class LauncherViewModel: ObservableObject {
     @Published var query = ""
@@ -56,6 +71,8 @@ final class LauncherViewModel: ObservableObject {
     @Published var showNotificationPanel = false
     @Published var showNotificationDock = false
     @Published var notificationDockTab = 0
+    @Published var inlineDockFeedback: DockInlineFeedback?
+    @Published var appQuitFeedbackPhases: [String: DockInlineFeedback.Phase] = [:]
 
     var debounceTask: Task<Void, Never>?
     var browserWarmupTask: Task<Void, Never>?

@@ -362,7 +362,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AXObserverManager.shared.startMonitoring()
 
         // Beta updater: check manifest in the background after launch.
-        AppUpdateService.shared.runLaunchAutoCheckIfNeeded()
+        // Skipped in Debug — the updater touches /Applications to replace the
+        // app, which triggers a per-launch App Management (TCC) prompt while
+        // iterating on local Debug builds.
+        #if !DEBUG
+            AppUpdateService.shared.runLaunchAutoCheckIfNeeded()
+        #endif
 
         // Start binary watcher so L2 auto-discovers newly installed CLI tools
         Task { @MainActor in
@@ -470,6 +475,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.didLaunchApplicationNotification,
             object: nil
         )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleAppTermination(_:)),
+            name: NSWorkspace.didTerminateApplicationNotification,
+            object: nil
+        )
     }
 
     @objc private func handleAppActivation(_ notification: Notification) {
@@ -479,6 +491,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let resolvedApp = resolvedUserFacingApplication(app)
         else { return }
         recordFrontmostApp(resolvedApp)
+        reinforceFloatingDockWindow(reason: "app activation", activate: false)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
     }
 
@@ -489,6 +502,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             app.bundleIdentifier != Bundle.main.bundleIdentifier
         else { return }
         MenuWarmCacheService.shared.appDidLaunch(app)
+        reinforceFloatingDockWindow(reason: "app launch", activate: false)
+    }
+
+    @objc private func handleAppTermination(_ notification: Notification) {
+        reinforceFloatingDockWindow(reason: "app termination", activate: false)
     }
 
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
@@ -814,24 +832,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func checkAccessibilityPermissions() {
-        // Check without prompting first - this is the actual permission state
         let accessEnabled = AXIsProcessTrusted()
 
-        if !accessEnabled {
-            // Only prompt if permissions are not granted
-            // Use the prompt option to show the system dialog
-            let checkOptPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            let options = [checkOptPrompt: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
-
-            #if DEBUG
-            print("⚠️ Accessibility permissions not granted - system prompt shown")
-            #endif
-        } else {
-            #if DEBUG
-            print("✅ Accessibility permissions already granted")
-            #endif
-        }
+        #if DEBUG
+        // Do not show Apple's trust prompt on every Debug launch. Ad-hoc Xcode
+        // builds change cdhash often, so macOS can report "not trusted" even
+        // when the previous build is already enabled in System Settings.
+        print(accessEnabled ? "✅ Accessibility permissions already granted" : "⚠️ Accessibility permissions not granted")
+        #endif
     }
 
     func showPermissionsAlert() {
@@ -866,7 +874,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func setupLauncherWindow() {
         let contentView = LauncherShell(onClose: {
-            self.hideLauncher()
+            self.hideLauncher(force: true)
         })
         .environmentObject(ContextDockEnvironment.shared)
         .environmentObject(AppState.shared)
@@ -914,12 +922,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applyPersistentDockBehavior() {
         guard let window = launcherWindow else { return }
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         window.level = windowLevel
         window.isMovableByWindowBackground = true
+    }
+
+    func reinforceFloatingDockWindow(reason: String, activate: Bool) {
+        guard settings.alwaysFloatDock || settings.effectiveDockAtBottom else { return }
+        guard let window = launcherWindow else { return }
+        applyPersistentDockBehavior()
+        suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
+        window.alphaValue = 1
+        window.orderFrontRegardless()
+        if activate {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     /// Overrides window appearance (light/dark/system)
@@ -938,11 +959,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func handleActiveSpaceChanged(_ notification: Notification) {
         guard let window = launcherWindow, window.isVisible else { return }
         suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
+        applyPersistentDockBehavior()
         // Re-assert key focus on the new Space so the user keeps typing seamlessly.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            self.reinforceFloatingDockWindow(reason: "active Space changed", activate: self.settings.alwaysFloatDock)
         }
     }
 
@@ -1417,6 +1438,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let visibleFrame = screen?.visibleFrame {
             var frame = window.frame
             frame.origin.x = visibleFrame.midX - frame.width / 2
+            if settings.alwaysFloatDock && !settings.effectiveDockAtBottom {
+                frame.origin.y = visibleFrame.midY - frame.height / 2
+                (window as? KeyableWindow)?.anchorAtBottom = false
+            }
             window.setFrame(frame, display: false)
             (window as? KeyableWindow)?.horizontalResizeAnchorX = visibleFrame.midX
         }
@@ -1615,7 +1640,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if window.isVisible {
                     // L1 has been removed; the main launcher hotkey now toggles L2 visibility.
                     self.isDockContextMode = false
-                    self.hideLauncher()
+                    self.hideLauncher(force: true)
                 } else {
                     // Hidden → always open at L2.
                     self.isDockContextMode = true
@@ -1642,7 +1667,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showLauncher() {
-        guard let window = launcherWindow, let screen = NSScreen.main else { return }
+        guard let window = launcherWindow else { return }
 
         #if DEBUG
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
@@ -1673,7 +1698,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         scheduleUserContextDetection()
 
         // Center the window horizontally and position it based on user preference
-        let screenFrame = screen.visibleFrame
+        let activeScreen =
+            NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? window.screen
+            ?? NSScreen.main
+        guard let activeScreen else { return }
+        let screenFrame = activeScreen.visibleFrame
         let windowWidth: CGFloat = 700  // Increased from 600 to 700
 
         // Match calculatedHeight's idle formula exactly so updateWindowSize() fires a ≤1px
@@ -1693,10 +1723,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let keyableWindow = window as? KeyableWindow {
                 keyableWindow.anchorAtBottom = true
             }
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            applyPersistentDockBehavior()
             print(
                 "📍 [AppDelegate] Positioning window at BOTTOM (y: \(y)) - Anchor: BOTTOM (stays fixed, results expand upward)"
             )
+        } else if settings.alwaysFloatDock {
+            // Always Float Dock should remain persistent, but launch centered like a
+            // floating command surface instead of inheriting a bottom/corner dock pose.
+            y = screenFrame.midY - (initialHeight / 2)
+            if let keyableWindow = window as? KeyableWindow {
+                keyableWindow.anchorAtBottom = false
+            }
+            #if DEBUG
+            print("📍 [AppDelegate] Positioning always-float window at CENTER (y: \(y))")
+            #endif
         } else {
             // Default: upper third of screen
             y = screenFrame.maxY - screenFrame.height / 3
@@ -1755,14 +1795,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
     }
 
-    func hideLauncher() {
+    func hideLauncher(force: Bool = false) {
         WebQuickLookPanel.shared.close()
         guard let window = launcherWindow else { return }
-        if settings.effectiveDockAtBottom {
+        if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
             window.alphaValue = 1
-            if !window.isVisible {
-                window.orderFront(nil)
-            }
+            applyPersistentDockBehavior()
+            window.orderFrontRegardless()
             NotificationCenter.default.post(name: .focusSearchField, object: nil)
             return
         }

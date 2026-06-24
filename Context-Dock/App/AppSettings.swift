@@ -1630,7 +1630,7 @@ class AppSettings: ObservableObject {
             aiChatHistoryData = try encoder.encode(messages)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode chat history: \(error)")
+                print("⚠️ Failed to encode chat history: \(error)")
             #endif
         }
     }
@@ -1643,7 +1643,7 @@ class AppSettings: ObservableObject {
             return try decoder.decode([T].self, from: aiChatHistoryData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode chat history: \(error)")
+                print("⚠️ Failed to decode chat history: \(error)")
             #endif
             return []
         }
@@ -1652,7 +1652,7 @@ class AppSettings: ObservableObject {
     func clearChatHistory() {
         aiChatHistoryData = Data()
         #if DEBUG
-        print("✅ Chat history cleared")
+            print("✅ Chat history cleared")
         #endif
     }
 
@@ -1664,7 +1664,7 @@ class AppSettings: ObservableObject {
             pinnedApps = try decoder.decode([PinnedApp].self, from: pinnedAppsData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode pinned apps: \(error)")
+                print("⚠️ Failed to decode pinned apps: \(error)")
             #endif
             pinnedApps = []
         }
@@ -1676,7 +1676,7 @@ class AppSettings: ObservableObject {
             pinnedAppsData = try encoder.encode(pinnedApps)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode pinned apps: \(error)")
+                print("⚠️ Failed to encode pinned apps: \(error)")
             #endif
         }
     }
@@ -1690,7 +1690,7 @@ class AppSettings: ObservableObject {
                 [SearchDirectory].self, from: searchDirectoriesData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode search directories: \(error)")
+                print("⚠️ Failed to decode search directories: \(error)")
             #endif
             searchDirectories = []
         }
@@ -1702,7 +1702,7 @@ class AppSettings: ObservableObject {
             searchDirectoriesData = try encoder.encode(searchDirectories)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode search directories: \(error)")
+                print("⚠️ Failed to encode search directories: \(error)")
             #endif
         }
     }
@@ -1715,7 +1715,7 @@ class AppSettings: ObservableObject {
             ollamaModels = try decoder.decode([OllamaModel].self, from: ollamaModelsData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode Ollama models: \(error)")
+                print("⚠️ Failed to decode Ollama models: \(error)")
             #endif
             ollamaModels = []
         }
@@ -1727,7 +1727,7 @@ class AppSettings: ObservableObject {
             ollamaModelsData = try encoder.encode(ollamaModels)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode Ollama models: \(error)")
+                print("⚠️ Failed to encode Ollama models: \(error)")
             #endif
         }
     }
@@ -1741,7 +1741,7 @@ class AppSettings: ObservableObject {
                 [ExtensionScript].self, from: extensionScriptsData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode extension scripts: \(error)")
+                print("⚠️ Failed to decode extension scripts: \(error)")
             #endif
         }
     }
@@ -1752,7 +1752,7 @@ class AppSettings: ObservableObject {
             extensionScriptsData = try encoder.encode(extensionScripts)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode extension scripts: \(error)")
+                print("⚠️ Failed to encode extension scripts: \(error)")
             #endif
         }
     }
@@ -1765,7 +1765,7 @@ class AppSettings: ObservableObject {
             importedBookmarks = try decoder.decode([BrowserItem].self, from: importedBookmarksData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode imported bookmarks: \(error)")
+                print("⚠️ Failed to decode imported bookmarks: \(error)")
             #endif
         }
     }
@@ -1776,7 +1776,7 @@ class AppSettings: ObservableObject {
             importedBookmarksData = try encoder.encode(importedBookmarks)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode imported bookmarks: \(error)")
+                print("⚠️ Failed to encode imported bookmarks: \(error)")
             #endif
         }
     }
@@ -1789,7 +1789,7 @@ class AppSettings: ObservableObject {
             recentWebSearches = try decoder.decode([String].self, from: recentWebSearchesData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode recent web searches: \(error)")
+                print("⚠️ Failed to decode recent web searches: \(error)")
             #endif
         }
     }
@@ -1800,7 +1800,7 @@ class AppSettings: ObservableObject {
             recentWebSearchesData = try encoder.encode(recentWebSearches)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode recent web searches: \(error)")
+                print("⚠️ Failed to encode recent web searches: \(error)")
             #endif
         }
     }
@@ -1811,7 +1811,7 @@ class AppSettings: ObservableObject {
             appShortcuts = try JSONDecoder().decode([AppShortcut].self, from: appShortcutsData)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to decode app shortcuts: \(error)")
+                print("⚠️ Failed to decode app shortcuts: \(error)")
             #endif
         }
     }
@@ -1821,7 +1821,7 @@ class AppSettings: ObservableObject {
             appShortcutsData = try JSONEncoder().encode(appShortcuts)
         } catch {
             #if DEBUG
-            print("⚠️ Failed to encode app shortcuts: \(error)")
+                print("⚠️ Failed to encode app shortcuts: \(error)")
             #endif
         }
     }
@@ -1916,7 +1916,7 @@ class AppSettings: ObservableObject {
 
         guard let type = scriptType else {
             #if DEBUG
-            print("⚠️ Unsupported file type: \(fileExtension)")
+                print("⚠️ Unsupported file type: \(fileExtension)")
             #endif
             return
         }
@@ -1927,7 +1927,7 @@ class AppSettings: ObservableObject {
         if !extensionScripts.contains(where: { $0.path == script.path }) {
             extensionScripts.append(script)
             #if DEBUG
-            print("✅ Added extension script: \(name) (\(type.displayName))")
+                print("✅ Added extension script: \(name) (\(type.displayName))")
             #endif
         }
     }
@@ -2041,7 +2041,7 @@ class AppSettings: ObservableObject {
             return response.models.map { OllamaModel(name: $0.name) }
         } catch {
             #if DEBUG
-            print("⚠️ Failed to fetch Ollama models: \(error)")
+                print("⚠️ Failed to fetch Ollama models: \(error)")
             #endif
             return []
         }
@@ -2078,11 +2078,11 @@ class AppSettings: ObservableObject {
                 relativeTo: nil
             )
             #if DEBUG
-            print("✅ Created security-scoped bookmark for: \(url.path)")
+                print("✅ Created security-scoped bookmark for: \(url.path)")
             #endif
         } catch {
             #if DEBUG
-            print("⚠️ Failed to create bookmark for \(url.path): \(error)")
+                print("⚠️ Failed to create bookmark for \(url.path): \(error)")
             #endif
         }
 
@@ -2128,7 +2128,7 @@ class AppSettings: ObservableObject {
 
             if isStale {
                 #if DEBUG
-                print("⚠️ Bookmark is stale for: \(directory.path)")
+                    print("⚠️ Bookmark is stale for: \(directory.path)")
                 #endif
                 // Update the bookmark
                 updateBookmarkForDirectory(directory)
@@ -2136,18 +2136,18 @@ class AppSettings: ObservableObject {
 
             if url.startAccessingSecurityScopedResource() {
                 #if DEBUG
-                print("✅ Started accessing: \(url.path)")
+                    print("✅ Started accessing: \(url.path)")
                 #endif
                 return true
             } else {
                 #if DEBUG
-                print("⚠️ Failed to start accessing: \(url.path)")
+                    print("⚠️ Failed to start accessing: \(url.path)")
                 #endif
                 return false
             }
         } catch {
             #if DEBUG
-            print("⚠️ Failed to resolve bookmark for \(directory.path): \(error)")
+                print("⚠️ Failed to resolve bookmark for \(directory.path): \(error)")
             #endif
             return false
         }
@@ -2177,12 +2177,12 @@ class AppSettings: ObservableObject {
                 // Note: This will trigger didSet and save
                 searchDirectories[index] = updatedDirectory
                 #if DEBUG
-                print("✅ Updated bookmark for: \(directory.path)")
+                    print("✅ Updated bookmark for: \(directory.path)")
                 #endif
             }
         } catch {
             #if DEBUG
-            print("⚠️ Failed to update bookmark for \(directory.path): \(error)")
+                print("⚠️ Failed to update bookmark for \(directory.path): \(error)")
             #endif
         }
     }
@@ -2216,14 +2216,14 @@ class AppSettings: ObservableObject {
         // Check if already pinned
         guard !pinnedApps.contains(where: { $0.path == app.path }) else {
             #if DEBUG
-            print("⚠️ App already pinned: \(app.name)")
+                print("⚠️ App already pinned: \(app.name)")
             #endif
             return
         }
 
         pinnedApps.append(app)
         #if DEBUG
-        print("📌 Pinned: \(app.name) (\(app.type))")
+            print("📌 Pinned: \(app.name) (\(app.type))")
         #endif
     }
 
@@ -2245,7 +2245,8 @@ class AppSettings: ObservableObject {
         pinnedApps.insert(app, at: adjustedDestination)
 
         #if DEBUG
-        print("🔄 Reordered pinned app: \(app.name) from \(sourceIndex) to \(adjustedDestination)")
+            print(
+                "🔄 Reordered pinned app: \(app.name) from \(sourceIndex) to \(adjustedDestination)")
         #endif
     }
 
@@ -2350,7 +2351,7 @@ class AppSettings: ObservableObject {
         let bookmarksPath = NSHomeDirectory() + "/Library/Safari/Bookmarks.plist"
         guard FileManager.default.fileExists(atPath: bookmarksPath) else {
             #if DEBUG
-            print("⚠️ Safari bookmarks file not found")
+                print("⚠️ Safari bookmarks file not found")
             #endif
             return 0
         }
@@ -2361,7 +2362,7 @@ class AppSettings: ObservableObject {
             let children = plist["Children"] as? [[String: Any]]
         else {
             #if DEBUG
-            print("⚠️ Failed to parse Safari bookmarks")
+                print("⚠️ Failed to parse Safari bookmarks")
             #endif
             return 0
         }
@@ -2372,7 +2373,7 @@ class AppSettings: ObservableObject {
         }
 
         #if DEBUG
-        print("✅ Imported \(count) bookmarks from Safari")
+            print("✅ Imported \(count) bookmarks from Safari")
         #endif
         return count
     }
@@ -2413,7 +2414,7 @@ class AppSettings: ObservableObject {
             NSHomeDirectory() + "/Library/Application Support/Google/Chrome/Default/Bookmarks"
         guard FileManager.default.fileExists(atPath: bookmarksPath) else {
             #if DEBUG
-            print("⚠️ Chrome bookmarks file not found")
+                print("⚠️ Chrome bookmarks file not found")
             #endif
             return 0
         }
@@ -2423,7 +2424,7 @@ class AppSettings: ObservableObject {
             let roots = json["roots"] as? [String: Any]
         else {
             #if DEBUG
-            print("⚠️ Failed to parse Chrome bookmarks")
+                print("⚠️ Failed to parse Chrome bookmarks")
             #endif
             return 0
         }
@@ -2436,7 +2437,7 @@ class AppSettings: ObservableObject {
         }
 
         #if DEBUG
-        print("✅ Imported \(count) bookmarks from Chrome")
+            print("✅ Imported \(count) bookmarks from Chrome")
         #endif
         return count
     }
@@ -2478,7 +2479,7 @@ class AppSettings: ObservableObject {
             let profiles = try? FileManager.default.contentsOfDirectory(atPath: profilesPath)
         else {
             #if DEBUG
-            print("⚠️ Firefox profiles folder not found")
+                print("⚠️ Firefox profiles folder not found")
             #endif
             return 0
         }
@@ -2491,10 +2492,10 @@ class AppSettings: ObservableObject {
                 // Note: Parsing SQLite would require additional dependencies
                 // For now, we'll just note that Firefox uses SQLite
                 #if DEBUG
-                print("ℹ️ Firefox bookmarks found at: \(placesPath)")
+                    print("ℹ️ Firefox bookmarks found at: \(placesPath)")
                 #endif
                 #if DEBUG
-                print("ℹ️ Firefox bookmark import requires SQLite parsing (not yet implemented)")
+                    print("ℹ️ Firefox bookmark import requires SQLite parsing (not yet implemented)")
                 #endif
             }
         }
@@ -2508,7 +2509,7 @@ class AppSettings: ObservableObject {
             NSHomeDirectory() + "/Library/Application Support/Microsoft Edge/Default/Bookmarks"
         guard FileManager.default.fileExists(atPath: bookmarksPath) else {
             #if DEBUG
-            print("⚠️ Edge bookmarks file not found")
+                print("⚠️ Edge bookmarks file not found")
             #endif
             return 0
         }
@@ -2518,7 +2519,7 @@ class AppSettings: ObservableObject {
             let roots = json["roots"] as? [String: Any]
         else {
             #if DEBUG
-            print("⚠️ Failed to parse Edge bookmarks")
+                print("⚠️ Failed to parse Edge bookmarks")
             #endif
             return 0
         }
@@ -2531,7 +2532,7 @@ class AppSettings: ObservableObject {
         }
 
         #if DEBUG
-        print("✅ Imported \(count) bookmarks from Edge")
+            print("✅ Imported \(count) bookmarks from Edge")
         #endif
         return count
     }
@@ -2540,7 +2541,7 @@ class AppSettings: ObservableObject {
     func clearImportedBookmarks() {
         importedBookmarks.removeAll()
         #if DEBUG
-        print("✅ Cleared all imported bookmarks")
+            print("✅ Cleared all imported bookmarks")
         #endif
     }
 
@@ -2561,7 +2562,7 @@ class AppSettings: ObservableObject {
     func clearRecentWebSearches() {
         recentWebSearches.removeAll()
         #if DEBUG
-        print("✅ Cleared recent web searches")
+            print("✅ Cleared recent web searches")
         #endif
     }
 }

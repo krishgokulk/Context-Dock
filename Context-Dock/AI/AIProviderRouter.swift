@@ -126,23 +126,9 @@ private enum AIProviderHTTP {
     }
 
     static func imageData(for attachments: [AIAttachment]) -> [(data: String, mediaType: String)] {
-        attachments.compactMap { attachment in
-            guard attachment.kind == .image,
-                  let data = try? Data(contentsOf: attachment.url)
-            else { return nil }
-            return (data.base64EncodedString(), mediaType(for: attachment.url))
-        }
-    }
-
-    static func mediaType(for url: URL) -> String {
-        switch url.pathExtension.lowercased() {
-        case "png": return "image/png"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "heic": return "image/heic"
-        case "tiff", "tif": return "image/tiff"
-        default: return "image/jpeg"
-        }
+        // Normalizes any image format (heic/tiff/bmp/…) to a provider-safe MIME type;
+        // sending those raw types used to 400 silently on Anthropic/OpenAI vision.
+        AIAttachmentPreparer.imageBlocks(for: attachments)
     }
 }
 
@@ -475,13 +461,10 @@ final class AIProviderRouter {
         let provider = providerOverride ?? AIProfileRouter.provider(for: profile, settings: settings)
         var contextPrompt = contextBuilder.build(request: request)
         contextPrompt = AIProfileRouter.decoratedContextPrompt(contextPrompt, profile: profile, request: request)
-        let adapter = provider == .onDevice ? nil : adapter(for: provider)
-        if let adapter {
-            contextPrompt += attachmentFallbackPrompt(
-                attachments: request.attachments,
-                capabilities: adapter.capabilities
-            )
-        }
+        contextPrompt += attachmentPromptAddendum(
+            attachments: request.attachments,
+            capabilities: capabilities(for: provider)
+        )
         do {
             return try await sendPrepared(request: request, provider: provider, contextPrompt: contextPrompt)
         } catch {
@@ -530,13 +513,19 @@ final class AIProviderRouter {
             request.liveContext == nil || contextPrompt.contains("Shared context snapshot:")
             ? ""
             : "\n\n" + contextBuilder.build(request: request)
+        // Extract text from PDFs/documents and fold it into the prompt so every
+        // provider can read files even though none accept raw file uploads.
+        let attachmentPrompt = attachmentPromptAddendum(
+            attachments: request.attachments,
+            capabilities: capabilities(for: provider)
+        )
         if provider == .onDevice {
             let imageURLs = request.attachments
                 .filter { $0.kind == .image }
                 .map(\.url)
             return try await AIProviderService.shared.sendPreparedOnDevice(
                 message: request.text,
-                contextPrompt: contextPrompt + liveContextPrompt,
+                contextPrompt: contextPrompt + liveContextPrompt + attachmentPrompt,
                 history: request.history,
                 imageURLs: imageURLs
             )
@@ -545,7 +534,7 @@ final class AIProviderRouter {
         let configuration = try configuration(for: provider, apiKeyOverride: nil)
         return try await adapter(for: provider).send(
             request: request,
-            contextPrompt: contextPrompt + liveContextPrompt,
+            contextPrompt: contextPrompt + liveContextPrompt + attachmentPrompt,
             configuration: configuration
         )
     }
@@ -588,14 +577,14 @@ final class AIProviderRouter {
             )
         }
         let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
-        // If the provider can't natively take an attachment kind, append a text note
-        // so the model knows what was attached instead of silently ignoring it.
-        let fallback = attachmentFallbackPrompt(
+        // Extract readable text from file attachments and note any we couldn't read.
+        let attachmentPrompt = attachmentPromptAddendum(
             attachments: attachments,
-            capabilities: adapter(for: provider).capabilities
+            capabilities: capabilities(for: provider)
         )
         return try await adapter(for: provider).send(
-            request: request, contextPrompt: contextPrompt + fallback, configuration: configuration
+            request: request, contextPrompt: contextPrompt + attachmentPrompt,
+            configuration: configuration
         )
     }
 
@@ -671,20 +660,46 @@ final class AIProviderRouter {
         }
     }
 
-    private func attachmentFallbackPrompt(
+    /// Folds attachments into the prompt: extracted text for PDFs/documents (so files
+    /// are readable even when `supportsFiles` is false), plus a path-only note for
+    /// images a non-vision provider can't see and files we genuinely couldn't parse.
+    private func attachmentPromptAddendum(
         attachments: [AIAttachment],
         capabilities: AIProviderCapabilities
     ) -> String {
-        let unsupported = attachments.filter {
-            switch $0.kind {
-            case .image: return !capabilities.supportsImages
-            case .file, .pdf: return !capabilities.supportsFiles
-            case .url: return false
-            }
+        var addendum = AIAttachmentPreparer.extractedText(for: attachments)
+
+        var unreadable: [AIAttachment] = []
+        if !capabilities.supportsImages {
+            unreadable += attachments.filter { $0.kind == .image }
         }
-        guard !unsupported.isEmpty else { return "" }
-        let paths = unsupported.map { "- \($0.url.path)" }.joined(separator: "\n")
-        return "\n\nAttachment note: Provider cannot read these attachment contents. Use metadata/path only:\n\(paths)"
+        unreadable += AIAttachmentPreparer.unreadableFileAttachments(attachments)
+
+        if !unreadable.isEmpty {
+            let paths = unreadable.map { "- \($0.url.path)" }.joined(separator: "\n")
+            addendum +=
+                "\n\nAttachment note: these could not be read directly; use metadata/path only:\n\(paths)"
+        }
+        return addendum
+    }
+
+    /// Model-aware vision check. The provider-level `supportsImages` flag is optimistic
+    /// (it green-lit text-only Ollama / custom models, which then 400 on an image), so
+    /// for local and OpenAI-compatible providers we inspect the selected model id.
+    func selectedModelSupportsVision(for provider: AIProvider) -> Bool {
+        switch provider {
+        case .ollama:
+            return AIAttachmentPreparer.modelSupportsVision(modelID: settings.selectedOllamaModel)
+        case .openAICompatible:
+            return AIAttachmentPreparer.modelSupportsVision(
+                modelID: settings.openAICompatibleModelID)
+        case .shortcuts:
+            return false
+        default:
+            // First-party providers (OpenAI/Anthropic/Gemini) use pinned vision-capable
+            // models; on-device OCRs images to text. Trust the provider flag.
+            return capabilities(for: provider).supportsImages
+        }
     }
 }
 

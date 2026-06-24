@@ -125,11 +125,11 @@ final class AXSearchFieldInjector {
         }
     }
 
-    /// Find the app's own canonical search command from its cached menu
+    /// Find the app's own canonical search command from live/cached menus
     /// snapshot — "Mailbox Search" (Mail), "Note List Search…" (Notes), plain
-    /// "Search"/"Find…" elsewhere. Clicking the app's declared item beats
-    /// guessing shortcuts: it's correct per app by definition.
-    private func menuDerivedSearchOpeners(bundleId: String, appName: String) -> [[String]] {
+    /// "Search"/"Find…" elsewhere. The declared shortcut is used first when
+    /// available, with AX menu click kept as the fallback.
+    private func menuDerivedSearchOpeners(bundleId: String, appName: String, pid: pid_t) -> [AXMenuItem] {
         let excludedTitles: Set<String> = [
             "find next", "find previous", "find again", "find and replace",
             "use selection for find", "jump to selection", "jump to top",
@@ -152,7 +152,16 @@ final class AXSearchFieldInjector {
         }
 
         var seen = Set<String>()
-        var scored: [(path: [String], score: Int)] = []
+        var scored: [(item: AXMenuItem, score: Int)] = []
+
+        let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+        for item in liveItems where item.isEnabled {
+            guard let value = score(item) else { continue }
+            let key = item.path.joined(separator: ">")
+            guard seen.insert(key).inserted else { continue }
+            scored.append((item, value + 10))
+        }
+
         for query in ["search", "find"] {
             let items = GlobalContextEngine.shared.cachedMenuItems(
                 bundleIdentifier: bundleId,
@@ -164,10 +173,10 @@ final class AXSearchFieldInjector {
                 guard let value = score(item) else { continue }
                 let key = item.path.joined(separator: ">")
                 guard seen.insert(key).inserted else { continue }
-                scored.append((item.path, value))
+                scored.append((item, value))
             }
         }
-        return scored.sorted { $0.score > $1.score }.map(\.path)
+        return scored.sorted { $0.score > $1.score }.map(\.item)
     }
 
     /// Open the app's search UI: app-declared menu item first (unless the app
@@ -178,10 +187,27 @@ final class AXSearchFieldInjector {
         pid: pid_t
     ) async -> AXUIElement? {
         if !hasCuratedSearchShortcut(bundleId: bundleId) {
-            let openers = menuDerivedSearchOpeners(bundleId: bundleId, appName: appName)
-            for path in openers.prefix(2) {
+            let openers = menuDerivedSearchOpeners(bundleId: bundleId, appName: appName, pid: pid)
+            for item in openers.prefix(2) {
+                let shortcut = item.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !shortcut.isEmpty {
+                    let sent = await MainActor.run {
+                        AXMenuReader.shared.executeShortcut(
+                            char: shortcut,
+                            modifiers: item.shortcutModifiers,
+                            in: pid
+                        )
+                    }
+                    if sent {
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                        if let field = await resolveSearchField(pid: pid, attempts: 3) {
+                            return field
+                        }
+                    }
+                }
+
                 let clicked = await MainActor.run {
-                    AXMenuReader.shared.clickMenuItem(path: path, in: pid)
+                    AXMenuReader.shared.clickMenuItem(path: item.path, in: pid)
                 }
                 guard clicked else { continue }
                 try? await Task.sleep(nanoseconds: 200_000_000)

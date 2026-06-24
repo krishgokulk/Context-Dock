@@ -271,10 +271,32 @@ final class GlobalContextEngine {
         }
 
         guard liveMatch.isEnabled || isWindowMenuAction || isStopMenuAction || liveCloseDocumentAction else {
-            let clicked = await MainActor.run {
-                AXMenuReader.shared.clickMenuItem(path: liveMatch.path, in: pid)
+            let shortcut = (request.shortcutChar ?? liveMatch.shortcutChar)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let shortcutModifiers = request.shortcutModifiers != 0
+                ? request.shortcutModifiers
+                : liveMatch.shortcutModifiers
+            let shortcutSent: Bool
+            if !shortcut.isEmpty {
+                shortcutSent = await MainActor.run {
+                    AXMenuReader.shared.executeShortcut(
+                        char: shortcut,
+                        modifiers: shortcutModifiers,
+                        in: pid
+                    )
+                }
+            } else {
+                shortcutSent = false
             }
-            if clicked {
+            let menuClicked: Bool
+            if !shortcutSent {
+                menuClicked = await MainActor.run {
+                    AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid)
+                }
+            } else {
+                menuClicked = false
+            }
+            if shortcutSent || menuClicked {
                 await MainActor.run {
                     AXMenuReader.shared.invalidateCache(for: pid)
                 }
@@ -769,13 +791,6 @@ final class GlobalContextEngine {
         app: NSRunningApplication
     ) async -> Bool {
         let shortcut = shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let normalizedTitle = path.last?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        if normalizedTitle == "paste",
-           await MainActor.run(body: { AXMenuReader.shared.clickMenuItem(path: path, in: pid) }) {
-            return true
-        }
         if isStopMenuPath(path), shortcut == ".",
            await MainActor.run(body: {
                AXMenuReader.shared.executeShortcutToFrontmost(
@@ -791,7 +806,7 @@ final class GlobalContextEngine {
            }) {
             return true
         }
-        if await MainActor.run(body: { AXMenuReader.shared.clickMenuItem(path: path, in: pid) }) {
+        if await MainActor.run(body: { AXMenuReader.shared.clickMenuItemReliably(path: path, in: pid) }) {
             return true
         }
         await MainActor.run {

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  background: transparent;
+  min-height: 480px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+.scene {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 800px;
+}
+.left-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.left-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #555;
+  text-align: center;
+}
+.h-arrow-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+.h-arrow-label {
+  font-size: 10px;
+  color: #3aa3f5;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.4;
+}
+.center-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+.v-arrow-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  width: 100%;
+  justify-content: center;
+}
+.v-arrow-label {
+  font-size: 10px;
+  color: #3aa3f5;
+  font-weight: 500;
+  white-space: nowrap;
+  text-align: left;
+  line-height: 1.5;
+}
+.right-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-self: stretch;
+  padding-left: 18px;
+}
+.right-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.right-text {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #1a1a1a;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.right-text small {
+  display: block;
+  font-size: 10px;
+  color: #666;
+  font-weight: 400;
+}
+
+.dock-pill {
+  width: 288px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #b0a89a 0%, #8a8070 40%, #6e6358 100%);
+  box-shadow: 0 2px 14px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.15);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 7px;
+  position: relative;
+  overflow: hidden;
+}
+.dock-pill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.13) 0%, transparent 60%);
+  pointer-events: none;
+}
+.pill-icon {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.13);
+}
+.pill-content { flex: 1; overflow: hidden; }
+.pill-title {
+  font-size: 11px; font-weight: 600;
+  color: rgba(255,255,255,0.95);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+}
+.pill-sub {
+  font-size: 9.5px; color: rgba(255,255,255,0.52);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.pill-dots { display: flex; gap: 4px; flex-shrink: 0; }
+.pill-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.22); }
+.pill-dot.on { background: rgba(255,255,255,0.78); }
+.media-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.mbtn { width: 18px; height: 18px; border-radius: 50%; background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; font-size: 7px; color: rgba(255,255,255,0.9); }
+.mbtn.play { background: rgba(255,255,255,0.88); color: #333; font-size: 9px; }
+.media-album { width: 26px; height: 26px; border-radius: 6px; background: linear-gradient(135deg,#4a90d9,#7b4fa8); flex-shrink: 0; display:flex;align-items:center;justify-content:center; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="scene">
+
+  <!-- LEFT: General AI Chat -->
+  <div class="left-col">
+    <div class="left-label">General AI<br>Chat Mode</div>
+    <div class="dock-pill" style="width:196px;">
+      <div class="pill-icon">✦</div>
+      <div class="pill-content">
+        <div class="pill-title">AI Assistant</div>
+        <div class="pill-sub">Ask anything…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HORIZONTAL ARROW -->
+  <div class="h-arrow-col">
+    <div class="h-arrow-label">Swipe left or<br>right to switch</div>
+    <svg width="58" height="20" viewBox="0 0 58 20">
+      <polygon points="0,10 11,4 11,16" fill="#3aa3f5"/>
+      <line x1="9" y1="10" x2="49" y2="10" stroke="#3aa3f5" stroke-width="2.5"/>
+      <polygon points="58,10 47,4 47,16" fill="#3aa3f5"/>
+    </svg>
+  </div>
+
+  <!-- CENTER STACK -->
+  <div class="center-col">
+
+    <!-- Global Context -->
+    <div class="dock-pill">
+      <div class="pill-icon">▶</div>
+      <div class="pill-content">
+        <div class="pill-title">Global Context</div>
+        <div class="pill-sub">Search apps, files, commands…</div>
+      </div>
+      <div class="pill-dots">
+        <div class="pill-dot on"></div><div class="pill-dot"></div><div class="pill-dot"></div><div class="pill-dot"></div>
+      </div>
+    </div>
+
+    <!-- V arrow 1 -->
+    <div class="v-arrow-wrap">
+      <svg width="20" height="50" viewBox="0 0 20 50">
+        <polygon points="10,0 4,13 16,13" fill="#3aa3f5"/>
+        <line x1="10" y1="11" x2="10" y2="39" stroke="#3aa3f5" stroke-width="2.5"/>
+        <polygon points="10,50 4,37 16,37" fill="#3aa3f5"/>
+      </svg>
+      <div class="v-arrow-label">Swipe up / down<br>or ↑↓ arrow key</div>
+    </div>
+
+    <!-- Context Dock -->
+    <div class="dock-pill">
+      <div class="pill-icon" style="font-size:11px;">🧭</div>
+      <div class="pill-content">
+        <div class="pill-title">Safari — tabs, page cmds, menu cmds</div>
+        <div class="pill-sub">Context Dock · frontmost app</div>
+      </div>
+      <div class="pill-dots">
+        <div class="pill-dot"></div><div class="pill-dot on"></div><div class="pill-dot"></div><div class="pill-dot"></div>
+      </div>
+    </div>
+
+    <!-- V arrow 2 -->
+    <div class="v-arrow-wrap">
+      <svg width="20" height="50" viewBox="0 0 20 50">
+        <polygon points="10,0 4,13 16,13" fill="#3aa3f5"/>
+        <line x1="10" y1="11" x2="10" y2="39" stroke="#3aa3f5" stroke-width="2.5"/>
+        <polygon points="10,50 4,37 16,37" fill="#3aa3f5"/>
+      </svg>
+      <div class="v-arrow-label">Swipe up / down<br>or ↑↓ arrow key</div>
+    </div>
+
+    <!-- Media Dock -->
+    <div class="dock-pill">
+      <div class="media-controls">
+        <div class="mbtn">◀◀</div>
+        <div class="mbtn play">▶</div>
+        <div class="mbtn">▶▶</div>
+      </div>
+      <div class="media-album">🎵</div>
+      <div class="pill-content" style="margin-left:4px;">
+        <div class="pill-title">I tried the new Siri & Appl…</div>
+        <div class="pill-sub">Dean Kaliber</div>
+      </div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.45);padding-right:2px;">···</div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT LABELS -->
+  <div class="right-col">
+    <div class="right-label-row" style="padding-top:8px;">
+      <div style="display:flex;align-items:center;">
+        <div style="width:28px;height:1.5px;background:#1a1a1a;"></div>
+        <div style="width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:7px solid #1a1a1a;margin-left:-1px;"></div>
+      </div>
+      <div class="right-text">Global Context</div>
+    </div>
+
+    <div class="right-label-row">
+      <div style="display:flex;align-items:center;">
+        <div style="width:28px;height:1.5px;background:#1a1a1a;"></div>
+        <div style="width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:7px solid #1a1a1a;margin-left:-1px;"></div>
+      </div>
+      <div class="right-text">
+        Context Dock (Frontmost app)
+        <small>(on launch) double press opt key</small>
+      </div>
+    </div>
+
+    <div class="right-label-row" style="padding-bottom:8px;">
+      <div style="display:flex;align-items:center;">
+        <div style="width:28px;height:1.5px;background:#1a1a1a;"></div>
+        <div style="width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:7px solid #1a1a1a;margin-left:-1px;"></div>
+      </div>
+      <div class="right-text">Media Dock</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

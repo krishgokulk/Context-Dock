@@ -1,0 +1,156 @@
+import AppKit
+import Foundation
+import PDFKit
+import UniformTypeIdentifiers
+
+/// Converts user attachments into model-ready inputs before a request is sent.
+///
+/// Third-party chat-completion endpoints only accept a narrow shape: text plus a
+/// few image MIME types. They do not take raw PDFs or office documents, and most
+/// reject anything outside png/jpeg/gif/webp. Apple's Siri sidesteps this by running
+/// every file through a system parser before the model sees it. We do the same here:
+///
+/// - `imageBlocks` normalizes *any* image format (heic, tiff, bmp, …) to png/jpeg so
+///   it survives the Anthropic/OpenAI vision endpoints, which silently 400 on the
+///   formats `mediaType(for:)` used to mislabel.
+/// - `extractedText` pulls readable text out of PDFs and documents so a provider that
+///   "doesn't support files" can still reason about them — the text rides in the prompt.
+enum AIAttachmentPreparer {
+    /// Per-file cap so a large document can't blow the context window.
+    private static let maxCharactersPerFile = 16_000
+
+    /// Image MIME types every supported vision endpoint accepts as-is.
+    private static let nativeImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
+
+    // MARK: - Images
+
+    /// Returns base64 image blocks with a provider-safe media type. Formats outside the
+    /// native set are transcoded to PNG via ImageIO so they are not rejected downstream.
+    static func imageBlocks(for attachments: [AIAttachment]) -> [(data: String, mediaType: String)] {
+        attachments.compactMap { attachment in
+            guard attachment.kind == .image else { return nil }
+            let ext = attachment.url.pathExtension.lowercased()
+            if nativeImageExtensions.contains(ext),
+                let data = try? Data(contentsOf: attachment.url)
+            {
+                return (data.base64EncodedString(), mediaType(forExtension: ext))
+            }
+            // Transcode heic/tiff/bmp/etc. to PNG so vision endpoints accept it.
+            guard let png = pngData(from: attachment.url) else { return nil }
+            return (png.base64EncodedString(), "image/png")
+        }
+    }
+
+    private static func mediaType(forExtension ext: String) -> String {
+        switch ext {
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        default: return "image/jpeg"
+        }
+    }
+
+    private static func pngData(from url: URL) -> Data? {
+        guard let image = NSImage(contentsOf: url),
+            let tiff = image.tiffRepresentation,
+            let rep = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    // MARK: - Files / PDFs
+
+    /// True when the attachment is a file/pdf whose text we can attempt to extract.
+    static func canExtractText(from attachment: AIAttachment) -> Bool {
+        attachment.kind == .file || attachment.kind == .pdf
+    }
+
+    /// Builds a prompt block containing the readable text of every file/pdf attachment.
+    /// Empty string when there is nothing extractable, so callers can append freely.
+    static func extractedText(for attachments: [AIAttachment]) -> String {
+        let blocks: [String] = attachments.compactMap { attachment in
+            guard canExtractText(from: attachment) else { return nil }
+            guard let text = text(from: attachment.url), !text.isEmpty else { return nil }
+            let name = attachment.url.lastPathComponent
+            return "### Attached file: \(name)\n```\n\(text)\n```"
+        }
+        guard !blocks.isEmpty else { return "" }
+        return "\n\nThe user attached the following files. Their extracted contents:\n\n"
+            + blocks.joined(separator: "\n\n")
+    }
+
+    /// Attachments whose contents we could *not* turn into text — callers note these so
+    /// the model knows something was attached but unreadable, instead of staying silent.
+    static func unreadableFileAttachments(_ attachments: [AIAttachment]) -> [AIAttachment] {
+        attachments.filter { attachment in
+            canExtractText(from: attachment) && (text(from: attachment.url)?.isEmpty ?? true)
+        }
+    }
+
+    private static func text(from url: URL) -> String? {
+        let ext = url.pathExtension.lowercased()
+        let extracted: String?
+        switch ext {
+        case "pdf":
+            extracted = pdfText(url)
+        case "rtf", "rtfd", "doc", "docx", "odt", "wordml", "html", "htm", "webarchive":
+            extracted = attributedText(url) ?? plainText(url)
+        default:
+            extracted = plainText(url)
+        }
+        guard let value = extracted?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else { return nil }
+        if value.count > maxCharactersPerFile {
+            return String(value.prefix(maxCharactersPerFile))
+                + "\n\n*(truncated — file is larger than shown)*"
+        }
+        return value
+    }
+
+    private static func pdfText(_ url: URL) -> String? {
+        guard let doc = PDFDocument(url: url) else { return nil }
+        return doc.string
+    }
+
+    private static func attributedText(_ url: URL) -> String? {
+        guard
+            let attributed = try? NSAttributedString(
+                url: url,
+                options: [.documentType: NSAttributedString.DocumentType.plain],
+                documentAttributes: nil)
+        else {
+            // Fall back to letting AppKit infer the document type (rtf/docx/html).
+            guard
+                let inferred = try? NSAttributedString(
+                    url: url, options: [:], documentAttributes: nil)
+            else { return nil }
+            return inferred.string
+        }
+        return attributed.string
+    }
+
+    private static func plainText(_ url: URL) -> String? {
+        if let utf8 = try? String(contentsOf: url, encoding: .utf8) { return utf8 }
+        // Some text files are not UTF-8; let the system sniff the encoding.
+        var encoding: String.Encoding = .utf8
+        return try? String(contentsOf: url, usedEncoding: &encoding)
+    }
+
+    // MARK: - Model-aware vision
+
+    /// Substrings that mark an Ollama / OpenAI-compatible model as vision-capable.
+    private static let visionModelMarkers: [String] = [
+        "vision", "llava", "bakllava", "moondream", "minicpm-v", "qwen2-vl", "qwen2.5-vl",
+        "qwen-vl", "gemma3", "pixtral", "llama3.2-vision", "llama-3.2-vision", "internvl",
+        "cogvlm", "phi-3-vision", "phi3-vision", "phi-4-multimodal", "granite-vision",
+    ]
+
+    /// Whether a specific model id is multimodal. Used to gate the image attach button
+    /// at the *model* level — the provider-level flag is optimistic and wrongly green-lit
+    /// text-only local/custom models, which then 400 on an image payload.
+    static func modelSupportsVision(modelID: String) -> Bool {
+        let id = modelID.lowercased()
+        return visionModelMarkers.contains { id.contains($0) }
+    }
+}

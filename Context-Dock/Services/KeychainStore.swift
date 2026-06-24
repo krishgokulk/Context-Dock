@@ -55,6 +55,11 @@ final class KeychainStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            // Use the data-protection keychain so item access is scoped by the
+            // app's entitlement / Team ID rather than a per-build code-signature
+            // ACL. Without this, every Debug rebuild changes the cdhash and macOS
+            // re-prompts for the login password to release the item.
+            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 }

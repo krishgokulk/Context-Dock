@@ -60,7 +60,11 @@ extension LauncherView {
         let pureGlobalAppSearch = shouldUsePureGlobalAppSearch
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
-        let pills = pureGlobalAppSearch || pillQuery.isEmpty
+        // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
+        // query — so the result sheet is visible the moment the launcher opens with a selection.
+        let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
+        let pills =
+            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope
             ? []
             : contextDockViewModel.visiblePills
         let explicitAppTarget =

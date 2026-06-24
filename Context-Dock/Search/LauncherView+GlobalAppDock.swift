@@ -584,7 +584,8 @@ extension LauncherView {
                         // Match by bundleId → path → localized name (robust for apps whose
                         // indexed bundleId differs from the live one, e.g. ChatGPT), and fall
                         // back to the live running set when runningRegularApps is empty.
-                        let isRunning = runningApplication(forGlobalResult: result, lookup: runningLookup) != nil
+                        let runningApp = runningApplication(forGlobalResult: result, lookup: runningLookup)
+                        let isRunning = runningApp != nil
                         appListRow(
                             icon: result.icon,
                             name: result.title,
@@ -593,6 +594,7 @@ extension LauncherView {
                             isCommandIcon: globalListUsesCommandIcon(for: result),
                             defaultsToFirstSelection: true,
                             quitAction: isRunning ? makeQuitAction(result) : nil,
+                            quitPhase: appQuitFeedbackPhase(bundleID: runningApp?.bundleIdentifier),
                             action: makeAction(result)
                         )
                         .id(appRowID(result))

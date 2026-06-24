@@ -1939,8 +1939,10 @@ extension LauncherView {
                         "What would you like to do with this? I can summarize or explain it, send it to Notes, Reminders, Mail or Messages, or anything else — just ask."))
             requestWindowSizeUpdate(reason: .chatChanged)
         } else {
+            // Submit synchronously: the Enter caller clears searchState.query right after this
+            // returns, so an async submit would read an empty query and do nothing.
             searchState.query = q
-            DispatchQueue.main.async { submitAIQuery() }
+            submitAIQuery()
         }
     }
 

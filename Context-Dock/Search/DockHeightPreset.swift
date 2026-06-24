@@ -213,7 +213,9 @@ struct DockHeightResolver {
 
         if metrics.resultCount > 0 {
             let resultHeight =
-                metrics.l1ResultsReservedHeight > 0 ? metrics.l1ResultsReservedHeight : 450
+                metrics.l1ResultsReservedHeight > 0
+                ? metrics.l1ResultsReservedHeight
+                : l1ResultsHeight(for: metrics.resultCount)
             return metrics.statusBarHeight + metrics.contextHeight + pinnedAppsHeight
                 + metrics.searchBarHeight + metrics.contextChipHeight + metrics.indexingBarHeight
                 + resultHeight + 10
@@ -227,5 +229,15 @@ struct DockHeightResolver {
 
         return metrics.statusBarHeight + metrics.contextHeight + pinnedAppsHeight
             + metrics.searchBarHeight + metrics.contextChipHeight + metrics.indexingBarHeight
+    }
+
+    static func l1ResultsHeight(for resultCount: Int) -> CGFloat {
+        guard resultCount > 0 else { return 0 }
+        let headerHeight: CGFloat = 32
+        let rowHeight: CGFloat = 58
+        let verticalPadding: CGFloat = 12
+        let contentHeight = headerHeight + CGFloat(resultCount) * rowHeight + verticalPadding
+        let minimumHeight: CGFloat = resultCount <= 2 ? contentHeight : 112
+        return min(max(contentHeight, minimumHeight), 450)
     }
 }

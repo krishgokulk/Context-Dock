@@ -4,6 +4,42 @@ import SwiftUI
 import Vision
 
 extension LauncherView {
+    func handleDockInlineFeedback(_ note: Notification) {
+        guard let userInfo = note.userInfo,
+              let id = userInfo["id"] as? String
+        else { return }
+
+        if (userInfo["dismiss"] as? Bool) == true {
+            if launcherViewModel.inlineDockFeedback?.id == id {
+                launcherViewModel.inlineDockFeedback = nil
+            }
+            return
+        }
+
+        guard let title = userInfo["title"] as? String,
+              let icon = userInfo["icon"] as? String,
+              let phaseRaw = userInfo["phase"] as? String,
+              let phase = DockInlineFeedback.Phase(rawValue: phaseRaw)
+        else { return }
+
+        launcherViewModel.inlineDockFeedback = DockInlineFeedback(
+            id: id,
+            title: title,
+            icon: icon,
+            phase: phase,
+            subject: userInfo["subject"] as? String,
+            bundleID: userInfo["bundleID"] as? String
+        )
+
+        if phase != .progress {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                if self.launcherViewModel.inlineDockFeedback?.id == id {
+                    self.launcherViewModel.inlineDockFeedback = nil
+                }
+            }
+        }
+    }
+
     var contentWithModifiers: some View {
         mainContent
             .frame(width: calculatedWidth)
@@ -31,9 +67,8 @@ extension LauncherView {
             }
             .onChange(of: searchState.results.count) { _, newCount in
                 guard !showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
-                // Pre-commit to max height on first result — window stable while typing (Raycast pattern)
-                if newCount > 0 && l1ResultsReservedHeight < 450 {
-                    l1ResultsReservedHeight = 450
+                if newCount > 0 {
+                    l1ResultsReservedHeight = DockHeightResolver.l1ResultsHeight(for: newCount)
                     requestWindowSizeUpdate(
                         reason: .resultsChanged,
                         animated: false,
@@ -54,11 +89,17 @@ extension LauncherView {
                 // A page favicon finished loading — repaint EVERY view that shows web-link rows, not
                 // just Safari global context. Without rebuilding, the favicon sits in the cache but
                 // the already-built pills keep their generic icon (menuItemImage was nil at build).
+                if shouldShowSafariTabStrip {
+                    syncSafariTabStrip()
+                }
                 refreshVisibleGlobalContextAfterMenuCacheUpdate()
                 if showContextInDock && !isGlobalContextActive {
                     scheduleDockPillRebuild(
                         query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .dockInlineFeedbackChanged)) { note in
+                handleDockInlineFeedback(note)
             }
             .onChange(of: aiMode.messages.count) { _, _ in
                 // Reset is handled by the message-count gate in DockHeightResolver, and l2 chat reuses
@@ -449,6 +490,10 @@ extension LauncherView {
                 requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: isGlobalContextActive) { _, isActive in
+                if isActive, isContextDockChatConnected {
+                    exitContextDockChatSheet()
+                    WebResearchSession.shared.clear()
+                }
                 if isActive, globalContextActivation?.autoActivated == false {
                     suppressCurrentFinderSelectionBaseline()
                 }
@@ -515,7 +560,15 @@ extension LauncherView {
             .onChange(of: showContextInDock) { _, newValue in
                 if newValue {
                     syncL2DockSession(force: true)
+                    if shouldShowSafariTabStrip {
+                        syncSafariTabStrip(force: true)
+                    }
                     scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+                }
+            }
+            .onChange(of: frontmost.bundleID) { _, _ in
+                if shouldShowSafariTabStrip {
+                    syncSafariTabStrip(force: true)
                 }
             }
             // Rebuild pills whenever the live menu content changes — catches both count changes
@@ -568,7 +621,7 @@ extension LauncherView {
                     isSearchFieldFocused = true
                     return
                 }
-                AppDelegate.shared?.hideLauncher()
+                AppDelegate.shared?.hideLauncher(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                     AppDelegate.shared?.previousFrontmostApp?.activate(options: [
                         .activateIgnoringOtherApps
@@ -815,6 +868,10 @@ extension LauncherView {
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { notification in
                 beginMouseDrivenInteractionGrace()
+                if isContextDockChatConnected {
+                    exitContextDockChatSheet()
+                    WebResearchSession.shared.clear()
+                }
                 showMediaLayer = false
                 aiMode.isActive = false
                 showContextInDock = true

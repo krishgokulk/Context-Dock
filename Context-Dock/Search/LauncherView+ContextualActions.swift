@@ -669,13 +669,12 @@ extension LauncherView {
         appName: String,
         userMessage: String
     ) {
+        let fid = DockActionFeedback.start(
+            "Opening", subject: appName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
         let launched = launchApplication(bundleIdentifier: bundleId, appName: appName)
         if launched {
-            DockActionFeedback.start(
-                "Opening", subject: appName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
+            DockActionFeedback.complete(fid, label: "\(appName) opened")
         } else {
-            let fid = DockActionFeedback.start(
-                "Opening", subject: appName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
             DockActionFeedback.fail(fid, label: "Couldn't open \(appName)")
         }
         searchState.query = ""
@@ -3127,7 +3126,7 @@ extension LauncherView {
             guard !isGlobalContextActive, !isGlobalScope,
                 !scopedBundleId.isEmpty, !scopedAppName.isEmpty,
                 let intent = AppContentSearchRouter.shared.scopedIntent(
-                    for: q,
+                    for: scopedSearchQuery,
                     bundleId: scopedBundleId,
                     appName: scopedAppName
                 )

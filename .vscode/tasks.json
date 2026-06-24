@@ -55,6 +55,40 @@
                 "showReuseMessage": true,
                 "clear": false
             }
+        },
+        {
+            "label": "Context-Dock: build and run",
+            "type": "shell",
+            "command": "${workspaceFolder}/script/build_and_run.sh",
+            "args": [
+                "run"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            }
+        },
+        {
+            "label": "Context-Dock: build (check)",
+            "type": "shell",
+            "command": "${workspaceFolder}/script/build_and_run.sh",
+            "args": [
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            }
         }
     ]
 }

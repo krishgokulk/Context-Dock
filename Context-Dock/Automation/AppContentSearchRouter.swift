@@ -87,10 +87,9 @@ final class AppContentSearchRouter {
         let normalized = normalize(rawQuery)
         guard !normalized.isEmpty else { return nil }
 
-        guard bundleId != "com.apple.finder",
-            let content = contentAfterSearchVerb(in: normalized),
-            !content.isEmpty
-        else { return nil }
+        guard bundleId != "com.apple.finder" else { return nil }
+        let content = contentAfterSearchVerb(in: normalized) ?? normalized
+        guard !content.isEmpty else { return nil }
         return AppContentSearchIntent(bundleId: bundleId, appName: appName, query: content)
     }
 

@@ -150,6 +150,16 @@ xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration R
 
 SwiftTerm resolves through Swift Package Manager automatically.
 
+Project scripts wrap the common local workflows:
+
+```bash
+./scripts/build-debug.sh
+./script/build_and_run.sh
+./script/build_and_run.sh --verify
+```
+
+Codex uses `.codex/environments/environment.toml` to expose a Run action backed by `./script/build_and_run.sh`.
+
 ## Beta DMG
 
 Current beta artifact:
@@ -168,6 +178,14 @@ Settings → Updates can check the open-source beta channel, download the latest
 - When enabled, new beta builds download automatically and the DMG opens when ready.
 - Users can disable automatic updates anytime in Settings → Updates.
 - Current manifest: `update-manifest.json`.
+
+Prepare a beta update with:
+
+```bash
+./scripts/release-beta.sh
+```
+
+This bumps the build number, builds Release, creates and verifies `Context-Dock-1.1-beta.dmg`, updates `update-manifest.json`, then shows the git diff. Add `--commit` to commit the release files, or `--push` to commit and push after the build succeeds.
 
 ## Project Layout
 

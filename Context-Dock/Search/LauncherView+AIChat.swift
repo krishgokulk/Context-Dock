@@ -354,6 +354,9 @@ extension LauncherView {
     /// One-line "Using: <app> · <cli tools> · <N shortcuts>" summary shown under the
     /// Context Dock Chat header so the user sees the conversation's tool scope.
     func contextDockChatUsingSummary(bundleId: String, appName: String) -> String {
+        if isContextDockBrowserBundle(bundleId), connectedBrowserPageGhostTitle != nil {
+            return "Using: \(appName) · current page"
+        }
         var parts: [String] = [appName]
         let cli = TerminalPackageManager.shared.packages.filter {
             $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
@@ -367,6 +370,14 @@ extension LauncherView {
             parts.append("\(shortcutCount) shortcut\(shortcutCount == 1 ? "" : "s")")
         }
         return "Using: " + parts.joined(separator: " · ")
+    }
+
+    func contextDockChatTitle(appName: String, bundleId: String) -> String {
+        guard isContextDockBrowserBundle(bundleId),
+            let pageTitle = connectedBrowserPageGhostTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !pageTitle.isEmpty
+        else { return appName }
+        return pageTitle
     }
 
     @ViewBuilder
@@ -385,10 +396,11 @@ extension LauncherView {
                                 size: 18, cornerRadius: 4
                             )
                             VStack(alignment: .leading, spacing: 1) {
-                                Text("Chat with \(scopedTarget.name)")
+                                Text("Chat with \(contextDockChatTitle(appName: scopedTarget.name, bundleId: scopedTarget.bundleId))")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
+                                    .truncationMode(.tail)
                                 Text(contextDockChatUsingSummary(
                                     bundleId: scopedTarget.bundleId, appName: scopedTarget.name))
                                     .font(.system(size: 10))
@@ -2276,6 +2288,11 @@ extension LauncherView {
                     // all file/app/text context via the `context` parameter. Passing a pre-built
                     // context string as message would double the context and overflow Foundation Models.
                     let onDeviceContext: UserContext = {
+                        if let page = webResearch.pages.last,
+                            isContextDockBrowserBundle(scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId)
+                        {
+                            return .url(page.url)
+                        }
                         if isExplicitScopedApp && !scopedBundleId.isEmpty {
                             return .appFocused(name: scopedAppName, bundleID: scopedBundleId)
                         }

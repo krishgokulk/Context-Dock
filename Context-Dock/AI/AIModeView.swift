@@ -111,7 +111,7 @@ struct AIModeView: View {
     }
 
     private var providerSupportsImages: Bool {
-        AIProviderRouter.shared.capabilities(for: settings.selectedAIProvider).supportsImages
+        AIProviderRouter.shared.selectedModelSupportsVision(for: settings.selectedAIProvider)
     }
 
     @ViewBuilder private var contextChipsRow: some View {

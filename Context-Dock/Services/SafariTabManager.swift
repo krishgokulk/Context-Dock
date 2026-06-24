@@ -10,11 +10,14 @@ import AppKit
 // MARK: - Safari Tab Model
 
 struct SafariTab: Identifiable {
-    let id = UUID()
     let title: String
     let url: String
     let windowIndex: Int
     let tabIndex: Int
+
+    var id: String {
+        "\(windowIndex):\(tabIndex):\(url)"
+    }
 
     /// Display-friendly domain extracted from url
     var domain: String {
@@ -61,6 +64,66 @@ struct SafariTab: Identifiable {
 final class SafariTabManager {
     static let shared = SafariTabManager()
     private init() {}
+
+    private let cacheLock = NSLock()
+    private var cachedTabsStorage: [SafariTab] = []
+    private var lastFetchDate: Date = .distantPast
+    private var refreshInFlight = false
+    private var lastSelectedTabStorage: SafariTab?
+    private var lastSelectedTabDate: Date = .distantPast
+
+    func cachedTabs(maxAge: TimeInterval = 30) -> [SafariTab] {
+        cacheLock.lock()
+        let fresh = Date().timeIntervalSince(lastFetchDate) <= maxAge
+        let tabs = fresh ? cachedTabsStorage : []
+        cacheLock.unlock()
+        return tabs
+    }
+
+    func lastSelectedTab(maxAge: TimeInterval = 3) -> SafariTab? {
+        cacheLock.lock()
+        let fresh = Date().timeIntervalSince(lastSelectedTabDate) <= maxAge
+        let tab = fresh ? lastSelectedTabStorage : nil
+        cacheLock.unlock()
+        return tab
+    }
+
+    func rememberSelectedTab(_ tab: SafariTab) {
+        cacheLock.lock()
+        lastSelectedTabStorage = tab
+        lastSelectedTabDate = Date()
+        cacheLock.unlock()
+    }
+
+    func refreshCachedTabsIfNeeded(
+        maxAge: TimeInterval = 2,
+        force: Bool = false,
+        completion: (@MainActor ([SafariTab]) -> Void)? = nil
+    ) {
+        cacheLock.lock()
+        let freshEnough = Date().timeIntervalSince(lastFetchDate) <= maxAge
+        if refreshInFlight || (!force && freshEnough) {
+            let tabs = cachedTabsStorage
+            cacheLock.unlock()
+            if let completion {
+                Task { @MainActor in completion(tabs) }
+            }
+            return
+        }
+        refreshInFlight = true
+        cacheLock.unlock()
+
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let tabs = await self.fetchTabs()
+            self.cacheLock.lock()
+            self.refreshInFlight = false
+            self.cacheLock.unlock()
+            if let completion {
+                await MainActor.run { completion(tabs) }
+            }
+        }
+    }
 
     // MARK: Fetch
 
@@ -112,6 +175,10 @@ final class SafariTabManager {
                     tabs.append(SafariTab(title: title, url: url,
                                           windowIndex: wi, tabIndex: ti))
                 }
+                self.cacheLock.lock()
+                self.cachedTabsStorage = tabs
+                self.lastFetchDate = Date()
+                self.cacheLock.unlock()
                 continuation.resume(returning: tabs)
             }
         }
@@ -121,6 +188,7 @@ final class SafariTabManager {
 
     /// Bring the given tab to front in Safari and activate the app.
     func switchTo(_ tab: SafariTab) {
+        rememberSelectedTab(tab)
         let script = """
         tell application "Safari"
             set current tab of window \(tab.windowIndex) to tab \(tab.tabIndex) of window \(tab.windowIndex)
@@ -131,6 +199,29 @@ final class SafariTabManager {
         DispatchQueue.global(qos: .userInitiated).async {
             NSAppleScript(source: script)?.executeAndReturnError(nil)
         }
+    }
+
+    func switchToOpenTabOrOpenURL(_ urlString: String) {
+        let normalized = Self.normalizedURLKey(urlString)
+        if let tab = cachedTabs(maxAge: 45).first(where: {
+            Self.normalizedURLKey($0.url) == normalized
+        }) {
+            switchTo(tab)
+            return
+        }
+        openURL(urlString)
+    }
+
+    private static func normalizedURLKey(_ value: String) -> String {
+        guard var comps = URLComponents(string: value) else {
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        comps.fragment = nil
+        var text = (comps.url?.absoluteString ?? value)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        while text.hasSuffix("/") { text.removeLast() }
+        return text
     }
 
     // MARK: Current tab info
@@ -152,6 +243,57 @@ final class SafariTabManager {
                 var err: NSDictionary?
                 let res = s.executeAndReturnError(&err)
                 continuation.resume(returning: err == nil ? res.stringValue : nil)
+            }
+        }
+    }
+
+    func currentTab() async -> SafariTab? {
+        let script = """
+        tell application "Safari"
+            try
+                set currentTab to current tab of front window
+                set tabTitle to name of currentTab
+                set tabURL to URL of currentTab
+                set tabIndex to 1
+                repeat with ti from 1 to count of tabs of front window
+                    if tab ti of front window is currentTab then
+                        set tabIndex to ti
+                        exit repeat
+                    end if
+                end repeat
+                if tabURL is missing value then set tabURL to ""
+                if tabTitle is missing value then set tabTitle to tabURL
+                return "1|||" & (tabIndex as string) & "|||" & tabTitle & "|||" & tabURL
+            end try
+        end tell
+        """
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let s = NSAppleScript(source: script) else {
+                    continuation.resume(returning: nil); return
+                }
+                var err: NSDictionary?
+                let res = s.executeAndReturnError(&err)
+                guard err == nil,
+                    let item = res.stringValue
+                else {
+                    continuation.resume(returning: nil); return
+                }
+                let parts = item.components(separatedBy: "|||")
+                guard parts.count == 4,
+                    let windowIndex = Int(parts[0]),
+                    let tabIndex = Int(parts[1]),
+                    !parts[3].isEmpty
+                else {
+                    continuation.resume(returning: nil); return
+                }
+                let tab = SafariTab(
+                    title: parts[2].isEmpty ? parts[3] : parts[2],
+                    url: parts[3],
+                    windowIndex: windowIndex,
+                    tabIndex: tabIndex
+                )
+                continuation.resume(returning: tab)
             }
         }
     }

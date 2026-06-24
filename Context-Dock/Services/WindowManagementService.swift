@@ -240,6 +240,46 @@ final class WindowManagementService {
         return apply(centered, to: window)
     }
 
+    /// Best-effort centering after an app is activated/launched from the dock or
+    /// global context. Minimized windows animate back in asynchronously (the genie
+    /// restore takes ~0.4–0.7s), so a single immediate attempt finds only a tiny,
+    /// ineligible frame and bails. This un-minimizes the app's windows and polls
+    /// until a real window appears, then centers it. Unlike `execute(.center)` it
+    /// never shows the "No window found" toast — centering here is implicit, not a
+    /// user-issued window command, so a miss should stay silent.
+    func centerAfterActivate(_ app: NSRunningApplication, attempt: Int = 0) {
+        let pid = app.processIdentifier
+        // Kick off the restore for any minimized windows on every attempt — the app
+        // may not have created its window yet on the first pass.
+        unminimizeAllWindows(pid: pid)
+        if let window = frontmostEligibleWindow(pid: pid), let screen = screen(for: window) {
+            rememberFrame(window, pid: pid)
+            let visible = screen.visibleFrame
+            let centered = visible.insetBy(dx: visible.width * 0.10, dy: visible.height * 0.10)
+            _ = apply(centered, to: window)
+            return
+        }
+        // Up to ~1.1s of polling (8 × 0.15s) to outlast the restore animation, then
+        // give up quietly rather than nag with a toast.
+        guard attempt < 8 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.centerAfterActivate(app, attempt: attempt + 1)
+        }
+    }
+
+    private func unminimizeAllWindows(pid: pid_t) {
+        for window in windows(pid: pid) {
+            var minimized: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                window, kAXMinimizedAttribute as CFString, &minimized) == .success,
+                (minimized as? Bool) == true
+            {
+                AXUIElementSetAttributeValue(
+                    window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            }
+        }
+    }
+
     private func arrangeWindows(_ command: Command, pid: pid_t, appName: String) -> Bool {
         var windows = workspaceEligibleWindows(preferredPID: pid)
         if isPairArrangement(command) {

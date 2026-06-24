@@ -947,6 +947,7 @@ extension LauncherView {
         isCommandIcon: Bool = false,
         defaultsToFirstSelection: Bool = false,
         quitAction: (() -> Void)? = nil,
+        quitPhase: DockInlineFeedback.Phase? = nil,
         action: @escaping () -> Void
     ) -> some View {
         // Spotlight-style default selection: in a typed-query RESULT list, the first row reads as
@@ -1029,24 +1030,35 @@ extension LauncherView {
                             Button(role: .destructive) {
                                 quitAction()
                             } label: {
+                                let quitTint: SwiftUI.Color = quitPhase == .success ? .green : .red
                                 HStack(spacing: 5) {
-                                    Text("⌫")
-                                        .font(.system(size: 10, weight: .bold))
+                                    if quitPhase == .progress {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .scaleEffect(0.52)
+                                            .frame(width: 13, height: 13)
+                                    } else if quitPhase == .success {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                    } else {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
                                     Text("Quit")
                                         .font(.system(size: 11, weight: .semibold))
                                     Image(systemName: "rectangle.portrait.and.arrow.right")
                                         .font(.system(size: 10, weight: .semibold))
                                 }
-                                .foregroundStyle(Color.red.opacity(0.92))
+                                .foregroundStyle(quitTint.opacity(0.92))
                                 .padding(.leading, 7)
                                 .padding(.trailing, 6)
                                 .padding(.vertical, 4)
                                 .background {
                                     Capsule(style: .continuous)
-                                        .fill(Color.red.opacity(0.16))
+                                        .fill(quitTint.opacity(0.16))
                                         .overlay(
                                             Capsule(style: .continuous)
-                                                .strokeBorder(Color.red.opacity(0.34), lineWidth: 0.7)
+                                                .strokeBorder(quitTint.opacity(0.34), lineWidth: 0.7)
                                         )
                                 }
                             }

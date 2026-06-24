@@ -56,8 +56,12 @@ final class WebResearchSession: ObservableObject {
         var block = "\n\n## CURRENT WEB PAGE\n"
         if !page.title.isEmpty { block += "Title: \(page.title)\n" }
         block += "URL: \(page.url)\n\n"
-        block += "### Page Content:\n\(page.text)\n"
-        block += "\nAnswer questions about this page based ONLY on the content above.\n"
+        if page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            block += "Page text is still loading. Use the title and URL to identify the page, and say when full page content is needed.\n"
+        } else {
+            block += "### Page Content:\n\(page.text)\n"
+            block += "\nAnswer questions about this page based ONLY on the content above.\n"
+        }
         return block
     }
 }

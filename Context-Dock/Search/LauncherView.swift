@@ -94,8 +94,8 @@ struct LauncherView: View {
     @ObservedObject var mediaObserver = MediaPlayerObserver.shared
     @StateObject var taskExecutor = L2AITaskExecutor.shared
     @StateObject var selectionModel = SelectionObserverModel()
-    // High-water-mark height for L1 results panel — grows to fit content, never shrinks mid-session.
-    // Resets to 0 when results clear. Window resizes once on 0→N transition, stays stable while typing.
+    // Reserved height for L1 results panel. Resets to 0 when results clear and otherwise tracks
+    // visible result count so short result sets do not keep a mostly empty sheet.
     // Preview, shortcut-sheet, and command-key state lives in LauncherViewModel.
     // AI chat mode
     @EnvironmentObject var appState: AppState
@@ -462,6 +462,10 @@ struct LauncherView: View {
             !isContextDockChatRoutingLocked,
             shouldShowL2UnifiedDockRow
         else { return false }
+
+        // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
+        // an empty query — so it's visible the moment the launcher opens with a selection.
+        if isGlobalContextActive && hasActiveDockContextSelection { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
@@ -1508,6 +1512,20 @@ struct LauncherView: View {
     func executeDockPill(_ pill: DockPill) {
         UsageTracker.shared.recordAccess(for: defaultDockPillTrackingIdentifier(pill))
         if let url = pill.resolvedURL,
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https"
+        {
+            if pill.sourceBundleId == "com.apple.Safari" || frontmost.bundleID == "com.apple.Safari" {
+                SafariTabManager.shared.switchToOpenTabOrOpenURL(url.absoluteString)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+            searchState.query = ""
+            l2.focusedPillIndex = nil
+            hideLauncherAfterResultExecution()
+            return
+        }
+        if let url = pill.resolvedURL,
             FileManager.default.fileExists(atPath: url.path)
         {
             NSWorkspace.shared.open(url)
@@ -1972,6 +1990,27 @@ struct LauncherView: View {
         }
         let lower = searchState.query.lowercased()
 
+        // Finder desktop file-search scope: the ghost must complete a real file/folder
+        // name, never a cross-app menu command. The cross-app fallback below otherwise
+        // surfaces unrelated commands (e.g. "Screen Time" from System Settings' cached
+        // menu) because the indexed file pills carry no sourceBundleId and fail the
+        // global-context filter. Restrict to the pre-indexed Finder desktop pills and
+        // stop — no menu fallback in pure file search.
+        if isFinderDesktopOnlyMode {
+            let pools = [cachedDockPills, finderDesktopIndexedPills, finderDesktopRecentPills]
+            for pool in pools {
+                if let match = pool.first(where: {
+                    !$0.isSeparator
+                        && $0.rankingKind != "finderRecentApp"
+                        && $0.name.lowercased().hasPrefix(lower)
+                        && $0.name.count > searchState.query.count
+                }) {
+                    return match
+                }
+            }
+            return nil
+        }
+
         // Frontmost-scoped sources: cached pills + frontmost menu cache.
         // Skip in pure global app search — not frontmost-scoped there.
         if !shouldUsePureGlobalAppSearch {
@@ -2261,12 +2300,22 @@ struct LauncherView: View {
 
     // Shared condition: whether any results panel should be visible.
     var hasResultsToShow: Bool {
+        guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
         return !searchState.results.isEmpty
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (shouldShowContextDockAppPanel
                 && !(showContextInDock && l2.chatArmed && !l2.showChatPopover))
             || shouldShowFinderSearchResultsPanel(for: searchState.query)
+    }
+
+    var shouldSuppressIdleBottomResultsPanel: Bool {
+        settings.alwaysFloatDock
+            && settings.effectiveDockAtBottom
+            && showContextInDock
+            && !showMediaLayer
+            && !aiMode.isActive
+            && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var shouldShowContextDockAppPanel: Bool {
@@ -2335,7 +2384,12 @@ struct LauncherView: View {
     var searchResultsPanelMaxHeight: CGFloat {
         switch currentDockSurfaceMode {
         case .globalContext, .contextDock:
-            return l1ResultsReservedHeight > 0 ? l1ResultsReservedHeight : 450
+            let liveHeight = DockHeightResolver.l1ResultsHeight(for: searchState.results.count)
+            guard l1ResultsReservedHeight > 0 else { return liveHeight }
+            if globalInlineAppScope != nil || searchState.results.count <= 2 {
+                return liveHeight
+            }
+            return l1ResultsReservedHeight
         case .generalChat, .contextDockChat, .mediaDock:
             return 0
         }

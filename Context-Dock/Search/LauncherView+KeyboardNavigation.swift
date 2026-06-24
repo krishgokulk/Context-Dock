@@ -465,19 +465,20 @@ extension LauncherView {
                             let bundleId = self.bundleIdentifier(forApplicationResult: result),
                             !bundleId.isEmpty
                         else { return event }
-                        self.focusedAppPillIndex = nil
-                        self.l2.pillNavViaKeyboard = false
-                        self.activateInlineDockAppScope(
-                            bundleIdentifier: bundleId,
-                            appName: result.title,
-                            queryOverride: "",  // clear "ter" so it doesn't show behind the pill
-                            preserveGlobalContext: true
+                        let activated = self.activateGlobalInlineScope(
+                            result: result,
+                            bundleID: bundleId
                         )
-                        // The focused field editor can write its stale buffer ("ter") back
-                        // over the binding after the in-scope clear — force it empty next
-                        // runloop so no text bleeds behind the scope pill.
+                        guard activated else { return event }
+                        self.focusedAppPillIndex = nil
+                        self.l2.focusedPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        self.clearSearchFieldEditorText()
+                        self.reclaimSearchInputFocus()
                         DispatchQueue.main.async {
-                            if !self.searchState.query.isEmpty { self.searchState.query = "" }
+                            self.searchState.query = ""
+                            self.clearSearchFieldEditorText()
+                            self.reclaimSearchInputFocus()
                         }
                         return nil
                     }
@@ -1468,7 +1469,7 @@ extension LauncherView {
                     return .handled
                 }
                 // Dock visible, nothing active: ESC hides dock and returns to previous app
-                AppDelegate.shared?.hideLauncher()
+                AppDelegate.shared?.hideLauncher(force: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                     AppDelegate.shared?.previousFrontmostApp?.activate(options: [
                         .activateIgnoringOtherApps
@@ -1497,6 +1498,17 @@ extension LauncherView {
                     // Dismiss file/text selection chip (same as clicking "-")
                     if hasActiveDockContextSelection {
                         dismissSelectionAndStayInGlobalContext()
+                        isSearchFieldFocused = true
+                        return .handled
+                    }
+                    if isContextDockChatConnected,
+                        AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
+                    {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                            exitContextDockChatSheet()
+                            WebResearchSession.shared.clear()
+                            searchState.revision += 1
+                        }
                         isSearchFieldFocused = true
                         return .handled
                     }
@@ -1559,7 +1571,7 @@ extension LauncherView {
                     return .handled
                 }
                 // In a browser with an empty field, right-arrow grabs the current
-                // page as a context pill (instead of opening the AI chat panel).
+                // page and immediately arms app-scoped chat for that page.
                 if (isGlobalContextActive || showContextInDock),
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
@@ -1569,6 +1581,8 @@ extension LauncherView {
                     AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID),
                     addCurrentSafariPageToContextFromKeyboard()
                 {
+                    searchState.revision += 1
+                    openInlineAIChatPanel()
                     return .handled
                 }
                 if (isGlobalContextActive || showContextInDock),

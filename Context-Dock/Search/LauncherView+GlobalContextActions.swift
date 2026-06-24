@@ -1059,7 +1059,13 @@ extension LauncherView {
             : isMenuActionQuery
                 ? max(12, maxListViewDockPills - appResults.count)
             : max(0, maxListViewDockPills - appResults.count)
-        let contentSearchGroups = globalAppContentSearchGroups(for: q)
+        let roleExpandedGroups = globalRoleExpandedAppGroups(for: q)
+        let roleExpandedBundleIds = Set(roleExpandedGroups.map(\.id))
+        let contentSearchGroups = roleExpandedGroups + globalAppContentSearchGroups(for: q)
+            .filter { group in
+                let bundleId = group.pills.first?.sourceBundleId ?? group.id
+                return !roleExpandedBundleIds.contains(bundleId)
+            }
         let contentSearchPillCount = contentSearchGroups.flatMap(\.pills).count
         let remainingMenuBudget = max(0, menuBudget - contentSearchPillCount)
         let menuGroups = indexedRunningMenuGroups(
@@ -1492,8 +1498,10 @@ extension LauncherView {
         // state just because it appeared under the resting cursor.
         hoveredGlobalInlineScopeBundleId = nil
         searchState.query = ""
+        clearSearchFieldEditorText()
         scheduleGlobalAppMatchRebuild(query: "", delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
+        reclaimSearchInputFocus()
         return true
     }
 
@@ -1537,6 +1545,20 @@ extension LauncherView {
     func moveSearchInsertionPointToEnd(in textView: NSTextView) {
         let end = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: end, length: 0))
+    }
+
+    func clearSearchFieldEditorText() {
+        let keyResponder = NSApp.keyWindow?.firstResponder as? NSTextView
+        let launcherResponder = AppDelegate.shared?.launcherWindow?.firstResponder as? NSTextView
+        let textViews = [keyResponder, launcherResponder].compactMap { $0 }
+
+        for textView in textViews {
+            if !textView.string.isEmpty {
+                textView.string = ""
+                launcherViewModel.searchInputCaretTick &+= 1
+            }
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
     }
 
     /// Like reclaimSearchInputFocus, but selects the whole query (Spotlight-style) so pressing Up
@@ -2619,6 +2641,189 @@ extension LauncherView {
         return appGroups
     }
 
+    func globalRoleExpandedAppGroups(for query: String) -> [AppMenuGroup] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            !hasActiveDockContextSelection,
+            globalInlineAppScope == nil,
+            !q.isEmpty
+        else { return [] }
+
+        let resolution = GlobalContextQueryRoleResolver.shared.resolve(q)
+        guard let scope = resolution.scope else { return [] }
+
+        let scopeResolution = DockScopeResolution(
+            scopedBundleId: scope.bundleId,
+            scopedAppName: scope.appName,
+            scopedSearchQuery: scope.actionQuery,
+            isExplicitAppScope: true,
+            isGlobalScope: false
+        )
+        let icon = resolvedApplicationIcon(
+            bundleIdentifier: scope.bundleId,
+            appName: scope.appName
+        )
+
+        var pills: [DockPill] = []
+        if isBrowserMenuSource(scope.bundleId),
+            !scope.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            pills.append(globalBrowserSearchPill(scope: scope, icon: icon))
+            if let target = resolution.targets.first,
+                let website = globalRoleWebsiteURL(for: target)
+            {
+                pills.append(globalOpenWebsitePill(url: website, scope: scope, target: target))
+            }
+        }
+
+        let cachedPills = cachedGlobalAppScopeDockPills(
+            query: scope.actionQuery,
+            scope: scopeResolution,
+            appPath: scope.appPath
+        )
+        for pill in cachedPills where !pills.contains(where: { $0.trackingIdentifier == pill.trackingIdentifier }) {
+            pills.append(pill)
+            if pills.count >= 5 { break }
+        }
+        if !pills.contains(where: { $0.rankingKind == "appLaunch" || normalizedDockPillText($0.name) == "open \(normalizedDockPillText(scope.appName))" }) {
+            pills.append(globalOpenAppPill(scope: scope, icon: icon))
+        }
+
+        let visible = Array(pills.prefix(5))
+        guard !visible.isEmpty else { return [] }
+        return [
+            AppMenuGroup(
+                id: scope.bundleId,
+                appName: scope.appName,
+                icon: icon,
+                pills: visible
+            )
+        ]
+    }
+
+    func globalBrowserSearchPill(
+        scope: GlobalContextResolvedAppRole,
+        icon: NSImage?
+    ) -> DockPill {
+        let query = scope.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let intent = AppContentSearchIntent(
+            bundleId: scope.bundleId,
+            appName: scope.appName,
+            query: query
+        )
+        var pill = DockPill(
+            id: "global-browser-search:\(scope.bundleId):\(normalizedDockPillText(query))",
+            name: "Search web for \"\(query)\"",
+            icon: "magnifyingglass",
+            accentColorName: "blue",
+            badge: "Search",
+            execute: {
+                let actionId = DockActionFeedback.start(
+                    "Searching", subject: scope.appName,
+                    icon: "magnifyingglass", tint: .blue.opacity(0.85)
+                )
+                Task {
+                    let output = await AppContentSearchRouter.shared.execute(intent)
+                    await MainActor.run {
+                        let clean = output
+                            .replacingOccurrences(of: "✅ ", with: "")
+                            .replacingOccurrences(of: "❌ ", with: "")
+                        if output.hasPrefix("❌") {
+                            DockActionFeedback.fail(actionId, label: clean)
+                        } else {
+                            DockActionFeedback.complete(actionId, label: clean)
+                        }
+                        searchState.query = ""
+                        focusedAppPillIndex = nil
+                        l2.focusedPillIndex = nil
+                    }
+                }
+            }
+        )
+        pill.menuItemImage = icon
+        pill.sourceBundleId = scope.bundleId
+        pill.sourceAppName = scope.appName
+        pill.rankingKind = "contentSearch"
+        pill.trackingIdentifier = "global-browser-search:\(scope.bundleId):\(normalizedDockPillText(query))"
+        pill.searchTerms = [query, scope.appName, "search", "web", "find"]
+        pill.rankingScore = 10_000
+        return pill
+    }
+
+    func globalOpenWebsitePill(
+        url: URL,
+        scope: GlobalContextResolvedAppRole,
+        target: GlobalContextResolvedAppRole
+    ) -> DockPill {
+        var pill = DockPill(
+            id: "global-open-website:\(scope.bundleId):\(target.bundleId):\(url.host ?? url.absoluteString)",
+            name: "Open \(url.host ?? target.appName)",
+            icon: "link",
+            accentColorName: "blue",
+            badge: "Web",
+            execute: { [self] in
+                openURL(url, inBrowserBundleId: scope.bundleId)
+            }
+        )
+        pill.sourceBundleId = scope.bundleId
+        pill.sourceAppName = scope.appName
+        pill.rankingKind = "web"
+        pill.trackingIdentifier = pill.id
+        pill.resolvedURL = url
+        pill.searchTerms = [target.appName, url.absoluteString, "open", "download", "web"]
+        return pill
+    }
+
+    func globalOpenAppPill(
+        scope: GlobalContextResolvedAppRole,
+        icon: NSImage?
+    ) -> DockPill {
+        var pill = DockPill(
+            id: "global-open-app:\(scope.bundleId)",
+            name: "Open \(scope.appName)",
+            icon: "app.badge",
+            accentColorName: "blue",
+            badge: nil,
+            execute: { [self] in
+                _ = launchApplication(
+                    bundleIdentifier: scope.bundleId,
+                    appName: scope.appName,
+                    path: scope.appPath
+                )
+            }
+        )
+        pill.menuItemImage = icon
+        pill.sourceBundleId = scope.bundleId
+        pill.sourceAppName = scope.appName
+        pill.rankingKind = "appLaunch"
+        pill.trackingIdentifier = pill.id
+        pill.searchTerms = [scope.appName, "open", "launch"]
+        return pill
+    }
+
+    func globalRoleWebsiteURL(for target: GlobalContextResolvedAppRole) -> URL? {
+        let hostBase = normalizedDockPillText(target.appName)
+            .split(separator: " ")
+            .first
+            .map(String.init) ?? ""
+        guard hostBase.count >= 3 else { return nil }
+        return URL(string: "https://www.\(hostBase).com")
+    }
+
+    func openURL(_ url: URL, inBrowserBundleId bundleId: String) {
+        hideLauncherAfterResultExecution()
+        if let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            NSWorkspace.shared.open(
+                [url],
+                withApplicationAt: browserURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func appContentSearchDockPill(_ intent: AppContentSearchIntent) -> DockPill {
         var pill = DockPill(
             id: "content-search:\(intent.id)",
@@ -3068,15 +3273,20 @@ extension LauncherView {
         appName: String,
         appPath: String?
     ) -> DockPill {
+        let queryKey = actionQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         var pill = DockPill(
-            id: "scoped-content-search:\(bundleId)",
+            id: "scoped-content-search:\(bundleId):\(queryKey)",
             name: "Search \"\(actionQuery)\" in \(appName)",
             icon: "magnifyingglass",
             accentColorName: nil,
             badge: nil,
             execute: { [self] in
+                let liveQuery = effectiveGlobalInlineActionQuery(searchState.query)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 executeScopedAppContentSearch(
-                    query: actionQuery,
+                    query: liveQuery.isEmpty ? actionQuery : liveQuery,
                     bundleId: bundleId,
                     appName: appName,
                     appPath: appPath
@@ -3086,7 +3296,7 @@ extension LauncherView {
         pill.sourceBundleId = bundleId
         pill.sourceAppName = appName
         pill.rankingKind = "contentSearch"
-        pill.trackingIdentifier = "scoped-content-search:\(bundleId)"
+        pill.trackingIdentifier = "scoped-content-search:\(bundleId):\(queryKey)"
         pill.searchTerms = [actionQuery, "search", appName]
         return pill
     }

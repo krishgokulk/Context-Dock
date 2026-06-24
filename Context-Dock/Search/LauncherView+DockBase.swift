@@ -322,6 +322,7 @@ extension LauncherView {
         index: Int? = nil,
         isExpanded: Bool = false,  // fills the vacated search-bar width
         destructiveAction: (() -> Void)? = nil,
+        destructivePhase: DockInlineFeedback.Phase? = nil,
         removeAction: (() -> Void)? = nil,
         pinAction: (() -> Void)? = nil,  // double-click to pin
         action: @escaping () -> Void
@@ -403,12 +404,6 @@ extension LauncherView {
                     }
                     if isExpanded {
                         Spacer(minLength: 0)
-                        if destructiveAction != nil {
-                            Image(systemName: "delete.left")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary.opacity(0.55))
-                                .padding(.trailing, 8)
-                        }
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary.opacity(0.55))
@@ -467,11 +462,24 @@ extension LauncherView {
             .buttonStyle(.plain)
             .zIndex(isExpanded ? 20 : (focused ? 10 : (hovered ? 5 : 0)))
 
-            if hovered, !isExpanded, let quit = destructiveAction {
+            if (hovered || destructivePhase != nil), !isExpanded, let quit = destructiveAction {
                 Button(action: quit) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: max(14, sz * 0.24), weight: .semibold))
-                        .foregroundStyle(.white, Color.black.opacity(0.65))
+                    Group {
+                        if destructivePhase == .progress {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.56)
+                                .frame(width: max(14, sz * 0.24), height: max(14, sz * 0.24))
+                        } else if destructivePhase == .success {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: max(14, sz * 0.24), weight: .semibold))
+                                .foregroundStyle(.white, Color.green.opacity(0.78))
+                        } else {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: max(14, sz * 0.24), weight: .semibold))
+                                .foregroundStyle(.white, Color.black.opacity(0.65))
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
                 .offset(x: max(4, sz * 0.08), y: -max(4, sz * 0.08))
@@ -507,6 +515,7 @@ extension LauncherView {
         isRunning: Bool,
         hoverKey: String? = nil,
         onCloseRunningApp: (() -> Void)? = nil,
+        closePhase: DockInlineFeedback.Phase? = nil,
         action: @escaping () -> Void
     ) -> some View {
         let sz = CGFloat(settings.dockIconSize)
@@ -545,13 +554,26 @@ extension LauncherView {
 
             if let hoverKey, let onCloseRunningApp, isRunning {
                 Button(action: onCloseRunningApp) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white, Color.black.opacity(0.72))
-                        .background(Color.black.opacity(0.12), in: Circle())
+                    Group {
+                        if closePhase == .progress {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.55)
+                                .frame(width: 16, height: 16)
+                        } else if closePhase == .success {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white, Color.green.opacity(0.78))
+                        } else {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white, Color.black.opacity(0.72))
+                        }
+                    }
+                    .background(Color.black.opacity(0.12), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .opacity(hoveredDockAppKey == hoverKey ? 1 : 0)
+                .opacity((hoveredDockAppKey == hoverKey || closePhase != nil) ? 1 : 0)
                 .offset(x: 4, y: -4)
                 .help("Quit \(label)")
             }

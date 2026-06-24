@@ -489,14 +489,30 @@ extension LauncherView {
     func addCurrentSafariPageToContextFromKeyboard() -> Bool {
         guard AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID) else { return false }
         let bridge = SafariBrowserBridge.shared
-        guard bridge.isFresh, let ctx = bridge.latestContext,
-            !ctx.url.isEmpty
-        else { return false }
-        if !webResearch.pages.contains(where: { $0.url == ctx.url }) {
-            WebResearchSession.shared.addPage(
+        if bridge.isFresh, let ctx = bridge.latestContext, !ctx.url.isEmpty {
+            attachBrowserPageSnapshotToCurrentChat(
                 PageSnapshot(
                     url: ctx.url, text: ctx.pageTextForAI,
                     title: ctx.title, timestamp: ctx.timestamp))
+            return true
+        }
+
+        let browserPID: pid_t = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+        if let snap = AXWebReader.shared.cachedSnapshot(for: browserPID),
+            !snap.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            attachBrowserPageSnapshotToCurrentChat(snap)
+            return true
+        }
+
+        guard let url = currentBrowserPageURL()?.absoluteString else { return false }
+        let title = URL(string: url)?.host ?? frontmost.name
+        attachBrowserPageSnapshotToCurrentChat(
+            PageSnapshot(
+                url: url, text: "",
+                title: title, timestamp: Date()))
+        if browserPID != 0 {
+            AXWebReader.shared.refresh(pid: browserPID, currentURL: url)
         }
         return true
     }

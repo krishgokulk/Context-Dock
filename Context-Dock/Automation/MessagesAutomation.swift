@@ -149,24 +149,7 @@ enum MessagesAutomation {
         guard !trimmed.isEmpty else { return "❌ No search query provided." }
         guard let app = await activateOrLaunchMessages() else { return "❌ Couldn't open Messages." }
 
-        let pid = app.processIdentifier
-        try? await Task.sleep(nanoseconds: 250_000_000)
-
-        // Cmd+F to open search
-        AXMenuReader.shared.executeShortcut(char: "f", modifiers: 2, in: pid)
-        try? await Task.sleep(nanoseconds: 200_000_000)
-
-        // Try to find and fill the search field
-        let appElement = AXUIElementCreateApplication(pid)
-        if let searchField = findSearchField(in: appElement) {
-            _ = AXUIElementSetAttributeValue(searchField, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            if AXUIElementSetAttributeValue(searchField, kAXValueAttribute as CFString, trimmed as CFTypeRef) == .success {
-                postEnter(to: pid)
-                return "✅ Searching Messages for \"\(trimmed)\""
-            }
-        }
-
-        return "⚠️ Opened Messages search — query \"\(trimmed)\" may need to be typed manually."
+        return await AXSearchFieldInjector.shared.inject(query: trimmed, into: app)
     }
 
     // MARK: - Compose Message

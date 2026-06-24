@@ -18,6 +18,7 @@ final class MenuExecutionCoordinator {
         let knownMenuItems: [AXMenuItem]
         let isGlobalContextActive: Bool
         let hasActiveDockContextSelection: Bool
+        let keepsDockFloating: Bool
     }
 
     struct DockMenuActionCallbacks {
@@ -26,6 +27,24 @@ final class MenuExecutionCoordinator {
         let scheduleTerminationRefresh: @MainActor (NSRunningApplication) -> Void
         let reloadMenu: @MainActor (NSRunningApplication) -> Void
         let clearLiveDockMenuState: @MainActor () -> Void
+        let refocusDockInput: @MainActor () -> Void
+    }
+
+    /// macOS revalidates Accessibility for non-notarized (e.g. Xcode Debug) builds by cdhash,
+    /// which changes every build — so the grant silently lapses and AX clicks / CGEvent
+    /// shortcuts do nothing. Surface it instead of failing silently, and open the pane.
+    @discardableResult
+    static func ensureAccessibilityTrustOrPrompt() -> Bool {
+        if AXIsProcessTrusted() { return true }
+        AppToast.show(
+            "Grant Accessibility to run app actions",
+            icon: "exclamationmark.shield", tint: .orange)
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        {
+            NSWorkspace.shared.open(url)
+        }
+        return false
     }
 
     func executeDockMenuAction(
@@ -33,6 +52,8 @@ final class MenuExecutionCoordinator {
         callbacks: DockMenuActionCallbacks
     ) {
         guard request.sourcePID != 0 else { return }
+        // No Accessibility trust → AX menu clicks and shortcut posting can't work; prompt.
+        guard Self.ensureAccessibilityTrustOrPrompt() else { return }
         guard executionTask == nil else {
             AppToast.show("Action already running", icon: "clock", tint: .secondary)
             return
@@ -55,11 +76,11 @@ final class MenuExecutionCoordinator {
 
             if isQuitAction {
                 await MainActor.run {
-                    callbacks.hideBeforeExecution()
                     _ = sourceApp.terminate()
                     callbacks.scheduleTerminationRefresh(sourceApp)
                     callbacks.refreshRunningApps()
                     callbacks.clearLiveDockMenuState()
+                    callbacks.refocusDockInput()
                 }
                 return
             }
@@ -70,9 +91,11 @@ final class MenuExecutionCoordinator {
                 )
                 if case let .handled(success, message, icon, tint) = directResult {
                     await MainActor.run {
-                        AppToast.show(message, icon: icon, tint: tint)
+                        DockActionFeedback.showResult(message, icon: icon, success: success)
                         MenuWarmCacheService.shared.frontmostAppDidChange(sourceApp)
-                        if success { callbacks.hideBeforeExecution() }
+                        callbacks.refreshRunningApps()
+                        callbacks.refocusDockInput()
+                        _ = tint
                     }
                     return
                 }
@@ -176,23 +199,23 @@ final class MenuExecutionCoordinator {
 
             let preferredShortcut = executableShortcutChar?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let pasteMenuClicked =
-                !directWindowActionHandled && !cachedShortcutSent
-                && Self.isPasteMenuPath(executablePath)
-                && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
             let shortcutSent =
                 cachedShortcutSent
-                || (!directWindowActionHandled && !pasteMenuClicked
+                || (!directWindowActionHandled
                     && !preferredShortcut.isEmpty
                     && AXMenuReader.shared.executeShortcut(
                         char: preferredShortcut,
                         modifiers: executableShortcutModifiers,
                         in: request.sourcePID
                     ))
-
+            let pasteMenuClicked =
+                !directWindowActionHandled && !shortcutSent
+                && Self.isPasteMenuPath(executablePath)
+                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
             let menuClicked =
-                !directWindowActionHandled && !pasteMenuClicked && !shortcutSent
-                && AXMenuReader.shared.clickMenuItem(path: executablePath, in: request.sourcePID)
+                !directWindowActionHandled && !shortcutSent && !pasteMenuClicked
+                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
+
             let fallbackWindowActionHandled =
                 !directWindowActionHandled && !shortcutSent && !menuClicked && isWindowMenuAction
                 && self.executeWindowManagementActionIfNeeded(
@@ -213,6 +236,9 @@ final class MenuExecutionCoordinator {
                 await MainActor.run {
                     callbacks.refreshRunningApps()
                     MenuWarmCacheService.shared.frontmostAppDidChange(sourceApp)
+                    if request.keepsDockFloating {
+                        callbacks.refocusDockInput()
+                    }
                 }
                 return
             }

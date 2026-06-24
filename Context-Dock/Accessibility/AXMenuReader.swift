@@ -207,6 +207,12 @@ final class AXMenuReader {
         return traverse(element: bar, path: path)
     }
 
+    @discardableResult
+    func clickMenuItemReliably(path: [String], in pid: pid_t) -> Bool {
+        if clickMenuItem(path: path, in: pid) { return true }
+        return clickMenuItemViaSystemEvents(path: path, in: pid)
+    }
+
     // MARK: - Private — tree reading
 
     private func readChildren(of parent: AXUIElement, path: [String],
@@ -421,6 +427,50 @@ final class AXMenuReader {
             return (out, err?.isEmpty == false ? err : nil)
         }
         return (out, err ?? "osascript exit \(process.terminationStatus)")
+    }
+
+    private func clickMenuItemViaSystemEvents(path: [String], in pid: pid_t) -> Bool {
+        let cleanPath = path
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard cleanPath.count >= 2,
+              let app = NSWorkspace.shared.runningApplications.first(where: {
+                  $0.processIdentifier == pid && !$0.isTerminated
+              }),
+              let appName = app.localizedName,
+              !appName.isEmpty
+        else { return false }
+
+        let appNameLiteral = appleScriptStringLiteral(appName)
+        let pathList = cleanPath.map(appleScriptStringLiteral).joined(separator: ", ")
+        let script = """
+        tell application "System Events"
+            tell process \(appNameLiteral)
+                set frontmost to true
+                set pathParts to {\(pathList)}
+                set topName to item 1 of pathParts
+                set currentMenu to menu 1 of menu bar item topName of menu bar 1
+                repeat with i from 2 to (count of pathParts)
+                    set itemName to item i of pathParts
+                    if i is (count of pathParts) then
+                        click menu item itemName of currentMenu
+                    else
+                        set currentMenu to menu 1 of menu item itemName of currentMenu
+                    end if
+                end repeat
+            end tell
+        end tell
+        """
+
+        let result = runAppleScript(script) ?? runOsaScriptProcess(script)
+        return result.error == nil
+    }
+
+    private func appleScriptStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
     }
 
     private func attributeElement(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {

@@ -1155,7 +1155,7 @@ extension LauncherView {
         l2.focusedPillIndex = nil
         l2.pillNavViaKeyboard = false
         isSearchFieldFocused = false
-        AppDelegate.shared?.hideLauncher()
+        AppDelegate.shared?.hideLauncher(force: true)
     }
 
     func hideLauncherAfterFinderAction() {

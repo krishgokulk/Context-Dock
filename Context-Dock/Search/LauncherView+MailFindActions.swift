@@ -634,16 +634,12 @@ extension LauncherView {
             return element
         }
 
-        var firstEditableField: AXUIElement?
         for child in axChildElements(element) {
             if let exact = findGenericSearchField(in: child, depth: depth + 1) {
                 return exact
             }
-            if firstEditableField == nil, isEditableAXElement(child) {
-                firstEditableField = child
-            }
         }
-        return firstEditableField
+        return nil
     }
 
     func setAXTextValue(_ text: String, on element: AXUIElement) -> Bool {
@@ -732,6 +728,23 @@ extension LauncherView {
         guard !trimmed.isEmpty else { return false }
 
         for _ in 0..<16 {
+            let appElement = AXUIElementCreateApplication(pid)
+            if let searchField = findGenericSearchField(in: appElement) {
+                let didPasteValue = await typeMailSearchQuery(
+                    trimmed,
+                    into: searchField,
+                    pid: pid
+                )
+                let didSetAXValue =
+                    didPasteValue
+                    ? false
+                    : setAXTextValue(trimmed, on: searchField)
+                if didPasteValue || didSetAXValue {
+                    if pressReturn { postKeyCode(36, to: pid) }
+                    return true
+                }
+            }
+
             if let focusedElement = currentFocusedElement(in: pid),
                 isEditableAXElement(focusedElement)
             {
@@ -744,19 +757,6 @@ extension LauncherView {
                     didPasteValue
                     ? false
                     : setAXTextValue(trimmed, on: focusedElement)
-                if didPasteValue || didSetAXValue {
-                    if pressReturn { postKeyCode(36, to: pid) }
-                    return true
-                }
-            }
-
-            let appElement = AXUIElementCreateApplication(pid)
-            if let searchField = findGenericSearchField(in: appElement) {
-                let didPasteValue = await typeMailSearchQuery(trimmed, into: searchField, pid: pid)
-                let didSetAXValue =
-                    didPasteValue
-                    ? false
-                    : setAXTextValue(trimmed, on: searchField)
                 if didPasteValue || didSetAXValue {
                     if pressReturn { postKeyCode(36, to: pid) }
                     return true
@@ -1646,36 +1646,8 @@ extension LauncherView {
                 return
             }
 
-            let pid = app.processIdentifier
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            setFindPasteboardString(searchQuery)
-            let profile = appSearchProfile(
-                bundleIdentifier: intent.targetBundleId,
-                appName: intent.targetAppName,
-                commandTitle: intent.commandTitle
-            )
-            var injected = false
-            if profile.tryVisibleSearchFieldFirst {
-                injected = await injectSearchQuery(
-                    searchQuery,
-                    into: pid,
-                    pressReturn: profile.pressReturnAfterInject
-                )
-            }
-            if !injected {
-                _ = await openFindInterface(
-                    in: pid,
-                    bundleIdentifier: intent.targetBundleId,
-                    appName: intent.targetAppName,
-                    commandTitle: intent.commandTitle
-                )
-                try? await Task.sleep(nanoseconds: 160_000_000)
-                injected = await injectSearchQuery(
-                    searchQuery,
-                    into: pid,
-                    pressReturn: profile.pressReturnAfterInject
-                )
-            }
+            let message = await AXSearchFieldInjector.shared.inject(query: searchQuery, into: app)
+            let injected = message.hasPrefix("✅")
 
             await MainActor.run {
                 if injected {
@@ -1763,13 +1735,20 @@ extension LauncherView {
 
             let pid = app.processIdentifier
             let path = menuItem.path
-            let clicked = AXMenuReader.shared.clickMenuItem(path: path, in: pid)
-            if !clicked, let sc = menuItem.shortcutChar, !sc.isEmpty {
-                _ = AXMenuReader.shared.executeShortcut(
+            let shortcutSent: Bool
+            if let sc = menuItem.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !sc.isEmpty
+            {
+                shortcutSent = AXMenuReader.shared.executeShortcut(
                     char: sc,
                     modifiers: menuItem.shortcutModifiers,
                     in: pid
                 )
+            } else {
+                shortcutSent = false
+            }
+            if !shortcutSent {
+                _ = AXMenuReader.shared.clickMenuItem(path: path, in: pid)
             }
 
             var injected = searchQuery.isEmpty
