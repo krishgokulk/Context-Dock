@@ -656,7 +656,9 @@ final class AIProviderRouter {
         case .openAICompatible: return OpenAICompatibleProviderAdapter()
         case .claudeBridge, .chatGPTBridge: return OpenAICompatibleProviderAdapter()
         case .shortcuts: return ShortcutsProviderAdapter()
-        case .onDevice: preconditionFailure("Provider does not use an adapter")
+        case .onDevice:
+            assertionFailure("Provider does not use an adapter")
+            return OpenAICompatibleProviderAdapter()
         }
     }
 
