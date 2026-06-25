@@ -160,15 +160,20 @@ Project scripts wrap the common local workflows:
 
 Codex uses `.codex/environments/environment.toml` to expose a Run action backed by `./script/build_and_run.sh`.
 
-## Beta DMG
+## Install (beta)
 
-Current beta artifact:
+Download the latest DMG from [Releases](https://github.com/krishgokulk/Context-Dock/releases), then:
 
-```text
-Context-Dock-1.1-beta.dmg
-```
+1. Open `Context-Dock-1.1-beta.dmg` and drag **Context Dock** to **Applications**.
+2. The beta is **not notarized yet**, so macOS quarantines it. Clear the quarantine flag in Terminal:
 
-Install by opening the DMG and dragging `Context-Dock.app` to Applications. Grant Accessibility permission when macOS prompts.
+   ```bash
+   xattr -cr /Applications/Context-Dock.app
+   ```
+
+3. Open Context Dock from Applications and grant **Accessibility** permission when macOS prompts.
+
+> The `xattr -cr` step is only needed until the app is signed & notarized. After that, it installs normally.
 
 ## Beta Updates
 

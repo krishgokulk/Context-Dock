@@ -113,15 +113,22 @@ TOKEN="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/d
 AUTH="Authorization: Bearer $TOKEN"
 API="https://api.github.com/repos/$REPO"
 
-# Create the release (tagging main's tip); if the tag already exists, look it up.
+# Create the release (tagging main's tip). The create POST is fire-and-forget —
+# the response parse has proven flaky, so we don't rely on it. Instead we always
+# resolve the release id by tag afterwards, with a few retries (GitHub may take a
+# moment to index a brand-new tag/release).
 NOTES="Beta build $BUILD. Download the DMG, open it, drag $APP_NAME to Applications. Unsigned beta — first launch may need right-click → Open. Minimum macOS 26.1."
-RID="$(curl -s -X POST "$API/releases" -H "$AUTH" -H 'Accept: application/vnd.github+json' \
+curl -s -X POST "$API/releases" -H "$AUTH" -H 'Accept: application/vnd.github+json' \
   -d "$(python3 -c "import json,sys;print(json.dumps({'tag_name':'$TAG','target_commitish':'main','name':'$APP_NAME $VERSION ($BUILD) — beta','body':'''$NOTES''','prerelease':True}))")" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)"
-if [ -z "$RID" ]; then
+  >/dev/null
+
+RID=""
+for _ in 1 2 3 4 5; do
   RID="$(curl -s "$API/releases/tags/$TAG" -H "$AUTH" \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)"
-fi
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('id') or '')" 2>/dev/null)"
+  [ -n "$RID" ] && break
+  sleep 2
+done
 [ -n "$RID" ] || { restore_journal; die "Could not create or find the release."; }
 
 # Replace any existing same-name asset, then upload.
