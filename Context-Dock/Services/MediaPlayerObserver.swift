@@ -144,7 +144,9 @@ class MediaPlayerObserver: ObservableObject {
         let a = u?["Artist"]          as? String ?? ""
         let s = u?["Player State"]    as? String ?? ""
         let p = u?["Player Position"] as? Double ?? 0
-        let d = u?["Total Time"]      as? Double ?? 0
+        // Music's "Total Time" is in milliseconds; "Player Position" is seconds.
+        // Normalize so the scrubber/remaining time isn't 1000× too long.
+        let d = Self.secondsFromMaybeMillis(u?["Total Time"] as? Double ?? 0)
         applyRaw(title: t, artist: a, isPlaying: s == "Playing",
                  elapsed: p, duration: d, rate: s == "Playing" ? 1 : 0,
                  bundleID: "com.apple.Music")
@@ -157,10 +159,16 @@ class MediaPlayerObserver: ObservableObject {
         let a = u?["Artist"]            as? String ?? ""
         let s = u?["Player State"]      as? String ?? ""
         let p = u?["Playback Position"] as? Double ?? 0
-        let d = u?["Track Duration"]    as? Double ?? 0
+        let d = Self.secondsFromMaybeMillis(u?["Track Duration"] as? Double ?? 0)
         applyRaw(title: t, artist: a, isPlaying: s == "Playing",
                  elapsed: p, duration: d, rate: s == "Playing" ? 1 : 0,
                  bundleID: "com.spotify.client")
+    }
+
+    /// Some players report track length in milliseconds. Anything longer than a
+    /// few hours is almost certainly milliseconds, so scale it down to seconds.
+    private static func secondsFromMaybeMillis(_ value: Double) -> Double {
+        value > 10_000 ? value / 1000 : value
     }
 
     // MARK: - Debounced fetch scheduler

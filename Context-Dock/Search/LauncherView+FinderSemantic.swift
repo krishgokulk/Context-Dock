@@ -661,7 +661,17 @@ extension LauncherView {
         guard !hasNonFinderInlineScope, !hasNonFinderTargetApp else { return false }
         // Use l2.targetApp for explicit chip pin — avoids resolveDockScope which is
         // query-dependent and returns wrong results when query matches menu items in other apps.
+        // Global Context pins the Finder scope in globalInlineAppScope (not l2.targetApp),
+        // so honour that too — otherwise the Finder chip in Global Context never enters
+        // desktop file-search and shows no files/folders.
         let explicitFinderScope = l2.targetApp?.bundleId == finderBundleId
+            || globalInlineAppScope?.bundleId == finderBundleId
+        // In Global Context, desktop file-search is ONLY for an explicit Finder
+        // chip. Do not fall into it just because Finder is the frontmost app —
+        // plain Global Context must stay apps/commands/running, not files.
+        if isGlobalContextActive {
+            return explicitFinderScope
+        }
         let isFinderContext = frontmost.bundleID == finderBundleId
             || axContext.bundleId == finderBundleId
             || explicitFinderScope

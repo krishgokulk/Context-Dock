@@ -29,7 +29,11 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
 }
 
 // Custom NSWindow that can become key window and is draggable
-class KeyableWindow: NSWindow {
+// NSPanel (not NSWindow) so it can carry .nonactivatingPanel: the launcher
+// becomes key for typing WITHOUT activating Context-Dock, so the frontmost app
+// keeps its menu bar (Spotlight/Alfred behaviour) instead of being replaced by
+// our app's menus.
+class KeyableWindow: NSPanel {
     // Flag to anchor window at bottom when expanding
     var anchorAtBottom: Bool = false
     var horizontalResizeAnchorX: CGFloat?
@@ -881,7 +885,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         launcherWindow = KeyableWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 60),
-            styleMask: [.borderless, .fullSizeContentView, .resizable],
+            styleMask: [.borderless, .fullSizeContentView, .resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -893,6 +897,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcherWindow?.contentView = hostingView
         launcherWindow?.backgroundColor = .clear
         launcherWindow?.isOpaque = false
+        // Stay visible when Context-Dock isn't the active app — it never becomes
+        // active now that it's a non-activating panel.
+        launcherWindow?.hidesOnDeactivate = false
         let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
@@ -939,7 +946,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.orderFrontRegardless()
         if activate {
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            self.launcherWindow?.makeKey()
         }
     }
 
@@ -1389,7 +1396,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 window.alphaValue = 1.0
                 window.orderFrontRegardless()
                 window.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                self.launcherWindow?.makeKey()
                 NotificationCenter.default.post(name: .commandKeyToggleContextScope, object: nil)
             }
         }
@@ -1448,7 +1455,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.alphaValue = 1
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        self.launcherWindow?.makeKey()
     }
 
     func activateContextDock() {
@@ -1497,7 +1504,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.isDockContextMode = true
             if let window = self.launcherWindow, window.isVisible {
                 window.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                self.launcherWindow?.makeKey()
             } else {
                 self.showLauncher()
             }
@@ -1770,7 +1777,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.orderFrontRegardless()
         window.makeKey()
         window.acceptsMouseMovedEvents = true
-        NSApp.activate(ignoringOtherApps: true)
+        self.launcherWindow?.makeKey()
 
         // Reset content state now that the window is key and the app is active.
         // The window is still alpha=0 at this point, so stale content is not visible.
