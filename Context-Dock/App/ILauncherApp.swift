@@ -923,10 +923,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applyPersistentDockBehavior() {
         guard let window = launcherWindow else { return }
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
+        let newLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
-        window.level = windowLevel
+        if window.level != newLevel { window.level = newLevel }
         window.isMovableByWindowBackground = true
     }
 

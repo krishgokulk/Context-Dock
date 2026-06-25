@@ -992,7 +992,7 @@ extension LauncherView {
                 NSAnimationContext.current.duration = 0.18
                 NSAnimationContext.current.timingFunction = CAMediaTimingFunction(
                     controlPoints: 0.2, 0.9, 0.4, 1.0)
-                window.animator().setFrame(newFrame, display: true)
+                window.animator().setFrame(newFrame, display: false)
                 NSAnimationContext.endGrouping()
             } else {
                 window.setFrame(newFrame, display: false)

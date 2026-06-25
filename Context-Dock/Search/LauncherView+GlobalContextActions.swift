@@ -2112,7 +2112,7 @@ extension LauncherView {
                     matchedAlias: preserveRemainingQueryTokens ? extraction.matchedQueryAlias : alias,
                     aliasStartIndex: extraction.aliasStartIndex
                 )
-                if best == nil || score > best!.1 {
+                if best.map({ score > $0.1 }) ?? true {
                     best = (target, score)
                 }
             }
