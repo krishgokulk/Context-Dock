@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'           # v1.1.7, v1.2.0, etc.
+  workflow_dispatch:   # manual trigger from GitHub Actions UI
+
+jobs:
+  build-and-notarize:
+    name: Build, sign, notarize
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Signing certificate ──────────────────────────────────────────────────
+      # Store in GitHub Secrets:
+      #   APPLE_DEVELOPER_CERTIFICATE_P12_BASE64  (base64 of the .p12 file)
+      #   APPLE_DEVELOPER_CERTIFICATE_PASSWORD    (p12 export password)
+      #
+      # To export:
+      #   openssl base64 -in DeveloperIDApplication.p12 | pbcopy
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$CERTIFICATE_P12" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      # ── Archive ─────────────────────────────────────────────────────────────
+      - name: Archive
+        run: |
+          mkdir -p .build/archive
+          xcodebuild archive \
+            -project Context-Dock.xcodeproj \
+            -scheme Context-Dock \
+            -configuration Release \
+            -archivePath .build/archive/Context-Dock.xcarchive \
+            -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM=F4PP2L7U76
+
+      # ── Export with Developer ID ─────────────────────────────────────────────
+      - name: Export (Developer ID)
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath .build/archive/Context-Dock.xcarchive \
+            -exportPath .build/export \
+            -exportOptionsPlist scripts/ExportOptions-DevID.plist \
+            -allowProvisioningUpdates
+
+      # ── DMG ─────────────────────────────────────────────────────────────────
+      - name: Create DMG
+        run: |
+          VERSION="$(plutil -extract CFBundleShortVersionString raw -o - Context-Dock/Info.plist)"
+          mkdir -p .build/dmg-stage
+          cp -R ".build/export/Context-Dock.app" .build/dmg-stage/
+          ln -s /Applications .build/dmg-stage/Applications
+          hdiutil create \
+            -volname "Context-Dock $VERSION" \
+            -srcfolder .build/dmg-stage \
+            -ov -format UDZO \
+            "Context-Dock-$VERSION.dmg"
+          echo "DMG_PATH=Context-Dock-$VERSION.dmg" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # ── Notarize ─────────────────────────────────────────────────────────────
+      # Secrets needed:
+      #   APPLE_ID                  (your@email.com)
+      #   APPLE_ID_APP_PASSWORD     (app-specific password from appleid.apple.com)
+      #   APPLE_TEAM_ID             (F4PP2L7U76)
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_APP_PASSWORD: ${{ secrets.APPLE_ID_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_ID_APP_PASSWORD" \
+            --wait --verbose
+
+      - name: Staple
+        run: |
+          xcrun stapler staple "$DMG_PATH"
+          spctl --assess --type open \
+            --context context:primary-signature \
+            --verbose "$DMG_PATH"
+
+      # ── Upload artifact ───────────────────────────────────────────────────────
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Context-Dock-${{ env.VERSION }}
+          path: ${{ env.DMG_PATH }}
+          retention-days: 30
+
+      # ── Create GitHub Release (only on tag push) ──────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.DMG_PATH }}
+          generate_release_notes: true
