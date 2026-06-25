@@ -170,6 +170,27 @@ Context-Dock-1.1-beta.dmg
 
 Install by opening the DMG and dragging `Context-Dock.app` to Applications. Grant Accessibility permission when macOS prompts.
 
+### "Context-Dock is damaged and can't be opened"
+
+Beta builds are not yet notarized, so macOS Gatekeeper will block the first launch with this message. Two ways to fix it:
+
+**Option A — Terminal (fastest):**
+
+After dragging the app to Applications, open Terminal and run:
+
+```bash
+xattr -cr /Applications/Context-Dock.app
+```
+
+Then double-click the app normally. You only need to do this once.
+
+**Option B — System Settings:**
+
+1. Try to open the app — macOS will show the warning.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll down to the Security section — you will see **"Context-Dock was blocked"**.
+4. Click **Open Anyway**.
+
 ## Beta Updates
 
 Settings → Updates can check the open-source beta channel, download the latest DMG, and open the installer.
