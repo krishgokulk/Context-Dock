@@ -187,6 +187,15 @@ Prepare a beta update with:
 
 This bumps the build number, builds Release, creates and verifies `Context-Dock-1.1-beta.dmg`, updates `update-manifest.json`, then shows the git diff. Add `--commit` to commit the release files, or `--push` to commit and push after the build succeeds.
 
+Or ship everything in one command — bump, build, DMG, push your branch, merge to `main`, and publish a GitHub Release with the DMG attached:
+
+```bash
+./scripts/ship.sh        # auto-increment build number
+./scripts/ship.sh 9      # explicit build number
+```
+
+Run `ship.sh` from a work branch with your code already committed.
+
 ## Project Layout
 
 ```text

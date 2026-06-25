@@ -41,6 +41,19 @@ In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first. There are no autom
 - **External dependency**: SwiftTerm (via SPM, auto-resolved by Xcode)  
 - **Second target**: `Context-DockExtension` (Safari Web Extension, `com.krishgokul.ContextDock.SafariExtension`)
 
+## Shipping a release ("ship it")
+
+When the user says **"ship it"** / **"release it"**, run the script — do **not** re-derive the steps:
+
+```bash
+./scripts/ship.sh        # auto-increment the build number
+./scripts/ship.sh 9      # explicit build number
+```
+
+`scripts/ship.sh` is the single source of truth for releasing. In one command it: bumps the build, builds Release (serial `-jobs 1` to dodge the build.db prune flake), makes the DMG, commits + pushes the current work branch, merges into `main` and pushes it, then publishes a GitHub Release with the DMG attached (token read from the git credential store).
+
+Preconditions the script enforces: run from a **work branch** (not `main`) with all source changes already committed; it aborts cleanly on merge conflicts. The DMG is an **unsigned** beta (no notarization) — first launch on another Mac needs right-click → Open. The in-app updater reads `update-manifest.json` from `main`.
+
 ## Project structure
 
 The project uses `PBXFileSystemSynchronizedRootGroup` (Xcode 16). **Creating a subfolder on disk automatically creates an Xcode group** — no `project.pbxproj` edits needed when adding or moving files.
