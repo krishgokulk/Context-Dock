@@ -4,6 +4,23 @@
   "version": "1.0",
   "description": "Sends rich browser context (page text, selected text, scroll position) to Context Dock.",
 
+  "icons": {
+    "48": "icon-48.png",
+    "96": "icon-96.png",
+    "128": "icon-128.png",
+    "256": "icon-256.png",
+    "512": "icon-512.png"
+  },
+
+  "action": {
+    "default_icon": {
+      "48": "icon-48.png",
+      "96": "icon-96.png",
+      "128": "icon-128.png"
+    },
+    "default_title": "Context Dock"
+  },
+
   "background": {
     "service_worker": "background.js"
   },

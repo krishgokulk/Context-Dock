@@ -20,3 +20,7 @@ Swift: +0 added · ~0 modified · -0 deleted
 ## 2026-06-25 00:44 · `06d8f0a0` · `main`
 **Merge codex-context-dock-polish-fixes into main (1.1 beta build 6)**
 Swift: +107 added · ~100 modified · -4 deleted
+
+## 2026-06-25 00:53 · `ba364e3c` · `codex-context-dock-polish-fixes`
+**chore: point updater at main branch instead of feature branch**
+Swift: +0 added · ~1 modified · -0 deleted

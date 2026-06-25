@@ -180,9 +180,10 @@ struct DockHeightResolver {
     }
 
     private static func mediaDockHeight(_ metrics: DockHeightMetrics) -> CGFloat {
-        let mediaPillHeight: CGFloat =
-            metrics.mediaHasDuration ? 70 : metrics.searchBarHeight
-        return metrics.statusBarHeight + mediaPillHeight + 12
+        // Constant height regardless of whether the track reports a duration, so
+        // the Media Dock never resizes mid-playback and switching into it from
+        // another mode animates smoothly instead of snapping between sizes.
+        return metrics.statusBarHeight + MediaDockSurface.surfaceHeight + 12
     }
 
     private static func searchSurfaceHeight(_ metrics: DockHeightMetrics) -> CGFloat {

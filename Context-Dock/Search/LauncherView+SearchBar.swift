@@ -1436,10 +1436,10 @@ extension LauncherView {
                                             }
                                         }
                                     } else if isGlobalContextActive, l2.targetApp == nil {
-                                        // Global context (no app scoped): "Global Context" ghost.
-                                        // When an app IS scoped (right-arrow), fall through to the
-                                        // scoped "Ask <app>" prompt below instead.
-                                        Text("Global Context")
+                                        // Global context (no app scoped): tell the user what they
+                                        // can do here. When an app IS scoped (right-arrow), fall
+                                        // through to the scoped "Ask <app>" prompt below instead.
+                                        Text("Search Apps or menus")
                                             .foregroundStyle(.secondary.opacity(0.55))
                                             .font(.system(size: 15, weight: .medium))
                                             .lineLimit(1)

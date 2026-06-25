@@ -444,9 +444,17 @@ struct LauncherView: View {
     }
 
     var shouldUsePureGlobalAppSearch: Bool {
-        isGlobalContextActive
+        // Only an EXPLICIT Finder scope (the inline Finder chip) means "search
+        // files" and should beat global app search. Do NOT use the broad
+        // isFinderDesktopOnlyMode here — it's also true when Finder merely happens
+        // to be the frontmost app, which would wrongly turn plain Global Context
+        // (no chip) into file search instead of apps/commands/running apps.
+        let explicitFinderScope =
+            globalInlineAppScope?.bundleId == "com.apple.finder"
+        return isGlobalContextActive
             && !hasActiveDockContextSelection
             && l2.targetApp == nil
+            && !explicitFinderScope
             && searchState.activeSmartQueryKey == nil
             && searchState.contextApp == nil
             && lockedSubmenuParent == nil
@@ -1911,12 +1919,13 @@ struct LauncherView: View {
                 case .executed:
                     break
                 case .executionFallback:
-                    AppToast.show(
-                        result.message, icon: "checkmark.circle", tint: .blue.opacity(0.85))
+                    // Modern inline dock feedback (tick at the dock's trailing edge
+                    // + ghost message in the input), not a separate floating pill.
+                    DockActionFeedback.showResult(
+                        result.message, icon: "checkmark.circle.fill", success: true)
                 case .unavailable, .launchFailed:
-                    AppToast.show(
-                        result.message, icon: "exclamationmark.triangle", tint: .orange.opacity(0.9)
-                    )
+                    DockActionFeedback.showResult(
+                        result.message, icon: "exclamationmark.triangle.fill", success: false)
                 }
 
                 // Quitting an app from its own scope: drop that app's pill so the

@@ -800,6 +800,18 @@ final class GlobalContextEngine {
            }) {
             return true
         }
+        // Browser extension menu commands (Safari/Chrome — "Turn Off the Lights",
+        // "Night Mode", etc.) ignore synthetic keystrokes: the event posts
+        // "successfully" but the extension never acts, and executeShortcut can't
+        // detect that, so it returns true and blocks the click fallback. For
+        // browsers, click the menu item directly first — the reliable path the
+        // user performs by hand — before falling back to the shortcut.
+        if SelectedContextResolver.isBrowserBundleId(app.bundleIdentifier ?? ""),
+           await MainActor.run(body: {
+               AXMenuReader.shared.clickMenuItemReliably(path: path, in: pid)
+           }) {
+            return true
+        }
         if !shortcut.isEmpty,
            await MainActor.run(body: {
                AXMenuReader.shared.executeShortcut(char: shortcut, modifiers: shortcutModifiers, in: pid)

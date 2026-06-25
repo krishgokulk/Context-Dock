@@ -122,6 +122,58 @@ extension LauncherView {
         )
     }
 
+    /// Live current-page context block for a browser scope, injected into the L2
+    /// context so EVERY provider (HTTP, on-device, Shortcuts) sees the page — its
+    /// URL, text and selection — without needing a tool to read it.
+    ///
+    /// Source priority: the Safari Web Extension payload (richest, reliable URL,
+    /// 8 000-char page text, no automation prompt), then the AX snapshot when the
+    /// extension is not enabled. Returns "" when not a browser or no data.
+    @MainActor
+    func browserScopeContextBlock(scopedBundleId: String) -> String {
+        let bundle = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        guard isContextDockBrowserBundle(bundle) else { return "" }
+
+        var pageTitle = ""
+        var pageURL = ""
+        var pageText = ""
+        var selected = ""
+
+        // 1) Safari Web Extension payload — preferred when fresh.
+        if SafariBrowserBridge.shared.isFresh,
+            let ext = SafariBrowserBridge.shared.currentContext() {
+            pageTitle = ext.title
+            pageURL = ext.url
+            pageText = ext.pageTextForAI
+            selected = ext.selectedText
+        }
+
+        // 2) AX snapshot fallback (extension disabled, or other browser).
+        if pageText.isEmpty, let browser = AppDelegate.shared?.previousFrontmostApp {
+            let pid = browser.processIdentifier
+            let liveURL = currentBrowserPageURL()?.absoluteString ?? ""
+            var snap = AXWebReader.shared.cachedSnapshot(for: pid)
+            if (snap?.text.isEmpty != false || snap?.isStale == true), !liveURL.isEmpty {
+                AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+                snap = AXWebReader.shared.cachedSnapshot(for: pid)
+            }
+            pageText = snap?.text ?? ""
+            if pageURL.isEmpty { pageURL = (snap?.url.isEmpty == false) ? (snap?.url ?? liveURL) : liveURL }
+            if pageTitle.isEmpty { pageTitle = snap?.title ?? "" }
+        }
+
+        guard !pageText.isEmpty || !pageURL.isEmpty else { return "" }
+        let selectedSection = selected.isEmpty
+            ? "" : "\nSELECTED TEXT:\n\(String(selected.prefix(1500)))"
+        return """
+            CURRENT PAGE TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
+            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)
+            \(pageText.isEmpty
+                ? "PAGE TEXT: (unavailable — could not read the page)"
+                : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")
+            """
+    }
+
     var shouldShowContextDockAIQueryFallback: Bool {
         guard showContextInDock,
             !isGlobalContextActive,
@@ -2203,8 +2255,15 @@ extension LauncherView {
                 let appleData = await self.appleAppsAndWeatherContext(for: query)
                 // Live MCP tools linked to this app (App Adapters → Linked MCP).
                 let mcpBlock = await MCPRuntime.shared.toolPromptBlock(forBundleId: scopedBundleId)
+                // Live browser page (URL + text + selection) from the Safari Web
+                // Extension, so every provider can answer "summarize this page",
+                // pass the video URL to yt-dlp, etc. — without a page-reading tool.
+                let browserPageBlock = await MainActor.run {
+                    self.browserScopeContextBlock(scopedBundleId: scopedBundleId)
+                }
                 let activeContextPrompt = [
                     finalContextPrompt, runtimeCLIContextPrompt, appleData, mcpBlock,
+                    browserPageBlock,
                 ]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n")
@@ -2409,13 +2468,54 @@ extension LauncherView {
                     await MainActor.run {
                         finishL2AIRequest(l2RequestID)
                     }
+                } else if provider == .shortcuts {
+                    // Shortcuts provider runs a user-built Shortcut (Apple
+                    // Intelligence, Ollama, any API) and returns its text. It is
+                    // non-streaming. activeContextPrompt already carries the live
+                    // browser page block (URL + text + selection), so the Shortcut
+                    // sees the page like every other provider.
+                    do {
+                        let request = AIRequest(
+                            text: query,
+                            context: scopedConversationContext,
+                            source: .contextDock,
+                            additionalContextPrompt: activeContextPrompt)
+                        let reply = try await AIProviderRouter.shared.send(
+                            request, provider: .shortcuts)
+                        if Task.isCancelled {
+                            await MainActor.run { finishL2AIRequest(l2RequestID) }
+                            return
+                        }
+                        await MainActor.run {
+                            var msg = AIChatMessage(
+                                role: .assistant,
+                                content: reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty ? "The Shortcut returned no output." : reply)
+                            msg = self.tagMessageWithProposal(msg)
+                            l2.chatMessages.append(msg)
+                            if !activeContextPrompt.isEmpty {
+                                extractAndInsertDockApprovalCards(
+                                    from: msg.content, intoMessageAt: msg.id)
+                            }
+                            finishL2AIRequest(l2RequestID)
+                        }
+                    } catch {
+                        await MainActor.run {
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: "Shortcut failed: \(error.localizedDescription)",
+                                    isError: true))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                    }
                 } else {
                     await MainActor.run {
                         l2.chatMessages.append(
                             AIChatMessage(
                                 role: .assistant,
                                 content:
-                                    "This AI provider is not supported in L2 mode. Please select OpenAI, Anthropic, Gemini, Ollama, or On-Device in Settings.",
+                                    "This AI provider is not supported in L2 mode. Please select OpenAI, Anthropic, Gemini, Ollama, On-Device, or Shortcuts in Settings.",
                                 isError: true))
                         finishL2AIRequest(l2RequestID)
                     }
