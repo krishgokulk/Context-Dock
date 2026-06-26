@@ -1035,14 +1035,17 @@ extension LauncherView {
                 if !docs.isEmpty { return searchResults(from: docs, query: q) }
                 return instantGlobalApplicationMatches(for: q, limit: appRowLimit)
             }()
+            // Frontmost app's adapter actions (linked shortcuts, deep links) — so
+            // an app's installed actions are reachable in Global Context too.
+            let adapterRows = globalFrontmostAdapterActionRows(for: q, limit: 6)
             if isTerminationQuery {
                 return mergeGlobalRowsPreservingPriority(
-                    [runningRows, commandRows, appRows],
+                    [runningRows, commandRows, adapterRows, appRows],
                     limit: appRowLimit
                 )
             }
             return mergeGlobalRowsPreservingPriority(
-                [appRows, commandRows, runningRows],
+                [adapterRows, appRows, commandRows, runningRows],
                 limit: appRowLimit
             )
         }()
@@ -2897,6 +2900,36 @@ extension LauncherView {
             || pathText.contains("recently")
             || pathText.contains("tabs")
             || pathText.contains("visited")
+    }
+
+    /// The frontmost app's installed adapter actions (linked shortcuts, deep
+    /// links, etc.) as Global Context rows. Menu-bar/CLI types are excluded —
+    /// menus come from the AX cache, CLI is a scoped concept.
+    func globalFrontmostAdapterActionRows(for query: String, limit: Int) -> [SearchResult] {
+        let bundleId = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+            ?? frontmost.bundleID
+        guard !bundleId.isEmpty else { return [] }
+        let actions = adapterManager.actions(for: bundleId, query: query)
+            .filter { $0.type != .menubar && $0.type != .cliTool }
+        guard !actions.isEmpty else { return [] }
+        let capturedContext = axContext
+        return actions.prefix(limit).map { action in
+            SearchResult(
+                title: action.name,
+                subtitle: action.type == .shortcut ? "Shortcut" : action.type.displayName,
+                icon: NSImage(systemSymbolName: action.icon, accessibilityDescription: nil),
+                action: {
+                    Task {
+                        _ = await AppAdapterManager.shared.execute(
+                            action, context: capturedContext, targetBundleId: bundleId)
+                    }
+                },
+                score: 9_500,
+                type: action.type == .shortcut ? .shortcut : .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                stableID: "global-adapter:\(bundleId):\(action.id)")
+        }
     }
 
     func isBrowserMenuSource(_ bundleID: String) -> Bool {

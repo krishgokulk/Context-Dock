@@ -1292,6 +1292,15 @@ struct LauncherView: View {
                 || scopedBundleId == "com.apple.systempreferences"
         else { return [] }
 
+        // If the user installed a System Settings adapter pack, it owns these
+        // actions (with correct, up-to-date deep links). Suppress the hardcoded
+        // built-in panes so they don't duplicate or shadow the pack with stale
+        // links (e.g. Wallpaper moved panes on macOS 26).
+        if let adapter = AppAdapterManager.shared.adapter(for: "com.apple.systempreferences"),
+            !adapter.actions.isEmpty {
+            return []
+        }
+
         typealias Pane = (name: String, terms: [String], url: String, icon: String)
         let panes: [Pane] = [
             (

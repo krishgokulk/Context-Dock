@@ -2551,7 +2551,9 @@ struct AppShortcutPickerSheet: View {
             }
         }
         .frame(width: 430, height: 500)
-        .onAppear { catalog.loadIfNeeded() }
+        // Always re-enumerate on open so shortcuts created since launch appear
+        // (loadIfNeeded is a no-op once loaded → stale list).
+        .onAppear { catalog.refresh() }
     }
 }
 
@@ -3155,7 +3157,7 @@ struct AutomationAdapterDetailView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(linkedCLITools.isEmpty && browserExtensionActions.isEmpty ? "No actions yet" : "No app actions yet")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Add actions using Open URL / Deep Link, Open File / App, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
+                            Text("Actions appear in DoraX when this app is frontmost. Add one manually, or import an adapter pack to install many at once.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                             HStack(spacing: 8) {
