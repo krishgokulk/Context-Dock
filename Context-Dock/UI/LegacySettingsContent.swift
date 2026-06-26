@@ -1647,6 +1647,17 @@ struct AppAdaptersSettingsView: View {
     @State private var showAutomations = false
     @State private var searchText = ""
     @State private var showNewAdapterSheet = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
 
     private func resolvedName(bundleId: String) -> String {
         if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
@@ -1875,6 +1886,18 @@ struct AppAdaptersSettingsView: View {
 
                     Spacer()
 
+                    if !showAutomations {
+                        Button(action: importAdapterPack) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                                Text("Import Pack").font(.system(size: 11))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .help("Import an App Adapter Pack (.adapterpack, .zip, .json)")
+                    }
+
                     Button {
                         Task {
                             await adapterManager.loadUserAdapters()
@@ -1891,6 +1914,25 @@ struct AppAdaptersSettingsView: View {
                 .padding(.vertical, 8)
             }
             .frame(minWidth: 200, maxWidth: 240)
+            .sheet(item: $importPreview) { preview in
+                AdapterPackImportPreviewSheet(
+                    preview: preview,
+                    onCancel: { importPreview = nil },
+                    onImport: {
+                        Task {
+                            let ok = await AdapterPackImporter.shared.install(preview)
+                            await MainActor.run {
+                                importPreview = nil
+                                if ok { selectedBundleId = preview.adapter.bundleId }
+                                else { importError = "Couldn't install the adapter pack." }
+                            }
+                        }
+                    })
+            }
+            .alert(
+                "Import Failed", isPresented: .constant(importError != nil),
+                actions: { Button("OK") { importError = nil } },
+                message: { Text(importError ?? "") })
 
             // MARK: Right panel
             VStack(spacing: 0) {
@@ -2508,9 +2550,28 @@ struct LabeledField<Content: View>: View {
 private struct AdapterRowView: View {
     let adapter: AppAdapter
     @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @State private var showRename = false
+    @State private var renameText = ""
 
     var isEnabled: Bool {
         adapterManager.adapters.first(where: { $0.id == adapter.id })?.isEnabled ?? adapter.isEnabled
+    }
+
+    private var categories: [String] {
+        Array(Set(adapter.actions.compactMap {
+            $0.category?.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func exportAdapter() {
+        guard let src = adapterManager.exportFileURL(for: adapter.bundleId) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(adapter.appName).json"
+        panel.allowedFileTypes = ["json"]
+        if panel.runModal() == .OK, let dest = panel.url {
+            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.copyItem(at: src, to: dest)
+        }
     }
 
     var body: some View {
@@ -2545,6 +2606,37 @@ private struct AdapterRowView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             .labelsHidden()
+        }
+        .contextMenu {
+            Text("\(adapter.visibleActions.count) actions" +
+                (categories.isEmpty ? "" : " · \(categories.count) categories"))
+            Divider()
+            Button {
+                renameText = adapter.appName
+                showRename = true
+            } label: { Label("Rename…", systemImage: "pencil") }
+            Button {
+                Task { await adapterManager.duplicateAdapter(bundleId: adapter.bundleId) }
+            } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+            Button(action: exportAdapter) {
+                Label("Export…", systemImage: "square.and.arrow.up")
+            }
+            if let src = adapterManager.exportFileURL(for: adapter.bundleId) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([src])
+                } label: { Label("Show Source in Finder", systemImage: "folder") }
+            }
+            Divider()
+            Button(role: .destructive) {
+                Task { await adapterManager.deleteAdapter(bundleId: adapter.bundleId) }
+            } label: { Label("Delete", systemImage: "trash") }
+        }
+        .alert("Rename Adapter", isPresented: $showRename) {
+            TextField("Name", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                Task { await adapterManager.renameAdapter(bundleId: adapter.bundleId, to: renameText) }
+            }
         }
     }
 }

@@ -2867,18 +2867,36 @@ extension LauncherView {
     /// title is in local browser history — those rows open in Safari directly instead
     /// of replaying menu clicks against the source app.
     func browserLinkURL(for descriptor: GlobalMenuDescriptor) -> URL? {
-        guard descriptor.path.count > 1, isBrowserMenuSource(descriptor.bundleID) else { return nil }
+        guard isBrowserURLMenuRow(descriptor) else { return nil }
+        return SafariLinkResolver.shared.url(forTitle: descriptor.name)
+    }
+
+    /// True when a browser menu descriptor is a DYNAMIC URL row (History /
+    /// Bookmarks / Recently Closed / recent tabs) rather than a stable command
+    /// (Back, Forward, Home, Show Personal History, Clear History…). These rows
+    /// must open a URL and must NEVER be AX-clicked — the submenu is scrollable,
+    /// position-sensitive and reorders.
+    func isBrowserURLMenuRow(_ descriptor: GlobalMenuDescriptor) -> Bool {
+        guard descriptor.path.count > 1, isBrowserMenuSource(descriptor.bundleID) else { return false }
         let root = descriptor.path.first.map(normalizedDockPillText) ?? ""
         let pathText = descriptor.path.map(normalizedDockPillText).joined(separator: " ")
-        let linkContext =
-            root == "history"
+        // Stable commands that live under History/Bookmarks but are NOT URL rows.
+        let name = normalizedDockPillText(descriptor.name)
+        let stableCommands: Set<String> = [
+            "show all history", "show history", "show personal history",
+            "clear history", "clear history…", "clear history...",
+            "back", "forward", "home", "reopen last closed window",
+            "reopen all windows from last session", "show bookmarks",
+            "edit bookmarks", "add bookmark", "add bookmark…", "bookmark all tabs",
+            "show bookmarks editor", "add to reading list",
+        ]
+        if stableCommands.contains(name) { return false }
+        return root == "history"
             || root == "bookmarks"
             || pathText.contains("recent")
             || pathText.contains("recently")
             || pathText.contains("tabs")
             || pathText.contains("visited")
-        guard linkContext else { return nil }
-        return SafariLinkResolver.shared.url(forTitle: descriptor.name)
     }
 
     func isBrowserMenuSource(_ bundleID: String) -> Bool {
@@ -2942,6 +2960,12 @@ extension LauncherView {
                         appName: descriptor.appName,
                         command: windowCommand
                     )
+                } else if isBrowserURLMenuRow(descriptor) {
+                    // Dynamic Safari history/bookmark URL row whose URL couldn't be
+                    // resolved — never AX-click the scrollable submenu.
+                    DockActionFeedback.showResult(
+                        "Couldn't open — no URL for this history item",
+                        icon: "safari", success: false)
                 } else {
                     executeLearnedGhostAction(
                         bundleID: bundleID,

@@ -104,6 +104,17 @@ struct AutomationSettingsView: View {
     @State private var showGlobalCLIPicker = false
     @State private var showSystemCommandSheet = false
     @State private var showAIImportSheet = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
     @State private var extensionSheetMode: AddAppExtensionSheet.Mode = .script
     @State private var showingImportPanel = false
 
@@ -194,6 +205,24 @@ struct AutomationSettingsView: View {
                 }
             }
         }
+        .sheet(item: $importPreview) { preview in
+            AdapterPackImportPreviewSheet(
+                preview: preview,
+                onCancel: { importPreview = nil },
+                onImport: {
+                    Task {
+                        let ok = await AdapterPackImporter.shared.install(preview)
+                        await MainActor.run {
+                            importPreview = nil
+                            if !ok { importError = "Couldn't install the adapter pack." }
+                        }
+                    }
+                })
+        }
+        .alert(
+            "Import Failed", isPresented: .constant(importError != nil),
+            actions: { Button("OK") { importError = nil } },
+            message: { Text(importError ?? "") })
         .onAppear {
             applySettingsPage(settingsPage)
             pkgMgr.loadPackages()
@@ -975,6 +1004,14 @@ struct AutomationSettingsView: View {
                     .controlSize(.small)
                     .fixedSize()
                     .layoutPriority(1)
+                    Button(action: importAdapterPack) {
+                        Label("Import Pack", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .layoutPriority(1)
+                    .help("Import an App Adapter Pack (.adapterpack, .zip, .json)")
                 }
                 Button(action: presentCreateFlow) {
                     Label(createButtonTitle, systemImage: "plus")
@@ -2731,9 +2768,56 @@ struct AutomationAdapterDetailView: View {
     @State private var showMCPSheet = false
     @State private var showDeleteConfirm = false
     @State private var isScanningHelp = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+    @State private var expandedActionGroups: Set<String> = []
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
 
     private var currentAdapter: AppAdapter {
         adapterManager.adapters.first(where: { $0.id == adapter.id }) ?? adapter
+    }
+
+    @ViewBuilder
+    private func actionRow(_ action: AdapterAction) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: action.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(.teal)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.name)
+                    .font(.system(size: 12, weight: .medium))
+                Text(action.type.displayName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                editingAction = action
+                showAddActionSheet = true
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.plain)
+            Button(role: .destructive) {
+                Task {
+                    await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
+                }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 6)
+        .padding(.leading, 8)
     }
 
     private var visibleActions: [AdapterAction] {
@@ -2890,6 +2974,24 @@ struct AutomationAdapterDetailView: View {
         } message: {
             Text("This will remove \(currentAdapter.appName) from FrontmostApp Actions.")
         }
+        .sheet(item: $importPreview) { preview in
+            AdapterPackImportPreviewSheet(
+                preview: preview,
+                onCancel: { importPreview = nil },
+                onImport: {
+                    Task {
+                        let ok = await AdapterPackImporter.shared.install(preview)
+                        await MainActor.run {
+                            importPreview = nil
+                            if !ok { importError = "Couldn't install the adapter pack." }
+                        }
+                    }
+                })
+        }
+        .alert(
+            "Import Failed", isPresented: .constant(importError != nil),
+            actions: { Button("OK") { importError = nil } },
+            message: { Text(importError ?? "") })
     }
 
     private func removeCurrentAdapterEverywhere() async {
@@ -2948,6 +3050,12 @@ struct AutomationAdapterDetailView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(.red)
+                    Button(action: importAdapterPack) {
+                        Label("Import Pack", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Install many actions for this app from an Adapter Pack")
                     Button {
                         presentAddActionEditor()
                     } label: {
@@ -2973,49 +3081,61 @@ struct AutomationAdapterDetailView: View {
                             Text("Add actions using Open URL / Deep Link, Open File / App, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
-                            Button("Add First Action") {
-                                presentAddActionEditor()
+                            HStack(spacing: 8) {
+                                Button("Add First Action") {
+                                    presentAddActionEditor()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                Button {
+                                    importAdapterPack()
+                                } label: {
+                                    Label("Import Pack", systemImage: "square.and.arrow.down")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Install many actions for this app from an Adapter Pack")
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
                         }
                         .padding(16)
                         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                     } else {
-                        ForEach(appOnlyActions) { action in
-                            HStack(spacing: 10) {
-                                Image(systemName: action.icon)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(.teal)
-                                    .frame(width: 24)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(action.name)
-                                        .font(.system(size: 12, weight: .medium))
-                                    Text(action.type.displayName)
-                                        .font(.system(size: 10))
+                        // Group actions by category into collapsible packs. Each
+                        // category expands via its arrow.
+                        let grouped = Dictionary(grouping: appOnlyActions) {
+                            ($0.category?.trimmingCharacters(in: .whitespaces)).flatMap {
+                                $0.isEmpty ? nil : $0
+                            } ?? "Actions"
+                        }
+                        ForEach(grouped.keys.sorted(), id: \.self) { key in
+                            let groupActions = grouped[key] ?? []
+                            DisclosureGroup(
+                                isExpanded: Binding(
+                                    get: { expandedActionGroups.contains(key) },
+                                    set: { open in
+                                        if open { expandedActionGroups.insert(key) }
+                                        else { expandedActionGroups.remove(key) }
+                                    })
+                            ) {
+                                ForEach(groupActions) { action in
+                                    actionRow(action)
+                                    if action.id != groupActions.last?.id {
+                                        Divider().padding(.leading, 34)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(key)
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("\(groupActions.count)")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(.quaternary, in: Capsule())
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Button {
-                                    editingAction = action
-                                    showAddActionSheet = true
-                                } label: {
-                                    Image(systemName: "pencil")
-                                }
-                                .buttonStyle(.plain)
-                                Button(role: .destructive) {
-                                    Task {
-                                        await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
-                                    }
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.plain)
                             }
-                            .padding(.vertical, 6)
-                            if action.id != appOnlyActions.last?.id {
-                                Divider()
-                            }
+                            .padding(.vertical, 2)
                         }
                     }
                 }

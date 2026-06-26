@@ -29,8 +29,10 @@ extension LauncherView {
                 name: entry.title.isEmpty ? entry.url.absoluteString : entry.title,
                 icon: "safari",
                 accentColorName: "blue",
-                badge: "Safari History",
+                badge: entry.domain,
                 execute: {
+                    // Always open the cached URL — never click the dynamic Safari
+                    // History submenu.
                     NSWorkspace.shared.open(entry.url)
                     AppDelegate.shared?.hideLauncher()
                 }
@@ -38,11 +40,14 @@ extension LauncherView {
             pill.sourceBundleId = "com.apple.Safari"
             pill.sourceAppName = "Safari"
             pill.rankingKind = "recentURL"
+            // Safari-style date bucket drives the dock section header.
+            pill.menuContext = entry.dateGroupTitle
             pill.resolvedURL = entry.url
             pill.quickLookURL = SafariRecentURLService.shared.quickLookURL(for: entry)
             pill.trackingIdentifier = "safari-history:\(entry.id)"
-            pill.searchTerms = [entry.title, entry.url.absoluteString, "safari", "recent", "history"]
-            return pill
+            pill.searchTerms = [entry.title, entry.url.absoluteString, entry.domain, "safari", "recent", "history"]
+            // Async favicon; globe/safari icon shows immediately, never blocks typing.
+            return pill.applyingSafariFavicon(entry.url)
         }
     }
 

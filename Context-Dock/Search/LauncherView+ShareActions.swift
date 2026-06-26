@@ -42,23 +42,54 @@ extension LauncherView {
     }
 
     /// Single entry point for any Share menu interaction.
-    /// - Bare "Share" / "Share…" (the share-sheet trigger) → DoraX's own destination
-    ///   list (no guessing a child).
-    /// - A real Share CHILD (Mail / AirDrop / Notes …) → click its EXACT menu path.
-    ///   NEVER resolve by title — that picked the wrong (first) destination.
-    /// - If the exact click can't run (no pid) → native Apple share sheet fallback.
+    /// - Bare "Share" / "Share…" (the share-sheet trigger) → DoraX's own destination list.
+    /// - A real Share CHILD (Mail / AirDrop / Notes …) → NATIVE NSSharingService, resolved
+    ///   by title against the real installed services. The Share submenu is system-managed,
+    ///   dynamic and position-sensitive, so an AX click on the child path lands on the wrong
+    ///   destination; native sharing uses the payload we already hold instead.
+    /// - AX execution stays only as a fallback for app-private share commands that can't be
+    ///   expressed as a native share payload.
     func executeShareAction(item: AXMenuItem) {
         if isShareSheetTitle(item.title) {
             revealShareDestinations()
             return
         }
+
+        let shareItems = liveShareItems()
+        let isKnownDest = isKnownShareDestinationTitle(item.title)
+
+        if !shareItems.isEmpty {
+            // Native first: match the child title to a real installed NSSharingService
+            // and perform it — no AX submenu click, no position guessing.
+            if let resolved = ShareDestinationResolver.resolve(
+                query: item.title, items: shareItems)
+            {
+                resolved.service.perform(withItems: shareItems)
+                return
+            }
+            // Known destination but no matching installed service → system picker
+            // (don't fall to a brittle AX click).
+            if isKnownDest {
+                presentSharingPicker(items: shareItems)
+                return
+            }
+            // Not a share destination (app-private command) → AX fallback below.
+        } else if isKnownDest {
+            // Share destination chosen but nothing to share → safe feedback, never click
+            // a random Share submenu item.
+            DockActionFeedback.showResult(
+                "Nothing to share", icon: "square.and.arrow.up", success: false)
+            return
+        }
+
+        // AX fallback: app-private share command, or no native payload. Still
+        // live-verifies the menu item before executing.
         let pid =
             item.sourcePID != 0
             ? item.sourcePID
             : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
         guard pid != 0 else {
-            let items = liveShareItems()
-            if !items.isEmpty { presentSharingPicker(items: items) }
+            if !shareItems.isEmpty { presentSharingPicker(items: shareItems) }
             return
         }
         executeDockMenuAction(
@@ -67,6 +98,21 @@ extension LauncherView {
             shortcutChar: item.shortcutChar,
             shortcutModifiers: item.shortcutModifiers
         )
+    }
+
+    /// Classifier for known native share destinations (kept in the share layer, not the
+    /// generic AX resolver). Decides whether a Share child should route to native sharing.
+    func isKnownShareDestinationTitle(_ title: String) -> Bool {
+        let t = normalizedDockPillText(title)
+        guard !t.isEmpty else { return false }
+        if t.hasPrefix("send to") || t.hasPrefix("share to") || t.hasPrefix("share with") {
+            return true
+        }
+        let destinations: Set<String> = [
+            "airdrop", "mail", "messages", "notes", "reminders",
+            "freeform", "shortcuts", "journal",
+        ]
+        return destinations.contains(where: { t == $0 || t.contains($0) })
     }
 
     func effectiveShareAXContext() -> AXContext {

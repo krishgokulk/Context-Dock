@@ -904,7 +904,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         launcherWindow?.level = windowLevel
-        launcherWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        launcherWindow?.collectionBehavior =
+            settings.effectiveDockAtBottom
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
         launcherWindow?.isMovableByWindowBackground = true
         // No window shadow: on a tight transparent window it renders as a hard dark
         // edge that fights the glass rim (double outline). A soft shadow needs window
@@ -929,7 +932,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applyPersistentDockBehavior() {
         guard let window = launcherWindow else { return }
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Bottom dock joins every Space (always present). Floating dock uses
+        // moveToActiveSpace: the hotkey brings it to WHATEVER desktop the user is
+        // on, but a passive desktop switch does NOT make it appear — manual show/
+        // hide, on the user's wish.
+        window.collectionBehavior =
+            settings.effectiveDockAtBottom
+            ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
         let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
@@ -940,6 +950,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func reinforceFloatingDockWindow(reason: String, activate: Bool) {
         guard settings.alwaysFloatDock || settings.effectiveDockAtBottom else { return }
         guard let window = launcherWindow else { return }
+        // Only keep an ALREADY-visible dock on top. Never resurrect a dock the
+        // user hid — otherwise switching/activating apps re-opens it. Manual
+        // show/hide only. (Bottom dock is exempt; it's meant to be persistent.)
+        guard window.isVisible || settings.effectiveDockAtBottom else { return }
         applyPersistentDockBehavior()
         suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
         window.alphaValue = 1
@@ -965,12 +979,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleActiveSpaceChanged(_ notification: Notification) {
         guard let window = launcherWindow, window.isVisible else { return }
+        // Floating dock is manual: do NOT follow the user to a new Space or grab
+        // focus there. Only the bottom dock re-asserts itself across Spaces.
+        guard settings.effectiveDockAtBottom else { return }
         suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
         applyPersistentDockBehavior()
-        // Re-assert key focus on the new Space so the user keeps typing seamlessly.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
-            self.reinforceFloatingDockWindow(reason: "active Space changed", activate: self.settings.alwaysFloatDock)
+            self.reinforceFloatingDockWindow(reason: "active Space changed", activate: false)
         }
     }
 
