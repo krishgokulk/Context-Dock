@@ -940,10 +940,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.effectiveDockAtBottom
             ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
-        let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
+        let newLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
-        window.level = windowLevel
+        if window.level != newLevel { window.level = newLevel }
         window.isMovableByWindowBackground = true
     }
 

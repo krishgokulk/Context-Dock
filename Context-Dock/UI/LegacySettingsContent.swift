@@ -7228,7 +7228,7 @@ struct PermissionsSettingsView: View {
             return message.contains("-600") || message.localizedCaseInsensitiveContains("Application isn’t running") || message.localizedCaseInsensitiveContains("Application isn't running")
         }
 
-        Task { @MainActor in
+        Task.detached(priority: .utility) {
             // 1) Try System Events first (commonly available)
             let systemEventsScript = """
             tell application \"System Events\"
@@ -7236,6 +7236,7 @@ struct PermissionsSettingsView: View {
             end tell
             """
 
+            let result: String
             if let sysErr = run(script: systemEventsScript) {
                 // 2) Try Shortcuts: launch, wait, then ask for list of shortcuts
                 launch(appName: "Shortcuts")
@@ -7261,30 +7262,34 @@ struct PermissionsSettingsView: View {
                                 if containsMinus600(termErr) {
                                     try? await Task.sleep(nanoseconds: 700_000_000)
                                     if let termErrRetry = run(script: terminalScript) {
-                                        automationTestMessage = termErrRetry
+                                        result = termErrRetry
                                     } else {
-                                        automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                                        result = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
                                     }
                                 } else {
-                                    automationTestMessage = termErr
+                                    result = termErr
                                 }
                             } else {
-                                automationTestMessage = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                                result = "Automation request sent to Terminal. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
                             }
                         } else {
-                            automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                            result = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
                         }
                     } else {
-                        automationTestMessage = scErr
+                        result = scErr
                     }
                 } else {
-                    automationTestMessage = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                    result = "Automation request sent to Shortcuts. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
                 }
             } else {
-                automationTestMessage = "Automation request sent to System Events. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
+                result = "Automation request sent to System Events. If prompted, approve access and then check System Settings > Privacy & Security > Automation."
             }
 
-            isTestingAutomation = false
+            let finalResult = result
+            await MainActor.run {
+                automationTestMessage = finalResult
+                isTestingAutomation = false
+            }
         }
     }
     

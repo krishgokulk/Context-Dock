@@ -19,6 +19,13 @@
 			remoteGlobalIDString = CAFE00000000000000000002;
 			remoteInfo = "Context-DockExtension";
 		};
+		FDAA0001000000000000AA09 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FD1617CC2ECEA5B500620C78 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FD1617D32ECEA5B500620C78;
+			remoteInfo = "Context-Dock";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -38,6 +45,7 @@
 /* Begin PBXFileReference section */
 		CAFE00000000000000000006 /* Context-DockExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Context-DockExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD1617D42ECEA5B500620C78 /* Context-Dock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Context-Dock.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FDAA0001000000000000AA02 /* Context-DockTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Context-DockTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -82,6 +90,11 @@
 			path = "Context-Dock";
 			sourceTree = "<group>";
 		};
+		FDAA0001000000000000AA08 /* Context-DockTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Context-DockTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +110,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				FDE6DAB32F17B92700E175DF /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FDAA0001000000000000AA04 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -117,6 +137,7 @@
 			children = (
 				FD1617D42ECEA5B500620C78 /* Context-Dock.app */,
 				CAFE00000000000000000006 /* Context-DockExtension.appex */,
+				FDAA0001000000000000AA02 /* Context-DockTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -169,6 +190,26 @@
 			productReference = FD1617D42ECEA5B500620C78 /* Context-Dock.app */;
 			productType = "com.apple.product-type.application";
 		};
+		FDAA0001000000000000AA01 /* Context-DockTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FDAA0001000000000000AA05 /* Build configuration list for PBXNativeTarget "Context-DockTests" */;
+			buildPhases = (
+				FDAA0001000000000000AA03 /* Sources */,
+				FDAA0001000000000000AA04 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FDAA0001000000000000AA0A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FDAA0001000000000000AA08 /* Context-DockTests */,
+			);
+			name = "Context-DockTests";
+			productName = "Context-DockTests";
+			productReference = FDAA0001000000000000AA02 /* Context-DockTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -184,6 +225,10 @@
 					};
 					FD1617D32ECEA5B500620C78 = {
 						CreatedOnToolsVersion = 26.1.1;
+					};
+					FDAA0001000000000000AA01 = {
+						CreatedOnToolsVersion = 26.1.1;
+						TestTargetID = FD1617D32ECEA5B500620C78;
 					};
 				};
 			};
@@ -206,6 +251,7 @@
 			targets = (
 				FD1617D32ECEA5B500620C78 /* Context-Dock */,
 				CAFE00000000000000000002 /* Context-DockExtension */,
+				FDAA0001000000000000AA01 /* Context-DockTests */,
 			);
 		};
 /* End PBXProject section */
@@ -242,6 +288,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FDAA0001000000000000AA03 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -249,6 +302,11 @@
 			isa = PBXTargetDependency;
 			target = CAFE00000000000000000002 /* Context-DockExtension */;
 			targetProxy = CAFE0000000000000000000D /* PBXContainerItemProxy */;
+		};
+		FDAA0001000000000000AA0A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FD1617D32ECEA5B500620C78 /* Context-Dock */;
+			targetProxy = FDAA0001000000000000AA09 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -557,6 +615,52 @@
 			};
 			name = Release;
 		};
+		FDAA0001000000000000AA06 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F4PP2L7U76;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Context-Dock.app/Contents/MacOS/Context-Dock";
+			};
+			name = Debug;
+		};
+		FDAA0001000000000000AA07 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F4PP2L7U76;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Context-Dock.app/Contents/MacOS/Context-Dock";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -583,6 +687,15 @@
 			buildConfigurations = (
 				FD1617E02ECEA5B600620C78 /* Debug */,
 				FD1617E12ECEA5B600620C78 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FDAA0001000000000000AA05 /* Build configuration list for PBXNativeTarget "Context-DockTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FDAA0001000000000000AA06 /* Debug */,
+				FDAA0001000000000000AA07 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

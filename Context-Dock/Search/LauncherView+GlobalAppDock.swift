@@ -1360,7 +1360,7 @@ extension LauncherView {
                 let exactFirstTokenBonus = firstAliasToken == normalizedName ? 0.4 : 0.0
                 let score = Double(firstAliasToken.count) + aliasUsage + exactFirstTokenBonus
 
-                if best == nil || score > best!.score {
+                if best.map({ score > $0.score }) ?? true {
                     best = (appName, bundleId, ghost, actionQuery, score)
                 }
             }
