@@ -30,17 +30,44 @@ enum AdapterActionType: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .menubar:     return "Menu Bar"
+        case .menubar:     return "Menu Item"
         case .applescript: return "AppleScript"
-        case .jxa:         return "JXA"
-        case .shell:       return "Shell"
+        case .jxa:         return "JavaScript for Automation"
+        case .shell:       return "Terminal Command"
         case .cliTool:     return "CLI Tool"
-        case .urlScheme:   return "URL Scheme"
-        case .openItem:    return "Open File / App"
-        case .scriptFile:  return "Script File"
-        case .shortcut:    return "Shortcut"
+        case .urlScheme:   return "URL / Deep Link"
+        case .openItem:    return "Open Application or File"
+        case .scriptFile:  return "External Script"
+        case .shortcut:    return "Run Shortcut"
         case .aiPrompt:    return "AI Prompt"
-        case .pageJS:      return "Page JS (Userscript)"
+        case .pageJS:      return "Browser JavaScript"
+        }
+    }
+
+    /// Execution risk — drives the warning badge + approval requirement.
+    var riskLevel: AdapterActionRisk {
+        switch self {
+        case .urlScheme, .openItem, .shortcut, .menubar: return .low
+        case .aiPrompt, .pageJS: return .medium
+        case .shell, .applescript, .jxa, .scriptFile, .cliTool: return .high
+        }
+    }
+}
+
+enum AdapterActionRisk {
+    case low, medium, high
+    var label: String {
+        switch self {
+        case .low: return "Low risk"
+        case .medium: return "Medium risk"
+        case .high: return "High risk"
+        }
+    }
+    var color: String {
+        switch self {
+        case .low: return "green"
+        case .medium: return "orange"
+        case .high: return "red"
         }
     }
 }

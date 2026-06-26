@@ -1005,7 +1005,7 @@ struct AutomationSettingsView: View {
                     .fixedSize()
                     .layoutPriority(1)
                     Button(action: importAdapterPack) {
-                        Label("Import Pack", systemImage: "square.and.arrow.down")
+                        Label("Import Adapter…", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -2755,6 +2755,20 @@ struct GlobalCLIScopeDetailView: View {
     }
 }
 
+enum AdapterDetailTab: String, CaseIterable, Identifiable {
+    case overview, actions, shortcuts, cli, mcp
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: return "Overview"
+        case .actions: return "Actions"
+        case .shortcuts: return "Shortcuts"
+        case .cli: return "CLI Tools"
+        case .mcp: return "MCP"
+        }
+    }
+}
+
 struct AutomationAdapterDetailView: View {
     let adapter: AppAdapter
     @Binding var selectedActionID: String?
@@ -2771,6 +2785,56 @@ struct AutomationAdapterDetailView: View {
     @State private var importPreview: AdapterPackPreview?
     @State private var importError: String?
     @State private var expandedActionGroups: Set<String> = []
+    @State private var detailTab: AdapterDetailTab = .overview
+
+    /// Plugin-style summary for the Overview tab — feels alive even with no actions.
+    @ViewBuilder
+    private var adapterOverview: some View {
+        let a = currentAdapter
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                overviewCard("Status", a.isEnabled ? "Enabled" : "Disabled",
+                    icon: a.isEnabled ? "checkmark.circle.fill" : "pause.circle.fill",
+                    tint: a.isEnabled ? .green : .secondary)
+                overviewCard("Actions", "\(appOnlyActions.count)", icon: "bolt.fill", tint: .teal)
+                overviewCard("Shortcuts", "\(linkedShortcuts.count)", icon: "command", tint: .purple)
+                overviewCard("CLI Tools", "\(linkedCLITools.count)", icon: "terminal.fill", tint: .blue)
+                overviewCard("MCP Servers", "\(linkedMCPServers.count)", icon: "server.rack", tint: .orange)
+            }
+            if !a.bundleId.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("BUNDLE ID").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(a.bundleId).font(.system(size: 12, design: .monospaced))
+                }
+            }
+            HStack(spacing: 8) {
+                Button(action: importAdapterPack) {
+                    Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                }
+                Menu {
+                    Button { Task { await adapterManager.duplicateAdapter(bundleId: a.bundleId) } }
+                        label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                    Button(role: .destructive) { showDeleteConfirm = true }
+                        label: { Label("Delete", systemImage: "trash") }
+                } label: { Label("More", systemImage: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize()
+            }
+            .controlSize(.small)
+        }
+        .padding(16)
+    }
+
+    private func overviewCard(_ title: String, _ value: String, icon: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+            Text(value).font(.system(size: 22, weight: .semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
 
     private func importAdapterPack() {
         guard let url = AdapterPackImporter.shared.pickPack() else { return }
@@ -3051,7 +3115,7 @@ struct AutomationAdapterDetailView: View {
                     .controlSize(.small)
                     .tint(.red)
                     Button(action: importAdapterPack) {
-                        Label("Import Pack", systemImage: "square.and.arrow.down")
+                        Label("Import Adapter…", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -3068,6 +3132,19 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
+                Picker("", selection: $detailTab) {
+                    ForEach(AdapterDetailTab.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+
+                if detailTab == .overview {
+                    adapterOverview
+                }
+
+                if detailTab == .actions {
                 // MARK: FrontmostApp Actions section (non-pageJS)
                 VStack(alignment: .leading, spacing: 12) {
                     Text("FrontmostApp Actions")
@@ -3090,7 +3167,7 @@ struct AutomationAdapterDetailView: View {
                                 Button {
                                     importAdapterPack()
                                 } label: {
-                                    Label("Import Pack", systemImage: "square.and.arrow.down")
+                                    Label("Import Adapter…", systemImage: "square.and.arrow.down")
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
@@ -3201,9 +3278,9 @@ struct AutomationAdapterDetailView: View {
                     }
                     .padding(16)
                 }
+                }  // end: if detailTab == .actions
 
-                Divider()
-
+                if detailTab == .shortcuts {
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3264,9 +3341,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .shortcuts
 
-                Divider()
-
+                if detailTab == .cli {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Linked CLI Tools")
@@ -3366,9 +3443,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .cli
 
-                Divider()
-
+                if detailTab == .mcp {
                 // MARK: Linked MCP section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3445,6 +3522,7 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .mcp
 
             }
         }

@@ -1890,7 +1890,7 @@ struct AppAdaptersSettingsView: View {
                         Button(action: importAdapterPack) {
                             HStack(spacing: 4) {
                                 Image(systemName: "square.and.arrow.down").font(.system(size: 11))
-                                Text("Import Pack").font(.system(size: 11))
+                                Text("Import Adapter…").font(.system(size: 11))
                             }
                         }
                         .buttonStyle(.plain)
