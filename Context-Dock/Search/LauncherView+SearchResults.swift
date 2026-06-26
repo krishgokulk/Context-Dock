@@ -129,6 +129,12 @@ extension LauncherView {
         if kind == "setuphint" {
             return "Search"
         }
+        // Safari history rows group under their Safari-style date bucket
+        // ("Earlier Today", "Today", "Yesterday", "Wednesday, 24 June 2026").
+        if kind == "recenturl" {
+            if let bucket = pill.menuContext, !bucket.isEmpty { return bucket }
+            return "Safari History"
+        }
         if kind == "clipboard" {
             return "Clipboard Items"
         }
@@ -1352,10 +1358,14 @@ extension LauncherView {
 
     func resolvedApplicationMenuIcon(for item: AXMenuItem) -> NSImage? {
         let normalizedPath = item.path.map(normalizedDockPillText)
-        guard normalizedPath.contains("open with") || normalizedPath.dropLast().last == "open with"
-        else {
-            return nil
-        }
+        // Match "Open With" AND Safari's "Open Page With" (any "open … with" parent),
+        // plus any row whose own title ends in ".app" — so every app row in those
+        // dynamic menus shows its real app icon, not a generic doc icon.
+        let isOpenWithContext =
+            normalizedPath.contains { $0.contains("open") && $0.contains("with") }
+            || normalizedDockPillText(item.title).hasSuffix(".app")
+            || item.title.contains(".app")
+        guard isOpenWithContext else { return nil }
         // Open With titles arrive decorated: "Music.app (default)", "IINA.app",
         // "Books.app". Strip the trailing "(default)"/parenthetical and the ".app"
         // suffix so the name resolves to a real app icon (not a generic doc icon).
@@ -1374,6 +1384,12 @@ extension LauncherView {
                 ($0.localizedName ?? "").caseInsensitiveCompare(appName) == .orderedSame
                     && !$0.isTerminated
             }) {
+                // Prefer the static bundle icon over NSRunningApplication.icon —
+                // some apps (DuckDuckGo) set a generic runtime icon that isn't the
+                // real app icon.
+                if let bundleURL = app.bundleURL {
+                    return preparedDockIcon(NSWorkspace.shared.icon(forFile: bundleURL.path))
+                }
                 return preparedDockIcon(app.icon)
             }
             for dir in [

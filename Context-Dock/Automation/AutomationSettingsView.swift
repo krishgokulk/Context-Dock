@@ -104,6 +104,17 @@ struct AutomationSettingsView: View {
     @State private var showGlobalCLIPicker = false
     @State private var showSystemCommandSheet = false
     @State private var showAIImportSheet = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
     @State private var extensionSheetMode: AddAppExtensionSheet.Mode = .script
     @State private var showingImportPanel = false
 
@@ -194,6 +205,24 @@ struct AutomationSettingsView: View {
                 }
             }
         }
+        .sheet(item: $importPreview) { preview in
+            AdapterPackImportPreviewSheet(
+                preview: preview,
+                onCancel: { importPreview = nil },
+                onImport: {
+                    Task {
+                        let ok = await AdapterPackImporter.shared.install(preview)
+                        await MainActor.run {
+                            importPreview = nil
+                            if !ok { importError = "Couldn't install the adapter pack." }
+                        }
+                    }
+                })
+        }
+        .alert(
+            "Import Failed", isPresented: .constant(importError != nil),
+            actions: { Button("OK") { importError = nil } },
+            message: { Text(importError ?? "") })
         .onAppear {
             applySettingsPage(settingsPage)
             pkgMgr.loadPackages()
@@ -975,6 +1004,14 @@ struct AutomationSettingsView: View {
                     .controlSize(.small)
                     .fixedSize()
                     .layoutPriority(1)
+                    Button(action: importAdapterPack) {
+                        Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .layoutPriority(1)
+                    .help("Import an App Adapter Pack (.adapterpack, .zip, .json)")
                 }
                 Button(action: presentCreateFlow) {
                     Label(createButtonTitle, systemImage: "plus")
@@ -1581,12 +1618,12 @@ private struct AutomationAppRow: View {
     }
 
     private var subtitle: String {
-        let actionCount = adapter.visibleActions.count
+        var parts: [String] = []
+        let actionCount = adapter.actions.filter { $0.type != .cliTool }.count
         let cliCount = linkedCLIToolsCount
-        if cliCount == 0 {
-            return "\(actionCount) action\(actionCount == 1 ? "" : "s")"
-        }
-        return "\(actionCount) action\(actionCount == 1 ? "" : "s") · \(cliCount) CLI"
+        if actionCount > 0 { parts.append("\(actionCount) action\(actionCount == 1 ? "" : "s")") }
+        if cliCount > 0 { parts.append("\(cliCount) CLI") }
+        return parts.isEmpty ? "No actions yet" : parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -2514,7 +2551,9 @@ struct AppShortcutPickerSheet: View {
             }
         }
         .frame(width: 430, height: 500)
-        .onAppear { catalog.loadIfNeeded() }
+        // Always re-enumerate on open so shortcuts created since launch appear
+        // (loadIfNeeded is a no-op once loaded → stale list).
+        .onAppear { catalog.refresh() }
     }
 }
 
@@ -2718,6 +2757,20 @@ struct GlobalCLIScopeDetailView: View {
     }
 }
 
+enum AdapterDetailTab: String, CaseIterable, Identifiable {
+    case overview, actions, shortcuts, cli, mcp
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: return "Overview"
+        case .actions: return "Actions"
+        case .shortcuts: return "Shortcuts"
+        case .cli: return "CLI Tools"
+        case .mcp: return "MCP"
+        }
+    }
+}
+
 struct AutomationAdapterDetailView: View {
     let adapter: AppAdapter
     @Binding var selectedActionID: String?
@@ -2731,9 +2784,106 @@ struct AutomationAdapterDetailView: View {
     @State private var showMCPSheet = false
     @State private var showDeleteConfirm = false
     @State private var isScanningHelp = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+    @State private var expandedActionGroups: Set<String> = []
+    @State private var detailTab: AdapterDetailTab = .overview
+
+    /// Plugin-style summary for the Overview tab — feels alive even with no actions.
+    @ViewBuilder
+    private var adapterOverview: some View {
+        let a = currentAdapter
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                overviewCard("Status", a.isEnabled ? "Enabled" : "Disabled",
+                    icon: a.isEnabled ? "checkmark.circle.fill" : "pause.circle.fill",
+                    tint: a.isEnabled ? .green : .secondary)
+                overviewCard("Actions", "\(appOnlyActions.count)", icon: "bolt.fill", tint: .teal)
+                overviewCard("Shortcuts", "\(linkedShortcuts.count)", icon: "command", tint: .purple)
+                overviewCard("CLI Tools", "\(linkedCLITools.count)", icon: "terminal.fill", tint: .blue)
+                overviewCard("MCP Servers", "\(linkedMCPServers.count)", icon: "server.rack", tint: .orange)
+            }
+            if !a.bundleId.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("BUNDLE ID").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(a.bundleId).font(.system(size: 12, design: .monospaced))
+                }
+            }
+            HStack(spacing: 8) {
+                Button(action: importAdapterPack) {
+                    Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                }
+                Menu {
+                    Button { Task { await adapterManager.duplicateAdapter(bundleId: a.bundleId) } }
+                        label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                    Button(role: .destructive) { showDeleteConfirm = true }
+                        label: { Label("Delete", systemImage: "trash") }
+                } label: { Label("More", systemImage: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize()
+            }
+            .controlSize(.small)
+        }
+        .padding(16)
+    }
+
+    private func overviewCard(_ title: String, _ value: String, icon: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+            Text(value).font(.system(size: 22, weight: .semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
 
     private var currentAdapter: AppAdapter {
         adapterManager.adapters.first(where: { $0.id == adapter.id }) ?? adapter
+    }
+
+    @ViewBuilder
+    private func actionRow(_ action: AdapterAction) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: action.icon)
+                .font(.system(size: 13))
+                .foregroundStyle(.teal)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.name)
+                    .font(.system(size: 12, weight: .medium))
+                Text(action.type.displayName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                editingAction = action
+                showAddActionSheet = true
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.plain)
+            Button(role: .destructive) {
+                Task {
+                    await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
+                }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 6)
+        .padding(.leading, 8)
     }
 
     private var visibleActions: [AdapterAction] {
@@ -2890,6 +3040,24 @@ struct AutomationAdapterDetailView: View {
         } message: {
             Text("This will remove \(currentAdapter.appName) from FrontmostApp Actions.")
         }
+        .sheet(item: $importPreview) { preview in
+            AdapterPackImportPreviewSheet(
+                preview: preview,
+                onCancel: { importPreview = nil },
+                onImport: {
+                    Task {
+                        let ok = await AdapterPackImporter.shared.install(preview)
+                        await MainActor.run {
+                            importPreview = nil
+                            if !ok { importError = "Couldn't install the adapter pack." }
+                        }
+                    }
+                })
+        }
+        .alert(
+            "Import Failed", isPresented: .constant(importError != nil),
+            actions: { Button("OK") { importError = nil } },
+            message: { Text(importError ?? "") })
     }
 
     private func removeCurrentAdapterEverywhere() async {
@@ -2948,6 +3116,12 @@ struct AutomationAdapterDetailView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(.red)
+                    Button(action: importAdapterPack) {
+                        Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Install many actions for this app from an Adapter Pack")
                     Button {
                         presentAddActionEditor()
                     } label: {
@@ -2960,6 +3134,19 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
+                Picker("", selection: $detailTab) {
+                    ForEach(AdapterDetailTab.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+
+                if detailTab == .overview {
+                    adapterOverview
+                }
+
+                if detailTab == .actions {
                 // MARK: FrontmostApp Actions section (non-pageJS)
                 VStack(alignment: .leading, spacing: 12) {
                     Text("FrontmostApp Actions")
@@ -2970,52 +3157,64 @@ struct AutomationAdapterDetailView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(linkedCLITools.isEmpty && browserExtensionActions.isEmpty ? "No actions yet" : "No app actions yet")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Add actions using Open URL / Deep Link, Open File / App, Shell Command, AppleScript, JXA, Script File, or AI Prompt.")
+                            Text("Actions appear in DoraX when this app is frontmost. Add one manually, or import an adapter pack to install many at once.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
-                            Button("Add First Action") {
-                                presentAddActionEditor()
+                            HStack(spacing: 8) {
+                                Button("Add First Action") {
+                                    presentAddActionEditor()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                Button {
+                                    importAdapterPack()
+                                } label: {
+                                    Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .help("Install many actions for this app from an Adapter Pack")
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
                         }
                         .padding(16)
                         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                     } else {
-                        ForEach(appOnlyActions) { action in
-                            HStack(spacing: 10) {
-                                Image(systemName: action.icon)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(.teal)
-                                    .frame(width: 24)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(action.name)
-                                        .font(.system(size: 12, weight: .medium))
-                                    Text(action.type.displayName)
-                                        .font(.system(size: 10))
+                        // Group actions by category into collapsible packs. Each
+                        // category expands via its arrow.
+                        let grouped = Dictionary(grouping: appOnlyActions) {
+                            ($0.category?.trimmingCharacters(in: .whitespaces)).flatMap {
+                                $0.isEmpty ? nil : $0
+                            } ?? "Actions"
+                        }
+                        ForEach(grouped.keys.sorted(), id: \.self) { key in
+                            let groupActions = grouped[key] ?? []
+                            DisclosureGroup(
+                                isExpanded: Binding(
+                                    get: { expandedActionGroups.contains(key) },
+                                    set: { open in
+                                        if open { expandedActionGroups.insert(key) }
+                                        else { expandedActionGroups.remove(key) }
+                                    })
+                            ) {
+                                ForEach(groupActions) { action in
+                                    actionRow(action)
+                                    if action.id != groupActions.last?.id {
+                                        Divider().padding(.leading, 34)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(key)
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("\(groupActions.count)")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 1)
+                                        .background(.quaternary, in: Capsule())
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Button {
-                                    editingAction = action
-                                    showAddActionSheet = true
-                                } label: {
-                                    Image(systemName: "pencil")
-                                }
-                                .buttonStyle(.plain)
-                                Button(role: .destructive) {
-                                    Task {
-                                        await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
-                                    }
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.plain)
                             }
-                            .padding(.vertical, 6)
-                            if action.id != appOnlyActions.last?.id {
-                                Divider()
-                            }
+                            .padding(.vertical, 2)
                         }
                     }
                 }
@@ -3081,9 +3280,9 @@ struct AutomationAdapterDetailView: View {
                     }
                     .padding(16)
                 }
+                }  // end: if detailTab == .actions
 
-                Divider()
-
+                if detailTab == .shortcuts {
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3144,9 +3343,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .shortcuts
 
-                Divider()
-
+                if detailTab == .cli {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Linked CLI Tools")
@@ -3246,9 +3445,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .cli
 
-                Divider()
-
+                if detailTab == .mcp {
                 // MARK: Linked MCP section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3325,6 +3524,7 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
+                }  // end: if detailTab == .mcp
 
             }
         }

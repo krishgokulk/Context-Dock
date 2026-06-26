@@ -30,17 +30,44 @@ enum AdapterActionType: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .menubar:     return "Menu Bar"
+        case .menubar:     return "Menu Item"
         case .applescript: return "AppleScript"
-        case .jxa:         return "JXA"
-        case .shell:       return "Shell"
+        case .jxa:         return "JavaScript for Automation"
+        case .shell:       return "Terminal Command"
         case .cliTool:     return "CLI Tool"
-        case .urlScheme:   return "URL Scheme"
-        case .openItem:    return "Open File / App"
-        case .scriptFile:  return "Script File"
-        case .shortcut:    return "Shortcut"
+        case .urlScheme:   return "URL / Deep Link"
+        case .openItem:    return "Open Application or File"
+        case .scriptFile:  return "External Script"
+        case .shortcut:    return "Run Shortcut"
         case .aiPrompt:    return "AI Prompt"
-        case .pageJS:      return "Page JS (Userscript)"
+        case .pageJS:      return "Browser JavaScript"
+        }
+    }
+
+    /// Execution risk — drives the warning badge + approval requirement.
+    var riskLevel: AdapterActionRisk {
+        switch self {
+        case .urlScheme, .openItem, .shortcut, .menubar: return .low
+        case .aiPrompt, .pageJS: return .medium
+        case .shell, .applescript, .jxa, .scriptFile, .cliTool: return .high
+        }
+    }
+}
+
+enum AdapterActionRisk {
+    case low, medium, high
+    var label: String {
+        switch self {
+        case .low: return "Low risk"
+        case .medium: return "Medium risk"
+        case .high: return "High risk"
+        }
+    }
+    var color: String {
+        switch self {
+        case .low: return "green"
+        case .medium: return "orange"
+        case .high: return "red"
         }
     }
 }
@@ -53,6 +80,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     var icon: String                // SF Symbol name
     var description: String
     var triggers: [String]          // Keywords that surface this action when typing
+    var category: String?           // Optional grouping (e.g. "Network") — from adapter packs
     var type: AdapterActionType
     // Payload — only the relevant field is set for each type
     var menuPath: [String]?         // .menubar: ["File", "New Tab"]
@@ -72,14 +100,15 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     static func == (lhs: AdapterAction, rhs: AdapterAction) -> Bool { lhs.id == rhs.id }
 
     init(id: String, name: String, icon: String, description: String = "",
-         triggers: [String] = [], type: AdapterActionType,
+         triggers: [String] = [], category: String? = nil, type: AdapterActionType,
          menuPath: [String]? = nil, script: String? = nil, scriptFile: String? = nil,
          urlScheme: String? = nil, cliToolCommand: String? = nil, shortcutName: String? = nil,
          aiPromptTemplate: String? = nil,
          requiresApproval: Bool = false, isDestructive: Bool = false,
          accentColor: String? = nil) {
         self.id = id; self.name = name; self.icon = icon
-        self.description = description; self.triggers = triggers; self.type = type
+        self.description = description; self.triggers = triggers; self.category = category
+        self.type = type
         self.menuPath = menuPath; self.script = script; self.scriptFile = scriptFile
         self.urlScheme = urlScheme; self.cliToolCommand = cliToolCommand; self.shortcutName = shortcutName
         self.aiPromptTemplate = aiPromptTemplate
@@ -155,8 +184,31 @@ final class AppAdapterManager: ObservableObject {
 
     let adaptersDirectory: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return support.appendingPathComponent("DoraX/AppAdapters", isDirectory: true)
+    }()
+
+    /// Old location (pre-DoraX rename) — migrated into adaptersDirectory once.
+    private let legacyAdaptersDirectory: URL = {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return support.appendingPathComponent("ILauncher/AppAdapters", isDirectory: true)
     }()
+
+    /// Copy any user adapters from the old ILauncher path into the DoraX path so
+    /// existing installs keep working after the rename. Runs once (skips files
+    /// that already exist at the new path).
+    private func migrateLegacyAdaptersIfNeeded() {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: legacyAdaptersDirectory.path) else { return }
+        try? fm.createDirectory(at: adaptersDirectory, withIntermediateDirectories: true)
+        let files = (try? fm.contentsOfDirectory(
+            at: legacyAdaptersDirectory, includingPropertiesForKeys: nil)) ?? []
+        for src in files where src.pathExtension.lowercased() == "json" {
+            let dest = adaptersDirectory.appendingPathComponent(src.lastPathComponent)
+            if !fm.fileExists(atPath: dest.path) {
+                try? fm.copyItem(at: src, to: dest)
+            }
+        }
+    }
 
     private let legacySampleFileNames: Set<String> = ["Photos.json", "Notion.json", "Obsidian.json", "_TEMPLATE.json"]
 
@@ -250,6 +302,7 @@ final class AppAdapterManager: ObservableObject {
 
     func loadUserAdapters() async {
         try? FileManager.default.createDirectory(at: adaptersDirectory, withIntermediateDirectories: true)
+        migrateLegacyAdaptersIfNeeded()
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: adaptersDirectory,
             includingPropertiesForKeys: nil,
@@ -284,8 +337,25 @@ final class AppAdapterManager: ObservableObject {
             }
         }
 
-        adapters = userAdapters
-        mirrorVirtualScopeAdaptersIntoGlobalCommands(userAdapters)
+        // De-duplicate by bundleId — keep the richest (most actions) so a stray
+        // empty placeholder never shadows a real imported adapter, and the list
+        // shows one row per app.
+        var bestByBundle: [String: AppAdapter] = [:]
+        for adapter in userAdapters {
+            if let existing = bestByBundle[adapter.bundleId],
+                existing.actions.count >= adapter.actions.count {
+                continue
+            }
+            bestByBundle[adapter.bundleId] = adapter
+        }
+        var seen = Set<String>()
+        let deduped = userAdapters.compactMap { adapter -> AppAdapter? in
+            guard seen.insert(adapter.bundleId).inserted else { return nil }
+            return bestByBundle[adapter.bundleId]
+        }
+
+        adapters = deduped
+        mirrorVirtualScopeAdaptersIntoGlobalCommands(deduped)
         loadErrors = errors
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
     }
@@ -557,6 +627,80 @@ final class AppAdapterManager: ObservableObject {
         await loadUserAdapters()
     }
 
+    // MARK: - Adapter pack install / CRUD
+
+    /// Install an imported adapter pack: replace any existing adapter for the same
+    /// bundle id, write it as a single JSON file, and reload the in-memory index.
+    /// Returns false if the installed adapter isn't present afterwards.
+    @discardableResult
+    func installImportedAdapter(_ adapter: AppAdapter) async -> Bool {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: adaptersDirectory, withIntermediateDirectories: true)
+
+        // Remove any existing on-disk adapter files for this bundle id (e.g. a
+        // placeholder "System Settings.json" with 0 actions) so the import isn't
+        // shadowed by a duplicate with the same bundleId.
+        let existingFiles = (try? fm.contentsOfDirectory(
+            at: adaptersDirectory, includingPropertiesForKeys: nil)) ?? []
+        for file in existingFiles where file.pathExtension.lowercased() == "json" {
+            if let data = try? Data(contentsOf: file),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                (obj["bundleId"] as? String) == adapter.bundleId {
+                try? fm.removeItem(at: file)
+            }
+        }
+
+        let fileURL = adapterFileURL(for: adapter)
+        persistAdapter(adapter, to: fileURL)
+        let wrote = fm.fileExists(atPath: fileURL.path)
+        await loadUserAdapters()
+        return wrote && adapters.contains {
+            $0.bundleId == adapter.bundleId && !$0.actions.isEmpty
+        }
+    }
+
+    /// Duplicate an adapter under a new bundle id + name.
+    func duplicateAdapter(bundleId: String) async {
+        guard let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }
+        var copy = base
+        copy.bundleId = "\(base.bundleId).copy"
+        copy.id = copy.bundleId
+        copy.appName = "\(base.appName) Copy"
+        copy.isBuiltIn = false
+        copy.sourceFileURL = nil
+        persistAdapter(copy, to: adapterFileURL(for: copy))
+        await loadUserAdapters()
+    }
+
+    /// Rename an adapter's display name.
+    func renameAdapter(bundleId: String, to newName: String) async {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }
+        var updated = base
+        updated.appName = trimmed
+        updated.isBuiltIn = false
+        persistAdapter(updated, to: base.sourceFileURL ?? adapterFileURL(for: updated))
+        await loadUserAdapters()
+    }
+
+    /// The on-disk JSON URL for an adapter (existing source file or a name-derived path).
+    func exportFileURL(for bundleId: String) -> URL? {
+        guard let adapter = adapters.first(where: { $0.bundleId == bundleId }) else { return nil }
+        if let url = adapter.sourceFileURL, FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+        let url = adapterFileURL(for: adapter)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private func adapterFileURL(for adapter: AppAdapter) -> URL {
+        let safe = adapter.bundleId.isEmpty
+            ? adapter.appName.replacingOccurrences(of: "/", with: "-")
+            : adapter.bundleId
+        return adaptersDirectory.appendingPathComponent("\(safe).json")
+    }
+
     func deleteAction(id actionId: String, from bundleId: String) async {
         guard let base = adapters.first(where: { $0.bundleId == bundleId }) else { return }
         let safe = base.appName.replacingOccurrences(of: "/", with: "-")
@@ -774,6 +918,20 @@ final class AppAdapterManager: ObservableObject {
         let nameOverlap = tokenOverlapScore(normalizedName, query)
         if nameOverlap > 0 {
             score = max(score, 36 + Double(nameOverlap * 22))
+        }
+
+        // Category match ranks above description, below keyword (ranking tier 4).
+        if let category = action.category, !category.isEmpty {
+            let normalizedCategory = normalizedAdapterSearchText(category)
+            if normalizedCategory == query {
+                score = max(score, 72)
+            } else if normalizedCategory.contains(query) || query.contains(normalizedCategory) {
+                score = max(score, 50)
+            }
+            let categoryOverlap = tokenOverlapScore(normalizedCategory, query)
+            if categoryOverlap > 0 {
+                score = max(score, 22 + Double(categoryOverlap * 12))
+            }
         }
 
         if !normalizedDescription.isEmpty {

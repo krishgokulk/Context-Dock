@@ -1035,14 +1035,17 @@ extension LauncherView {
                 if !docs.isEmpty { return searchResults(from: docs, query: q) }
                 return instantGlobalApplicationMatches(for: q, limit: appRowLimit)
             }()
+            // Frontmost app's adapter actions (linked shortcuts, deep links) — so
+            // an app's installed actions are reachable in Global Context too.
+            let adapterRows = globalFrontmostAdapterActionRows(for: q, limit: 6)
             if isTerminationQuery {
                 return mergeGlobalRowsPreservingPriority(
-                    [runningRows, commandRows, appRows],
+                    [runningRows, commandRows, adapterRows, appRows],
                     limit: appRowLimit
                 )
             }
             return mergeGlobalRowsPreservingPriority(
-                [appRows, commandRows, runningRows],
+                [adapterRows, appRows, commandRows, runningRows],
                 limit: appRowLimit
             )
         }()
@@ -2867,18 +2870,66 @@ extension LauncherView {
     /// title is in local browser history — those rows open in Safari directly instead
     /// of replaying menu clicks against the source app.
     func browserLinkURL(for descriptor: GlobalMenuDescriptor) -> URL? {
-        guard descriptor.path.count > 1, isBrowserMenuSource(descriptor.bundleID) else { return nil }
+        guard isBrowserURLMenuRow(descriptor) else { return nil }
+        return SafariLinkResolver.shared.url(forTitle: descriptor.name)
+    }
+
+    /// True when a browser menu descriptor is a DYNAMIC URL row (History /
+    /// Bookmarks / Recently Closed / recent tabs) rather than a stable command
+    /// (Back, Forward, Home, Show Personal History, Clear History…). These rows
+    /// must open a URL and must NEVER be AX-clicked — the submenu is scrollable,
+    /// position-sensitive and reorders.
+    func isBrowserURLMenuRow(_ descriptor: GlobalMenuDescriptor) -> Bool {
+        guard descriptor.path.count > 1, isBrowserMenuSource(descriptor.bundleID) else { return false }
         let root = descriptor.path.first.map(normalizedDockPillText) ?? ""
         let pathText = descriptor.path.map(normalizedDockPillText).joined(separator: " ")
-        let linkContext =
-            root == "history"
+        // Stable commands that live under History/Bookmarks but are NOT URL rows.
+        let name = normalizedDockPillText(descriptor.name)
+        let stableCommands: Set<String> = [
+            "show all history", "show history", "show personal history",
+            "clear history", "clear history…", "clear history...",
+            "back", "forward", "home", "reopen last closed window",
+            "reopen all windows from last session", "show bookmarks",
+            "edit bookmarks", "add bookmark", "add bookmark…", "bookmark all tabs",
+            "show bookmarks editor", "add to reading list",
+        ]
+        if stableCommands.contains(name) { return false }
+        return root == "history"
             || root == "bookmarks"
             || pathText.contains("recent")
             || pathText.contains("recently")
             || pathText.contains("tabs")
             || pathText.contains("visited")
-        guard linkContext else { return nil }
-        return SafariLinkResolver.shared.url(forTitle: descriptor.name)
+    }
+
+    /// The frontmost app's installed adapter actions (linked shortcuts, deep
+    /// links, etc.) as Global Context rows. Menu-bar/CLI types are excluded —
+    /// menus come from the AX cache, CLI is a scoped concept.
+    func globalFrontmostAdapterActionRows(for query: String, limit: Int) -> [SearchResult] {
+        let bundleId = AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+            ?? frontmost.bundleID
+        guard !bundleId.isEmpty else { return [] }
+        let actions = adapterManager.actions(for: bundleId, query: query)
+            .filter { $0.type != .menubar && $0.type != .cliTool }
+        guard !actions.isEmpty else { return [] }
+        let capturedContext = axContext
+        return actions.prefix(limit).map { action in
+            SearchResult(
+                title: action.name,
+                subtitle: action.type == .shortcut ? "Shortcut" : action.type.displayName,
+                icon: NSImage(systemSymbolName: action.icon, accessibilityDescription: nil),
+                action: {
+                    Task {
+                        _ = await AppAdapterManager.shared.execute(
+                            action, context: capturedContext, targetBundleId: bundleId)
+                    }
+                },
+                score: 9_500,
+                type: action.type == .shortcut ? .shortcut : .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                stableID: "global-adapter:\(bundleId):\(action.id)")
+        }
     }
 
     func isBrowserMenuSource(_ bundleID: String) -> Bool {
@@ -2942,6 +2993,12 @@ extension LauncherView {
                         appName: descriptor.appName,
                         command: windowCommand
                     )
+                } else if isBrowserURLMenuRow(descriptor) {
+                    // Dynamic Safari history/bookmark URL row whose URL couldn't be
+                    // resolved — never AX-click the scrollable submenu.
+                    DockActionFeedback.showResult(
+                        "Couldn't open — no URL for this history item",
+                        icon: "safari", success: false)
                 } else {
                     executeLearnedGhostAction(
                         bundleID: bundleID,

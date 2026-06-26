@@ -1647,6 +1647,17 @@ struct AppAdaptersSettingsView: View {
     @State private var showAutomations = false
     @State private var searchText = ""
     @State private var showNewAdapterSheet = false
+    @State private var importPreview: AdapterPackPreview?
+    @State private var importError: String?
+
+    private func importAdapterPack() {
+        guard let url = AdapterPackImporter.shared.pickPack() else { return }
+        do {
+            importPreview = try AdapterPackImporter.shared.loadPreview(from: url)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
 
     private func resolvedName(bundleId: String) -> String {
         if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
@@ -1875,6 +1886,18 @@ struct AppAdaptersSettingsView: View {
 
                     Spacer()
 
+                    if !showAutomations {
+                        Button(action: importAdapterPack) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                                Text("Import Adapter…").font(.system(size: 11))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .help("Import an App Adapter Pack (.adapterpack, .zip, .json)")
+                    }
+
                     Button {
                         Task {
                             await adapterManager.loadUserAdapters()
@@ -1891,6 +1914,25 @@ struct AppAdaptersSettingsView: View {
                 .padding(.vertical, 8)
             }
             .frame(minWidth: 200, maxWidth: 240)
+            .sheet(item: $importPreview) { preview in
+                AdapterPackImportPreviewSheet(
+                    preview: preview,
+                    onCancel: { importPreview = nil },
+                    onImport: {
+                        Task {
+                            let ok = await AdapterPackImporter.shared.install(preview)
+                            await MainActor.run {
+                                importPreview = nil
+                                if ok { selectedBundleId = preview.adapter.bundleId }
+                                else { importError = "Couldn't install the adapter pack." }
+                            }
+                        }
+                    })
+            }
+            .alert(
+                "Import Failed", isPresented: .constant(importError != nil),
+                actions: { Button("OK") { importError = nil } },
+                message: { Text(importError ?? "") })
 
             // MARK: Right panel
             VStack(spacing: 0) {
@@ -2508,9 +2550,28 @@ struct LabeledField<Content: View>: View {
 private struct AdapterRowView: View {
     let adapter: AppAdapter
     @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @State private var showRename = false
+    @State private var renameText = ""
 
     var isEnabled: Bool {
         adapterManager.adapters.first(where: { $0.id == adapter.id })?.isEnabled ?? adapter.isEnabled
+    }
+
+    private var categories: [String] {
+        Array(Set(adapter.actions.compactMap {
+            $0.category?.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func exportAdapter() {
+        guard let src = adapterManager.exportFileURL(for: adapter.bundleId) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(adapter.appName).json"
+        panel.allowedFileTypes = ["json"]
+        if panel.runModal() == .OK, let dest = panel.url {
+            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.copyItem(at: src, to: dest)
+        }
     }
 
     var body: some View {
@@ -2545,6 +2606,37 @@ private struct AdapterRowView: View {
             .toggleStyle(.switch)
             .controlSize(.mini)
             .labelsHidden()
+        }
+        .contextMenu {
+            Text("\(adapter.visibleActions.count) actions" +
+                (categories.isEmpty ? "" : " · \(categories.count) categories"))
+            Divider()
+            Button {
+                renameText = adapter.appName
+                showRename = true
+            } label: { Label("Rename…", systemImage: "pencil") }
+            Button {
+                Task { await adapterManager.duplicateAdapter(bundleId: adapter.bundleId) }
+            } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+            Button(action: exportAdapter) {
+                Label("Export…", systemImage: "square.and.arrow.up")
+            }
+            if let src = adapterManager.exportFileURL(for: adapter.bundleId) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([src])
+                } label: { Label("Show Source in Finder", systemImage: "folder") }
+            }
+            Divider()
+            Button(role: .destructive) {
+                Task { await adapterManager.deleteAdapter(bundleId: adapter.bundleId) }
+            } label: { Label("Delete", systemImage: "trash") }
+        }
+        .alert("Rename Adapter", isPresented: $showRename) {
+            TextField("Name", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                Task { await adapterManager.renameAdapter(bundleId: adapter.bundleId, to: renameText) }
+            }
         }
     }
 }
@@ -2798,11 +2890,23 @@ struct AdapterActionEditorSheet: View {
     @State private var script: String      = ""
     @State private var filePath: String    = ""
     @State private var requiresApproval: Bool = false
+    @State private var shortcutName: String = ""
 
     @State private var isSaving = false
     @State private var previewIconValid = true
 
     var isEditing: Bool { existing != nil }
+
+    @ViewBuilder private var riskBadge: some View {
+        let r = actionType.riskLevel
+        if r != .low {
+            Label(r.label, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background((r == .high ? Color.red : Color.orange).opacity(0.15), in: Capsule())
+                .foregroundStyle(r == .high ? Color.red : Color.orange)
+        }
+    }
 
     private var resolvedActionName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2875,22 +2979,37 @@ struct AdapterActionEditorSheet: View {
 
                     Divider()
 
-                    // ── Action Type ──────────────────────────────────────────
-                    LabeledField("Type") {
-                        Picker("", selection: $actionType) {
-                            Text("Open URL / Deep Link").tag(AdapterActionType.urlScheme)
-                            Text("Open File / App").tag(AdapterActionType.openItem)
-                            Text("Shell Command").tag(AdapterActionType.shell)
-                            Text("AppleScript").tag(AdapterActionType.applescript)
-                            Text("JXA").tag(AdapterActionType.jxa)
-                            Text("Page JS (Userscript)").tag(AdapterActionType.pageJS)
-                            Text("Script File").tag(AdapterActionType.scriptFile)
-                            Text("AI Prompt").tag(AdapterActionType.aiPrompt)
-                            Text("Menu Bar").tag(AdapterActionType.menubar)
+                    // ── Action (intent-grouped) ──────────────────────────────
+                    LabeledField("Action") {
+                        HStack(spacing: 8) {
+                            Picker("", selection: $actionType) {
+                                Section("Recommended") {
+                                    Text("Open URL / Deep Link").tag(AdapterActionType.urlScheme)
+                                    Text("Open Application or File").tag(AdapterActionType.openItem)
+                                    Text("Run Shortcut").tag(AdapterActionType.shortcut)
+                                    Text("AI Prompt").tag(AdapterActionType.aiPrompt)
+                                }
+                                Section("Automation") {
+                                    Text("Menu Item").tag(AdapterActionType.menubar)
+                                    Text("AppleScript").tag(AdapterActionType.applescript)
+                                    Text("JavaScript for Automation").tag(AdapterActionType.jxa)
+                                }
+                                Section("Browser") {
+                                    Text("Browser JavaScript").tag(AdapterActionType.pageJS)
+                                }
+                                Section("Advanced") {
+                                    Text("Terminal Command").tag(AdapterActionType.shell)
+                                    Text("External Script").tag(AdapterActionType.scriptFile)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .onChange(of: actionType) { t in
+                                if t.riskLevel == .high { requiresApproval = true }
+                            }
+                            riskBadge
+                            Spacer()
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     // ── Payload ──────────────────────────────────────────────
@@ -2973,13 +3092,54 @@ struct AdapterActionEditorSheet: View {
                         Text("e.g. \"View, Zoom In\" clicks View › Zoom In in the menu bar.")
                             .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, -8)
 
+                    case .shortcut:
+                        LabeledField("Shortcut Name") {
+                            TextField("Exact macOS Shortcut name", text: $shortcutName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Text("Runs a macOS Shortcut by name (Shortcuts.app).")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
                     default:
                         EmptyView()
+                    }
+
+                    if actionType.riskLevel == .high {
+                        Label(
+                            "High-risk action — DoraX will ask for confirmation before it runs.",
+                            systemImage: "exclamationmark.shield.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
                     }
 
                     // ── Options ──────────────────────────────────────────────
                     Toggle("Require confirmation before running", isOn: $requiresApproval)
                         .font(.system(size: 12))
+
+                    // ── Preview ──────────────────────────────────────────────
+                    Divider()
+                    Text("PREVIEW")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Image(systemName: previewIconValid ? iconName : "bolt")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.teal)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(resolvedActionName.isEmpty ? "Action name" : resolvedActionName)
+                                .font(.system(size: 12, weight: .medium))
+                            Text(actionType.displayName)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        riskBadge
+                    }
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    Text("How this action appears in DoraX.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
                 .padding(16)
             }
@@ -2993,6 +3153,7 @@ struct AdapterActionEditorSheet: View {
         case .urlScheme: return urlScheme.trimmingCharacters(in: .whitespaces).isEmpty
         case .openItem, .scriptFile: return filePath.trimmingCharacters(in: .whitespaces).isEmpty
         case .menubar:   return script.trimmingCharacters(in: .whitespaces).isEmpty
+        case .shortcut:  return shortcutName.trimmingCharacters(in: .whitespaces).isEmpty
         default:         return script.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
@@ -3018,6 +3179,7 @@ struct AdapterActionEditorSheet: View {
         urlScheme   = a.urlScheme ?? ""
         filePath    = a.scriptFile ?? ""
         script      = a.script ?? a.cliToolCommand ?? a.menuPath?.joined(separator: ", ") ?? a.aiPromptTemplate ?? ""
+        shortcutName = a.shortcutName ?? ""
         requiresApproval = a.requiresApproval
     }
 
@@ -3047,8 +3209,9 @@ struct AdapterActionEditorSheet: View {
             scriptFile: filePathPayload,
             urlScheme: actionType == .urlScheme ? urlScheme : nil,
             cliToolCommand: actionType == .cliTool ? script.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
+            shortcutName: actionType == .shortcut ? shortcutName.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
             aiPromptTemplate: actionType == .aiPrompt ? script : nil,
-            requiresApproval: requiresApproval
+            requiresApproval: requiresApproval || actionType.riskLevel == .high
         )
 
         Task {
