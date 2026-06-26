@@ -91,6 +91,35 @@ enum AdapterPackImportError: LocalizedError {
     }
 }
 
+// MARK: - Named subsystem surface
+//
+// Documented architecture names. Concrete logic lives in AdapterPackImporter
+// (import/parse), AppAdapterManager (registry + on-disk store + in-memory index).
+// These give the subsystem its public surface and a place to grow (AI Skills,
+// Workflows, Variables…) without restructuring later.
+
+typealias AppAdapterPackImporter = AdapterPackImporter
+
+/// Schema validation for adapter packs.
+enum AppAdapterPackValidator {
+    /// nil = valid; otherwise the reason a pack is rejected.
+    static func validate(manifest: AdapterPackManifest, actions: [AdapterAction]) -> String? {
+        if manifest.bundleId.trimmingCharacters(in: .whitespaces).isEmpty { return "missing bundleId" }
+        if manifest.name.trimmingCharacters(in: .whitespaces).isEmpty { return "missing name" }
+        if actions.isEmpty { return "no actions" }
+        return nil
+    }
+}
+
+/// Ranked, in-memory action search for an adapter — never parses JSON per
+/// keystroke (the registry holds the parsed adapters in memory).
+@MainActor
+enum AppAdapterSearchIndex {
+    static func search(_ query: String, bundleId: String) -> [AdapterAction] {
+        AppAdapterManager.shared.actions(for: bundleId, query: query)
+    }
+}
+
 // MARK: - Importer
 
 @MainActor
@@ -116,9 +145,10 @@ final class AdapterPackImporter {
 
     func loadPreview(from url: URL) throws -> AdapterPackPreview {
         let (manifest, actions) = try parse(url)
-        guard !actions.isEmpty else { throw AdapterPackImportError.noActions }
-        guard !manifest.bundleId.trimmingCharacters(in: .whitespaces).isEmpty else {
-            throw AdapterPackImportError.invalidSchema("missing bundleId")
+        if let reason = AppAdapterPackValidator.validate(manifest: manifest, actions: actions) {
+            throw reason == "no actions"
+                ? AdapterPackImportError.noActions
+                : AdapterPackImportError.invalidSchema(reason)
         }
         let adapter = AppAdapter(
             id: manifest.bundleId,

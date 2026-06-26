@@ -3114,6 +3114,32 @@ struct AdapterActionEditorSheet: View {
                     // ── Options ──────────────────────────────────────────────
                     Toggle("Require confirmation before running", isOn: $requiresApproval)
                         .font(.system(size: 12))
+
+                    // ── Preview ──────────────────────────────────────────────
+                    Divider()
+                    Text("PREVIEW")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Image(systemName: previewIconValid ? iconName : "bolt")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.teal)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(resolvedActionName.isEmpty ? "Action name" : resolvedActionName)
+                                .font(.system(size: 12, weight: .medium))
+                            Text(actionType.displayName)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        riskBadge
+                    }
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    Text("How this action appears in DoraX.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
                 .padding(16)
             }

@@ -1618,12 +1618,12 @@ private struct AutomationAppRow: View {
     }
 
     private var subtitle: String {
-        let actionCount = adapter.visibleActions.count
+        var parts: [String] = []
+        let actionCount = adapter.actions.filter { $0.type != .cliTool }.count
         let cliCount = linkedCLIToolsCount
-        if cliCount == 0 {
-            return "\(actionCount) action\(actionCount == 1 ? "" : "s")"
-        }
-        return "\(actionCount) action\(actionCount == 1 ? "" : "s") · \(cliCount) CLI"
+        if actionCount > 0 { parts.append("\(actionCount) action\(actionCount == 1 ? "" : "s")") }
+        if cliCount > 0 { parts.append("\(cliCount) CLI") }
+        return parts.isEmpty ? "No actions yet" : parts.joined(separator: " · ")
     }
 
     var body: some View {
