@@ -2781,7 +2781,7 @@ enum AdapterToolGroupKind: String, CaseIterable, Identifiable {
         }
     }
     /// Not yet implemented — shown as a dimmed "coming soon" group.
-    var isComingSoon: Bool { self == .api || self == .skills }
+    var isComingSoon: Bool { self == .skills }
 }
 
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
@@ -2803,6 +2803,11 @@ struct AutomationAdapterDetailView: View {
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     @ObservedObject private var mcpManager = MCPServerManager.shared
+    @ObservedObject private var apiStore = APIConnectionStore.shared
+    @State private var showAPIConnectSheet = false
+    @State private var apiName = ""
+    @State private var apiBaseURL = ""
+    @State private var apiKey = ""
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
@@ -2937,7 +2942,8 @@ struct AutomationAdapterDetailView: View {
         case .shortcuts: return linkedShortcuts.count
         case .cli: return linkedCLITools.count
         case .mcp: return linkedMCPServers.count
-        case .api, .skills: return 0
+        case .api: return apiStore.connections(for: currentAdapter.bundleId).count
+        case .skills: return 0
         }
     }
 
@@ -3349,6 +3355,64 @@ struct AutomationAdapterDetailView: View {
 
                 if detailTab == .tools {
                 toolGroupOverview
+
+                // MARK: API Connections section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("API Connections")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            apiName = ""; apiBaseURL = ""; apiKey = ""
+                            showAPIConnectSheet = true
+                        } label: {
+                            Label("Connect", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    let apiConns = apiStore.connections(for: currentAdapter.bundleId)
+                    if apiConns.isEmpty {
+                        Text("Connect an API to let scoped chat use this app's service. Keys are stored in your Keychain.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(apiConns) { conn in
+                            HStack(spacing: 10) {
+                                Image(systemName: "link")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(conn.name).font(.system(size: 12, weight: .medium))
+                                    Text(conn.baseURL.isEmpty ? "Connected" : conn.baseURL)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                                Spacer()
+                                Label("Connected", systemImage: "checkmark.circle.fill")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.green)
+                                Button(role: .destructive) {
+                                    apiStore.disconnect(id: conn.id)
+                                } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if conn.id != apiConns.last?.id { Divider() }
+                        }
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3645,6 +3709,49 @@ struct AutomationAdapterDetailView: View {
                 showAddActionSheet = false
                 editingAction = nil
             }
+        }
+        .sheet(isPresented: $showAPIConnectSheet) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Connect API — \(currentAdapter.appName)")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Button("Cancel") { showAPIConnectSheet = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Connect") {
+                        apiStore.connect(
+                            name: apiName, baseURL: apiBaseURL, apiKey: apiKey,
+                            bundleId: currentAdapter.bundleId)
+                        showAPIConnectSheet = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(apiName.trimmingCharacters(in: .whitespaces).isEmpty
+                        || apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+                .padding(16)
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledField("Name") {
+                        TextField("e.g. GitHub API", text: $apiName).textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Base URL (optional)") {
+                        TextField("https://api.github.com", text: $apiBaseURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                    LabeledField("API Key") {
+                        SecureField("Stored in your Keychain", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Label("The key is saved to the macOS Keychain — never to disk or the adapter file.",
+                        systemImage: "lock.shield")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+            .frame(width: 460)
         }
         .sheet(isPresented: $showCLIToolPicker) {
             AppCLIToolPickerSheet(

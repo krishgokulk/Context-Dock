@@ -92,7 +92,7 @@
 		};
 		FDAA0001000000000000AA08 /* Context-DockTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Context-DockTests;
+			path = "Context-DockTests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -129,6 +129,7 @@
 				FD1617D62ECEA5B500620C78 /* Context-Dock */,
 				CAFE00000000000000000001 /* Context-DockExtension */,
 				FD1617D52ECEA5B500620C78 /* Products */,
+				FDC5EAA22FF06DCB00A74429 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -140,6 +141,14 @@
 				FDAA0001000000000000AA02 /* Context-DockTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		FDC5EAA22FF06DCB00A74429 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				FDAA0001000000000000AA08 /* Context-DockTests */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -629,7 +638,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -652,7 +661,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
