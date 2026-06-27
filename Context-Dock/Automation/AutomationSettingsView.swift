@@ -2757,6 +2757,33 @@ struct GlobalCLIScopeDetailView: View {
     }
 }
 
+/// Generic capability groups an adapter can expose under the Tools tab. New
+/// integration types (API, Skills) plug in here without per-app hardcoding.
+enum AdapterToolGroupKind: String, CaseIterable, Identifiable {
+    case shortcuts, cli, mcp, api, skills
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .shortcuts: return "Shortcuts"
+        case .cli: return "CLI Tools"
+        case .mcp: return "MCP Servers"
+        case .api: return "API Connections"
+        case .skills: return "Skills"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .shortcuts: return "command"
+        case .cli: return "terminal.fill"
+        case .mcp: return "server.rack"
+        case .api: return "link"
+        case .skills: return "brain.head.profile"
+        }
+    }
+    /// Not yet implemented — shown as a dimmed "coming soon" group.
+    var isComingSoon: Bool { self == .api || self == .skills }
+}
+
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
     case overview, actions, tools, advanced
     var id: String { rawValue }
@@ -2902,6 +2929,45 @@ struct AutomationAdapterDetailView: View {
         visibleActions
             .filter { $0.type == .shortcut }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Linked count per capability group — drives the Tools overview chips.
+    private func toolGroupCount(_ kind: AdapterToolGroupKind) -> Int {
+        switch kind {
+        case .shortcuts: return linkedShortcuts.count
+        case .cli: return linkedCLITools.count
+        case .mcp: return linkedMCPServers.count
+        case .api, .skills: return 0
+        }
+    }
+
+    @ViewBuilder
+    private var toolGroupOverview: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10
+        ) {
+            ForEach(AdapterToolGroupKind.allCases) { kind in
+                let count = toolGroupCount(kind)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(kind.title, systemImage: kind.icon)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(kind.isComingSoon ? .secondary : .primary)
+                    Text(
+                        kind.isComingSoon
+                            ? "Coming soon"
+                            : (count == 0 ? "None linked" : "\(count) linked")
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .opacity(kind.isComingSoon ? 0.55 : 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
     }
 
     /// Extracts "yt-dlp" from bundleId "cli://yt-dlp", nil for real app adapters.
@@ -3282,6 +3348,7 @@ struct AutomationAdapterDetailView: View {
                 }  // end: if detailTab == .actions
 
                 if detailTab == .tools {
+                toolGroupOverview
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
