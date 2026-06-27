@@ -32,8 +32,6 @@ struct SettingsDetailView: View {
             AutomationImportPanel(onClose: {})
         case .mediaActions:
             MediaActionsSettingsPage()
-        case .appleNotesMCP:
-            AppleNotesMCPSettingsView()
         case .permissions:
             PermissionsSettingsPage()
         case .appearance:
