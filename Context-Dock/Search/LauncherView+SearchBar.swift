@@ -621,24 +621,34 @@ extension LauncherView {
                                     let browserPageIcon =
                                         isContextDockChatConnected ? currentBrowserPageIcon() : nil
                                     let feedbackAppIcon = inlineDockFeedbackAppIcon()
-                                    // In Finder desktop-only mode (no window open) treat icon as nil → globe
-                                    let displayIcon =
-                                        feedbackAppIcon
-                                        ?? scopedGlobalAppIcon?.icon
-                                        ?? previewGlobalAppResult?.icon
-                                        ?? topGlobalMenuIcon
-                                        ?? l2.targetApp?.icon ?? typedAppIcon?.icon
-                                        ?? browserPageIcon
-                                        ?? (isGlobalContextActive ? nil : frontmost.icon)
-                                    let displayIconIdentity =
-                                        launcherViewModel.inlineDockFeedback?.bundleID
-                                        ?? scopedGlobalAppIcon?.bundleId
-                                        ?? previewGlobalAppBundleId
-                                        ?? (topGlobalMenuIcon == nil ? nil : "global-menu")
-                                        ?? l2.targetApp?.bundleId
-                                        ?? typedAppIcon?.bundleId
-                                        ?? currentBrowserPageIconIdentity
-                                        ?? frontmost.bundleID
+                                    // In Finder desktop-only mode (no window open) treat icon as nil → globe.
+                                    // Built as a typed candidate list (first non-nil wins) instead of a
+                                    // long `??` chain: the mixed-optional chain took ~9s to type-check and
+                                    // blew the solver limit on older Xcode toolchains (CI). Same result.
+                                    let displayIconCandidates: [NSImage?] = [
+                                        feedbackAppIcon,
+                                        scopedGlobalAppIcon?.icon,
+                                        previewGlobalAppResult?.icon,
+                                        topGlobalMenuIcon,
+                                        l2.targetApp?.icon,
+                                        typedAppIcon?.icon,
+                                        browserPageIcon,
+                                        isGlobalContextActive ? nil : frontmost.icon,
+                                    ]
+                                    let displayIcon: NSImage? =
+                                        displayIconCandidates.first(where: { $0 != nil }) ?? nil
+                                    let displayIconIdentityCandidates: [String?] = [
+                                        launcherViewModel.inlineDockFeedback?.bundleID,
+                                        scopedGlobalAppIcon?.bundleId,
+                                        previewGlobalAppBundleId,
+                                        topGlobalMenuIcon == nil ? nil : "global-menu",
+                                        l2.targetApp?.bundleId,
+                                        typedAppIcon?.bundleId,
+                                        currentBrowserPageIconIdentity,
+                                        frontmost.bundleID,
+                                    ]
+                                    let displayIconIdentity: String? =
+                                        displayIconIdentityCandidates.first(where: { $0 != nil }) ?? nil
                                     let menuIcon = menuInputIconForSearchText(
                                         hasAppMatch: scopedGlobalAppIcon != nil
                                             || previewGlobalAppResult != nil || l2.targetApp != nil
