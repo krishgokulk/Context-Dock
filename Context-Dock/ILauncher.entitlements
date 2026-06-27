@@ -14,11 +14,10 @@
 	<true/>
 	<key>com.apple.security.personal-information.photos-library</key>
 	<true/>
-	<!-- Force-disable the debuggable entitlement that Xcode auto-injects for Debug.
-	     macOS refuses to persist Accessibility/Keychain TCC grants for a get-task-allow
-	     binary, so every Debug rebuild re-prompts. Off => grants stick across rebuilds.
-	     Release never had it. Trade-off: Xcode LLDB can't attach (we run the app, not LLDB). -->
+	<!-- Debuggable: lets Xcode attach LLDB. TCC (Accessibility/Keychain) re-prompts
+	     on every Debug rebuild regardless on macOS 26 (cdhash changes), so disabling
+	     this bought nothing — keep debugging enabled. Release builds never set it. -->
 	<key>com.apple.security.get-task-allow</key>
-	<false/>
+	<true/>
 </dict>
 </plist>
