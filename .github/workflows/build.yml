@@ -24,6 +24,11 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
 
+      - name: Install Metal toolchain
+        # The project ships .metal shaders; the runner's Xcode doesn't bundle the
+        # Metal toolchain by default ("cannot execute tool 'metal'").
+        run: xcodebuild -downloadComponent MetalToolchain || true
+
       - name: Build (Debug, unsigned)
         run: |
           xcodebuild \
