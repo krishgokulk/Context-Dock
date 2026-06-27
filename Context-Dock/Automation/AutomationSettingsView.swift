@@ -2758,15 +2758,14 @@ struct GlobalCLIScopeDetailView: View {
 }
 
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
-    case overview, actions, shortcuts, cli, mcp
+    case overview, actions, tools, advanced
     var id: String { rawValue }
     var title: String {
         switch self {
         case .overview: return "Overview"
         case .actions: return "Actions"
-        case .shortcuts: return "Shortcuts"
-        case .cli: return "CLI Tools"
-        case .mcp: return "MCP"
+        case .tools: return "Tools"
+        case .advanced: return "Advanced"
         }
     }
 }
@@ -3282,7 +3281,7 @@ struct AutomationAdapterDetailView: View {
                 }
                 }  // end: if detailTab == .actions
 
-                if detailTab == .shortcuts {
+                if detailTab == .tools {
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3343,9 +3342,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .shortcuts
+                }  // end: Tools (Shortcuts)
 
-                if detailTab == .cli {
+                if detailTab == .tools {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Linked CLI Tools")
@@ -3445,9 +3444,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .cli
+                }  // end: Tools (CLI)
 
-                if detailTab == .mcp {
+                if detailTab == .tools {
                 // MARK: Linked MCP section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3524,7 +3523,46 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .mcp
+                }  // end: Tools (MCP)
+
+                if detailTab == .advanced {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Adapter")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("BUNDLE ID")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(currentAdapter.bundleId)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+                        HStack(spacing: 8) {
+                            Button(action: importAdapterPack) {
+                                Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                            }
+                            Button {
+                                Task { await adapterManager.duplicateAdapter(bundleId: currentAdapter.bundleId) }
+                            } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                            if let src = adapterManager.exportFileURL(for: currentAdapter.bundleId) {
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([src])
+                                } label: { Label("Show Source", systemImage: "folder") }
+                            }
+                        }
+                        .controlSize(.small)
+
+                        Divider()
+                        Text("Danger Zone")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.red)
+                        Button(role: .destructive) { showDeleteConfirm = true } label: {
+                            Label("Delete Adapter", systemImage: "trash")
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(16)
+                }
 
             }
         }
