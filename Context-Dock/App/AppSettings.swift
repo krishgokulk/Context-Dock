@@ -886,6 +886,16 @@ class AppSettings: ObservableObject {
     @AppStorage("allowContacts") var allowContacts: Bool = true
     @AppStorage("allowAutomation") var allowAutomation: Bool = true  // AppleScript (Notes/Mail/Messages)
 
+    // Apple Notes MCP — all off by default; user must opt in explicitly
+    @AppStorage("noteMCPEnabled") var noteMCPEnabled: Bool = false
+    @AppStorage("noteMCPAllowMetadataSearch") var noteMCPAllowMetadataSearch: Bool = true
+    @AppStorage("noteMCPAllowPersistentFullRead") var noteMCPAllowPersistentFullRead: Bool = false
+    @AppStorage("noteMCPAllowGlobalAccess") var noteMCPAllowGlobalAccess: Bool = false
+    @AppStorage("noteMCPAllowBulkExport") var noteMCPAllowBulkExport: Bool = false
+    @AppStorage("noteMCPAllowDelete") var noteMCPAllowDelete: Bool = false
+    @AppStorage("noteMCPPreferLocalAI") var noteMCPPreferLocalAI: Bool = true
+    @AppStorage("noteMCPRequireCloudApproval") var noteMCPRequireCloudApproval: Bool = true
+
     // UI Feature Toggles
     @AppStorage("enableStatusBar") var enableStatusBar: Bool = true  // Show status bar extensions
     @AppStorage("enableFrontmostDetection") var enableFrontmostDetection: Bool = true  // Show frontmost app context

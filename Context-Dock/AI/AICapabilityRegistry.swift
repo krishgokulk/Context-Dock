@@ -104,6 +104,10 @@ final class CapabilityRegistry {
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
+        // Apple Notes MCP — only registered when explicitly enabled
+        if AppSettings.shared.noteMCPEnabled {
+            AppleNotesMCPCapabilities.register(in: self)
+        }
 
         register(
             AICapability(

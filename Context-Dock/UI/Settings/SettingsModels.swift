@@ -11,6 +11,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case mediaActions
     case workflows
     case shortcutSheetWorkflows
+    case appleNotesMCP
     case permissions
     case appearance
     case hotkeys
@@ -33,6 +34,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .mediaActions: return "Media Actions"
         case .workflows: return "Automation / Workflows"
         case .shortcutSheetWorkflows: return "Selection Scope"
+        case .appleNotesMCP: return "Apple Notes"
         case .permissions: return "Permissions"
         case .appearance: return "Appearance"
         case .hotkeys: return "Hotkeys"
@@ -55,6 +57,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .mediaActions: return "Image, video, audio, and PDF actions."
         case .workflows: return "Context rules and automation flows."
         case .shortcutSheetWorkflows: return "Actions for the Selection Scope — share and act on selected text or files."
+        case .appleNotesMCP: return "First-party Apple Notes integration — search, read, write, summarize, and export notes."
         case .permissions: return "Accessibility, automation, files, network, and AI risk."
         case .appearance: return "Visual preferences for dock and panels."
         case .hotkeys: return "Global keyboard shortcuts and launcher bindings."
@@ -77,6 +80,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .mediaActions: return "photo.on.rectangle.angled"
         case .workflows: return "point.topleft.down.curvedto.point.bottomright.up"
         case .shortcutSheetWorkflows: return "command.square"
+        case .appleNotesMCP: return "note.text"
         case .permissions: return "lock.shield.fill"
         case .appearance: return "paintpalette.fill"
         case .hotkeys: return "keyboard.fill"
@@ -99,6 +103,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .mediaActions: return .pink
         case .workflows: return .red
         case .shortcutSheetWorkflows: return .red
+        case .appleNotesMCP: return .yellow
         case .permissions: return .yellow
         case .appearance: return .cyan
         case .hotkeys: return .mint
@@ -167,6 +172,13 @@ extension SettingsSidebarSection {
                 ]),
                 SettingsSidebarRow("Media Actions", page: .mediaActions),
                 SettingsSidebarRow("Selection Scope", page: .shortcutSheetWorkflows)
+            ]
+        ),
+        SettingsSidebarSection(
+            id: "integrations",
+            title: "Integrations",
+            rows: [
+                SettingsSidebarRow("Apple Notes", page: .appleNotesMCP)
             ]
         ),
         SettingsSidebarSection(
