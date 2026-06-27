@@ -2893,6 +2893,7 @@ struct AutomationAdapterDetailView: View {
     @State private var importError: String?
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
+    @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
 
     /// Plugin-style summary for the Overview tab — feels alive even with no actions.
     @ViewBuilder
@@ -3070,6 +3071,52 @@ struct AutomationAdapterDetailView: View {
 
     private var linkedMCPServers: [MCPServerConfig] {
         mcpManager.servers(forBundleId: currentAdapter.bundleId)
+    }
+
+    @ViewBuilder
+    private var notesBuiltInMCPRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.yellow.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "note.text")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.orange)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("DoraX Notes MCP")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("built-in")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.yellow.opacity(0.18), in: Capsule())
+                            .foregroundStyle(.orange)
+                    }
+                    Text("search · read · create · append · update · summarize · tasks · link · export · delete")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $noteMCPEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+            .padding(.vertical, 6)
+
+            if !linkedMCPServers.isEmpty {
+                Divider()
+            }
+        }
     }
 
     var body: some View {
@@ -3730,7 +3777,11 @@ struct AutomationAdapterDetailView: View {
                         .controlSize(.mini)
                     }
 
-                    if linkedMCPServers.isEmpty {
+                    if currentAdapter.bundleId == "com.apple.Notes" {
+                        notesBuiltInMCPRow
+                    }
+
+                    if linkedMCPServers.isEmpty && currentAdapter.bundleId != "com.apple.Notes" {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("No linked MCP servers")
                                 .font(.system(size: 13, weight: .medium))
@@ -3740,7 +3791,9 @@ struct AutomationAdapterDetailView: View {
                         }
                         .padding(16)
                         .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                    } else {
+                    }
+
+                    if !linkedMCPServers.isEmpty {
                         ForEach(linkedMCPServers) { server in
                             HStack(spacing: 10) {
                                 ZStack {
