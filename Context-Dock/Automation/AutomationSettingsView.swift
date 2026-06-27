@@ -2757,16 +2757,113 @@ struct GlobalCLIScopeDetailView: View {
     }
 }
 
+/// Generic capability groups an adapter can expose under the Tools tab. New
+/// integration types (API, Skills) plug in here without per-app hardcoding.
+enum AdapterToolGroupKind: String, CaseIterable, Identifiable {
+    case shortcuts, cli, mcp, api, skills
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .shortcuts: return "Shortcuts"
+        case .cli: return "CLI Tools"
+        case .mcp: return "MCP Servers"
+        case .api: return "API Connections"
+        case .skills: return "Skills"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .shortcuts: return "command"
+        case .cli: return "terminal.fill"
+        case .mcp: return "server.rack"
+        case .api: return "link"
+        case .skills: return "brain.head.profile"
+        }
+    }
+    /// All capability groups are implemented.
+    var isComingSoon: Bool { false }
+}
+
+struct SkillEditorSheet: View {
+    let skill: AdapterSkill
+    let onDone: (AdapterSkill?) -> Void
+
+    @State private var name: String
+    @State private var summary: String
+    @State private var instructions: String
+    @State private var version: String
+
+    init(skill: AdapterSkill, onDone: @escaping (AdapterSkill?) -> Void) {
+        self.skill = skill
+        self.onDone = onDone
+        _name = State(initialValue: skill.name)
+        _summary = State(initialValue: skill.summary)
+        _instructions = State(initialValue: skill.instructions)
+        _version = State(initialValue: skill.version)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(skill.name.isEmpty ? "New Skill" : "Edit Skill")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    var s = skill
+                    s.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    s.summary = summary
+                    s.instructions = instructions
+                    s.version = version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "1.0" : version
+                    onDone(s)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                    || instructions.trimmingCharacters(in: .whitespaces).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledField("Name") {
+                        TextField("e.g. Code Review", text: $name).textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Summary (optional)") {
+                        TextField("One line shown in the list", text: $summary)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Version") {
+                        TextField("1.0", text: $version).textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                    }
+                    LabeledField("Instructions") {
+                        TextEditor(text: $instructions)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 200)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    }
+                    Label("Skills add reusable context to scoped AI chat for this app. They never run commands or grant permissions.",
+                        systemImage: "info.circle")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 520, height: 480)
+    }
+}
+
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
-    case overview, actions, shortcuts, cli, mcp
+    case overview, actions, tools, advanced
     var id: String { rawValue }
     var title: String {
         switch self {
         case .overview: return "Overview"
         case .actions: return "Actions"
-        case .shortcuts: return "Shortcuts"
-        case .cli: return "CLI Tools"
-        case .mcp: return "MCP"
+        case .tools: return "Tools"
+        case .advanced: return "Advanced"
         }
     }
 }
@@ -2777,6 +2874,14 @@ struct AutomationAdapterDetailView: View {
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     @ObservedObject private var mcpManager = MCPServerManager.shared
+    @ObservedObject private var apiStore = APIConnectionStore.shared
+    @ObservedObject private var skillStore = SkillStore.shared
+    @State private var showAPIConnectSheet = false
+    @State private var apiName = ""
+    @State private var apiBaseURL = ""
+    @State private var apiKey = ""
+    @State private var editingSkill: AdapterSkill?
+    @State private var showSkillEditor = false
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
@@ -2904,6 +3009,46 @@ struct AutomationAdapterDetailView: View {
         visibleActions
             .filter { $0.type == .shortcut }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Linked count per capability group — drives the Tools overview chips.
+    private func toolGroupCount(_ kind: AdapterToolGroupKind) -> Int {
+        switch kind {
+        case .shortcuts: return linkedShortcuts.count
+        case .cli: return linkedCLITools.count
+        case .mcp: return linkedMCPServers.count
+        case .api: return apiStore.connections(for: currentAdapter.bundleId).count
+        case .skills: return skillStore.skills(for: currentAdapter.bundleId).count
+        }
+    }
+
+    @ViewBuilder
+    private var toolGroupOverview: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10
+        ) {
+            ForEach(AdapterToolGroupKind.allCases) { kind in
+                let count = toolGroupCount(kind)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(kind.title, systemImage: kind.icon)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(kind.isComingSoon ? .secondary : .primary)
+                    Text(
+                        kind.isComingSoon
+                            ? "Coming soon"
+                            : (count == 0 ? "None linked" : "\(count) linked")
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .opacity(kind.isComingSoon ? 0.55 : 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
     }
 
     /// Extracts "yt-dlp" from bundleId "cli://yt-dlp", nil for real app adapters.
@@ -3329,7 +3474,127 @@ struct AutomationAdapterDetailView: View {
                 }
                 }  // end: if detailTab == .actions
 
-                if detailTab == .shortcuts {
+                if detailTab == .tools {
+                toolGroupOverview
+
+                // MARK: API Connections section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("API Connections")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            apiName = ""; apiBaseURL = ""; apiKey = ""
+                            showAPIConnectSheet = true
+                        } label: {
+                            Label("Connect", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    let apiConns = apiStore.connections(for: currentAdapter.bundleId)
+                    if apiConns.isEmpty {
+                        Text("Connect an API to let scoped chat use this app's service. Keys are stored in your Keychain.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(apiConns) { conn in
+                            HStack(spacing: 10) {
+                                Image(systemName: "link")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.blue)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(conn.name).font(.system(size: 12, weight: .medium))
+                                    Text(conn.baseURL.isEmpty ? "Connected" : conn.baseURL)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                                Spacer()
+                                Label("Connected", systemImage: "checkmark.circle.fill")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.green)
+                                Button(role: .destructive) {
+                                    apiStore.disconnect(id: conn.id)
+                                } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if conn.id != apiConns.last?.id { Divider() }
+                        }
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
+                // MARK: Skills section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Skills")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            editingSkill = AdapterSkill(
+                                adapterBundleId: currentAdapter.bundleId, name: "", instructions: "")
+                            showSkillEditor = true
+                        } label: {
+                            Label("Add Skill", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    let skills = skillStore.skills(for: currentAdapter.bundleId)
+                    if skills.isEmpty {
+                        Text("Skills are reusable instructions (prompts, workflows) that scoped chat uses for this app. They add context — they never run commands.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(skills) { skill in
+                            HStack(spacing: 10) {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.purple)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(skill.name).font(.system(size: 12, weight: .medium))
+                                    Text(skill.summary.isEmpty ? "v\(skill.version)" : "\(skill.summary) · v\(skill.version)")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { skill.isEnabled },
+                                    set: { skillStore.setEnabled($0, id: skill.id) }))
+                                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                                Button {
+                                    editingSkill = skill; showSkillEditor = true
+                                } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
+                                Button(role: .destructive) {
+                                    skillStore.remove(id: skill.id)
+                                } label: { Image(systemName: "trash") }.buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if skill.id != skills.last?.id { Divider() }
+                        }
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3390,9 +3655,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .shortcuts
+                }  // end: Tools (Shortcuts)
 
-                if detailTab == .cli {
+                if detailTab == .tools {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Linked CLI Tools")
@@ -3492,9 +3757,9 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .cli
+                }  // end: Tools (CLI)
 
-                if detailTab == .mcp {
+                if detailTab == .tools {
                 // MARK: Linked MCP section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3577,7 +3842,46 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .mcp
+                }  // end: Tools (MCP)
+
+                if detailTab == .advanced {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Adapter")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("BUNDLE ID")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(currentAdapter.bundleId)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+                        HStack(spacing: 8) {
+                            Button(action: importAdapterPack) {
+                                Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                            }
+                            Button {
+                                Task { await adapterManager.duplicateAdapter(bundleId: currentAdapter.bundleId) }
+                            } label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                            if let src = adapterManager.exportFileURL(for: currentAdapter.bundleId) {
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([src])
+                                } label: { Label("Show Source", systemImage: "folder") }
+                            }
+                        }
+                        .controlSize(.small)
+
+                        Divider()
+                        Text("Danger Zone")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.red)
+                        Button(role: .destructive) { showDeleteConfirm = true } label: {
+                            Label("Delete Adapter", systemImage: "trash")
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(16)
+                }
 
             }
         }
@@ -3592,6 +3896,58 @@ struct AutomationAdapterDetailView: View {
             AdapterActionEditorSheet(bundleId: currentAdapter.bundleId, existing: editingAction) {
                 showAddActionSheet = false
                 editingAction = nil
+            }
+        }
+        .sheet(isPresented: $showAPIConnectSheet) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Connect API — \(currentAdapter.appName)")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Button("Cancel") { showAPIConnectSheet = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Connect") {
+                        apiStore.connect(
+                            name: apiName, baseURL: apiBaseURL, apiKey: apiKey,
+                            bundleId: currentAdapter.bundleId)
+                        showAPIConnectSheet = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(apiName.trimmingCharacters(in: .whitespaces).isEmpty
+                        || apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+                .padding(16)
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledField("Name") {
+                        TextField("e.g. GitHub API", text: $apiName).textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Base URL (optional)") {
+                        TextField("https://api.github.com", text: $apiBaseURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                    LabeledField("API Key") {
+                        SecureField("Stored in your Keychain", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Label("The key is saved to the macOS Keychain — never to disk or the adapter file.",
+                        systemImage: "lock.shield")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+            .frame(width: 460)
+        }
+        .sheet(isPresented: $showSkillEditor) {
+            if let skill = editingSkill {
+                SkillEditorSheet(skill: skill) { saved in
+                    if let saved { skillStore.upsert(saved) }
+                    showSkillEditor = false
+                    editingSkill = nil
+                }
             }
         }
         .sheet(isPresented: $showCLIToolPicker) {

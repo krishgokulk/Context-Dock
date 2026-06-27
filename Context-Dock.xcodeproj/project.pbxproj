@@ -92,7 +92,7 @@
 		};
 		FDAA0001000000000000AA08 /* Context-DockTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Context-DockTests;
+			path = "Context-DockTests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -129,6 +129,7 @@
 				FD1617D62ECEA5B500620C78 /* Context-Dock */,
 				CAFE00000000000000000001 /* Context-DockExtension */,
 				FD1617D52ECEA5B500620C78 /* Products */,
+				FDC5EAA22FF06DCB00A74429 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -140,6 +141,14 @@
 				FDAA0001000000000000AA02 /* Context-DockTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		FDC5EAA22FF06DCB00A74429 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				FDAA0001000000000000AA08 /* Context-DockTests */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -316,7 +325,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -351,7 +360,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -515,7 +524,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = NO;
@@ -570,7 +579,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = NO;
@@ -620,7 +629,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -629,7 +638,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -643,7 +652,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -652,7 +661,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.krishgokul.ContextDock.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = NO;
