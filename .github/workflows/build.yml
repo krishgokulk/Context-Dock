@@ -1,0 +1,36 @@
+name: Build
+
+# Catch compile breaks before they land on main (e.g. a missing `import Combine`
+# that the cloud toolchain doesn't flag but a stricter local one does).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use latest Xcode
+        run: |
+          ls /Applications | grep -i '^Xcode' || true
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Build (Debug, unsigned)
+        run: |
+          xcodebuild \
+            -project Context-Dock.xcodeproj \
+            -scheme Context-Dock \
+            -configuration Debug \
+            -derivedDataPath .build/CIDerivedData \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build

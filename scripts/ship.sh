@@ -113,22 +113,36 @@ TOKEN="$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/d
 AUTH="Authorization: Bearer $TOKEN"
 API="https://api.github.com/repos/$REPO"
 
-# Create the release (tagging main's tip). The create POST is fire-and-forget —
-# the response parse has proven flaky, so we don't rely on it. Instead we always
-# resolve the release id by tag afterwards, with a few retries (GitHub may take a
-# moment to index a brand-new tag/release).
-NOTES="Beta build $BUILD. Download the DMG, open it, drag $APP_NAME to Applications. Unsigned beta — first launch may need right-click → Open. Minimum macOS 26.1."
+# Build the JSON body with python into a temp file (no shell-quoting of the body —
+# the em-dash + nested quotes used to corrupt it, producing an empty POST and a
+# missing release). curl reads the file; then resolve the release id by tag with
+# retries (GitHub may take a moment to index a brand-new release).
+BODY_FILE="$(mktemp)"
+RESP_FILE="$(mktemp)"
+python3 - "$TAG" "$APP_NAME" "$VERSION" "$BUILD" > "$BODY_FILE" <<'PY'
+import json, sys
+tag, app, ver, build = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+notes = (f"Beta build {build}. Download the DMG, open it, drag {app} to "
+         f"Applications. Unsigned beta — first launch may need right-click → "
+         f"Open. Minimum macOS 26.1.")
+print(json.dumps({
+    "tag_name": tag, "target_commitish": "main",
+    "name": f"{app} {ver} ({build}) — beta", "body": notes, "prerelease": True,
+}))
+PY
 curl -s -X POST "$API/releases" -H "$AUTH" -H 'Accept: application/vnd.github+json' \
-  -d "$(python3 -c "import json,sys;print(json.dumps({'tag_name':'$TAG','target_commitish':'main','name':'$APP_NAME $VERSION ($BUILD) — beta','body':'''$NOTES''','prerelease':True}))")" \
-  >/dev/null
+  -d @"$BODY_FILE" > "$RESP_FILE"
 
-RID=""
-for _ in 1 2 3 4 5; do
-  RID="$(curl -s "$API/releases/tags/$TAG" -H "$AUTH" \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('id') or '')" 2>/dev/null)"
-  [ -n "$RID" ] && break
-  sleep 2
-done
+RID="$(python3 -c "import sys,json;print(json.load(open('$RESP_FILE')).get('id') or '')" 2>/dev/null)"
+if [ -z "$RID" ]; then
+  for _ in 1 2 3 4 5 6 7 8; do
+    RID="$(curl -s "$API/releases/tags/$TAG" -H "$AUTH" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin).get('id') or '')" 2>/dev/null)"
+    [ -n "$RID" ] && break
+    sleep 2
+  done
+fi
+rm -f "$BODY_FILE" "$RESP_FILE"
 [ -n "$RID" ] || { restore_journal; die "Could not create or find the release."; }
 
 # Replace any existing same-name asset, then upload.
