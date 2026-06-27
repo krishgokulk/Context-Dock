@@ -2261,9 +2261,14 @@ extension LauncherView {
                 let browserPageBlock = await MainActor.run {
                     self.browserScopeContextBlock(scopedBundleId: scopedBundleId)
                 }
+                // Adapter Skills — reusable instruction bundles for this app, fed
+                // as extra AI context (never executable).
+                let skillsBlock = await MainActor.run {
+                    SkillStore.shared.instructionsBlock(for: scopedBundleId)
+                }
                 let activeContextPrompt = [
                     finalContextPrompt, runtimeCLIContextPrompt, appleData, mcpBlock,
-                    browserPageBlock,
+                    browserPageBlock, skillsBlock,
                 ]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n")

@@ -2780,8 +2780,79 @@ enum AdapterToolGroupKind: String, CaseIterable, Identifiable {
         case .skills: return "brain.head.profile"
         }
     }
-    /// Not yet implemented — shown as a dimmed "coming soon" group.
-    var isComingSoon: Bool { self == .skills }
+    /// All capability groups are implemented.
+    var isComingSoon: Bool { false }
+}
+
+struct SkillEditorSheet: View {
+    let skill: AdapterSkill
+    let onDone: (AdapterSkill?) -> Void
+
+    @State private var name: String
+    @State private var summary: String
+    @State private var instructions: String
+    @State private var version: String
+
+    init(skill: AdapterSkill, onDone: @escaping (AdapterSkill?) -> Void) {
+        self.skill = skill
+        self.onDone = onDone
+        _name = State(initialValue: skill.name)
+        _summary = State(initialValue: skill.summary)
+        _instructions = State(initialValue: skill.instructions)
+        _version = State(initialValue: skill.version)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(skill.name.isEmpty ? "New Skill" : "Edit Skill")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    var s = skill
+                    s.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    s.summary = summary
+                    s.instructions = instructions
+                    s.version = version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "1.0" : version
+                    onDone(s)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                    || instructions.trimmingCharacters(in: .whitespaces).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledField("Name") {
+                        TextField("e.g. Code Review", text: $name).textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Summary (optional)") {
+                        TextField("One line shown in the list", text: $summary)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Version") {
+                        TextField("1.0", text: $version).textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                    }
+                    LabeledField("Instructions") {
+                        TextEditor(text: $instructions)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 200)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    }
+                    Label("Skills add reusable context to scoped AI chat for this app. They never run commands or grant permissions.",
+                        systemImage: "info.circle")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 520, height: 480)
+    }
 }
 
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
@@ -2804,10 +2875,13 @@ struct AutomationAdapterDetailView: View {
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     @ObservedObject private var mcpManager = MCPServerManager.shared
     @ObservedObject private var apiStore = APIConnectionStore.shared
+    @ObservedObject private var skillStore = SkillStore.shared
     @State private var showAPIConnectSheet = false
     @State private var apiName = ""
     @State private var apiBaseURL = ""
     @State private var apiKey = ""
+    @State private var editingSkill: AdapterSkill?
+    @State private var showSkillEditor = false
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
@@ -2943,7 +3017,7 @@ struct AutomationAdapterDetailView: View {
         case .cli: return linkedCLITools.count
         case .mcp: return linkedMCPServers.count
         case .api: return apiStore.connections(for: currentAdapter.bundleId).count
-        case .skills: return 0
+        case .skills: return skillStore.skills(for: currentAdapter.bundleId).count
         }
     }
 
@@ -3413,6 +3487,67 @@ struct AutomationAdapterDetailView: View {
 
                 Divider()
 
+                // MARK: Skills section
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Skills")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            editingSkill = AdapterSkill(
+                                adapterBundleId: currentAdapter.bundleId, name: "", instructions: "")
+                            showSkillEditor = true
+                        } label: {
+                            Label("Add Skill", systemImage: "plus")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                    let skills = skillStore.skills(for: currentAdapter.bundleId)
+                    if skills.isEmpty {
+                        Text("Skills are reusable instructions (prompts, workflows) that scoped chat uses for this app. They add context — they never run commands.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                    } else {
+                        ForEach(skills) { skill in
+                            HStack(spacing: 10) {
+                                Image(systemName: "brain.head.profile")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.purple)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(skill.name).font(.system(size: 12, weight: .medium))
+                                    Text(skill.summary.isEmpty ? "v\(skill.version)" : "\(skill.summary) · v\(skill.version)")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { skill.isEnabled },
+                                    set: { skillStore.setEnabled($0, id: skill.id) }))
+                                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                                Button {
+                                    editingSkill = skill; showSkillEditor = true
+                                } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
+                                Button(role: .destructive) {
+                                    skillStore.remove(id: skill.id)
+                                } label: { Image(systemName: "trash") }.buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 6)
+                            if skill.id != skills.last?.id { Divider() }
+                        }
+                    }
+                }
+                .padding(16)
+
+                Divider()
+
                 // MARK: Linked Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -3752,6 +3887,15 @@ struct AutomationAdapterDetailView: View {
                 .padding(16)
             }
             .frame(width: 460)
+        }
+        .sheet(isPresented: $showSkillEditor) {
+            if let skill = editingSkill {
+                SkillEditorSheet(skill: skill) { saved in
+                    if let saved { skillStore.upsert(saved) }
+                    showSkillEditor = false
+                    editingSkill = nil
+                }
+            }
         }
         .sheet(isPresented: $showCLIToolPicker) {
             AppCLIToolPickerSheet(
