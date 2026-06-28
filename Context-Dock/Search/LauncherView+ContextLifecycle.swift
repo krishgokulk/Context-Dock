@@ -645,7 +645,8 @@ extension LauncherView {
                 }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        exitContextDockChatAndScope()
+                        // Frontmost-app chat → back to that app's menu search, not Global Context.
+                        exitContextDockChatBackToContext()
                     }
                     isSearchFieldFocused = true
                     return

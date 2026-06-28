@@ -1793,12 +1793,17 @@ extension LauncherView {
                                 // chat. Pressing → (or the button) turns the "+" into "−".
                                 if isContextDockChatConnected {
                                     contextDockChatCloseButton
-                                } else if !isCompactSmartScope, l2.targetApp == nil {
-                                    if frontmost.bundleID == "com.apple.finder" {
+                                } else if !isCompactSmartScope {
+                                    let finderContext =
+                                        frontmost.bundleID == "com.apple.finder"
+                                        || l2.targetApp?.bundleId == "com.apple.finder"
+                                    if finderContext {
+                                        // Finder window present (not desktop-only) → "+" attaches
+                                        // the current folder for recursive/content search.
                                         if canAttachCurrentFinderFolderToConversation {
                                             addFinderFolderButton
                                         }
-                                    } else if !frontmost.bundleID.isEmpty,
+                                    } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
                                         frontmost.bundleID != Bundle.main.bundleIdentifier
                                     {
                                         contextDockChatButton

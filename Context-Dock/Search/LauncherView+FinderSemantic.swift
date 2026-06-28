@@ -630,14 +630,16 @@ extension LauncherView {
 
         for info in list {
             guard let wpid = info[kCGWindowOwnerPID as String] as? Int, wpid == pid,
-                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0
+                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
+                  w > 120, h > 120
             else { continue }
-            // Service/background windows have no title; real folder windows do.
-            guard let name = info[kCGWindowName as String] as? String, !name.isEmpty else { continue }
-            // Require meaningful size to exclude 0×0 service windows.
-            if let bounds = info[kCGWindowBounds as String] as? [String: Any],
-               let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
-               w > 50 && h > 50 { return true }
+            // Do NOT require kCGWindowName: it's unavailable without Screen Recording
+            // permission, so a real folder window would be invisible and Context Dock would
+            // wrongly fall into desktop file-search. .excludeDesktopElements + layer == 0
+            // already drop the desktop; the size floor drops tiny service windows.
+            return true
         }
         return false
     }
@@ -675,9 +677,11 @@ extension LauncherView {
         let isFinderContext = frontmost.bundleID == finderBundleId
             || axContext.bundleId == finderBundleId
             || explicitFinderScope
-        // Explicitly scoping Finder (strip icon / right-arrow) always means "search files" —
-        // desktop file-search regardless of whether a Finder window is open.
-        return isFinderContext && (explicitFinderScope || !finderHasActiveWindow())
+        // In Context Dock, desktop file-search is ONLY for the no-window state (desktop
+        // showing). When a Finder window is frontmost — even with an explicit Finder scope —
+        // show that window's menus + the "+" current-folder affordance instead of desktop
+        // file search. (Global Context above keeps explicit-scope = universal file search.)
+        return isFinderContext && !finderHasActiveWindow()
     }
 
     func isFinderCurrentWindowSearchAttached(currentFolderPath: String? = nil) -> Bool {
