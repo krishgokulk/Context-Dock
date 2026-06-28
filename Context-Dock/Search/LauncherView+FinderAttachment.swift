@@ -29,7 +29,7 @@ extension LauncherView {
         refreshCachedFinderCurrentDirectory(for: "com.apple.finder")
         let folderPath = currentFinderFolderPath()
         let normalizedPath = URL(fileURLWithPath: folderPath).standardizedFileURL.path
-        guard isAttachableFinderHomeFolder(normalizedPath) else { return }
+        guard isAttachableFinderFolder(normalizedPath) else { return }
         guard FileManager.default.fileExists(atPath: normalizedPath) else { return }
 
         if isFinderFolderSearchAttached(currentFolderPath: normalizedPath) {
@@ -79,11 +79,15 @@ extension LauncherView {
         return attachedFinderFolderSearchPath == folderPath
     }
 
-    func isAttachableFinderHomeFolder(_ path: String) -> Bool {
+    /// Any real folder the frontmost Finder window is showing can be attached as the
+    /// current-folder search context — not just home subfolders. Desktop is excluded
+    /// (Finder desktop-only mode owns that), as are the home root and filesystem root,
+    /// which are too broad to be useful as a folder snapshot.
+    func isAttachableFinderFolder(_ path: String) -> Bool {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !normalizedPath.isEmpty, normalizedPath != "/" else { return false }
         let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
-        guard normalizedPath.hasPrefix(home + "/") else { return false }
-        guard normalizedPath != "\(home)/Desktop" else { return false }
+        guard normalizedPath != "\(home)/Desktop", normalizedPath != home else { return false }
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: normalizedPath, isDirectory: &isDir)
             && isDir.boolValue
@@ -91,7 +95,7 @@ extension LauncherView {
 
     var canAttachCurrentFinderFolderToConversation: Bool {
         guard !isFinderDesktopOnlyMode else { return false }
-        return isAttachableFinderHomeFolder(currentFinderFolderPath())
+        return isAttachableFinderFolder(currentFinderFolderPath())
     }
 
     func attachFinderFolderSearch(path: String) {
@@ -244,33 +248,42 @@ extension LauncherView {
         await Task.detached(priority: .userInitiated) {
             let folderURL = URL(fileURLWithPath: path).standardizedFileURL
             let keys: Set<URLResourceKey> = [.isDirectoryKey, .contentModificationDateKey]
-            let urls =
-                (try? FileManager.default.contentsOfDirectory(
+            // Recurse into subfolders so current-folder search behaves like Spotlight
+            // (files, folders, and nested contents). Depth is capped so a huge tree
+            // can't stall the build, and the item count is limited.
+            guard
+                let enumerator = FileManager.default.enumerator(
                     at: folderURL,
                     includingPropertiesForKeys: Array(keys),
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                )) ?? []
+                )
+            else { return [] }
 
-            return
-                urls
-                .prefix(limit)
-                .compactMap { url -> FinderFolderSnapshotItem? in
-                    let standardized = url.standardizedFileURL
-                    guard !standardized.lastPathComponent.hasPrefix(".") else { return nil }
-                    let values = try? standardized.resourceValues(forKeys: keys)
-                    return FinderFolderSnapshotItem(
+            var items: [FinderFolderSnapshotItem] = []
+            for case let url as URL in enumerator {
+                if items.count >= limit { break }
+                if enumerator.level > 6 {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                let standardized = url.standardizedFileURL
+                guard !standardized.lastPathComponent.hasPrefix(".") else { continue }
+                let values = try? standardized.resourceValues(forKeys: keys)
+                items.append(
+                    FinderFolderSnapshotItem(
                         url: standardized,
                         path: standardized.path,
                         displayName: standardized.lastPathComponent,
                         isDirectory: values?.isDirectory ?? standardized.hasDirectoryPath,
                         modifiedDate: values?.contentModificationDate
-                    )
-                }
-                .sorted {
-                    if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
-                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
-                        == .orderedAscending
-                }
+                    ))
+            }
+
+            return items.sorted {
+                if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                    == .orderedAscending
+            }
         }.value
     }
 }

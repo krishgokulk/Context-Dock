@@ -228,6 +228,9 @@ extension LauncherView {
                 if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
                     return nil
                 }
+                if self.connectFrontmostAppChatFromEmptyFieldIfNeeded() {
+                    return nil
+                }
                 if let findToken = self.lockedFindToken,
                     findToken.hasChildMenu,
                     self.searchInputCursorIsAtEnd()
@@ -250,7 +253,10 @@ extension LauncherView {
             }
             // Tab in global context explicitly enters app scope.
             // Typing alone stays global so cross-app suggestions cannot steal the query.
-            if event.keyCode == 48, self.isGlobalContextActive {
+            // Exception: in Finder desktop-only mode the query is a file/folder search —
+            // Tab must NOT switch to a same-named app (e.g. "screen" → Screen Sharing),
+            // which would hijack the Finder scope and drop the file results.
+            if event.keyCode == 48, self.isGlobalContextActive, !self.isFinderDesktopOnlyMode {
                 if self.shouldUsePureGlobalAppSearch,
                     let result = self.focusedOrTopGlobalAppResult(),
                     let bundleId = self.bundleIdentifier(forApplicationResult: result)
@@ -331,7 +337,10 @@ extension LauncherView {
                 return nil
             }
 
-            if self.isGlobalContextActive,
+            // Cycle the running-app scope on ←/→ with an empty query — in Global Context
+            // AND in an app scope already entered from it (l2.targetApp set), so the user
+            // can right-arrow from one scoped app to the next.
+            if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 123 || event.keyCode == 124,
                 self.focusedAppPillIndex == nil,
@@ -1514,14 +1523,14 @@ extension LauncherView {
                     }
                     if shouldShowContextDockChatSheet || l2.showChatPopover {
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            exitContextDockChatAndScope()
+                            exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true
                         return .handled
                     }
                     if l2.chatArmed {
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            exitContextDockChatAndScope()
+                            exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true
                         return .handled

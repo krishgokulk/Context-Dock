@@ -706,7 +706,10 @@ extension LauncherView {
             && searchState.contextApp == nil
             && searchState.selectedIndex == nil
             && !isContextDockChatConnected
-            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp == nil)
+            // Show in Global Context (no active selection), AND in an explicit app scope
+            // (l2.targetApp set) so the strip stays after scoping from the strip and the user
+            // can right-arrow to the next app. Hidden only for the plain frontmost Context Dock.
+            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp != nil)
     }
 
     var currentGlobalScopedBundleID: String? {
@@ -738,17 +741,24 @@ extension LauncherView {
                     && bundleID != frontmostBundle
                     && bundleID != scopedBundle
             }
-        // Finder always leads the strip in Global Context.
-        let finder = NSWorkspace.shared.runningApplications.first {
-            $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
-        }
+        // Finder leads the strip in Global Context as the entry into desktop file-search —
+        // but once Finder IS the active scope it owns the chip, so drop it from the strip
+        // (otherwise it shows twice: scope chip + strip icon). Show only the other apps.
+        let finder =
+            scopedBundle == "com.apple.finder"
+            ? nil
+            : NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
+            }
         return (Array([finder].compactMap { $0 }) + others)
             .prefix(5)
             .map { $0 }
     }
 
     var globalScopeCycleApps: [NSRunningApplication] {
-        guard isGlobalContextActive,
+        // Available in Global Context AND in an app scope entered from it (l2.targetApp set),
+        // so right-arrow keeps cycling to the next running app after the first scope.
+        guard isGlobalContextActive || l2.targetApp != nil,
             showContextInDock,
             !aiMode.isActive,
             !showMediaLayer,
@@ -791,14 +801,32 @@ extension LauncherView {
         if bundleID == "com.apple.finder" {
             detachFinderFolderSearch()
         }
+        // Scoping a running app EXITS Global Context into a clean Context Dock app scope
+        // (preserveGlobalContext = false → activateInlineDockAppScope clears
+        // globalContextActivation). This is the only state where scoped menus/files build
+        // through the Context Dock surface and Cmd is inert (Cmd only toggles Global↔Context
+        // Dock, and we're no longer in Global Context). The running-app strip + right-arrow
+        // cycling are kept alive in this app-scoped state by their own l2.targetApp-aware
+        // gates (shouldShowGlobalRunningAppStrip / globalScopeCycleApps), so the user still
+        // sees the other apps and can right-arrow to the next app scope.
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
             queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "" : nil,
-            preserveGlobalContext: true
+            preserveGlobalContext: false
         )
         if activated {
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Rebuild scoped results immediately (no Cmd "kick" needed). Finder's provider is
+            // the desktop/current-folder file index — prime it; every other app uses the
+            // cached-menu provider via the normal pill rebuild. Both run cache-only.
+            if isFinderDesktopOnlyMode {
+                primeFinderDesktopModeCache(commitQuery: q.lowercased(), preserveFocus: true)
+            } else {
+                scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
+            }
+            requestWindowSizeUpdate(reason: .panelChanged)
             // Run AFTER activateInlineDockAppScope's own focus toggle settles, so this is
             // the authoritative last focus claim — otherwise the racing toggles leave the
             // field unfocused (no caret, can't type) after a right-arrow scope.

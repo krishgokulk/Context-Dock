@@ -259,6 +259,28 @@ extension LauncherView {
         requestWindowSizeUpdate(reason: .modeChanged)
     }
 
+    /// Backspace/close out of a chat. If the chat is tied to the FRONTMOST app, return
+    /// to that app's menu search (Context Dock) — even if the chat was armed while
+    /// Global Context was active (the "+" button has no global guard). Only chats not
+    /// bound to the frontmost app fall out to Global Context.
+    func exitContextDockChatBackToContext() {
+        let chatApp = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let frontApp = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let boundToFrontmost =
+            !frontApp.isEmpty
+            && l2.targetApp == nil
+            && (chatApp.isEmpty || chatApp == frontApp)
+        if boundToFrontmost {
+            exitContextDockChatSheet()
+            // Force the frontmost app's Context Dock, not Global Context.
+            globalContextActivation = nil
+            showContextInDock = true
+            scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: true)
+        } else {
+            exitContextDockChatAndScope()
+        }
+    }
+
     func exitContextDockChatAndScope() {
         exitContextDockChatSheet()
         clearSearchContext()
@@ -314,6 +336,29 @@ extension LauncherView {
         }
         .buttonStyle(.plain)
         .help("Close AI conversation")
+    }
+
+    /// Right-arrow on a non-Finder frontmost app in Context Dock (empty field, idle)
+    /// connects the frontmost-app chat — the "+" affordance. Finder uses folder attach.
+    /// Guarded so it never steals right-arrow from the pinned/running app-pill row.
+    @discardableResult
+    func connectFrontmostAppChatFromEmptyFieldIfNeeded() -> Bool {
+        guard showContextInDock, !isGlobalContextActive else { return false }
+        guard !isCompactSmartScope, l2.targetApp == nil else { return false }
+        guard !isContextDockChatConnected else { return false }
+        guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        guard isSearchInputActiveAtEnd() else { return false }
+        let bid = frontmost.bundleID
+        guard !bid.isEmpty, bid != "com.apple.finder", bid != Bundle.main.bundleIdentifier else {
+            return false
+        }
+        // Only when the frontmost-app dock has content — otherwise right-arrow drives the
+        // pinned/running app-pill row, which must keep its navigation.
+        guard !selectionScopedDockPills(cachedDockPills).isEmpty else { return false }
+        toggleInlineAIChatPanel()
+        return true
     }
 
     func toggleInlineAIChatPanel() {

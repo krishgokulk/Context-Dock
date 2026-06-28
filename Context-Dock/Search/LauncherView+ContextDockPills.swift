@@ -1047,10 +1047,14 @@ extension LauncherView {
         }
         let roots = finderDesktopSearchRootPaths()
 
+        // Match the filename OR the indexed text content (Spotlight extracts text from
+        // PDFs, documents, and OCR'd images) so desktop search behaves like Spotlight.
+        // Recursion is implicit — inDirectories scopes the query to the user folders
+        // and their subfolders.
         let fileSearchPaths = roots.isEmpty ? [] : await Self.spotlightSearchPaths(
             predicate: NSPredicate(
-                format: "kMDItemDisplayName LIKE[cd] %@",
-                "*\(query)*"
+                format: "kMDItemDisplayName LIKE[cd] %@ OR kMDItemTextContent LIKE[cd] %@",
+                "*\(query)*", "*\(query)*"
             ),
             inDirectories: roots,
             sortByLastUsed: true,

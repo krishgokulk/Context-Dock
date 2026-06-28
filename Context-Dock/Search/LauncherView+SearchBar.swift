@@ -1788,15 +1788,21 @@ extension LauncherView {
                                     contextDockChatCloseButton
                                 }
                             } else if showContextInDock {
+                                // "+" affordance per frontmost app: Finder window → attach the
+                                // current folder for search; any other app → connect frontmost-app
+                                // chat. Pressing → (or the button) turns the "+" into "−".
                                 if isContextDockChatConnected {
                                     contextDockChatCloseButton
-                                }
-                                if !isCompactSmartScope,
-                                    l2.targetApp == nil,
-                                    frontmost.bundleID == "com.apple.finder",
-                                    canAttachCurrentFinderFolderToConversation
-                                {
-                                    addFinderFolderButton
+                                } else if !isCompactSmartScope, l2.targetApp == nil {
+                                    if frontmost.bundleID == "com.apple.finder" {
+                                        if canAttachCurrentFinderFolderToConversation {
+                                            addFinderFolderButton
+                                        }
+                                    } else if !frontmost.bundleID.isEmpty,
+                                        frontmost.bundleID != Bundle.main.bundleIdentifier
+                                    {
+                                        contextDockChatButton
+                                    }
                                 }
                             }
                         }

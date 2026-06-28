@@ -2802,6 +2802,17 @@ extension LauncherView {
                 await MainActor.run {
                     guard self.crossAppMenuTargetPID == pid else { return }
                     self.crossAppMenuItems = preparedItems
+                    // Rebuild the dock so the freshly loaded menus render right away.
+                    // Without this, a scoped app with CACHED menus stayed empty until an
+                    // unrelated keypress (e.g. Cmd) kicked SwiftUI into rebuilding — the
+                    // "running-app scope shows nothing in Global Context" bug.
+                    if !preparedItems.isEmpty {
+                        self.scheduleDockPillRebuild(
+                            query: self.searchState.query, delayNanoseconds: 0,
+                            refreshContext: false)
+                        self.refreshVisibleGlobalContextAfterMenuCacheUpdate(
+                            bundleIdentifier: app.bundleIdentifier ?? "")
+                    }
                     // No cached menu for this scoped app → force a live AX scan so its
                     // commands actually appear (otherwise the scoped dock stays empty).
                     self.warmMenuCacheIfNeeded(
@@ -2896,6 +2907,8 @@ extension LauncherView {
             return
         }
 
+        // Pure Global Context uses the global app-search path, not this dock-pill build.
+        // (Scoping a running app exits Global Context, so this never fires for an app scope.)
         if isGlobalContextActive,
             !hasActiveDockContextSelection,
             !showGlobalClipboardPill,

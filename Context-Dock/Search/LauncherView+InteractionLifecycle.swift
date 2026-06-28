@@ -284,6 +284,10 @@ extension LauncherView {
         guard settings.singleCommandTogglesContextScope else { return }
         guard !isCompactSmartScope else { return }
         guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
+        // Cmd only switches Global Context ↔ Context Dock. Inside an explicit app scope it is
+        // inert — leave the scope with Backspace/Escape, not Cmd. (Previously Cmd here cleared
+        // globalContextActivation and was the accidental "fix" for the old hybrid scope.)
+        guard l2.targetApp == nil else { return }
         guard Date() >= suppressCommandScopeToggleUntil else { return }
 
         if !isSearchBarExpanded {

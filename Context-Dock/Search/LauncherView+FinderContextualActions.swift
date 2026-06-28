@@ -1449,8 +1449,7 @@ extension LauncherView {
         let scored = Array(
             attachedFinderFolderSnapshotItems
             .compactMap { item -> (item: FinderFolderSnapshotItem, score: Double)? in
-                guard item.url.deletingLastPathComponent().standardizedFileURL.path == folderPath
-                else { return nil }
+                // Search the whole attached-folder tree (recursive), not just direct children.
                 guard let score = finderSemanticScore(query: semanticQuery, for: item.url),
                     score >= 120
                 else { return nil }

@@ -481,7 +481,9 @@ struct LauncherView: View {
         }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
-        let pills = pillQuery.isEmpty ? [] : contextDockViewModel.visiblePills
+        // Scoped app shows menus on empty query (see l2DockRowPresentation).
+        let pills =
+            (pillQuery.isEmpty && l2.targetApp == nil) ? [] : contextDockViewModel.visiblePills
         let hasActiveContextSelection = hasActiveDockContextSelection
 
         let showPinnedRow =

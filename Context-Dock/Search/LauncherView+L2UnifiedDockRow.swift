@@ -11,6 +11,7 @@ extension LauncherView {
         let presentation = l2DockRowPresentation
         GlobalContextSurface(
             presentation: presentation,
+            isFinderDesktopOnlyMode: isFinderDesktopOnlyMode,
             onPillQueryChange: handleL2PillQueryChange,
             onAppear: { handleL2DockRowAppear(pillQuery: presentation.pillQuery) },
             onFinderDesktopModeChange: { enabled in
@@ -63,8 +64,11 @@ extension LauncherView {
         // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
         // query — so the result sheet is visible the moment the launcher opens with a selection.
         let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
+        // A scoped app (running-app scope in Global Context) must show its menus on an
+        // empty query, just like Context Dock — otherwise the scoped dock stays empty
+        // until a keypress. Only the unscoped global/empty state collapses to no pills.
         let pills =
-            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope
+            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil
             ? []
             : contextDockViewModel.visiblePills
         let explicitAppTarget =
