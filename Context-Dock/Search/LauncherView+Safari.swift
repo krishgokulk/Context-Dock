@@ -7,45 +7,55 @@ extension LauncherView {
         guard !query.isEmpty else { return [] }
 
         let scope = resolveDockScope(for: rawQuery)
-        let isSafariScope =
-            scope.scopedBundleId == "com.apple.Safari"
-            || frontmost.bundleID == "com.apple.Safari"
-            || axContext.bundleId == "com.apple.Safari"
+        let scopedBrowserBundleId: String? = {
+            if isBrowserMenuSource(scope.scopedBundleId) { return scope.scopedBundleId }
+            if isBrowserMenuSource(frontmost.bundleID) { return frontmost.bundleID }
+            if isBrowserMenuSource(axContext.bundleId) { return axContext.bundleId }
+            return nil
+        }()
         let explicitlyRequestsHistory =
-            ["recent", "recents", "history", "url", "urls"].contains(query)
-        guard isGlobalContextActive || isSafariScope else { return [] }
+            ["recent", "recents", "history", "url", "urls", "bookmark", "bookmarks"].contains(query)
+        guard isGlobalContextActive || scopedBrowserBundleId != nil else { return [] }
 
-        SafariRecentURLService.shared.refreshIfNeeded {
+        BrowserURLLibraryService.shared.refreshIfNeeded {
             scheduleDockPillRebuild(
                 query: searchState.query, delayNanoseconds: 0, refreshContext: false)
         }
 
-        let entries = SafariRecentURLService.shared.entries(matching: query)
+        let entries = BrowserURLLibraryService.shared.entries(
+            matching: query,
+            bundleId: isGlobalContextActive ? nil : scopedBrowserBundleId
+        )
         guard explicitlyRequestsHistory || !entries.isEmpty else { return [] }
 
         return entries.map { entry in
             var pill = DockPill(
-                id: "safari-history:\(entry.id)",
+                id: "browser-url:\(entry.id)",
                 name: entry.title.isEmpty ? entry.url.absoluteString : entry.title,
-                icon: "safari",
+                icon: entry.kind == .bookmark ? "bookmark.fill" : "clock.arrow.circlepath",
                 accentColorName: "blue",
                 badge: entry.domain,
                 execute: {
-                    // Always open the cached URL — never click the dynamic Safari
-                    // History submenu.
-                    NSWorkspace.shared.open(entry.url)
+                    // Always open cached URL in source browser; never AX-click dynamic
+                    // History/Bookmarks menus.
+                    BrowserURLLibraryService.shared.open(entry)
                     AppDelegate.shared?.hideLauncher()
                 }
             )
-            pill.sourceBundleId = "com.apple.Safari"
-            pill.sourceAppName = "Safari"
+            pill.sourceBundleId = entry.browserBundleId
+            pill.sourceAppName = entry.browserName
             pill.rankingKind = "recentURL"
-            // Safari-style date bucket drives the dock section header.
+            pill.menuItemName = entry.title
+            pill.menuStatusBadge = entry.kind.rawValue
             pill.menuContext = entry.dateGroupTitle
             pill.resolvedURL = entry.url
-            pill.quickLookURL = SafariRecentURLService.shared.quickLookURL(for: entry)
-            pill.trackingIdentifier = "safari-history:\(entry.id)"
-            pill.searchTerms = [entry.title, entry.url.absoluteString, entry.domain, "safari", "recent", "history"]
+            pill.quickLookURL = BrowserURLLibraryService.shared.quickLookURL(for: entry)
+            pill.trackingIdentifier = "browser-url:\(entry.id)"
+            pill.searchTerms = [
+                entry.title, entry.url.absoluteString, entry.domain,
+                entry.browserName, entry.kind.rawValue,
+                "browser", "url", "recent", "history", "bookmark",
+            ]
             // Async favicon; globe/safari icon shows immediately, never blocks typing.
             return pill.applyingSafariFavicon(entry.url)
         }

@@ -2273,10 +2273,15 @@ extension LauncherView {
 
         let hints: String
         if bundleId == "com.apple.finder" || lowerName == "finder" {
-            hints =
-                attachedFinderFolderSearchPath.isEmpty
-                ? "search files and folders in \(finderDesktopSearchScopeLabel)"
-                : "search this folder, open files, menu cmds"
+            if !attachedFinderFolderSearchPath.isEmpty {
+                hints = "search this folder, open files, menu cmds"
+            } else if isFinderDesktopOnlyMode {
+                // No Finder window — desktop file search over the user's folders.
+                hints = "search files and folders in \(finderDesktopSearchScopeLabel)"
+            } else {
+                // Finder window present — live menus/actions like any app; → for current folder.
+                hints = "search menus, actions, → current folder"
+            }
         } else if AXWebReader.shared.isBrowser(bundleId: bundleId) {
             hints = "tabs, page cmds, menu cmds"
         } else if bundleId == "com.microsoft.VSCode" || lowerName.contains("code") {
@@ -2438,12 +2443,12 @@ extension LauncherView {
         if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
-            crossAppMenuNeedsLiveLoad = true
-            seedCrossAppMenuCache(for: targetApp)
-            loadCrossAppMenu(for: targetApp)
+            DispatchQueue.main.async {
+                self.crossAppMenuNeedsLiveLoad = true
+                self.seedCrossAppMenuCache(for: targetApp)
+                self.loadCrossAppMenu(for: targetApp)
+            }
         } else {
-            crossAppMenuTargetPID = 0
-            crossAppMenuNeedsLiveLoad = false
             // App not running — load from persistent disk cache so command palette still works.
             // Actions route via executeCachedMenuAction (no live PID needed).
             let cached = GlobalContextEngine.shared.cachedMenuItems(
@@ -2453,7 +2458,11 @@ extension LauncherView {
                 query: "",
                 maxResults: 120
             )
-            crossAppMenuItems = cached
+            DispatchQueue.main.async {
+                self.crossAppMenuTargetPID = 0
+                self.crossAppMenuNeedsLiveLoad = false
+                self.crossAppMenuItems = cached
+            }
         }
 
         if shouldSyncSession {
@@ -2994,11 +3003,29 @@ extension LauncherView {
         // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
         // point is to ask the AI about the selection). Never empty → stable result sheet.
         if isGlobalContextActive && hasActiveDockContextSelection {
-            var sel: [DockPill] = [selectionScopeAskAIPill(query: q)]
+            let finderFilePills = buildFinderFilePills(query: q)
+            let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
+            let finderMenuPills = buildFinderSelectionMenuPills(
+                query: q,
+                excludingTitles: finderMenuTitleSet,
+                allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
+            )
+            var sel: [DockPill] = finderFilePills + finderMenuPills
+            sel.append(selectionScopeAskAIPill(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-            return sel
+            return dedupeRankedDockPills(
+                rankDockPills(
+                    sel,
+                    rawQuery: q,
+                    rankingQuery: q,
+                    scopedBundleId: "com.apple.finder",
+                    scopedAppName: "Finder",
+                    isExplicitAppScope: false,
+                    includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            )
         }
 
         if isQuestionStyleDockQuery(q) { return [] }
@@ -3135,15 +3162,23 @@ extension LauncherView {
         let scopedBundleId = scope.scopedBundleId
         let scopedAppName = scope.scopedAppName
         let scopedSearchQuery = scope.scopedSearchQuery
+        let scopedShareDestinationPills: [DockPill] = {
+            guard isExplicitAppScope, !scopedSearchQuery.isEmpty else { return [] }
+            return buildShareQueryDestinationPills(query: scopedSearchQuery)
+        }()
         let appContentSearchPill: DockPill? = {
             guard !isGlobalContextActive, !isGlobalScope,
                 !scopedBundleId.isEmpty, !scopedAppName.isEmpty,
+                scopedShareDestinationPills.isEmpty,
                 let intent = AppContentSearchRouter.shared.scopedIntent(
                     for: scopedSearchQuery,
                     bundleId: scopedBundleId,
                     appName: scopedAppName
                 )
             else { return nil }
+            if isBrowserMenuSource(scopedBundleId) {
+                return browserContentSearchDockPill(intent)
+            }
             return appContentSearchDockPill(intent)
         }()
         let isFinderScopedDock =
@@ -3175,7 +3210,11 @@ extension LauncherView {
         let rawMacOSExtensionActionPills =
             isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
             ? buildMacOSExtensionActionPills(query: q) : []
-        let rawFinderFilePills = rawMacOSExtensionActionPills
+        let rawFinderFilePills =
+            (isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
+                ? buildFinderFilePills(query: q)
+                : [])
+            + rawMacOSExtensionActionPills
         // User-added search directories belong only to Finder desktop mode.
         // When a Finder window is frontmost, Context Dock should stay on that
         // window's menus/actions/selection, not global directory search.
@@ -3192,13 +3231,13 @@ extension LauncherView {
             isFinderScopedDock
             ? buildAttachedFinderFolderPills(
                 query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery) : []
-        let finderFileTitleSet = Set(rawMacOSExtensionActionPills.map { normalizedDockPillText($0.name) })
+        let finderFileTitleSet = Set(rawFinderFilePills.map { normalizedDockPillText($0.name) })
         let rawFinderSelectionMenuPills =
             isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
             ? buildFinderSelectionMenuPills(
                 query: q,
                 excludingTitles: finderFileTitleSet,
-                allowedRootNames: ["file", "open with", "tags"]
+                allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             ) : []
         let filteredFinderSelectionMenuPills = rawFinderSelectionMenuPills
         let payloadActionPills: [DockPill] = {
@@ -3502,7 +3541,9 @@ extension LauncherView {
                 let shareItems = ShareIntentRouter.shared.shareableItems(
                     for: effectiveAXContextForConversation())
                 if !shareItems.isEmpty {
-                    return pills + shareDestinationPills(listingItems: shareItems, filter: "")
+                    return dedupeRankedDockPills(
+                        pills + shareDestinationPills(listingItems: shareItems, filter: "")
+                    )
                 }
             }
             let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
@@ -3521,8 +3562,8 @@ extension LauncherView {
                 let pid = child.sourcePID != 0 ? child.sourcePID : frontPID
                 let sc = child.shortcutChar
                 let mod = child.shortcutModifiers
-                // Bare "Share"/"Share…" → reveal destinations; a real child (Mail/
-                // AirDrop/Notes) → click its EXACT menu path (never resolve by title).
+                // Bare "Share"/"Share…" or a Share child (Mail/AirDrop/Notes) routes
+                // through native NSSharingService, not an AX submenu click.
                 let isBareShareMenuItem = isShareSheetTitle(child.title)
                 let parentIsShare = normalizedDockPillText(subCtx.parent.title).contains("share")
                 let shareChild = child
@@ -3533,7 +3574,7 @@ extension LauncherView {
                     accentColorName: "blue",
                     badge: subCtx.parent.title,
                     execute: {
-                        if isBareShareMenuItem {
+                        if isBareShareMenuItem || parentIsShare {
                             executeShareAction(item: shareChild)
                             return
                         }
@@ -3615,6 +3656,8 @@ extension LauncherView {
         pills.append(contentsOf: semanticFinderPills)
 
         pills.append(contentsOf: semanticFinderQuickActionPills)
+
+        pills.append(contentsOf: scopedShareDestinationPills)
 
         if !isFinderDesktopOnlyMode {
             pills.append(
@@ -3701,11 +3744,31 @@ extension LauncherView {
             }
             return false
         }
+        let frontmostLiveMenuMatches: (NSRunningApplication, String) -> [AXMenuItem] = {
+            app, filterQ in
+            let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+            guard app.processIdentifier != 0,
+                app.processIdentifier == frontPID,
+                !liveMenuItems.isEmpty
+            else { return [] }
+            let filter = isGlobalScope ? menuItemsForGlobalContext : menuItemsAllowedForCurrentScope
+            return dedupeMenuItems(
+                filter(liveMenuItems.filter { menuItemMatchesQuery($0, filterQ) })
+            )
+        }
         let pureScopeMenuLimit = 10
         let pureScopeCandidateLimit = 12
         let scopedRunningMenuMatches: (NSRunningApplication, String, Bool) -> [AXMenuItem] = {
             app, filterQ, preferCached in
             let pid = app.processIdentifier
+            let liveAuthoritativeMatches = frontmostLiveMenuMatches(app, filterQ)
+            if !liveAuthoritativeMatches.isEmpty {
+                return orderedScopedMenuMatches(
+                    liveAuthoritativeMatches,
+                    filterQuery: filterQ,
+                    limit: preferCached ? pureScopeMenuLimit : 16
+                )
+            }
             let cachedMatches = crossAppMenuItems.filter { item in
                 item.sourcePID == pid
                     && menuItemMatchesQuery(item, filterQ)
@@ -3843,13 +3906,21 @@ extension LauncherView {
             {
                 let filterQ = actionQuery.isEmpty ? q : actionQuery
                 let candidateLimit = filterQ.isEmpty ? 80 : 24
-                let cachedMatches = crossAppMenuItems.filter { item in
-                    item.sourcePID == targetApp.processIdentifier
-                        && menuItemMatchesQuery(item, filterQ)
-                }
+                let liveAuthoritativeMatches = frontmostLiveMenuMatches(targetApp, filterQ)
+                let cachedMatches =
+                    liveAuthoritativeMatches.isEmpty
+                    ? crossAppMenuItems.filter { item in
+                        item.sourcePID == targetApp.processIdentifier
+                            && menuItemMatchesQuery(item, filterQ)
+                    }
+                    : liveAuthoritativeMatches
+                let persistentMatches =
+                    liveAuthoritativeMatches.isEmpty
+                    ? persistentMenuMatches(targetApp, filterQ, candidateLimit)
+                    : []
                 let matches = dedupeMenuItems(
                     menuItemsAllowedForCurrentScope(
-                        cachedMatches + persistentMenuMatches(targetApp, filterQ, candidateLimit)
+                        cachedMatches + persistentMatches
                     )
                 )
                 return orderedScopedMenuMatches(matches, filterQuery: filterQ, limit: 16)
@@ -3859,6 +3930,7 @@ extension LauncherView {
                 menuItemMatchesQuery(item, q)
             }
             let persistentMatches: [AXMenuItem] = {
+                guard cachedMatches.isEmpty else { return [] }
                 guard let app = AppDelegate.shared?.previousFrontmostApp else { return [] }
                 return persistentMenuMatches(app, q, 24)
             }()

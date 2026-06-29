@@ -9,13 +9,16 @@ extension LauncherView {
             && currentDockSurfaceMode != .generalChat
             && !isCompactSmartScope
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && activeSelectionLabel != nil
-            && activeSelectionIcon != nil
+            && currentSelectionActivationSnapshot(refresh: false) != nil
     }
 
     func currentSelectionActivationSnapshot(refresh: Bool = false) -> GlobalContextActivation? {
-        let shouldRefresh = refresh && !contextDockIsFrontmostApplication
-        if shouldRefresh, let app = AppDelegate.shared?.previousFrontmostApp ?? contextTargetApp() {
+        let refreshTarget = AppDelegate.shared?.previousFrontmostApp ?? contextTargetApp()
+        let ownBundleId = Bundle.main.bundleIdentifier ?? ""
+        let shouldRefresh =
+            refresh
+            && refreshTarget?.bundleIdentifier != ownBundleId
+        if shouldRefresh, let app = refreshTarget {
             AXContextReader.shared.refresh(from: app)
             axContext = AXContextReader.shared.current
         }
@@ -185,7 +188,9 @@ extension LauncherView {
 
     @ViewBuilder
     var selectionTrailingButton: some View {
-        if let selectionIcon = activeSelectionIcon {
+        if let selectionIcon = activeSelectionIcon
+            ?? currentSelectionActivationSnapshot(refresh: false)?.frozenIcon
+        {
             Button(action: openSelectionContextFromTrailingButton) {
                 Image(systemName: selectionIcon)
                     .foregroundStyle(Color.accentColor.opacity(0.86))
@@ -1839,8 +1844,10 @@ extension LauncherView {
                             else { return nil }
                             return key == "clipboard" ? .blue : .accentColor
                         }()
+                        let feedbackGlowColor = inlineDockFeedbackGlowColor()
                         let scopeColor: SwiftUI.Color =
-                            compactScopeColor
+                            feedbackGlowColor
+                            ?? compactScopeColor
                             ?? l2.targetApp?.icon?.dominantSwiftUIColor
                             ?? typedMatch?.icon.dominantSwiftUIColor
                             ?? frontmost.icon?.dominantSwiftUIColor
@@ -1922,7 +1929,11 @@ extension LauncherView {
                                         )
                                     if showIdleGlow {
                                         Capsule()
-                                            .strokeBorder(Color.white.opacity(0.75), lineWidth: 1.5)
+                                            .strokeBorder(
+                                                (feedbackGlowColor ?? .white).opacity(
+                                                    feedbackGlowColor.map { _ in 0.9 } ?? 0.75),
+                                                lineWidth: 1.5
+                                            )
                                             .blur(radius: 3)
                                     }
                                 }
@@ -2644,6 +2655,29 @@ extension LauncherView {
         }
     }
 
+    func inlineDockFeedbackGlowColor() -> Color? {
+        guard let feedback = launcherViewModel.inlineDockFeedback else { return nil }
+        if inlineDockFeedbackIsDestructive(feedback) {
+            return .red
+        }
+        if let icon = inlineDockFeedbackAppIcon() {
+            return icon.dominantSwiftUIColor
+        }
+        return inlineDockFeedbackColor(feedback.phase)
+    }
+
+    func inlineDockFeedbackIsDestructive(_ feedback: DockInlineFeedback) -> Bool {
+        let title = feedback.title.lowercased()
+        let icon = feedback.icon.lowercased()
+        return title.contains("quit")
+            || title.contains("delet")
+            || title.contains("trash")
+            || title.contains("remove")
+            || title.contains("empty trash")
+            || icon.contains("trash")
+            || icon.contains("xmark")
+    }
+
     func inlineDockFeedbackAppName() -> String? {
         guard let feedback = launcherViewModel.inlineDockFeedback else { return nil }
         if let subject = feedback.subject?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2676,10 +2710,11 @@ extension LauncherView {
 
     @ViewBuilder
     func inlineDockFeedbackChip(_ feedback: DockInlineFeedback) -> some View {
-        let accent = inlineDockFeedbackColor(feedback.phase)
+        let accent = inlineDockFeedbackGlowColor() ?? inlineDockFeedbackColor(feedback.phase)
         HStack(spacing: 6) {
             if feedback.phase == .progress {
                 ProgressView()
+                    .tint(accent)
                     .controlSize(.small)
                     .scaleEffect(0.58)
                     .frame(width: 18, height: 18)
@@ -2710,8 +2745,9 @@ extension LauncherView {
 
     @ViewBuilder
     func inlineDockFeedbackActionIcon(_ feedback: DockInlineFeedback) -> some View {
-        let accent = inlineDockFeedbackColor(feedback.phase)
-        Image(systemName: feedback.icon)
+        let accent = inlineDockFeedbackGlowColor() ?? inlineDockFeedbackColor(feedback.phase)
+        let iconName = inlineDockFeedbackIsDestructive(feedback) ? "xmark" : feedback.icon
+        Image(systemName: iconName)
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(accent)
             .frame(width: 26, height: 26)

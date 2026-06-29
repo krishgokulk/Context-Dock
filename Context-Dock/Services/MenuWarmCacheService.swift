@@ -143,9 +143,13 @@ final class MenuWarmCacheService {
         guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return }
         guard AXIsProcessTrusted() else { return }
 
+        // Finder needs the open-to-populate scan (flashes menus); keep it rare so the flash
+        // is ~once per session rather than every 45s.
+        let isFinder = bundleID == "com.apple.finder"
+        let freshness: TimeInterval = isFinder ? 1800 : warmFreshness
         if !force,
            let lastWarm = lastWarmDateByBundleID[bundleID],
-           Date().timeIntervalSince(lastWarm) < warmFreshness {
+           Date().timeIntervalSince(lastWarm) < freshness {
             return
         }
         if let activeWarmPID, activeWarmPID != app.processIdentifier {
@@ -167,10 +171,18 @@ final class MenuWarmCacheService {
         // Interactive callers await this result. Keep the scan at userInitiated
         // priority to avoid a user-interactive → utility priority inversion.
         let items = await Task.detached(priority: .userInitiated) {
-            var readItems = await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+            // Finder lazily populates submenu children only when opened — use the
+            // press-open-read-close scan so its menu items appear, not just the top row.
+            func scan() async -> [AXMenuItem] {
+                isFinder
+                    ? await AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
+                        for: pid, maxDepth: 6)
+                    : await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+            }
+            var readItems = await scan()
             if readItems.isEmpty {
                 try? await Task.sleep(nanoseconds: 160_000_000)
-                readItems = await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                readItems = await scan()
             }
             for index in readItems.indices {
                 readItems[index].sourcePID = pid

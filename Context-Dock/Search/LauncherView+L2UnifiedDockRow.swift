@@ -264,6 +264,13 @@ extension LauncherView {
                 )
             }
             await refreshFinderDesktopRecentPills()
+            // Build the COMPLETE index (all file types, incl images) so the instant filter is
+            // stable for any query — not just whatever the L1 document/file index happened to
+            // hold. Cheap to re-run (Spotlight + dedupe); persists for the session.
+            if finderDesktopFullIndexPrimed == false {
+                finderDesktopFullIndexPrimed = true
+                await primeFinderDesktopFullIndex()
+            }
         } else {
             contextDockViewModel.finderDesktopSearchTask?.cancel()
             contextDockViewModel.finderDesktopSearchTask = nil

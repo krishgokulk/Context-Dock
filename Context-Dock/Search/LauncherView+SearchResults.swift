@@ -1148,6 +1148,9 @@ extension LauncherView {
                 return true
             }
             let visiblePills = currentVisibleDockPills(for: q)
+            if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                return true
+            }
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }

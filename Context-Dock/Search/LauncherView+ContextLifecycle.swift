@@ -198,10 +198,19 @@ extension LauncherView {
                         guard let app, !app.isTerminated else { return }
                         let pid = app.processIdentifier
                         let name = app.localizedName ?? ""
+                        // Don't warm Finder in desktop-only mode (no window) — its menus aren't
+                        // shown there (files are), and the open-to-populate scan would flash
+                        // Finder's menus for nothing.
+                        let isFinderApp = app.bundleIdentifier == "com.apple.finder"
+                        let finderDesktopOnly =
+                            isFinderApp ? (await MainActor.run { self.isFinderDesktopOnlyMode }) : false
+                        let skipFinderDesktopWarm = isFinderApp && finderDesktopOnly
                         var items: [AXMenuItem] = []
                         if useCacheOnly {
                             items = GlobalContextEngine.shared.cachedMenuItems(
                                 for: app, maxResults: 120)
+                        } else if skipFinderDesktopWarm {
+                            items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
                         } else {
                             await MenuWarmCacheService.shared.warm(app: app, force: false)
                             items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
@@ -758,11 +767,15 @@ extension LauncherView {
                             globalContextActivation = nil
                         }
                     }
-                    // Clear stale AX selection and clipboard pill from the previous app
-                    axContext = .empty
-                    currentContext = .none
-                    showGlobalClipboardPill = false
-                    globalClipboardText = ""
+                    // Clear stale AX selection only when moving to a different external app.
+                    // When Context-Dock itself becomes frontmost, preserve the prior app's
+                    // selection so the trailing selection-scope button can still appear.
+                    if bundleID != ownId {
+                        axContext = .empty
+                        currentContext = .none
+                        showGlobalClipboardPill = false
+                        globalClipboardText = ""
+                    }
                     // Stamp time so autoSwitch won't re-fire from the AX observer debounce
                     frontmost.lastSwitchDate = Date()
                     if bundleID == "com.apple.finder" {
@@ -866,6 +879,7 @@ extension LauncherView {
                 showContextInDock = true
                 globalContextActivation = nil
                 setFrontmostAppContextOnly(reason: "activate context dock")
+                _ = currentSelectionActivationSnapshot(refresh: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { notification in
                 beginMouseDrivenInteractionGrace()
@@ -884,6 +898,7 @@ extension LauncherView {
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
                 inlineShareActive = false
+                _ = currentSelectionActivationSnapshot(refresh: true)
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 activateSearchField()
             }

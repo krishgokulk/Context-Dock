@@ -215,68 +215,112 @@ extension LauncherView {
         // Pills that always make sense for any selection
         var pills: [DockPill] = []
 
+        let normalizedQuery = normalizedDockPillText(q)
+
         func add(
-            _ id: String, _ name: String, _ icon: String, _ color: String,
+            _ id: String,
+            _ name: String,
+            _ icon: String,
+            _ color: String,
+            aliases: [String] = [],
             _ action: @escaping () -> Void
         ) {
-            if !q.isEmpty && !name.lowercased().contains(q) { return }
-            pills.append(
-                DockPill(
-                    id: "finder-ctx-\(id)", name: name, icon: icon,
-                    accentColorName: color, badge: label, execute: action))
+            let searchTerms = [name, id, ext, label, firstName, "finder", "selection"] + aliases
+            if !normalizedQuery.isEmpty {
+                let haystacks = searchTerms.map(normalizedDockPillText)
+                let tokens = Set(haystacks.flatMap(dockPillTokens))
+                let queryTokens = Set(dockPillTokens(normalizedQuery))
+                let matches =
+                    haystacks.contains { term in
+                        term.contains(normalizedQuery) || normalizedQuery.contains(term)
+                    }
+                    || !queryTokens.intersection(tokens).isEmpty
+                    || queryTokens.contains(ext)
+                guard matches else { return }
+            }
+
+            var pill = DockPill(
+                id: "finder-ctx-\(id)", name: name, icon: icon,
+                accentColorName: color, badge: label, execute: action)
+            pill.sourceBundleId = "com.apple.finder"
+            pill.sourceAppName = "Finder"
+            pill.rankingKind = "finderSelection"
+            pill.trackingIdentifier = "finder-selection:\(id)"
+            pill.searchTerms = searchTerms
+            pill.isEnabled = true
+            pill.hasLiveAvailability = true
+            pills.append(pill)
         }
 
-        add("ql", "Quick Look", "eye", "blue") {
+        add("ql", "Quick Look", "eye", "blue", aliases: ["preview", "view", "space"]) {
             NSWorkspace.shared.activateFileViewerSelecting(
                 paths.compactMap { URL(fileURLWithPath: $0) })
         }
-        add("open", "Open", "arrow.up.right.square", "blue") {
+        add("open", "Open", "arrow.up.right.square", "blue", aliases: ["launch"]) {
             for p in paths { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
         }
-        add("reveal", "Show in Finder", "folder", "gray") {
+        add("reveal", "Show in Finder", "folder", "gray", aliases: ["reveal", "locate"]) {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: first)])
         }
-        add("copypath", "Copy Path", "doc.on.clipboard", "teal") {
+        add("copypath", "Copy Path", "doc.on.clipboard", "teal", aliases: ["copy", "path"]) {
             let pb = NSPasteboard.general
             pb.clearContents()
             pb.setString(paths.joined(separator: "\n"), forType: .string)
         }
-        add("share", "Share…", "square.and.arrow.up", "blue") {
+        add("share", "Share…", "square.and.arrow.up", "blue", aliases: ["airdrop", "send"]) {
             let urls = paths.map { URL(fileURLWithPath: $0) }
             presentSharingPicker(items: urls)
         }
         if count > 1 {
-            add("new-folder-selection", "New Folder with Selection", "folder.badge.plus", "green") {
+            add(
+                "new-folder-selection",
+                "New Folder with Selection",
+                "folder.badge.plus",
+                "green",
+                aliases: ["folder", "group"]
+            ) {
                 executeFinderSelectionMenuAction(titleContains: "new folder with selection")
             }
         }
-        add("compress", count > 1 ? "Compress \(count) Items" : "Compress", "archivebox", "yellow")
+        add(
+            "compress",
+            count > 1 ? "Compress \(count) Items" : "Compress",
+            "archivebox",
+            "yellow",
+            aliases: ["zip", "archive"]
+        )
         {
             executeFinderSelectionMenuAction(titleContains: "compress")
         }
         if selectedURLs.allSatisfy({
             imageExtsForFinderSelection.contains($0.pathExtension.lowercased())
         }) {
-            add("create-pdf", "Create PDF", "doc.richtext", "red") {
+            add("create-pdf", "Create PDF", "doc.richtext", "red", aliases: ["pdf", "make pdf"]) {
                 createPDFFromFinderSelectionImages(selectedURLs)
             }
-            add("rotate-left", "Rotate Left", "rotate.left", "blue") {
+            add("rotate-left", "Rotate Left", "rotate.left", "blue", aliases: ["rotate"]) {
                 executeFinderSelectionMenuAction(titleContains: "rotate left")
             }
-            add("markup", "Markup", "pencil.tip.crop.circle", "blue") {
+            add("markup", "Markup", "pencil.tip.crop.circle", "blue", aliases: ["edit", "annotate"]) {
                 executeFinderSelectionMenuAction(titleContains: "markup")
             }
-            add("remove-background", "Remove Background", "person.crop.rectangle", "purple") {
+            add(
+                "remove-background",
+                "Remove Background",
+                "person.crop.rectangle",
+                "purple",
+                aliases: ["background", "cutout"]
+            ) {
                 executeFinderSelectionMenuAction(titleContains: "remove background")
             }
-            add("convert-image", "Convert Image", "photo.stack", "purple") {
+            add("convert-image", "Convert Image", "photo.stack", "purple", aliases: ["convert"]) {
                 executeFinderSelectionMenuAction(titleContains: "convert image")
             }
-            add("set-wallpaper", "Set as Wallpaper", "photo.fill", "green") {
+            add("set-wallpaper", "Set as Wallpaper", "photo.fill", "green", aliases: ["wallpaper"]) {
                 executeFinderSelectionMenuAction(titleContains: "set as wallpaper")
             }
         }
-        add("trash", "Move to Bin", "trash", "red") {
+        add("trash", "Move to Bin", "trash", "red", aliases: ["delete", "remove", "bin"]) {
             let urls = paths.map { URL(fileURLWithPath: $0) }
             var failures: [String] = []
             for url in urls {
@@ -323,22 +367,22 @@ extension LauncherView {
         }
 
         if imageExts.contains(ext) {
-            add("preview-img", "Open in Preview", "photo", "purple") {
+            add("preview-img", "Open in Preview", "photo", "purple", aliases: ["preview", "image"]) {
                 openInApp(URL(fileURLWithPath: first), appName: "Preview")
             }
         }
         if videoExts.contains(ext) {
-            add("play", "Play in QuickTime", "play.circle", "red") {
+            add("play", "Play in QuickTime", "play.circle", "red", aliases: ["video", "quicktime"]) {
                 openInApp(URL(fileURLWithPath: first), appName: "QuickTime Player")
             }
         }
         if pdfExts.contains(ext) {
-            add("preview-pdf", "Open in Preview", "doc.richtext", "red") {
+            add("preview-pdf", "Open in Preview", "doc.richtext", "red", aliases: ["pdf", "preview"]) {
                 openInApp(URL(fileURLWithPath: first), appName: "Preview")
             }
         }
         if archiveExts.contains(ext) {
-            add("unzip", "Unarchive", "archivebox.circle", "yellow") {
+            add("unzip", "Unarchive", "archivebox.circle", "yellow", aliases: ["unzip", "extract"]) {
                 let dir = URL(fileURLWithPath: first).deletingLastPathComponent().path
                 let proc = Process()
                 proc.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
@@ -347,7 +391,7 @@ extension LauncherView {
             }
         }
         if textExts.contains(ext) {
-            add("texteditor", "Open in TextEdit", "doc.plaintext", "gray") {
+            add("texteditor", "Open in TextEdit", "doc.plaintext", "gray", aliases: ["text", "edit"]) {
                 openInApp(URL(fileURLWithPath: first), appName: "TextEdit")
             }
         }
@@ -825,6 +869,45 @@ extension LauncherView {
         if let commitQuery, isFinderDesktopOnlyMode {
             commitFinderDesktopModeSnapshot(query: commitQuery, preserveFocus: preserveFocus)
         }
+    }
+
+    /// Build a COMPLETE finder-desktop file index for the user's folders — all file types
+    /// (images, video, etc.), not just the L1 document/file-filtered set. Spotlight, scoped
+    /// to the search roots, most-recent first. Runs once on Finder-desktop entry and the
+    /// result persists, so the instant per-keystroke filter always has matches instead of
+    /// waiting on the async per-query enrichment (the source of the "scr works, screen
+    /// doesn't" lag — screenshots were never in the instant index).
+    func primeFinderDesktopFullIndex() async {
+        let roots = finderDesktopSearchRootPaths()
+        guard !roots.isEmpty else { return }
+        let paths = await Self.spotlightSearchPaths(
+            predicate: NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*"),
+            inDirectories: roots,
+            sortByLastUsed: true,
+            limit: 3000
+        )
+        guard isFinderDesktopOnlyMode, !paths.isEmpty else { return }
+
+        var seen = Set<String>()
+        var pills: [DockPill] = []
+        pills.reserveCapacity(paths.count)
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            let name = url.lastPathComponent
+            guard !name.hasPrefix("."), seen.insert(path.lowercased()).inserted else { continue }
+            pills.append(
+                makeDesktopPill(
+                    path: path, name: name,
+                    badge: finderDisplayPath(url.deletingLastPathComponent().path),
+                    rankingKind: "spotlightSearch", query: nil, loadIcon: true,
+                    isDirectoryHint: nil))
+        }
+
+        guard isFinderDesktopOnlyMode else { return }
+        finderDesktopIndexedPills = dedupeFinderDesktopPills(finderDesktopIndexedPills + pills)
+        commitFinderDesktopModeSnapshot(
+            query: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            preserveFocus: true)
     }
 
     func finderDesktopSearchRootPaths() -> [String] {
@@ -1411,6 +1494,11 @@ extension LauncherView {
             let isOpenWithMenu =
                 normalizedTitle == "open with"
                 || item.path.contains { normalizedDockPillText($0) == "open with" }
+            let isContextualSelectionMenu =
+                item.path.contains { part in
+                    ["file", "quick actions", "services", "open with", "tags"]
+                        .contains(normalizedDockPillText(part))
+                }
             if openWithFilter != nil, isOpenWithMenu, normalizedTitle != "open with" {
                 continue
             }
@@ -1455,8 +1543,14 @@ extension LauncherView {
             pill.sourceAppName = "Finder"
             pill.menuContext = menuContextLabel(from: item.path)
             pill.rankingKind = "finderMenu"
-            pill.isEnabled = isOpenWithMenu && normalizedTitle != "open with" ? true : item.isEnabled
-            pill.hasLiveAvailability = isOpenWithMenu && normalizedTitle != "open with"
+            pill.isEnabled =
+                (isOpenWithMenu && normalizedTitle != "open with")
+                || isContextualSelectionMenu
+                || item.isEnabled
+            pill.hasLiveAvailability =
+                (isOpenWithMenu && normalizedTitle != "open with")
+                || isContextualSelectionMenu
+                || item.hasLiveAvailability
             pill.trackingIdentifier =
                 "finder-menu:\(path.joined(separator: " > ").lowercased())"
             pill.searchTerms = item.path + ["finder", "files", "selection"]
@@ -1823,6 +1917,7 @@ extension LauncherView {
         func scan(_ items: [AXMenuItem]) -> Bool {
             for item in items {
                 if isShareSheetTitle(item.title) { return true }
+                if item.path.map(normalizedDockPillText).contains("share") { return true }
                 if !item.children.isEmpty, scan(item.children) { return true }
             }
             return false
@@ -1839,6 +1934,10 @@ extension LauncherView {
         func scan(_ items: [AXMenuItem]) -> Bool {
             for item in items {
                 if isShareSheetTitle(item.title), !item.children.isEmpty { return true }
+                let normalizedPath = item.path.map(normalizedDockPillText)
+                if normalizedPath.contains("share"), !isShareSheetTitle(item.title) {
+                    return true
+                }
                 if !item.children.isEmpty, scan(item.children) { return true }
             }
             return false
@@ -2479,6 +2578,7 @@ extension LauncherView {
         case "semanticIntent": return 128
         case "finderCurrent": return 114
         case "finderSearch": return 104
+        case "recentURL": return 116
         case "adapter", "appAdapter": return 108
         case "menu": return 98
         case "submenuParent": return 96
@@ -2487,6 +2587,7 @@ extension LauncherView {
         case "quickAction": return 90
         case "contextExtension": return 86
         case "tool": return 82
+        case "webSearch": return 76
         case "crossApp": return 72
         case "finderContext": return 68
         case "context", "clipboard": return 62
@@ -2724,6 +2825,9 @@ extension LauncherView {
                     pill.menuItemName.isEmpty ? pill.name : pill.menuItemName
                 )
                 let context = normalizedDockPillText(pill.menuContext ?? pill.badge ?? "")
+                if pill.isShareAction {
+                    return "share:\(name)"
+                }
 
                 switch pill.rankingKind {
                 case "menu", "finderMenu", "submenuParent", "submenuChild":

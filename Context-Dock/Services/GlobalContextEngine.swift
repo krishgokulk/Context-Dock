@@ -271,43 +271,6 @@ final class GlobalContextEngine {
         }
 
         guard liveMatch.isEnabled || isWindowMenuAction || isStopMenuAction || liveCloseDocumentAction else {
-            let shortcut = (request.shortcutChar ?? liveMatch.shortcutChar)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let shortcutModifiers = request.shortcutModifiers != 0
-                ? request.shortcutModifiers
-                : liveMatch.shortcutModifiers
-            let shortcutSent: Bool
-            if !shortcut.isEmpty {
-                shortcutSent = await MainActor.run {
-                    AXMenuReader.shared.executeShortcut(
-                        char: shortcut,
-                        modifiers: shortcutModifiers,
-                        in: pid
-                    )
-                }
-            } else {
-                shortcutSent = false
-            }
-            let menuClicked: Bool
-            if !shortcutSent {
-                menuClicked = await MainActor.run {
-                    AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid)
-                }
-            } else {
-                menuClicked = false
-            }
-            if shortcutSent || menuClicked {
-                await MainActor.run {
-                    AXMenuReader.shared.invalidateCache(for: pid)
-                }
-                await forceRefreshCache(for: app)
-                return GlobalMenuExecutionResult(
-                    status: .executionFallback,
-                    app: app,
-                    liveItem: liveMatch,
-                    message: "Tried \(liveMatch.title)"
-                )
-            }
             await forceRefreshCache(for: app)
             return GlobalMenuExecutionResult(
                 status: .unavailable,
@@ -320,10 +283,10 @@ final class GlobalContextEngine {
         if isStopMenuAction {
             let executed = await executeMenuAction(
                 path: liveMatch.path,
-                shortcutChar: request.shortcutChar ?? liveMatch.shortcutChar,
-                shortcutModifiers: request.shortcutModifiers != 0
-                    ? request.shortcutModifiers
-                    : liveMatch.shortcutModifiers,
+                shortcutChar: liveMatch.shortcutChar ?? request.shortcutChar,
+                shortcutModifiers: liveMatch.shortcutModifiers != 0
+                    ? liveMatch.shortcutModifiers
+                    : request.shortcutModifiers,
                 pid: pid,
                 app: app
             )
@@ -339,11 +302,11 @@ final class GlobalContextEngine {
             )
         }
 
-        let preferredShortcut = (request.shortcutChar ?? liveMatch.shortcutChar)?
+        let preferredShortcut = (liveMatch.shortcutChar ?? request.shortcutChar)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let preferredModifiers = request.shortcutModifiers != 0
-            ? request.shortcutModifiers
-            : liveMatch.shortcutModifiers
+        let preferredModifiers = liveMatch.shortcutModifiers != 0
+            ? liveMatch.shortcutModifiers
+            : request.shortcutModifiers
 
         let executed = await executeMenuAction(
             path: liveMatch.path,

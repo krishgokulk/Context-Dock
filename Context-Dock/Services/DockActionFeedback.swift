@@ -70,13 +70,17 @@ final class DockActionFeedback {
         _ title: String,
         icon: String,
         success: Bool,
-        id: String = UUID().uuidString
+        id: String = UUID().uuidString,
+        subject: String? = nil,
+        bundleID: String? = nil
     ) {
         post(
             id: id,
             title: title,
             icon: icon,
-            phase: success ? "success" : "failure"
+            phase: success ? "success" : "failure",
+            subject: subject,
+            bundleID: bundleID
         )
     }
 

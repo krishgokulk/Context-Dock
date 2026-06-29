@@ -25,10 +25,7 @@ final class AppleNotesMCPServer {
         guard AppSettings.shared.noteMCPAllowMetadataSearch else {
             throw AppleNotesError.permissionDenied("Metadata search is disabled.")
         }
-        // Trigger a background refresh without blocking the search response
-        Task.detached(priority: .background) {
-            try? await AppleNotesMetadataIndex.shared.refreshIfNeeded()
-        }
+        try await AppleNotesMetadataIndex.shared.refreshIfNeeded()
         let results = await AppleNotesMetadataIndex.shared.search(query: query, maxResults: maxResults)
         AppleNotesMCPAuditLogger.shared.record(
             toolName: "notes.search",
@@ -37,6 +34,15 @@ final class AppleNotesMCPServer {
             approvalStatus: .notRequired
         )
         return results
+    }
+
+    func allMetadata(maxResults: Int = 10_000) async throws -> [NoteMetadata] {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        try await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+        return await AppleNotesMetadataIndex.shared.search(query: "", maxResults: maxResults)
     }
 
     // MARK: - Read (approval handled by executor based on persistent-read setting)

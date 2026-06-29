@@ -55,7 +55,9 @@ struct ContextDockPillBuilder {
         if let url = resolvedURL(item) {
             pill.resolvedURL = url
             pill.quickLookURL = url
-            pill.menuStatusBadge = "Cached File"
+            if !item.hasLiveAvailability {
+                pill.menuStatusBadge = "Cached File"
+            }
         }
 
         pill.trackingIdentifier = input.trackingIdentifier

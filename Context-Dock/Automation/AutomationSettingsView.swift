@@ -2907,7 +2907,7 @@ struct AutomationAdapterDetailView: View {
                 overviewCard("Actions", "\(appOnlyActions.count)", icon: "bolt.fill", tint: .teal)
                 overviewCard("Shortcuts", "\(linkedShortcuts.count)", icon: "command", tint: .purple)
                 overviewCard("CLI Tools", "\(linkedCLITools.count)", icon: "terminal.fill", tint: .blue)
-                overviewCard("MCP Servers", "\(linkedMCPServers.count)", icon: "server.rack", tint: .orange)
+                overviewCard("MCP Servers", "\(linkedMCPServerCount)", icon: "server.rack", tint: .orange)
             }
             if !a.bundleId.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -3016,7 +3016,7 @@ struct AutomationAdapterDetailView: View {
         switch kind {
         case .shortcuts: return linkedShortcuts.count
         case .cli: return linkedCLITools.count
-        case .mcp: return linkedMCPServers.count
+        case .mcp: return linkedMCPServerCount
         case .api: return apiStore.connections(for: currentAdapter.bundleId).count
         case .skills: return skillStore.skills(for: currentAdapter.bundleId).count
         }
@@ -3073,6 +3073,14 @@ struct AutomationAdapterDetailView: View {
         mcpManager.servers(forBundleId: currentAdapter.bundleId)
     }
 
+    private var hasEnabledNotesBuiltInMCP: Bool {
+        currentAdapter.bundleId == "com.apple.Notes" && noteMCPEnabled
+    }
+
+    private var linkedMCPServerCount: Int {
+        linkedMCPServers.count + (hasEnabledNotesBuiltInMCP ? 1 : 0)
+    }
+
     @ViewBuilder
     private var notesBuiltInMCPRow: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -3110,6 +3118,11 @@ struct AutomationAdapterDetailView: View {
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
+                    .onChange(of: noteMCPEnabled) { enabled in
+                        if enabled {
+                            CapabilityRegistry.shared.registerAppleNotesMCPIfNeeded()
+                        }
+                    }
             }
             .padding(.vertical, 6)
 

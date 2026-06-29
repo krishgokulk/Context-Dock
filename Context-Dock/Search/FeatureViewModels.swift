@@ -165,9 +165,9 @@ final class ContextDockViewModel: ObservableObject {
     @Published var inlineShareActive = false
     @Published var lockedFindToken: LauncherView.AppFindToken?
     @Published var showFindTokenMenu = false
-    @Published var crossAppMenuTargetPID: pid_t = 0
-    @Published var crossAppMenuNeedsLiveLoad = false
-    @Published var warmingMenuBundleIds: Set<String> = []
+    var crossAppMenuTargetPID: pid_t = 0
+    var crossAppMenuNeedsLiveLoad = false
+    var warmingMenuBundleIds: Set<String> = []
     @Published var hoveredDockPillIndex: Int?
     @Published var isHoveringPillRow = false
     @Published var listViewHoveredIndex: Int?

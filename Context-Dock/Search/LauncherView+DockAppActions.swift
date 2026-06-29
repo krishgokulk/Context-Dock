@@ -113,7 +113,11 @@ extension LauncherView {
         }
 
         let launchId = DockActionFeedback.start(
-            "Opening", subject: urlAppName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
+            "Opening",
+            subject: urlAppName,
+            icon: "arrow.up.right.circle.fill",
+            tint: .accentColor,
+            bundleID: resolvedBundleId)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -129,7 +133,11 @@ extension LauncherView {
 
             await MainActor.run {
                 let name = launchedApp?.localizedName ?? urlAppName
-                DockActionFeedback.complete(launchId, label: "\(name) opened")
+                DockActionFeedback.complete(
+                    launchId,
+                    label: "\(name) opened",
+                    subject: name,
+                    bundleID: launchedApp?.bundleIdentifier ?? resolvedBundleId)
             }
         }
     }
@@ -801,20 +809,19 @@ extension LauncherView {
         if bundleID == "com.apple.finder" {
             detachFinderFolderSearch()
         }
-        // Scoping a running app EXITS Global Context into a clean Context Dock app scope
-        // (preserveGlobalContext = false → activateInlineDockAppScope clears
-        // globalContextActivation). This is the only state where scoped menus/files build
-        // through the Context Dock surface and Cmd is inert (Cmd only toggles Global↔Context
-        // Dock, and we're no longer in Global Context). The running-app strip + right-arrow
-        // cycling are kept alive in this app-scoped state by their own l2.targetApp-aware
-        // gates (shouldShowGlobalRunningAppStrip / globalScopeCycleApps), so the user still
-        // sees the other apps and can right-arrow to the next app scope.
+        // FINDER stays in Global Context → Global Context Finder desktop file search (the
+        // universal "search files & folders" mode). EVERY OTHER app EXITS Global Context into
+        // a clean Context Dock app scope (preserveGlobalContext = false → activateInlineDockAppScope
+        // clears globalContextActivation) so its menus build through the Context Dock surface
+        // and Cmd is inert. The running-app strip + right-arrow cycling stay alive in both via
+        // their l2.targetApp / isGlobalContextActive-aware gates.
+        let keepGlobalForFinder = bundleID == "com.apple.finder"
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
             queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "" : nil,
-            preserveGlobalContext: false
+            preserveGlobalContext: keepGlobalForFinder
         )
         if activated {
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)

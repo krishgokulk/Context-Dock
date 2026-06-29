@@ -119,6 +119,7 @@ struct LauncherView: View {
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
     @State var finderDesktopRecentPills: [DockPill] = []
     @State var finderDesktopIndexedPills: [DockPill] = []  // all user-folder files, pre-loaded for instant filter
+    @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
@@ -1933,10 +1934,18 @@ struct LauncherView: View {
                     // Modern inline dock feedback (tick at the dock's trailing edge
                     // + ghost message in the input), not a separate floating pill.
                     DockActionFeedback.showResult(
-                        result.message, icon: "checkmark.circle.fill", success: true)
+                        result.message,
+                        icon: "checkmark.circle.fill",
+                        success: true,
+                        subject: result.app?.localizedName,
+                        bundleID: result.app?.bundleIdentifier ?? bundleID)
                 case .unavailable, .launchFailed:
                     DockActionFeedback.showResult(
-                        result.message, icon: "exclamationmark.triangle.fill", success: false)
+                        result.message,
+                        icon: "exclamationmark.triangle.fill",
+                        success: false,
+                        subject: result.app?.localizedName,
+                        bundleID: result.app?.bundleIdentifier ?? bundleID)
                 }
 
                 // Quitting an app from its own scope: drop that app's pill so the

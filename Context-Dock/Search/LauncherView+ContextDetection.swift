@@ -604,6 +604,26 @@ extension LauncherView {
         {
             panel.orderOut(nil)
             quickLookDataSource = nil
+            // Spotlight-style: land focus on the result that was being previewed so Down/Up
+            // continue from THERE, not from the first result. Use the previewed URL to find
+            // its row (the peek may have arrow-navigated to a different file than where it
+            // opened), then keep the list focused (not the input field).
+            if usesVerticalListDockLayout {
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+                let pills =
+                    pillQuery.isEmpty
+                    ? selectionScopedDockPills(cachedDockPills)
+                    : contextDockViewModel.visiblePills
+                if let idx = pills.firstIndex(where: { $0.quickLookURL == url }) {
+                    l2.focusedPillIndex = idx
+                } else if l2.focusedPillIndex == nil {
+                    l2.focusedPillIndex = listViewHoveredIndex
+                }
+                l2.pillNavViaKeyboard = true
+                isSearchFieldFocused = false
+            }
             return true
         }
 
@@ -617,7 +637,16 @@ extension LauncherView {
         }
         if let window = AppDelegate.shared?.launcherWindow {
             window.makeKey()
-            isSearchFieldFocused = true
+            // List-view (finder desktop) results: keep the RESULT focused, not the input —
+            // so when the peek closes (however it closes) the user lands back on the result
+            // and can arrow to the next one (Spotlight-style), instead of in the input field.
+            if usesVerticalListDockLayout {
+                if l2.focusedPillIndex == nil { l2.focusedPillIndex = listViewHoveredIndex }
+                l2.pillNavViaKeyboard = true
+                isSearchFieldFocused = false
+            } else {
+                isSearchFieldFocused = true
+            }
         }
         return true
     }

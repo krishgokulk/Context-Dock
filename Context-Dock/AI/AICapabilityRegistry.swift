@@ -91,6 +91,12 @@ final class CapabilityRegistry {
         capabilitiesByID[capability.id] = capability
     }
 
+    func registerAppleNotesMCPIfNeeded() {
+        guard AppSettings.shared.noteMCPEnabled else { return }
+        guard capabilitiesByID["notes.search"] == nil else { return }
+        AppleNotesMCPCapabilities.register(in: self)
+    }
+
     func promptBlock(for bundleID: String?) -> String {
         let entries = capabilities(for: bundleID).map { capability in
             let fields = capability.inputSchema.fields.map(\.name).joined(separator: ", ")

@@ -2866,6 +2866,44 @@ extension LauncherView {
         return pill
     }
 
+    func browserContentSearchDockPill(_ intent: AppContentSearchIntent) -> DockPill {
+        let encoded =
+            intent.query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+            ?? intent.query
+        let url = URL(string: "https://www.google.com/search?q=\(encoded)")
+        var pill = DockPill(
+            id: "browser-search:\(intent.bundleId):\(normalizedDockPillText(intent.query))",
+            name: "Search web for \"\(intent.query)\"",
+            icon: "magnifyingglass",
+            accentColorName: "blue",
+            badge: intent.appName,
+            execute: { [self] in
+                guard let url else { return }
+                let actionId = DockActionFeedback.start(
+                    "Searching", subject: intent.appName,
+                    icon: "magnifyingglass", tint: .blue.opacity(0.85)
+                )
+                openURL(url, inBrowserBundleId: intent.bundleId)
+                DockActionFeedback.complete(actionId, label: "Opened web search")
+                searchState.query = ""
+                focusedAppPillIndex = nil
+                l2.focusedPillIndex = nil
+            }
+        )
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: intent.bundleId) {
+            pill.menuItemImage = NSWorkspace.shared.icon(forFile: appURL.path)
+        }
+        pill.sourceBundleId = intent.bundleId
+        pill.sourceAppName = intent.appName
+        pill.rankingKind = "webSearch"
+        pill.trackingIdentifier =
+            "browser-search:\(intent.bundleId):\(normalizedDockPillText(intent.query))"
+        // Do not include the raw query here. Matching URL/history/menu rows should win
+        // when they contain the same text; this pill is the browser-native fallback.
+        pill.searchTerms = [intent.appName, "search", "web", "google", "browser"]
+        return pill
+    }
+
     /// Browser History/Bookmarks/Recent rows resolve to the page's real URL when the
     /// title is in local browser history — those rows open in Safari directly instead
     /// of replaying menu clicks against the source app.
@@ -3114,17 +3152,25 @@ extension LauncherView {
                 scopedAppName: scope.scopedAppName,
                 isGlobalScope: false
             )
-            let scopedMenuFetchLimit =
-                actionQuery.isEmpty
-                ? max(maxListViewDockPills * 10, 96)
-                : maxListViewDockPills
-            let indexedPills = indexedScopedAppMenuPills(
-                bundleIdentifier: scope.scopedBundleId,
-                appName: scope.scopedAppName,
-                query: actionQuery,
-                maxResults: scopedMenuFetchLimit
-            )
-            pills += indexedPills
+            let frontmostBundleId =
+                AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? ""
+            let hasAuthoritativeLiveMenus =
+                !liveMenuItems.isEmpty
+                && !scope.scopedBundleId.isEmpty
+                && scope.scopedBundleId == frontmostBundleId
+            if !hasAuthoritativeLiveMenus {
+                let scopedMenuFetchLimit =
+                    actionQuery.isEmpty
+                    ? max(maxListViewDockPills * 10, 96)
+                    : maxListViewDockPills
+                let indexedPills = indexedScopedAppMenuPills(
+                    bundleIdentifier: scope.scopedBundleId,
+                    appName: scope.scopedAppName,
+                    query: actionQuery,
+                    maxResults: scopedMenuFetchLimit
+                )
+                pills += indexedPills
+            }
             pills += scopedSpecialAppPills(
                 bundleIdentifier: scope.scopedBundleId,
                 appName: scope.scopedAppName,
@@ -3599,10 +3645,20 @@ extension LauncherView {
         }
 
         let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let pillCount = (pillQuery.isEmpty ? [] : contextDockViewModel.visiblePills)
+        let visibleDockPills =
+            isGlobalContextActive
+            ? currentVisibleDockPills(for: pillQuery)
+            : contextDockViewModel.visiblePills
+        let pillCount = (pillQuery.isEmpty ? [] : visibleDockPills)
             .filter { !$0.isSeparator }
             .count
         if pillCount > 0 { return min(maxListViewDockPills, pillCount) }
+        if isGlobalContextActive,
+            !pillQuery.isEmpty,
+            (pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery))
+        {
+            return 1
+        }
         if showContextInDock,
             !isGlobalContextActive,
             !q.isEmpty

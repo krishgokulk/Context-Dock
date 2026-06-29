@@ -205,7 +205,7 @@ extension LauncherView {
         return name.isEmpty ? "this app" : name
     }
 
-    func armContextDockChat() {
+    func armContextDockChat(animated: Bool = true) {
         let existingName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingBundleId = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if (l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty),
@@ -214,7 +214,7 @@ extension LauncherView {
         {
             l2.chatArmed = true
             l2.chatDismissed = false
-            requestWindowSizeUpdate(reason: .panelChanged)
+            requestWindowSizeUpdate(reason: .panelChanged, animated: animated)
             return
         }
         let scopedName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -225,7 +225,7 @@ extension LauncherView {
         l2.chatDismissed = false
         l2.chatDraftAppName = scopedName.isEmpty ? fallbackName : scopedName
         l2.chatDraftBundleId = scopedBundleId.isEmpty ? fallbackBundleId : scopedBundleId
-        requestWindowSizeUpdate(reason: .panelChanged)
+        requestWindowSizeUpdate(reason: .panelChanged, animated: animated)
     }
 
     func disarmContextDockChat() {
@@ -1704,10 +1704,110 @@ extension LauncherView {
         return true
     }
 
+    func tryHandleNotesMCPQuery(_ query: String, scopedBundleId: String) -> Bool {
+        guard scopedBundleId == "com.apple.Notes",
+              AppSettings.shared.noteMCPEnabled
+        else { return false }
+
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wantsCount = normalized.contains("how many")
+            || normalized.contains("count")
+            || normalized.contains("number of")
+        let wantsSearch = normalized.contains("find")
+            || normalized.contains("search")
+            || normalized.hasPrefix("any ")
+            || normalized.contains(" any ")
+            || normalized.contains("with ")
+            || normalized.contains("link")
+            || normalized.contains("url")
+        guard wantsCount || wantsSearch else { return false }
+
+        let userMessage = AIChatMessage(role: .user, content: query)
+        l2.chatMessages.append(userMessage)
+        l2.isLoading = true
+        let requestID = beginL2AIRequest()
+
+        l2.currentTask = Task {
+            do {
+                let notes = try await AppleNotesMCPServer.shared.allMetadata()
+                let response: String
+                if wantsCount && !wantsSearch {
+                    response = "There are \(notes.count) notes."
+                } else {
+                    let searchTerm = notesSearchTerm(from: normalized)
+                    let matches = searchTerm.isEmpty
+                        ? notes
+                        : try await AppleNotesMCPServer.shared.search(
+                            query: searchTerm, maxResults: 8)
+                    response = formatNotesSearchResponse(matches, query: searchTerm)
+                }
+                await MainActor.run {
+                    l2.isLoading = false
+                    l2.chatMessages.append(
+                        AIChatMessage(role: .assistant, content: response, mcpToolsRan: ["DoraX Notes MCP"])
+                    )
+                    finishL2AIRequest(requestID)
+                }
+            } catch {
+                await MainActor.run {
+                    l2.isLoading = false
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "Notes MCP failed: \(error.localizedDescription)",
+                            isError: true
+                        )
+                    )
+                    finishL2AIRequest(requestID)
+                }
+            }
+        }
+        return true
+    }
+
+    private func notesSearchTerm(from query: String) -> String {
+        let cleaned = query
+            .replacingOccurrences(of: "?", with: " ")
+            .replacingOccurrences(of: "#", with: " ")
+            .replacingOccurrences(of: "notes", with: " ")
+            .replacingOccurrences(of: "note", with: " ")
+            .replacingOccurrences(of: "links", with: " ")
+            .replacingOccurrences(of: "link", with: " ")
+            .replacingOccurrences(of: "urls", with: " ")
+            .replacingOccurrences(of: "url", with: " ")
+        let stopwords: Set<String> = [
+            "any", "with", "there", "are", "is", "have", "has", "find", "search",
+            "for", "about", "show", "me", "please", "a", "an", "the", "in", "on",
+            "do", "does", "did", "how", "many", "count", "number", "of"
+        ]
+        return cleaned
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { !stopwords.contains($0) }
+            .joined(separator: " ")
+    }
+
+    private func formatNotesSearchResponse(_ matches: [NoteMetadata], query: String) -> String {
+        guard !matches.isEmpty else {
+            return query.isEmpty
+                ? "No notes found."
+                : "No notes found for \(query)."
+        }
+        let rows = matches.prefix(5).map { note in
+            "• \(note.title) — \(note.folder)"
+        }.joined(separator: "\n")
+        let suffix = matches.count > 5 ? "\n+\(matches.count - 5) more" : ""
+        return "Found \(matches.count) note\(matches.count == 1 ? "" : "s")\(query.isEmpty ? "" : " for \(query)"):\n\(rows)\(suffix)"
+    }
+
     func handleL2Query(_ query: String, skipMenuRouter: Bool) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
-        armContextDockChat()
+        let trimmedSubmittedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSubmittedQuery {
+            searchState.query = ""
+        }
+        armContextDockChat(animated: wasContextDockChatActive)
         l2.showChatPopover = true
         l2.chatDismissed = false
         if handleL2TaskControlQueryIfNeeded(query) {
@@ -1770,6 +1870,10 @@ extension LauncherView {
             l2.currentTask = nil
             l2.isLoading = false
             l2.activeRequestID = nil
+        }
+
+        if tryHandleNotesMCPQuery(query, scopedBundleId: scopedBundleId) {
+            return
         }
 
         // Stamp the context key when the chat starts so we can detect future context switches.
@@ -2603,7 +2707,7 @@ extension LauncherView {
     /// into General Chat when the query is about them — otherwise on-device AI guesses
     /// ("This week is currently ongoing") because it has no actual data. Empty when the query
     /// isn't about an Apple app or nothing is found.
-    func appleAppsContextBlock(for query: String) -> String {
+    func appleAppsContextBlock(for query: String) async -> String {
         let q = query.lowercased()
         let api = AppleAppsAPI.shared
         var blocks: [String] = []
@@ -2669,8 +2773,15 @@ extension LauncherView {
             let nameGuess = query.split(separator: " ").map(String.init)
                 .filter { $0.first?.isUppercase ?? false }
                 .max(by: { $0.count < $1.count }) ?? ""
-            let contacts =
-                nameGuess.isEmpty ? api.getContacts(limit: 20) : api.searchContacts(query: nameGuess)
+            let contacts: [[String: Any]] = await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result =
+                        nameGuess.isEmpty
+                        ? api.getContacts(limit: 20)
+                        : api.searchContacts(query: nameGuess)
+                    continuation.resume(returning: result)
+                }
+            }
             if !contacts.isEmpty {
                 let lines = contacts.prefix(10).map { c -> String in
                     let name = (c["fullName"] as? String)?.trimmingCharacters(
@@ -2757,7 +2868,7 @@ extension LauncherView {
     /// system prompt. Used by both General Chat and Context Dock chat so both answer with
     /// real Calendar/Reminders/Contacts/Photos/Notes/Mail/Music/Safari/Weather data.
     func appleAppsAndWeatherContext(for query: String) async -> String {
-        var block = appleAppsContextBlock(for: query)
+        var block = await appleAppsContextBlock(for: query)
         let ql = query.lowercased()
         if ["weather", "temperature", "forecast", "rain", "raining", "sunny", "humid",
             "how hot", "how cold", "degrees"].contains(where: ql.contains)
