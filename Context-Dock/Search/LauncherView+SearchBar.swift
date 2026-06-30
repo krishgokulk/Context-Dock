@@ -1700,10 +1700,12 @@ extension LauncherView {
                                 globalRunningAppStrip
                             }
 
-                            // Selected file/text indicator — shown in the input-bar trailing for
-                            // both Context Dock (next to "+") and Global Context (next to the
-                            // running-app strip), so a launch with a selection is always visible.
+                            // Selected file/text indicator next to "+" in Context Dock. NOT in
+                            // Global Context — there a selection IS the dedicated Selection Scope,
+                            // which renders its own indicator (showing both was the duplicate
+                            // "4 files chip + file icon" look).
                             if hasActiveDockContextSelection, showContextInDock,
+                                !isGlobalContextActive,
                                 currentDockSurfaceMode != .generalChat
                             {
                                 selectionFloatingPill
