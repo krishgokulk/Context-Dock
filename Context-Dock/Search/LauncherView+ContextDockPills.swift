@@ -2572,6 +2572,7 @@ extension LauncherView {
 
     func dockPillKindBaseScore(_ pill: DockPill) -> Double {
         switch pill.rankingKind {
+        case "browserCommand": return 142
         case "appLaunch": return 136
         case "appSwitch": return 134
         case "nativeWindow": return 132

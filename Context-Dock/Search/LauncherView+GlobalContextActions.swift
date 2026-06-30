@@ -775,8 +775,19 @@ extension LauncherView {
         if bundleIdentifier == "com.apple.Photos", q == "photos" {
             score += 2_000
         }
-        score += min(
-            UsageTracker.shared.getScore(for: "app:\(bundleIdentifier ?? appName)") / 100.0, 45)
+        // Usage-aware ranking (Raycast/Spotlight-style learning): apps the user actually
+        // launches climb, and apps they've NEVER opened are demoted — so a perfect name
+        // match on an unused app (e.g. QuickTime for "qu") doesn't auto-win the top slot
+        // over apps the user uses daily. The boost is sized to break ties within a match
+        // tier without overriding a clearly stronger name match.
+        let frecency = UsageTracker.shared.getScore(for: "app:\(bundleIdentifier ?? appName)")
+        let learned = AppUsageLearner.shared.score(forBundleID: bundleIdentifier ?? "")
+        let usageSignal = frecency / 6.0 + learned * 6.0
+        if usageSignal > 0 {
+            score += min(usageSignal, 1_000)
+        } else {
+            score -= 500
+        }
         return score
     }
 
@@ -1063,6 +1074,16 @@ extension LauncherView {
                 ? max(12, maxListViewDockPills - appResults.count)
             : max(0, maxListViewDockPills - appResults.count)
         let roleExpandedGroups = globalRoleExpandedAppGroups(for: q)
+        if !roleExpandedGroups.isEmpty {
+            let rolePills = roleExpandedGroups.flatMap(\.pills)
+            return finish(GlobalGroupedListNavigationState(
+                appResults: [],
+                menuPills: rolePills,
+                menuGroups: [],
+                appMenuGroups: roleExpandedGroups,
+                menuFirst: false
+            ), label: "instantGlobalGroupedListNavigationState.roleScope")
+        }
         let roleExpandedBundleIds = Set(roleExpandedGroups.map(\.id))
         let contentSearchGroups = roleExpandedGroups + globalAppContentSearchGroups(for: q)
             .filter { group in
@@ -2669,15 +2690,23 @@ extension LauncherView {
         )
 
         var pills: [DockPill] = []
+        let hasNativeBrowserCommand =
+            isBrowserMenuSource(scope.bundleId)
+            && !BrowserNativeCommandService.shared
+                .matchingCommands(for: scope.actionQuery)
+                .isEmpty
         if isBrowserMenuSource(scope.bundleId),
+            !hasNativeBrowserCommand,
             !scope.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             pills.append(globalBrowserSearchPill(scope: scope, icon: icon))
-            if let target = resolution.targets.first,
-                let website = globalRoleWebsiteURL(for: target)
-            {
-                pills.append(globalOpenWebsitePill(url: website, scope: scope, target: target))
-            }
+            pills.append(
+                contentsOf: buildBrowserURLLibraryPills(
+                    query: scope.actionQuery,
+                    scopedBrowserBundleId: scope.bundleId,
+                    limit: 12
+                )
+            )
         }
 
         let cachedPills = cachedGlobalAppScopeDockPills(
@@ -2693,7 +2722,7 @@ extension LauncherView {
             pills.append(globalOpenAppPill(scope: scope, icon: icon))
         }
 
-        let visible = Array(pills.prefix(5))
+        let visible = Array(pills.prefix(maxListViewDockPills))
         guard !visible.isEmpty else { return [] }
         return [
             AppMenuGroup(
@@ -3296,6 +3325,7 @@ extension LauncherView {
         }
 
         if pill.rankingKind == "contentSearch" { score += query.isEmpty ? -80 : 500 }
+        if pill.rankingKind == "browserCommand" { score += query.isEmpty ? 120 : 820 }
         if pill.rankingKind == "nativeWindow" { score += query.isEmpty ? 12 : 80 }
         if query.isEmpty {
             score += scopedGlobalAppMenuUtilityScore(pill, appName: pill.sourceAppName)

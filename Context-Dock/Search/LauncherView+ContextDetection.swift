@@ -651,6 +651,58 @@ extension LauncherView {
         return true
     }
 
+    /// Electron/Catalyst apps (VS Code, Slack, Discord…) usually don't expose `selectedText`
+    /// via Accessibility, so the AX read returns nothing. Fallback: briefly copy the selection
+    /// (synthetic ⌘C to the still-frontmost previous app), read it off the pasteboard, then
+    /// RESTORE the previous pasteboard — so the selection chip works in any app. Non-destructive:
+    /// the user's clipboard is preserved, and an empty selection just times out to nil.
+    func peekSelectionViaClipboard(completion: @escaping (String?) -> Void) {
+        guard AXIsProcessTrusted() else { completion(nil); return }
+        let pb = NSPasteboard.general
+
+        // Snapshot the current pasteboard so we can put it back.
+        let saved: [NSPasteboardItem] =
+            pb.pasteboardItems?.map { item in
+                let copy = NSPasteboardItem()
+                for type in item.types {
+                    if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+                }
+                return copy
+            } ?? []
+        let beforeCount = pb.changeCount
+
+        // Synthetic ⌘C to the (still-frontmost) previous app.
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let keyC: CGKeyCode = 0x08  // 'c'
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
+        down?.flags = .maskCommand
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+
+        func restore() {
+            pb.clearContents()
+            if !saved.isEmpty { pb.writeObjects(saved) }
+        }
+
+        func poll(_ attempt: Int) {
+            if pb.changeCount != beforeCount {
+                let text = pb.string(forType: .string)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                restore()
+                completion((text?.isEmpty == false) ? text : nil)
+                return
+            }
+            if attempt >= 10 {  // ~200ms — copy never landed (no selection)
+                completion(nil)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(attempt + 1) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(1) }
+    }
+
     func refreshQuickLookPreviewForCurrentFocusIfVisible() {
         if showFolderPreview {
             if let index = searchState.selectedIndex,

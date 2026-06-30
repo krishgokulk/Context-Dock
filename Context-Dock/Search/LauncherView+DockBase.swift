@@ -263,6 +263,7 @@ extension LauncherView {
                         icon: resolvedPinnedIcon(for: app),
                         label: app.name,
                         isRunning: runningInstance != nil,
+                        runningApp: runningInstance,
                         hoverKey: "pinned-\(app.id.uuidString)",
                         onCloseRunningApp: runningInstance.map { runningApp in
                             { terminateRunningAppFromDock(runningApp) }
@@ -325,6 +326,7 @@ extension LauncherView {
         destructivePhase: DockInlineFeedback.Phase? = nil,
         removeAction: (() -> Void)? = nil,
         pinAction: (() -> Void)? = nil,  // double-click to pin
+        previewApp: NSRunningApplication? = nil,
         action: @escaping () -> Void
     ) -> some View {
         let hovered = hoveredDockAppKey == hoverKey || focused
@@ -504,6 +506,11 @@ extension LauncherView {
             withAnimation(.spring(response: 0.15, dampingFraction: 0.80)) {
                 hoveredDockAppKey = hovering ? hoverKey : nil
                 if let index { hoveredAppPillIndex = hovering ? index : nil }
+                if hovering, let previewApp {
+                    RunningAppPreviewService.shared.scheduleShow(for: previewApp, icon: icon)
+                } else if !hovering {
+                    RunningAppPreviewService.shared.scheduleHide()
+                }
             }
         }
         .help(pinAction != nil ? "\(label) — double-click to pin" : label)
@@ -513,6 +520,7 @@ extension LauncherView {
         icon: NSImage?,
         label: String,
         isRunning: Bool,
+        runningApp: NSRunningApplication? = nil,
         hoverKey: String? = nil,
         onCloseRunningApp: (() -> Void)? = nil,
         closePhase: DockInlineFeedback.Phase? = nil,
@@ -584,8 +592,12 @@ extension LauncherView {
             guard let hoverKey else { return }
             if hovering {
                 hoveredDockAppKey = hoverKey
+                if let runningApp {
+                    RunningAppPreviewService.shared.scheduleShow(for: runningApp, icon: icon)
+                }
             } else if hoveredDockAppKey == hoverKey {
                 hoveredDockAppKey = nil
+                RunningAppPreviewService.shared.scheduleHide()
             }
         }
         .help(label)

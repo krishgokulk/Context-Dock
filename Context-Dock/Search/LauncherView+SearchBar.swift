@@ -664,7 +664,23 @@ extension LauncherView {
                                         && previewGlobalAppResult == nil
                                         && scopedGlobalAppIcon == nil
                                     {
-                                        if let selIcon = frozenSelectionIcon ?? activeSelectionIcon {
+                                        if let feedbackIcon = feedbackAppIcon {
+                                            // Action in progress (quit/launch/run): show THAT app's
+                                            // icon on the left so the toast reads "[Safari] Safari
+                                            // quit … ✓" instead of the generic dock arrow.
+                                            Image(nsImage: feedbackIcon)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 26, height: 26)
+                                                .clipShape(
+                                                    RoundedRectangle(
+                                                        cornerRadius: 6, style: .continuous))
+                                                .transition(
+                                                    .scale(scale: 0.8).combined(with: .opacity))
+                                                .id("feedback-\(displayIconIdentity ?? "app")")
+                                        } else if let selIcon = frozenSelectionIcon
+                                            ?? activeSelectionIcon
+                                        {
                                             // Active selection: icon mirrors the content type (file, text, link, clipboard)
                                             Image(systemName: selIcon)
                                                 .foregroundStyle(
@@ -1684,19 +1700,23 @@ extension LauncherView {
                                 globalRunningAppStrip
                             }
 
-                            if let feedback = launcherViewModel.inlineDockFeedback,
+                            // Selected file/text indicator — shown in the input-bar trailing for
+                            // both Context Dock (next to "+") and Global Context (next to the
+                            // running-app strip), so a launch with a selection is always visible.
+                            if hasActiveDockContextSelection, showContextInDock,
                                 currentDockSurfaceMode != .generalChat
                             {
-                                inlineDockFeedbackChip(feedback)
-                                    .allowsHitTesting(false)
+                                selectionFloatingPill
                                     .transition(
                                         .scale(scale: 0.86, anchor: .trailing)
                                             .combined(with: .opacity))
                             }
 
-                            // Trailing area: focused context icon OR result icon OR clear OR controls
+                            // Trailing area: a single status pill that the "+" morphs INTO during
+                            // an action (spinner → ✓ / ✗), so there's never a separate tick pill
+                            // next to the "+". Covers all phases; the "+" branch below only renders
+                            // when there's no active feedback.
                             if let feedback = launcherViewModel.inlineDockFeedback,
-                                feedback.phase == .progress,
                                 currentDockSurfaceMode != .generalChat
                             {
                                 inlineDockFeedbackActionIcon(feedback)
@@ -2746,10 +2766,24 @@ extension LauncherView {
     @ViewBuilder
     func inlineDockFeedbackActionIcon(_ feedback: DockInlineFeedback) -> some View {
         let accent = inlineDockFeedbackGlowColor() ?? inlineDockFeedbackColor(feedback.phase)
-        let iconName = inlineDockFeedbackIsDestructive(feedback) ? "xmark" : feedback.icon
-        Image(systemName: iconName)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(accent)
+        // Single morphing status pill: spinner while in progress, ✓ on success, ✗ on failure.
+        let statusSymbol: String =
+            feedback.phase == .success
+            ? "checkmark"
+            : (feedback.phase == .failure || inlineDockFeedbackIsDestructive(feedback)
+                ? "xmark" : feedback.icon)
+        Group {
+            if feedback.phase == .progress {
+                ProgressView()
+                    .tint(accent)
+                    .controlSize(.small)
+                    .scaleEffect(0.62)
+            } else {
+                Image(systemName: statusSymbol)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(accent)
+            }
+        }
             .frame(width: 26, height: 26)
             .background(.regularMaterial, in: Circle())
             .background(accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12), in: Circle())

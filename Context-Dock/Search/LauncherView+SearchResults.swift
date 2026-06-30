@@ -910,6 +910,7 @@ extension LauncherView {
                         name: app.name,
                         subtitle: isRunning ? "Running" : "Launch",
                         index: idx,
+                        previewApp: runningApp(for: app),
                         action: {
                             launchPinnedApp(app)
                             if isGlobalContextActive {
@@ -978,6 +979,7 @@ extension LauncherView {
         defaultsToFirstSelection: Bool = false,
         quitAction: (() -> Void)? = nil,
         quitPhase: DockInlineFeedback.Phase? = nil,
+        previewApp: NSRunningApplication? = nil,
         action: @escaping () -> Void
     ) -> some View {
         // Spotlight-style default selection: in a typed-query RESULT list, the first row reads as
@@ -1123,6 +1125,11 @@ extension LauncherView {
             guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 hoveredAppPillIndex = hovering ? index : nil
+            }
+            if hovering, let previewApp {
+                RunningAppPreviewService.shared.scheduleShow(for: previewApp, icon: icon)
+            } else if !hovering {
+                RunningAppPreviewService.shared.scheduleHide()
             }
         }
     }

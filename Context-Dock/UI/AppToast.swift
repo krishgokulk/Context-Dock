@@ -51,6 +51,22 @@ final class AppToast: ObservableObject {
         action: (() -> Void)? = nil
     ) {
         Task { @MainActor in
+            // Unified surface: when the dock is open, render the toast INSIDE the dock
+            // (inline feedback) instead of a separate floating pill — one place for all
+            // toasts/notifications. Persistent toasts and those with an action button keep
+            // the floating pill (the inline feedback is transient and button-less), and the
+            // floating pill is the fallback whenever the dock is closed.
+            let canRouteToDock =
+                !persistent && actionTitle == nil
+                && AppDelegate.shared?.launcherWindow?.isVisible == true
+            if canRouteToDock {
+                let warning =
+                    icon.contains("exclamationmark") || icon.contains("shield")
+                    || icon.contains("xmark") || icon.contains("trash")
+                DockActionFeedback.showResult(
+                    message, icon: icon, success: !warning, id: id)
+                return
+            }
             shared.present(ToastItem(
                 id: id, icon: icon, message: message,
                 tint: tint, persistent: persistent, centered: centered,

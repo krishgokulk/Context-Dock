@@ -1009,6 +1009,22 @@ extension LauncherView {
                     }
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)
+
+                    // AX gave no selection (e.g. Electron apps don't expose selectedText) —
+                    // fall back to a clipboard peek so a text selection still surfaces the
+                    // selection chip / scope. Only when nothing else is already active.
+                    if self.activeSelection == nil, self.frozenSelectionText == nil,
+                        self.searchState.query.isEmpty
+                    {
+                        self.peekSelectionViaClipboard { text in
+                            guard let text, self.activeSelection == nil else { return }
+                            self.currentContext = .textSelected(text)
+                            _ = self.openInSelectionScopeIfSelectionPresent()
+                            self.scheduleDockPillRebuild(
+                                query: "", delayNanoseconds: 0, refreshContext: false)
+                            self.requestWindowSizeUpdate(reason: .modeChanged)
+                        }
+                    }
                 }
             }
         }

@@ -17,6 +17,19 @@ extension LauncherView {
             ["recent", "recents", "history", "url", "urls", "bookmark", "bookmarks"].contains(query)
         guard isGlobalContextActive || scopedBrowserBundleId != nil else { return [] }
 
+        return buildBrowserURLLibraryPills(
+            query: query,
+            scopedBrowserBundleId: isGlobalContextActive ? nil : scopedBrowserBundleId,
+            requireExplicitHistoryQuery: explicitlyRequestsHistory
+        )
+    }
+
+    func buildBrowserURLLibraryPills(
+        query: String,
+        scopedBrowserBundleId: String?,
+        requireExplicitHistoryQuery: Bool = false,
+        limit: Int = 24
+    ) -> [DockPill] {
         BrowserURLLibraryService.shared.refreshIfNeeded {
             scheduleDockPillRebuild(
                 query: searchState.query, delayNanoseconds: 0, refreshContext: false)
@@ -24,10 +37,10 @@ extension LauncherView {
 
         let entries = BrowserURLLibraryService.shared.entries(
             matching: query,
-            bundleId: isGlobalContextActive ? nil : scopedBrowserBundleId
+            bundleId: scopedBrowserBundleId,
+            limit: limit
         )
-        guard explicitlyRequestsHistory || !entries.isEmpty else { return [] }
-
+        guard requireExplicitHistoryQuery || !entries.isEmpty else { return [] }
         return entries.map { entry in
             var pill = DockPill(
                 id: "browser-url:\(entry.id)",

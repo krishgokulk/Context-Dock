@@ -1975,6 +1975,13 @@ extension LauncherView {
         appName: String,
         query: String
     ) -> [DockPill] {
+        if isBrowserMenuSource(bundleIdentifier) {
+            return buildBrowserNativeCommandPills(
+                bundleIdentifier: bundleIdentifier,
+                appName: appName,
+                query: query
+            )
+        }
         switch bundleIdentifier {
         case "com.apple.systempreferences":
             return buildSystemSettingsPills(
@@ -1984,6 +1991,52 @@ extension LauncherView {
             )
         default:
             return []
+        }
+    }
+
+    func buildBrowserNativeCommandPills(
+        bundleIdentifier: String,
+        appName: String,
+        query: String
+    ) -> [DockPill] {
+        let commands = BrowserNativeCommandService.shared.matchingCommands(for: query)
+        guard !commands.isEmpty else { return [] }
+
+        let appIcon = resolvedApplicationIcon(bundleIdentifier: bundleIdentifier, appName: appName)
+        return commands.map { command in
+            var pill = DockPill(
+                id: "browser-native-command:\(bundleIdentifier):\(command.rawValue)",
+                name: command.title,
+                icon: command.icon,
+                accentColorName: "blue",
+                badge: appName,
+                execute: {
+                    Task { @MainActor in
+                        BrowserNativeCommandService.shared.execute(
+                            command,
+                            bundleIdentifier: bundleIdentifier,
+                            appName: appName
+                        )
+                    }
+                }
+            )
+            pill.sourceBundleId = bundleIdentifier
+            pill.sourceAppName = appName
+            pill.rankingKind = "browserCommand"
+            pill.trackingIdentifier = "browser-native-command:\(bundleIdentifier):\(command.rawValue)"
+            pill.searchTerms = Array(Set(command.aliases + [
+                command.title,
+                appName,
+                "browser",
+                "tab",
+                "navigation",
+            ]))
+            pill.rankingScore = 20_000
+            pill.menuItemImage = appIcon
+            pill.hasLiveAvailability = true
+            pill.menuStatusBadge = "Native"
+            pill.keyboardShortcutLabel = command.shortcutLabel
+            return pill
         }
     }
 
