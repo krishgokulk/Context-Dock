@@ -2988,64 +2988,12 @@ struct LauncherView: View {
                     Label("Send Message", systemImage: "message")
                 }
             } else if result.type == .application {
-                if settings.isPinned(path: result.subtitle) {
-                    Button {
-                        if let pinnedApp = settings.pinnedApps.first(where: {
-                            $0.path == result.subtitle
-                        }) {
-                            settings.unpinApp(pinnedApp)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        settings.pinApp(name: result.title, path: result.subtitle)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
+                EmptyView()
             } else if result.type == .shortcut {
-                let shortcutPath = result.subtitle.isEmpty ? result.title : result.subtitle
-                if settings.pinnedApps.contains(where: { $0.path == shortcutPath }) {
-                    Button {
-                        if let pinnedItem = settings.pinnedApps.first(where: {
-                            $0.path == shortcutPath
-                        }) {
-                            settings.unpinApp(pinnedItem)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        settings.pinItem(name: result.title, path: shortcutPath, type: .shortcut)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
+                EmptyView()
             } else if let filePath = result.filePath,
                 result.type == .file || result.type == .folder || result.type == .document
             {
-                if settings.pinnedApps.contains(where: { $0.path == filePath }) {
-                    Button {
-                        if let pinnedItem = settings.pinnedApps.first(where: { $0.path == filePath }
-                        ) {
-                            settings.unpinApp(pinnedItem)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        let itemType: PinnedApp.PinnedItemType =
-                            result.type == .folder ? .folder : .file
-                        settings.pinItem(name: result.title, path: filePath, type: itemType)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
-                Divider()
                 Button {
                     NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: "")
                 } label: {

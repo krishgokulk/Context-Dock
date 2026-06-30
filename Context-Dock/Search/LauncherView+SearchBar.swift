@@ -9,6 +9,9 @@ extension LauncherView {
             && currentDockSurfaceMode != .generalChat
             && !isCompactSmartScope
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // In Selection Scope the left input icon already shows the selection; the trailing
+            // button repeats the same icon (the redundant second box). Hide it there.
+            && !(isGlobalContextActive && hasActiveDockContextSelection)
             && currentSelectionActivationSnapshot(refresh: false) != nil
     }
 
@@ -1700,20 +1703,6 @@ extension LauncherView {
                                 globalRunningAppStrip
                             }
 
-                            // Selected file/text indicator next to "+" in Context Dock. NOT in
-                            // Global Context — there a selection IS the dedicated Selection Scope,
-                            // which renders its own indicator (showing both was the duplicate
-                            // "4 files chip + file icon" look).
-                            if hasActiveDockContextSelection, showContextInDock,
-                                !isGlobalContextActive,
-                                currentDockSurfaceMode != .generalChat
-                            {
-                                selectionFloatingPill
-                                    .transition(
-                                        .scale(scale: 0.86, anchor: .trailing)
-                                            .combined(with: .opacity))
-                            }
-
                             // Trailing area: a single status pill that the "+" morphs INTO during
                             // an action (spinner → ✓ / ✗), so there's never a separate tick pill
                             // next to the "+". Covers all phases; the "+" branch below only renders
@@ -2032,8 +2021,6 @@ extension LauncherView {
                                     contextDockSurface
                                         .transition(.opacity)
                                 }
-                            } else if !searchState.query.isEmpty {
-                                pinnedAppsListView
                             }
                         }
                         .frame(maxWidth: .infinity)

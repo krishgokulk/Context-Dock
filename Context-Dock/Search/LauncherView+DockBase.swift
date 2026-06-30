@@ -254,56 +254,7 @@ extension LauncherView {
 
     @ViewBuilder
     var pinnedAppsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                // Pinned apps
-                ForEach(settings.pinnedApps) { app in
-                    let runningInstance = runningApp(for: app)
-                    appIconButton(
-                        icon: resolvedPinnedIcon(for: app),
-                        label: app.name,
-                        isRunning: runningInstance != nil,
-                        runningApp: runningInstance,
-                        hoverKey: "pinned-\(app.id.uuidString)",
-                        onCloseRunningApp: runningInstance.map { runningApp in
-                            { terminateRunningAppFromDock(runningApp) }
-                        },
-                        action: { launchPinnedApp(app) }
-                    )
-                    .contextMenu {
-                        Button {
-                            settings.unpinApp(app)
-                        } label: {
-                            Label("Unpin from Launcher", systemImage: "pin.slash")
-                        }
-                        Divider()
-                        Button {
-                            launchPinnedApp(app)
-                        } label: {
-                            Label("Open", systemImage: "arrow.up.right.square")
-                        }
-                        if app.type == .folder {
-                            Button {
-                                NSWorkspace.shared.selectFile(
-                                    app.path, inFileViewerRootedAtPath: "")
-                            } label: {
-                                Label("Show in Finder", systemImage: "folder")
-                            }
-                        }
-                    }
-                    .onDrag {
-                        NSItemProvider(object: app.id.uuidString as NSString)
-                    }
-                    .onDrop(
-                        of: [.text],
-                        delegate: PinnedAppDropDelegate(
-                            item: app,
-                            pinnedApps: $settings.pinnedApps,
-                            settings: settings
-                        ))
-                }
-            }
-        }
+        EmptyView()
     }
 
     func preparedDockIcon(_ icon: NSImage?) -> NSImage? {
@@ -325,7 +276,7 @@ extension LauncherView {
         destructiveAction: (() -> Void)? = nil,
         destructivePhase: DockInlineFeedback.Phase? = nil,
         removeAction: (() -> Void)? = nil,
-        pinAction: (() -> Void)? = nil,  // double-click to pin
+        pinAction: (() -> Void)? = nil,
         previewApp: NSRunningApplication? = nil,
         action: @escaping () -> Void
     ) -> some View {
@@ -409,17 +360,7 @@ extension LauncherView {
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary.opacity(0.55))
-                            .padding(.trailing, pinAction != nil ? 8 : 12)
-                        if let pin = pinAction {
-                            Button(action: pin) {
-                                Image(systemName: "pin")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary.opacity(0.55))
-                                    .padding(.trailing, 12)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Pin \(label)")
-                        }
+                        .padding(.trailing, 12)
                     }
                 }
                 .frame(maxWidth: isExpanded ? .infinity : nil)
@@ -498,9 +439,6 @@ extension LauncherView {
             }
 
         }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded { pinAction?() }
-        )
         .onHover { hovering in
             guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.15, dampingFraction: 0.80)) {
@@ -513,7 +451,7 @@ extension LauncherView {
                 }
             }
         }
-        .help(pinAction != nil ? "\(label) — double-click to pin" : label)
+        .help(label)
     }
 
     func appIconButton(

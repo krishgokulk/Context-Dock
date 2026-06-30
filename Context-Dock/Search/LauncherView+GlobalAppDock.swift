@@ -186,7 +186,7 @@ extension LauncherView {
     var pinnedAndRecentAppsRow: some View {
         let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
 
-        let basePinnedApps = settings.pinnedApps
+        let basePinnedApps: [PinnedApp] = []
         let visiblePinnedApps =
             searchQuery.isEmpty
             ? basePinnedApps
@@ -278,12 +278,6 @@ extension LauncherView {
                             }
                             .contextMenu {
                                 Button {
-                                    settings.unpinApp(app)
-                                } label: {
-                                    Label("Unpin from Launcher", systemImage: "pin.slash")
-                                }
-                                Divider()
-                                Button {
                                     launchPinnedApp(app)
                                 } label: {
                                     Label("Open", systemImage: "arrow.up.right.square")
@@ -335,12 +329,7 @@ extension LauncherView {
         }
 
         let makePinAction: (SearchResult) -> (() -> Void)? = { result in
-            guard let path = result.filePath, !settings.isPinned(path: path) else { return nil }
-            return {
-                let bid = bundleIdentifierForApplicationPath(path)
-                settings.pinApp(name: result.title, path: path, bundleIdentifier: bid)
-                AppUsageLearner.shared.recordAction("pin:\(result.title)", inBundleID: nil)
-            }
+            nil
         }
 
         if matches.isEmpty {
@@ -536,13 +525,7 @@ extension LauncherView {
             return { terminateRunningAppFromDock(runningApp) }
         }
         let makePinAction: (SearchResult) -> (() -> Void)? = { result in
-            guard result.type == .application else { return nil }
-            guard let path = result.filePath, !settings.isPinned(path: path) else { return nil }
-            return {
-                let bid = bundleIdentifierForApplicationPath(path)
-                settings.pinApp(name: result.title, path: path, bundleIdentifier: bid)
-                AppUsageLearner.shared.recordAction("pin:\(result.title)", inBundleID: nil)
-            }
+            nil
         }
 
         return ScrollViewReader { proxy in
@@ -616,13 +599,7 @@ extension LauncherView {
                         .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                         .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                         .contextMenu {
-                            if let pinAction = makePinAction(result) {
-                                Button(action: pinAction) {
-                                    Label("Pin to Launcher", systemImage: "pin")
-                                }
-                            }
                             if let quitAction = makeQuitAction(result) {
-                                Divider()
                                 Button(role: .destructive, action: quitAction) {
                                     Label("Quit \(result.title)", systemImage: "xmark.circle")
                                 }

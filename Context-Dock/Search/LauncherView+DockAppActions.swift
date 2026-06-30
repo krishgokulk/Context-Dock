@@ -890,7 +890,17 @@ extension LauncherView {
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
-                    .help("Switch to \(app.localizedName ?? "app")")
+                    .onHover { hovering in
+                        guard acceptsMouseDrivenDockInteraction else { return }
+                        if hovering {
+                            RunningAppPreviewService.shared.scheduleShow(
+                                for: app,
+                                icon: resolvedRunningAppIcon(for: app)
+                            )
+                        } else {
+                            RunningAppPreviewService.shared.scheduleHide()
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 7)

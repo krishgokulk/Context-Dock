@@ -894,36 +894,7 @@ extension LauncherView {
 
     @ViewBuilder
     var pinnedAppsListView: some View {
-        let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
-        let basePinned = settings.pinnedApps
-        let visiblePinned =
-            searchQuery.isEmpty
-            ? basePinned
-            : basePinned.filter { $0.name.lowercased().contains(searchQuery) }
-
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 2) {
-                ForEach(Array(visiblePinned.enumerated()), id: \.element.id) { idx, app in
-                    let isRunning = runningApp(for: app) != nil
-                    appListRow(
-                        icon: resolvedPinnedIcon(for: app),
-                        name: app.name,
-                        subtitle: isRunning ? "Running" : "Launch",
-                        index: idx,
-                        previewApp: runningApp(for: app),
-                        action: {
-                            launchPinnedApp(app)
-                            if isGlobalContextActive {
-                                scheduleContextDockTransition(
-                                    bundleId: app.bundleIdentifier, appName: app.name)
-                            }
-                        }
-                    )
-                    .id("app-list-\(idx)")
-                }
-            }
-            .padding(6)
-        }
+        EmptyView()
         .frame(maxHeight: 320)
         .background {
             ZStack {
@@ -1149,7 +1120,7 @@ extension LauncherView {
         }
         if isGlobalContextActive {
             if q.isEmpty {
-                return !settings.pinnedApps.isEmpty
+                return false
             }
             if shouldUsePureGlobalAppSearch {
                 return true
