@@ -75,6 +75,51 @@ actor MCPRuntime {
         }
     }
 
+    // MARK: - Global (all-apps) access — used by the general AI chat
+
+    /// Aggregate tools from every configured server across all app adapters.
+    func allTools() async -> [(server: String, serverId: UUID, tool: MCPTool)] {
+        let configs = await MainActor.run { MCPServerManager.shared.servers }
+        var out: [(String, UUID, MCPTool)] = []
+        for config in configs {
+            let client = await connectedClient(for: config)
+            guard let client else { continue }
+            let toolList = await client.tools
+            for t in toolList { out.append((config.name, config.id, t)) }
+        }
+        return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
+    }
+
+    /// Tool-description block for ALL linked servers — injected into the general chat system prompt.
+    func toolPromptBlockForAll() async -> String {
+        let all = await allTools()
+        guard !all.isEmpty else { return "" }
+        var lines: [String] = [
+            "## MCP Tools (from your linked app adapters)",
+            "You can call any of these tools. To call one, reply with ONLY a single line of JSON:",
+            "{\"mcp_call\": {\"server\": \"<server>\", \"tool\": \"<tool>\", \"arguments\": { … }}}",
+            "After the tool result arrives, answer the user in plain language.",
+            "",
+            "Available tools:",
+        ]
+        for entry in all {
+            let desc = entry.tool.description.isEmpty ? "" : " — \(entry.tool.description)"
+            lines.append("- server \"\(entry.server)\", tool \"\(entry.tool.name)\"\(desc)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Dispatch a tool call to any configured server by name — no bundleId scope.
+    func callToolGlobally(server: String, tool: String, arguments: [String: Any]) async throws -> String {
+        let configs = await MainActor.run { MCPServerManager.shared.servers }
+        guard let config = configs.first(where: { $0.name == server }) ?? configs.first
+        else { throw MCPClientError.notConnected }
+        guard let client = await connectedClient(for: config) else {
+            throw MCPClientError.notConnected
+        }
+        return try await client.callTool(name: tool, arguments: arguments)
+    }
+
     func shutdownAll() async {
         for (_, client) in clients { await client.shutdown() }
         clients.removeAll()

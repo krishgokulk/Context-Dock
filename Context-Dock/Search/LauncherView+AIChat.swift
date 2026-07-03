@@ -2924,6 +2924,58 @@ extension LauncherView {
                 + " SHARE_VIA: <Mail|Messages|Notes|Reminders|AirDrop|Freeform>."
         }
 
+        // MCP tools from ALL linked app adapters — inject and use the tool loop so the AI
+        // can actually call them (search_items, notes.search, etc.).
+        let mcpBlock = await MCPRuntime.shared.toolPromptBlockForAll()
+        let provider = settings.selectedAIProvider
+        let apiKey: String? = {
+            let k = settings.getAPIKey(for: provider)
+            return k.isEmpty ? nil : k
+        }()
+
+        if !mcpBlock.isEmpty && provider != .onDevice && provider != .shortcuts {
+            sysContent += "\n\n" + mcpBlock
+            let mcpRan = MCPRunCollector()
+            let commandExecutor: (String, String) async -> (Bool, String) = { command, _ in
+                if let call = self.parseMCPCall(from: command) {
+                    let result = (try? await MCPRuntime.shared.callToolGlobally(
+                        server: call.server, tool: call.tool, arguments: call.arguments
+                    )) ?? "MCP tool failed"
+                    await mcpRan.add(
+                        "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+                    return (true, result)
+                }
+                return (false, "")
+            }
+            var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
+                query,
+                context: .none,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: history,
+                commandExecutor: commandExecutor,
+                systemPromptOverride: sysContent
+            )
+            // Fallback: model emitted a raw mcp_call as its final text instead of through the loop
+            if let resolved = await resolveMCPToolCallGlobally(
+                in: finalResponse, userQuery: query,
+                provider: provider, apiKey: apiKey, history: history, systemPrompt: sysContent)
+            {
+                finalResponse = resolved.answer
+                for tool in resolved.toolsRan { await mcpRan.add(tool) }
+            }
+            let toolsRan = await mcpRan.tools
+            // Attach MCP chips to the pending assistant message via a post-append patch
+            if !toolsRan.isEmpty {
+                await MainActor.run {
+                    if let idx = self.aiMode.messages.indices.last {
+                        self.aiMode.messages[idx].mcpToolsRan = toolsRan
+                    }
+                }
+            }
+            return finalResponse
+        }
+
         let request = AIRequestBuilder.aiChat(
             text: query,
             history: history,
@@ -2931,9 +2983,55 @@ extension LauncherView {
         )
         return try await AIProviderRouter.shared.sendPrepared(
             request: request,
-            provider: settings.selectedAIProvider,
+            provider: provider,
             contextPrompt: sysContent
         )
+    }
+
+    /// Like `resolveMCPToolCall` but dispatches globally (no bundleId scope).
+    func resolveMCPToolCallGlobally(
+        in response: String, userQuery: String,
+        provider: AIProvider, apiKey: String?, history: [ChatMessage], systemPrompt: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        guard parseMCPCall(from: response) != nil else { return nil }
+        let maxSteps = 5
+        var transcript = history
+        var current = response
+        var toolsRan: [String] = []
+        for _ in 0..<maxSteps {
+            guard let call = parseMCPCall(from: current) else {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+            }
+            let result: String
+            do {
+                result = try await MCPRuntime.shared.callToolGlobally(
+                    server: call.server, tool: call.tool, arguments: call.arguments)
+            } catch {
+                return (
+                    answer: "MCP tool "\(call.tool)" failed: \(error.localizedDescription)",
+                    toolsRan: toolsRan)
+            }
+            toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+            transcript.append(ChatMessage(role: .assistant, content: current))
+            let followup =
+                "Tool \"\(call.tool)\" returned:\n\(result)\n\n"
+                + "If you need another tool, reply with the same single-line JSON. "
+                + "Otherwise answer the user's request in plain language: \(userQuery)"
+            transcript.append(ChatMessage(role: .user, content: followup))
+            let next = (try? await AIProviderService.shared.sendWithTools(
+                followup, context: .none, provider: provider, apiKey: apiKey,
+                conversationHistory: transcript,
+                commandExecutor: { _, _ in (false, "") },
+                systemPromptOverride: systemPrompt.isEmpty ? nil : systemPrompt
+            ))?.finalResponse ?? ""
+            if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (answer: "MCP tool "\(call.tool)" result:\n\(result)", toolsRan: toolsRan)
+            }
+            current = next
+        }
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
