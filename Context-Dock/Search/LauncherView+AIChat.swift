@@ -3185,7 +3185,7 @@ extension LauncherView {
         )
         return try await AIProviderRouter.shared.sendPrepared(
             request: request,
-            provider: settings.selectedAIProvider,
+            provider: provider,
             contextPrompt: sysContent
         )
     }
@@ -3379,6 +3379,52 @@ extension LauncherView {
               let text = String(data: data, encoding: .utf8)
         else { return "{}" }
         return text
+    }
+
+    /// Like `resolveMCPToolCall` but dispatches globally (no bundleId scope).
+    func resolveMCPToolCallGlobally(
+        in response: String, userQuery: String,
+        provider: AIProvider, apiKey: String?, history: [ChatMessage], systemPrompt: String
+    ) async -> (answer: String, toolsRan: [String])? {
+        guard parseMCPCall(from: response) != nil else { return nil }
+        let maxSteps = 5
+        var transcript = history
+        var current = response
+        var toolsRan: [String] = []
+        for _ in 0..<maxSteps {
+            guard let call = parseMCPCall(from: current) else {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
+            }
+            let result: String
+            do {
+                result = try await MCPRuntime.shared.callToolGlobally(
+                    server: call.server, tool: call.tool, arguments: call.arguments)
+            } catch {
+                return (
+                    answer: "MCP tool \"\(call.tool)\" failed: \(error.localizedDescription)",
+                    toolsRan: toolsRan)
+            }
+            toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
+            transcript.append(ChatMessage(role: .assistant, content: current))
+            let followup =
+                "Tool \"\(call.tool)\" returned:\n\(result)\n\n"
+                + "If you need another tool, reply with the same single-line JSON. "
+                + "Otherwise answer the user's request in plain language: \(userQuery)"
+            transcript.append(ChatMessage(role: .user, content: followup))
+            let next = (try? await AIProviderService.shared.sendWithTools(
+                followup, context: .none, provider: provider, apiKey: apiKey,
+                conversationHistory: transcript,
+                commandExecutor: { _, _ in (false, "") },
+                systemPromptOverride: systemPrompt.isEmpty ? nil : systemPrompt
+            ))?.finalResponse ?? ""
+            if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return (answer: "MCP tool \"\(call.tool)\" result:\n\(result)", toolsRan: toolsRan)
+            }
+            current = next
+        }
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
