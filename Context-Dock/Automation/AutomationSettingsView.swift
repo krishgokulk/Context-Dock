@@ -2758,15 +2758,14 @@ struct GlobalCLIScopeDetailView: View {
 }
 
 enum AdapterDetailTab: String, CaseIterable, Identifiable {
-    case overview, actions, shortcuts, cli, mcp
+    case overview, actions, tools, advanced
     var id: String { rawValue }
     var title: String {
         switch self {
         case .overview: return "Overview"
         case .actions: return "Actions"
-        case .shortcuts: return "Shortcuts"
-        case .cli: return "CLI Tools"
-        case .mcp: return "MCP"
+        case .tools: return "Tools"
+        case .advanced: return "Advanced"
         }
     }
 }
@@ -2802,27 +2801,9 @@ struct AutomationAdapterDetailView: View {
                 overviewCard("Actions", "\(appOnlyActions.count)", icon: "bolt.fill", tint: .teal)
                 overviewCard("Shortcuts", "\(linkedShortcuts.count)", icon: "command", tint: .purple)
                 overviewCard("CLI Tools", "\(linkedCLITools.count)", icon: "terminal.fill", tint: .blue)
-                overviewCard("MCP Servers", "\(linkedMCPServers.count)", icon: "server.rack", tint: .orange)
+                let mcpTotal = linkedMCPServers.count + (a.bundleId == "com.apple.Notes" ? 1 : 0)
+                overviewCard("MCP Servers", "\(mcpTotal)", icon: "server.rack", tint: .orange)
             }
-            if !a.bundleId.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("BUNDLE ID").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                    Text(a.bundleId).font(.system(size: 12, design: .monospaced))
-                }
-            }
-            HStack(spacing: 8) {
-                Button(action: importAdapterPack) {
-                    Label("Import Adapter…", systemImage: "square.and.arrow.down")
-                }
-                Menu {
-                    Button { Task { await adapterManager.duplicateAdapter(bundleId: a.bundleId) } }
-                        label: { Label("Duplicate", systemImage: "plus.square.on.square") }
-                    Button(role: .destructive) { showDeleteConfirm = true }
-                        label: { Label("Delete", systemImage: "trash") }
-                } label: { Label("More", systemImage: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize()
-            }
-            .controlSize(.small)
         }
         .padding(16)
     }
@@ -2837,6 +2818,25 @@ struct AutomationAdapterDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func toolCard(_ title: String, count: Int, icon: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(tint)
+            }
+            Text(count == 0 ? "None linked" : "\(count) linked")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(count == 0 ? .secondary : .primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func importAdapterPack() {
@@ -3329,102 +3329,129 @@ struct AutomationAdapterDetailView: View {
                 }
                 }  // end: if detailTab == .actions
 
-                if detailTab == .shortcuts {
-                // MARK: Linked Shortcuts section
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Linked Shortcuts")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button {
-                            ShortcutsCatalog.shared.loadIfNeeded()
-                            showShortcutPicker = true
-                        } label: {
-                            Label("Add Shortcut", systemImage: "plus")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    }
+                if detailTab == .tools {
+                // MARK: - Tools tab
+                VStack(alignment: .leading, spacing: 0) {
 
-                    if linkedShortcuts.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("No linked shortcuts")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Link macOS Shortcuts to \(currentAdapter.appName). They appear in the dock — filtered alongside menus and actions — only when \(currentAdapter.appName) is frontmost.")
-                                .font(.system(size: 11))
+                    // Summary mini-grid
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        toolCard("Shortcuts", count: linkedShortcuts.count, icon: "command", tint: .purple)
+                        toolCard("CLI Tools", count: linkedCLITools.count, icon: "terminal.fill", tint: .green)
+                        toolCard("MCP Servers", count: linkedMCPServers.count + (currentAdapter.bundleId == "com.apple.Notes" ? 1 : 0), icon: "server.rack", tint: .orange)
+                    }
+                    .padding(16)
+
+                    Divider()
+
+                    // MARK: MCP Servers section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("MCP Servers")
+                                .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
+                            Spacer()
+                            Button { showMCPSheet = true } label: {
+                                Label("Add MCP", systemImage: "plus")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
                         }
-                        .padding(16)
-                        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                    } else {
-                        ForEach(linkedShortcuts) { action in
-                            HStack(spacing: 10) {
-                                ShortcutTileIcon(name: action.shortcutName ?? action.name)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(action.name)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .lineLimit(1)
-                                    Text("Shortcut")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button(role: .destructive) {
-                                    Task {
-                                        await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId)
+
+                        if currentAdapter.bundleId == "com.apple.Notes" {
+                            notesBuiltInMCPRow
+                        }
+
+                        if linkedMCPServers.isEmpty && currentAdapter.bundleId != "com.apple.Notes" {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("No linked MCP servers")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Link Model Context Protocol servers so scoped dock chat for \(currentAdapter.appName) can use their tools.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(16)
+                            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                        }
+
+                        if !linkedMCPServers.isEmpty {
+                            ForEach(linkedMCPServers) { server in
+                                HStack(spacing: 10) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color.purple.opacity(0.12))
+                                            .frame(width: 28, height: 28)
+                                        Image(systemName: "cpu")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(.purple)
                                     }
-                                } label: {
-                                    Image(systemName: "minus.circle")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.red.opacity(0.7))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(server.name)
+                                                .font(.system(size: 12, weight: .medium))
+                                            Text(server.transport)
+                                                .font(.system(size: 9, weight: .medium))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color.purple.opacity(0.12), in: Capsule())
+                                                .foregroundStyle(.purple)
+                                        }
+                                        Text(([server.command] + server.args).joined(separator: " "))
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer()
+                                    Button(role: .destructive) {
+                                        mcpManager.unlink(id: server.id, from: currentAdapter.bundleId)
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.red.opacity(0.7))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.vertical, 6)
-                            if action.id != linkedShortcuts.last?.id {
-                                Divider()
+                                .padding(.vertical, 6)
+                                if server.id != linkedMCPServers.last?.id { Divider() }
                             }
                         }
                     }
-                }
-                .padding(16)
-                }  // end: if detailTab == .shortcuts
+                    .padding(16)
 
-                if detailTab == .cli {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Linked CLI Tools")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button {
-                            showCLIToolPicker = true
-                        } label: {
-                            Label("Add CLI Tool", systemImage: "plus")
-                                .font(.system(size: 10, weight: .medium))
+                    Divider()
+
+                    // MARK: CLI Tools section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("CLI Tools")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button { showCLIToolPicker = true } label: {
+                                Label("Add CLI Tool", systemImage: "plus")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    }
 
-                    if linkedCLITools.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("No linked CLI tools")
-                                .font(.system(size: 13, weight: .medium))
-                            Text("Associate CLI tools to make scoped dock chat use their scanned `--help` knowledge for this app.")
+                        if linkedCLITools.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("No linked CLI tools")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Associate CLI tools to make scoped dock chat use their scanned `--help` knowledge for this app.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(16)
+                            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                        } else {
+                            Text("Scoped dock chat for \(currentAdapter.appName) can use these CLI tools and ask for approval before running generated commands.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
-                        }
-                        .padding(16)
-                        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                    } else {
-                        Text("Scoped dock chat for \(currentAdapter.appName) can use these CLI tools and ask for approval before running generated commands.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
 
-                        ForEach(linkedCLITools, id: \.id) { package in
+                            ForEach(linkedCLITools, id: \.id) { package in
                             HStack(spacing: 10) {
                                 ZStack {
                                     RoundedRectangle(cornerRadius: 8)
@@ -3492,76 +3519,52 @@ struct AutomationAdapterDetailView: View {
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .cli
 
-                if detailTab == .mcp {
-                // MARK: Linked MCP section
+                Divider()
+
+                // MARK: Shortcuts section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Text("Linked MCP")
+                        Text("Shortcuts")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button {
-                            showMCPSheet = true
+                            ShortcutsCatalog.shared.loadIfNeeded()
+                            showShortcutPicker = true
                         } label: {
-                            Label("Add MCP", systemImage: "plus")
+                            Label("Add Shortcut", systemImage: "plus")
                                 .font(.system(size: 10, weight: .medium))
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
                     }
 
-                    if currentAdapter.bundleId == "com.apple.Notes" {
-                        notesBuiltInMCPRow
-                    }
-
-                    if linkedMCPServers.isEmpty && currentAdapter.bundleId != "com.apple.Notes" {
+                    if linkedShortcuts.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("No linked MCP servers")
+                            Text("No linked shortcuts")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Link Model Context Protocol servers so scoped dock chat for \(currentAdapter.appName) can use their tools. Paste the app's mcpServers JSON config, or add a stdio command manually.")
+                            Text("Link macOS Shortcuts to \(currentAdapter.appName). They appear in the dock only when \(currentAdapter.appName) is frontmost.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                         .padding(16)
                         .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                    }
-
-                    if !linkedMCPServers.isEmpty {
-                        ForEach(linkedMCPServers) { server in
+                    } else {
+                        ForEach(linkedShortcuts) { action in
                             HStack(spacing: 10) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.purple.opacity(0.12))
-                                        .frame(width: 28, height: 28)
-                                    Image(systemName: "cpu")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.purple)
-                                }
-
+                                ShortcutTileIcon(name: action.shortcutName ?? action.name)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(server.name)
-                                            .font(.system(size: 12, weight: .medium))
-                                        Text(server.transport)
-                                            .font(.system(size: 9, weight: .medium))
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 1)
-                                            .background(Color.purple.opacity(0.12), in: Capsule())
-                                            .foregroundStyle(.purple)
-                                    }
-                                    Text(([server.command] + server.args).joined(separator: " "))
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundStyle(.secondary)
+                                    Text(action.name)
+                                        .font(.system(size: 12, weight: .medium))
                                         .lineLimit(1)
-                                        .truncationMode(.middle)
+                                    Text("Shortcut")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
                                 }
-
                                 Spacer()
-
                                 Button(role: .destructive) {
-                                    mcpManager.unlink(id: server.id, from: currentAdapter.bundleId)
+                                    Task { await adapterManager.deleteAction(id: action.id, from: currentAdapter.bundleId) }
                                 } label: {
                                     Image(systemName: "minus.circle")
                                         .font(.system(size: 13))
@@ -3570,14 +3573,42 @@ struct AutomationAdapterDetailView: View {
                                 .buttonStyle(.plain)
                             }
                             .padding(.vertical, 6)
-                            if server.id != linkedMCPServers.last?.id {
-                                Divider()
-                            }
+                            if action.id != linkedShortcuts.last?.id { Divider() }
                         }
                     }
                 }
                 .padding(16)
-                }  // end: if detailTab == .mcp
+                }  // end VStack / end: if detailTab == .tools
+                }  // end: if detailTab == .tools
+
+                if detailTab == .advanced {
+                // MARK: Advanced tab
+                VStack(alignment: .leading, spacing: 16) {
+                    if !currentAdapter.bundleId.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("BUNDLE ID")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(currentAdapter.bundleId)
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Button(action: importAdapterPack) {
+                            Label("Import Adapter…", systemImage: "square.and.arrow.down")
+                        }
+                        Menu {
+                            Button { Task { await adapterManager.duplicateAdapter(bundleId: currentAdapter.bundleId) } }
+                                label: { Label("Duplicate", systemImage: "plus.square.on.square") }
+                            Button(role: .destructive) { showDeleteConfirm = true }
+                                label: { Label("Delete", systemImage: "trash") }
+                        } label: { Label("More", systemImage: "ellipsis.circle") }
+                        .menuStyle(.borderlessButton).fixedSize()
+                    }
+                    .controlSize(.small)
+                }
+                .padding(16)
+                }  // end: if detailTab == .advanced
 
             }
         }
