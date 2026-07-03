@@ -25,7 +25,15 @@ final class AppleNotesMCPServer {
         guard AppSettings.shared.noteMCPAllowMetadataSearch else {
             throw AppleNotesError.permissionDenied("Metadata search is disabled.")
         }
-        try await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+        // If index is cold (never loaded or empty), block and fill it first
+        let count = await AppleNotesMetadataIndex.shared.cachedCount
+        if count == 0 {
+            try await AppleNotesMetadataIndex.shared.forceRefresh()
+        } else {
+            Task.detached(priority: .background) {
+                try? await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+            }
+        }
         let results = await AppleNotesMetadataIndex.shared.search(query: query, maxResults: maxResults)
         AppleNotesMCPAuditLogger.shared.record(
             toolName: "notes.search",
@@ -66,6 +74,25 @@ final class AppleNotesMCPServer {
         }
         try await AppleNotesMetadataIndex.shared.refreshIfNeeded()
         return await AppleNotesMetadataIndex.shared.search(query: "", maxResults: maxResults)
+    }
+
+    // MARK: - Deep search (full note body scan via AppleScript — slower but thorough)
+
+    func deepSearch(query: String, maxResults: Int = 20) async throws -> [NoteMetadata] {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        let results = try await AppleNotesExecutionService.shared.deepSearchBodies(
+            query: query, maxResults: maxResults
+        )
+        AppleNotesMCPAuditLogger.shared.record(
+            toolName: "notes.search",
+            noteIDs: results.map(\.id),
+            riskLevel: .low,
+            approvalStatus: .notRequired
+        )
+        return results
     }
 
     // MARK: - Read (approval handled by executor based on persistent-read setting)
