@@ -2881,7 +2881,6 @@ struct AutomationAdapterDetailView: View {
     @State private var apiBaseURL = ""
     @State private var apiKey = ""
     @State private var editingSkill: AdapterSkill?
-    @State private var showSkillEditor = false
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
@@ -3687,7 +3686,6 @@ struct AutomationAdapterDetailView: View {
                         Button {
                             editingSkill = AdapterSkill(
                                 adapterBundleId: currentAdapter.bundleId, name: "", instructions: "")
-                            showSkillEditor = true
                         } label: {
                             Label("Add Skill", systemImage: "plus")
                                 .font(.system(size: 10, weight: .medium))
@@ -3723,7 +3721,7 @@ struct AutomationAdapterDetailView: View {
                                     set: { skillStore.setEnabled($0, id: skill.id) }))
                                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
                                 Button {
-                                    editingSkill = skill; showSkillEditor = true
+                                    editingSkill = skill
                                 } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
                                 Button(role: .destructive) {
                                     skillStore.remove(id: skill.id)
@@ -4086,13 +4084,10 @@ struct AutomationAdapterDetailView: View {
             }
             .frame(width: 460)
         }
-        .sheet(isPresented: $showSkillEditor) {
-            if let skill = editingSkill {
-                SkillEditorSheet(skill: skill) { saved in
-                    if let saved { skillStore.upsert(saved) }
-                    showSkillEditor = false
-                    editingSkill = nil
-                }
+        .sheet(item: $editingSkill) { skill in
+            SkillEditorSheet(skill: skill) { saved in
+                if let saved { skillStore.upsert(saved) }
+                editingSkill = nil
             }
         }
         .sheet(isPresented: $showCLIToolPicker) {

@@ -56,3 +56,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 11:17 · `972a56bd` · `codex-context-dock-polish-fixes`
 **feat(webapps): full browser-scope chat for Safari Web Apps + fix trigger-rule hijack**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 11:42 · `7e82c4d8` · `codex-context-dock-polish-fixes`
+**feat(agentic): placeholder-proof commands, file-ready badges, seeded skills**
+Swift: +1 added · ~4 modified · -0 deleted
