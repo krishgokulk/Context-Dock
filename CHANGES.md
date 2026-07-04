@@ -104,3 +104,7 @@ Swift: +0 added · ~6 modified · -0 deleted
 ## 2026-07-04 23:23 · `5d5b02e8` · `codex-context-dock-polish-fixes`
 **feat(global): instant result rows + token-app pills on no-match, ↓ expands them**
 Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-04 23:38 · `d6dbb94b` · `codex-context-dock-polish-fixes`
+**perf(global): async pill-query rebuild + menu-only results deferred behind ↓**
+Swift: +0 added · ~6 modified · -0 deleted

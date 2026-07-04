@@ -1272,6 +1272,14 @@ extension LauncherView {
         }
 
         globalContextViewModel.cachedGroupedFingerprint = fingerprint
+        // Track whether the result sheet is open for this typing session: rows open
+        // it; an emptied query closes it. Menu-only commits leave it as-is so an
+        // already-open sheet never collapses mid-typing (no dock jump).
+        if query.isEmpty {
+            globalContextViewModel.sheetOpenForQuerySession = false
+        } else if !commitState.appResults.isEmpty {
+            globalContextViewModel.sheetOpenForQuerySession = true
+        }
         let signpostState = SearchPerformanceLog.shared.beginInterval(
             "global.stateCommit",
             query: query

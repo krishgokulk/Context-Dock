@@ -190,6 +190,9 @@ extension LauncherView {
     /// the sheet stays collapsed; the strip shows the owning app's pill instead.
     func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
         !globalMenuResultsRevealed
+            // Never collapse a sheet that already opened this typing session —
+            // the rows→menu-only transition must not make the dock jump.
+            && !globalContextViewModel.sheetOpenForQuerySession
             && !presentation.query.isEmpty
             && presentation.matches.isEmpty
             && (!presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty)
