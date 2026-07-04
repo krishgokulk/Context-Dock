@@ -684,11 +684,19 @@ extension LauncherView {
     }
 
     func liveBrowserPageURLString() -> String? {
-        let pid = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+        let previousApp = AppDelegate.shared?.previousFrontmostApp
+        let pid = previousApp?.processIdentifier ?? 0
+        // Fresh on-demand AX read — the only source that works for Safari Web Apps
+        // (no extension, no address bar, cached context may point at the dock).
+        let liveAXRead: String? = {
+            guard let previousApp, let bundleId = previousApp.bundleIdentifier else { return nil }
+            return AXContextReader.shared.liveCurrentURL(pid: pid, bundleId: bundleId)
+        }()
         return (SafariBrowserBridge.shared.isFresh ? SafariBrowserBridge.shared.latestContext?.url : nil)
             ?? AXWebReader.shared.cachedSnapshot(for: pid)?.url
             ?? axContext.currentURL
             ?? AXContextReader.shared.current.currentURL
+            ?? liveAXRead
             ?? SafariTabManager.shared.lastSelectedTab()?.url
     }
 

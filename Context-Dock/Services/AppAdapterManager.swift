@@ -360,6 +360,7 @@ final class AppAdapterManager: ObservableObject {
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
         await seedStarterActionsIntoEmptyAdapters()
         await AdapterIntegrationSeeder.seedIfNeeded()
+        AdapterSkillSeeder.seedIfNeeded()
     }
 
     /// One-time backfill: any existing adapter with zero actions gets its starter set,

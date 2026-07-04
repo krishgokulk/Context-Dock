@@ -52,3 +52,7 @@ Swift: +1 added · ~2 modified · -0 deleted
 ## 2026-07-04 10:47 · `237aa8fc` · `codex-context-dock-polish-fixes`
 **fix(dock): attach frontmost document to scoped chat + favicon in chat header**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 11:17 · `972a56bd` · `codex-context-dock-polish-fixes`
+**feat(webapps): full browser-scope chat for Safari Web Apps + fix trigger-rule hijack**
+Swift: +0 added · ~2 modified · -0 deleted
