@@ -36,3 +36,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-04 09:15 · `a13cfede` · `codex-context-dock-polish-fixes`
 **Expose all linked MCP tools in general AI chat**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 09:20 · `312b1c96` · `codex-context-dock-polish-fixes`
+**Add built-in Calendar, Contacts, Reminders, and GitHub integrations**
+Swift: +4 added · ~4 modified · -0 deleted

@@ -32,8 +32,12 @@ final class GeneralChatCapabilityHub {
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
     func capabilityPromptBlock(compact: Bool = false) async -> String {
+        // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
+        // so a flipped toggle shows up on the very next message.
+        let builtinLines = builtInCapabilityLines()
         if let cachedBlock, Date().timeIntervalSince(cachedAt) < cacheTTL {
-            return compact ? compacted(cachedBlock) : cachedBlock
+            let block = joinedBlock(cachedBlock, builtinLines: builtinLines)
+            return compact ? compacted(block) : block
         }
 
         var mcpLines: [String] = []
@@ -55,7 +59,7 @@ final class GeneralChatCapabilityHub {
         let historyApps = savedChatApps()
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 
-        guard !mcpLines.isEmpty || !historyLines.isEmpty else {
+        guard !mcpLines.isEmpty || !historyLines.isEmpty || !builtinLines.isEmpty else {
             cachedBlock = ""
             cachedAt = Date()
             return ""
@@ -91,7 +95,43 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
-        return compact ? compacted(block) : block
+        let full = joinedBlock(block, builtinLines: builtinLines)
+        return compact ? compacted(full) : full
+    }
+
+    /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/
+    /// GitHub) — callable with server "builtin" through the same mcp_call JSON.
+    private func builtInCapabilityLines() -> [String] {
+        let prefixes = ["notes.", "calendar.", "contacts.", "reminders.", "github."]
+        let caps = CapabilityRegistry.shared.all.filter { cap in
+            prefixes.contains(where: cap.id.hasPrefix)
+        }
+        guard !caps.isEmpty else { return [] }
+        var lines = [
+            "",
+            "Built-in tools (call with server \"builtin\", no app needed):",
+        ]
+        for cap in caps {
+            let fields = cap.inputSchema.fields
+                .map { "\($0.name)\($0.required ? "" : "?")" }
+                .joined(separator: ", ")
+            lines.append("- tool \"\(cap.id)\": \(cap.title) | input: [\(fields)]")
+        }
+        return lines
+    }
+
+    private func joinedBlock(_ base: String, builtinLines: [String]) -> String {
+        if builtinLines.isEmpty { return base }
+        if base.isEmpty {
+            let header = [
+                "## App Tools (available in General Chat)",
+                "To call a tool, reply with ONLY one line of JSON and nothing else:",
+                "{\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"<tool>\", \"arguments\": { … }}}",
+                "After the tool result returns, answer the user's question in plain language.",
+            ]
+            return (header + builtinLines).joined(separator: "\n")
+        }
+        return base + "\n" + builtinLines.joined(separator: "\n")
     }
 
     private func compacted(_ block: String) -> String {
@@ -119,6 +159,28 @@ final class GeneralChatCapabilityHub {
             let server = (mcp["server"] as? String) ?? ""
             let arguments = (mcp["arguments"] as? [String: Any]) ?? [:]
             let appRef = (mcp["app"] as? String) ?? (mcp["bundleId"] as? String) ?? ""
+            // Built-in capability ids (notes.search, calendar.today, …) win over MCP
+            // server tools — there is no overlap in practice.
+            if CapabilityRegistry.shared.capability(id: tool) != nil {
+                let input = arguments.mapValues { value -> String in
+                    if let s = value as? String { return s }
+                    return "\(value)"
+                }
+                let plan = AIActionPlan(
+                    capability: tool, input: input, explanation: "Requested from AI chat")
+                do {
+                    let result = try await AIExecutionEngine.shared.executeWithApproval(
+                        plan, context: .none)
+                    return ToolCallResult(
+                        handled: true, success: true, output: result.output,
+                        label: "\(tool) via built-in")
+                } catch {
+                    return ToolCallResult(
+                        handled: true, success: false,
+                        output: "Tool \(tool) failed: \(error.localizedDescription)",
+                        label: "\(tool) via built-in")
+                }
+            }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {
                 return ToolCallResult(
                     handled: true, success: false,
