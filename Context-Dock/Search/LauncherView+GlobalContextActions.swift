@@ -1166,6 +1166,18 @@ extension LauncherView {
                 limit: appRowLimit
             )
         }()
+        // 1–2 char queries: apps only. Menu / role / content matching keeps its
+        // existing 3+ char gate — skipping that work here is what makes short
+        // queries filter instantly.
+        if q.count < 3, !isTerminationQuery {
+            return finish(GlobalGroupedListNavigationState(
+                appResults: appResults,
+                menuPills: [],
+                menuGroups: [],
+                appMenuGroups: [],
+                menuFirst: false
+            ), label: "instantGlobalGroupedListNavigationState.shortQuery")
+        }
         let runningMenuGroupCount = max(
             currentRegularRunningApps().count,
             runningRegularApps.count

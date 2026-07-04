@@ -60,3 +60,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 11:42 · `7e82c4d8` · `codex-context-dock-polish-fixes`
 **feat(agentic): placeholder-proof commands, file-ready badges, seeded skills**
 Swift: +1 added · ~4 modified · -0 deleted
+
+## 2026-07-04 11:49 · `d28ccd7e` · `codex-context-dock-polish-fixes`
+**fix(skills): empty skill editor sheet — use item-based sheet presentation**
+Swift: +0 added · ~1 modified · -0 deleted

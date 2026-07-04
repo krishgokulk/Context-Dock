@@ -1591,6 +1591,23 @@ extension LauncherView {
                                         if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                             launcherViewModel.inlineDockFeedback = nil
                                         }
+                                        // Global Context app search filters instantly like the
+                                        // file index — no 85 ms defer between keystroke and rows.
+                                        // The deferred pass still runs for everything else.
+                                        if isL2ContextActive, shouldUsePureGlobalAppSearch,
+                                            lockedSubmenuParent == nil, lockedFindToken == nil,
+                                            !isContextDockChatRoutingLocked, !isCompactSmartScope,
+                                            searchState.activeSmartQueryKey == nil
+                                        {
+                                            let q = newValue
+                                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                                .lowercased()
+                                            if globalInlineAppScope == nil {
+                                                scheduleGlobalAppMatchRebuild(query: q)
+                                            } else {
+                                                scheduleGlobalGroupedListRebuild(query: q)
+                                            }
+                                        }
                                         scheduleDeferredQueryChange(from: oldValue, to: newValue)
                                         if currentDockSurfaceMode == .globalContext,
                                             !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2547,18 +2564,9 @@ extension LauncherView {
                     loadApplicationsInBackground()
                 }
                 if !allowMenuOrCrossAppMatching, globalInlineAppScope == nil {
-                    globalAppMatchGeneration &+= 1
-                    globalAppMatchTask?.cancel()
-                    globalAppMatchTask = nil
-                    pendingGlobalAppQuery = nil
-                    cachedGlobalAppQuery = ""
-                    cachedGlobalAppMatches = []
-                    globalGroupedGeneration &+= 1
-                    globalGroupedTask?.cancel()
-                    globalGroupedTask = nil
-                    pendingGlobalGroupedQuery = nil
-                    cachedGlobalGroupedQuery = ""
-                    cachedGlobalGroupedState = nil
+                    // 1–2 chars: app rows still filter live (menu / cross-app matching
+                    // stays gated at 3+ chars inside the grouped state builder).
+                    scheduleGlobalAppMatchRebuild(query: q)
                     resetCollapseTimer()
                     return
                 }
