@@ -244,12 +244,8 @@ extension LauncherView {
                 {
                     return nil
                 }
-                if self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    self.currentSelectionActivationSnapshot(refresh: true) != nil
-                {
-                    self.openSelectionContextFromTrailingButton()
-                    return nil
-                }
+                // Right arrow always drives the "+" actions (attach folder / frontmost
+                // chat). Selection Scope opens ONLY from clicking its trailing icon.
                 if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
                     return nil
                 }

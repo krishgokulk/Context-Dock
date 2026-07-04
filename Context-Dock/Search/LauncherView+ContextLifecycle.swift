@@ -1484,6 +1484,9 @@ extension LauncherView {
         refreshCachedFinderCurrentDirectory(for: app.bundleIdentifier ?? "")
         checkClipboardForGlobalContext()
         autoReturnFromGlobalContextIfNeeded()
+        // A file selected in Finder WHILE the dock is open must surface the trailing
+        // selection button live — the lightweight AX poll below never reads selection.
+        refreshFinderSelectionContextFromFinder()
 
         let bundleId = app.bundleIdentifier ?? ""
         let pid = app.processIdentifier

@@ -76,3 +76,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 12:44 · `57f70e7a` · `codex-context-dock-polish-fixes`
 **feat(dock): pin button replaces duplicate close, backspace clears+exits chat**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-04 12:57 · `577ac456` · `codex-context-dock-polish-fixes`
+**fix(dock): backspace in scoped chat returns to frontmost menu search + VS Code live state**
+Swift: +0 added · ~2 modified · -0 deleted
