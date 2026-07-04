@@ -24,3 +24,15 @@ Swift: +107 added · ~100 modified · -4 deleted
 ## 2026-06-25 00:53 · `ba364e3c` · `codex-context-dock-polish-fixes`
 **chore: point updater at main branch instead of feature branch**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-04 09:12 · `9ccd7dc6` · `codex-context-dock-polish-fixes`
+**feat(chat): agentic tool loop in general chat + Notes MCP speedups**
+Swift: +4 added · ~35 modified · -0 deleted
+
+## 2026-07-04 09:14 · `bb1c8918` · `codex-context-dock-polish-fixes`
+**Fix AppleScript syntax error and make Notes MCP search robust**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-04 09:15 · `a13cfede` · `codex-context-dock-polish-fixes`
+**Expose all linked MCP tools in general AI chat**
+Swift: +0 added · ~2 modified · -0 deleted

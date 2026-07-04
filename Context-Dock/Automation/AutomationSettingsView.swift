@@ -2894,6 +2894,10 @@ struct AutomationAdapterDetailView: View {
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
     @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
+    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = false
+    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = false
+    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = false
+    @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
     /// Plugin-style summary for the Overview tab — feels alive even with no actions.
     @ViewBuilder
@@ -3073,12 +3077,19 @@ struct AutomationAdapterDetailView: View {
         mcpManager.servers(forBundleId: currentAdapter.bundleId)
     }
 
-    private var hasEnabledNotesBuiltInMCP: Bool {
-        currentAdapter.bundleId == "com.apple.Notes" && noteMCPEnabled
+    private var hasEnabledBuiltInIntegration: Bool {
+        switch currentAdapter.bundleId {
+        case "com.apple.Notes": return noteMCPEnabled
+        case "com.apple.iCal": return calendarMCPEnabled
+        case "com.apple.AddressBook": return contactsMCPEnabled
+        case "com.apple.reminders": return remindersMCPEnabled
+        case "com.github.GitHubClient": return githubMCPEnabled
+        default: return false
+        }
     }
 
     private var linkedMCPServerCount: Int {
-        linkedMCPServers.count + (hasEnabledNotesBuiltInMCP ? 1 : 0)
+        linkedMCPServers.count + (hasEnabledBuiltInIntegration ? 1 : 0)
     }
 
     @ViewBuilder
@@ -3114,7 +3125,9 @@ struct AutomationAdapterDetailView: View {
 
                 Spacer()
 
-                Toggle("", isOn: $noteMCPEnabled)
+                Toggle("", isOn: liveRegisteringBinding($noteMCPEnabled) {
+                    AppleNotesMCPCapabilities.register(in: CapabilityRegistry.shared)
+                })
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
@@ -3129,6 +3142,123 @@ struct AutomationAdapterDetailView: View {
             if !linkedMCPServers.isEmpty {
                 Divider()
             }
+        }
+    }
+
+    /// True when this adapter has a first-party built-in integration (Notes, Calendar,
+    /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
+    private var hasBuiltInIntegration: Bool {
+        ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
+         "com.github.GitHubClient"].contains(currentAdapter.bundleId)
+    }
+
+    /// Generic built-in integration row (same look as the Notes MCP row) for
+    /// Calendar / Contacts / Reminders / GitHub adapters.
+    @ViewBuilder
+    private func builtInIntegrationRow(
+        title: String, capabilities: String, icon: String, tint: Color, isOn: Binding<Bool>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(tint.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(tint)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .medium))
+                        Text("built-in")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(tint.opacity(0.18), in: Capsule())
+                            .foregroundStyle(tint)
+                    }
+                    Text(capabilities)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: isOn)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+            .padding(.vertical, 6)
+
+            if !linkedMCPServers.isEmpty {
+                Divider()
+            }
+        }
+    }
+
+    /// Registers the given built-in capability set the moment the toggle flips on, so the
+    /// AI can use it without an app restart. (There is no unregister — flipping off relies
+    /// on each executor's own settings guard until next launch.)
+    private func liveRegisteringBinding(
+        _ source: Binding<Bool>, register: @escaping @MainActor () -> Void
+    ) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                if newValue { MainActor.assumeIsolated { register() } }
+            }
+        )
+    }
+
+    /// The built-in integration row for the current adapter, if it has one (non-Notes).
+    @ViewBuilder
+    private var builtInIntegrationRowForCurrentAdapter: some View {
+        switch currentAdapter.bundleId {
+        case "com.apple.iCal":
+            builtInIntegrationRow(
+                title: "DoraX Calendar",
+                capabilities: "today · list upcoming · search · create event",
+                icon: "calendar", tint: .red,
+                isOn: liveRegisteringBinding($calendarMCPEnabled) {
+                    AppleCalendarMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.AddressBook":
+            builtInIntegrationRow(
+                title: "DoraX Contacts",
+                capabilities: "search · contact details",
+                icon: "person.crop.circle", tint: .brown,
+                isOn: liveRegisteringBinding($contactsMCPEnabled) {
+                    AppleContactsMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.reminders":
+            builtInIntegrationRow(
+                title: "DoraX Reminders",
+                capabilities: "today · list · create reminder",
+                icon: "checklist", tint: .orange,
+                isOn: liveRegisteringBinding($remindersMCPEnabled) {
+                    AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.github.GitHubClient":
+            builtInIntegrationRow(
+                title: "DoraX GitHub (gh CLI)",
+                capabilities: "list issues · list PRs · repo info · create issue",
+                icon: "chevron.left.forwardslash.chevron.right", tint: .purple,
+                isOn: liveRegisteringBinding($githubMCPEnabled) {
+                    GitHubMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        default:
+            EmptyView()
         }
     }
 
@@ -3792,9 +3922,11 @@ struct AutomationAdapterDetailView: View {
 
                     if currentAdapter.bundleId == "com.apple.Notes" {
                         notesBuiltInMCPRow
+                    } else {
+                        builtInIntegrationRowForCurrentAdapter
                     }
 
-                    if linkedMCPServers.isEmpty && currentAdapter.bundleId != "com.apple.Notes" {
+                    if linkedMCPServers.isEmpty && !hasBuiltInIntegration {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("No linked MCP servers")
                                 .font(.system(size: 13, weight: .medium))

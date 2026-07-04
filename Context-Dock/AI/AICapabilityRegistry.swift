@@ -118,6 +118,19 @@ final class CapabilityRegistry {
         if AppSettings.shared.noteMCPEnabled {
             AppleNotesMCPCapabilities.register(in: self)
         }
+        // Apple system app MCP capabilities — each guarded by its own flag
+        if AppSettings.shared.calendarMCPEnabled {
+            AppleCalendarMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.contactsMCPEnabled {
+            AppleContactsMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.remindersMCPEnabled {
+            AppleRemindersMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.githubMCPEnabled {
+            GitHubMCPCapabilities.register(in: self)
+        }
 
         register(
             AICapability(
