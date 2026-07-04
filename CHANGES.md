@@ -116,3 +116,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-04 23:45 · `78756771` · `codex-context-dock-polish-fixes`
 **fix(global): no dock jump — open result sheet never collapses mid-typing**
 Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-05 00:01 · `e1a7b9d4` · `codex-context-dock-polish-fixes`
+**fix(global): menu-only deferral unconditional + animated content collapse**
+Swift: +0 added · ~4 modified · -0 deleted

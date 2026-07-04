@@ -189,10 +189,14 @@ extension LauncherView {
     /// Menu-only match (no app/command rows) that has not been revealed with ↓ yet —
     /// the sheet stays collapsed; the strip shows the owning app's pill instead.
     func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
+        // ALL result types defer while typing: the dock stays a compact bar with
+        // matching pills in the strip; ↓ glides the full sheet in. App scopes and
+        // launch hints keep their immediate list.
         !globalMenuResultsRevealed
             && !presentation.query.isEmpty
-            && presentation.matches.isEmpty
-            && (!presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty)
+            && (!presentation.matches.isEmpty
+                || !presentation.menuPills.isEmpty
+                || !presentation.appMenuGroups.isEmpty)
             && presentation.scopedMenuAppName == nil
             && presentation.launchHint == nil
             && globalInlineAppScope == nil

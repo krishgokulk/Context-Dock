@@ -389,12 +389,11 @@ extension LauncherView {
                 }
 
                 switch event.keyCode {
-                case 125:  // Down — reveal deferred menu-only results first, then navigate
+                case 125:  // Down — first press reveals the deferred sheet, then navigates
                     if !self.globalMenuResultsRevealed,
-                        groupedState.appResults.isEmpty,
                         self.globalInlineAppScope == nil
                     {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.9)) {
                             self.globalMenuResultsRevealed = true
                         }
                         return nil

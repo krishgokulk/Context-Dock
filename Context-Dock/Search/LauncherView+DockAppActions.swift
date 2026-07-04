@@ -963,12 +963,24 @@ extension LauncherView {
         // Deferred menu-only matches: strip shows the OWNING app's pill; ↓ (or tap)
         // expands the menu result sheet.
         let menuOwners = globalStripMenuOwnerApps
-        // Token-fallback: no row matched the full query → the strip becomes the
-        // matching-app icons for each query word (instant feedback; ↓ expands rows).
-        let tokenResults = menuOwners.isEmpty && globalStripShowsTokenMatches
-            ? tokenMatchedAppResults(
-                for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-            : []
+        // Deferred app matches: while the sheet is collapsed behind ↓, the strip
+        // shows the top matching apps. Falls back to per-word token matches when
+        // nothing matched the full query.
+        let tokenResults: [SearchResult] = {
+            guard menuOwners.isEmpty, !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch
+            else { return [] }
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !q.isEmpty else { return [] }
+            if cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+                let state = cachedGlobalGroupedState, !state.appResults.isEmpty
+            {
+                return Array(state.appResults.prefix(5))
+            }
+            if globalStripShowsTokenMatches {
+                return tokenMatchedAppResults(for: q)
+            }
+            return []
+        }()
         let apps = menuOwners.isEmpty && tokenResults.isEmpty ? globalRunningAppStripApps : []
         return Group {
             if !menuOwners.isEmpty {
