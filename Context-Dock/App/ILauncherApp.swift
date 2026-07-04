@@ -635,7 +635,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(
             NSMenuItem(
-                title: "Show Launcher (\(settings.hotkeyDisplayString))",
+                title: "Show Launcher (⌥⌥ · \(settings.hotkeyDisplayString))",
                 action: #selector(showLauncherFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(

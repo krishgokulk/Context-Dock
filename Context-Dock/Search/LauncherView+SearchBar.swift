@@ -1839,24 +1839,21 @@ extension LauncherView {
                                 .help("Open clipboard")
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
-                                    // Live selection appears NEXT TO the other trailing
-                                    // controls, never replacing them.
-                                    if shouldShowSelectionTrailingButton {
-                                        selectionTrailingButton
-                                    }
                                     if isContextDockChatConnected {
                                         contextDockChatCloseButton
+                                    }
+                                    // Live selection appears to the RIGHT of the other
+                                    // trailing controls, never replacing them.
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
                                     }
                                 }
                             } else if showContextInDock {
                                 // "+" affordance per frontmost app: Finder window → attach the
                                 // current folder for search; any other app → connect frontmost-app
                                 // chat. Pressing → (or the button) turns the "+" into "−".
-                                // A live selection shows its icon BESIDE the "+", not instead.
+                                // A live selection shows its icon to the RIGHT of the "+".
                                 HStack(spacing: 6) {
-                                    if shouldShowSelectionTrailingButton {
-                                        selectionTrailingButton
-                                    }
                                     if isContextDockChatConnected {
                                         contextDockChatCloseButton
                                     } else if !isCompactSmartScope {
@@ -1874,6 +1871,9 @@ extension LauncherView {
                                         {
                                             contextDockChatButton
                                         }
+                                    }
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
                                     }
                                 }
                             } else if shouldShowSelectionTrailingButton {

@@ -84,3 +84,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 14:16 · `0023e379` · `codex-context-dock-polish-fixes`
 **fix(dock): live selection button while dock open + right arrow always drives '+' actions**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 14:28 · `a9035f03` · `codex-context-dock-polish-fixes`
+**fix(dock): selection icon renders beside the '+' button, not instead of it**
+Swift: +0 added · ~1 modified · -0 deleted
