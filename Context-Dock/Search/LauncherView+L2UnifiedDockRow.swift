@@ -186,19 +186,35 @@ extension LauncherView {
         }
     }
 
+    /// Menu-only match (no app/command rows) that has not been revealed with ↓ yet —
+    /// the sheet stays collapsed; the strip shows the owning app's pill instead.
+    func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
+        !globalMenuResultsRevealed
+            && !presentation.query.isEmpty
+            && presentation.matches.isEmpty
+            && (!presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty)
+            && presentation.scopedMenuAppName == nil
+            && presentation.launchHint == nil
+            && globalInlineAppScope == nil
+    }
+
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
-        globalAppSearchListView(
-            query: presentation.query,
-            matches: presentation.matches,
-            menuPills: presentation.menuPills,
-            appMenuGroups: presentation.appMenuGroups,
-            launchHint: presentation.launchHint,
-            scopedMenuAppName: presentation.scopedMenuAppName,
-            scopedMenuActionQuery: presentation.scopedMenuActionQuery,
-            isLoading: presentation.isLoading,
-            menuFirst: false
-        )
+        if isDeferredMenuOnlyPresentation(presentation) {
+            EmptyView()
+        } else {
+            globalAppSearchListView(
+                query: presentation.query,
+                matches: presentation.matches,
+                menuPills: presentation.menuPills,
+                appMenuGroups: presentation.appMenuGroups,
+                launchHint: presentation.launchHint,
+                scopedMenuAppName: presentation.scopedMenuAppName,
+                scopedMenuActionQuery: presentation.scopedMenuActionQuery,
+                isLoading: presentation.isLoading,
+                menuFirst: false
+            )
+        }
     }
 
     @ViewBuilder
@@ -223,7 +239,9 @@ extension LauncherView {
         if shouldUsePureGlobalAppSearch {
             l2.appCompletion = nil
             l2.showResultsPopover = false
-            scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 0)
+            // Keystroke path — default delay coalesces the build between keystrokes
+            // so typing never blocks on it.
+            scheduleGlobalAppMatchRebuild(query: newQuery)
             return
         }
         if isFinderDesktopOnlyMode {

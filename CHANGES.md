@@ -100,3 +100,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-04 23:03 · `b4bfdafb` · `codex-context-dock-polish-fixes`
 **feat(global): Siri-style deferred results — pill row while typing, ↓ reveals list**
 Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-04 23:23 · `5d5b02e8` · `codex-context-dock-polish-fixes`
+**feat(global): instant result rows + token-app pills on no-match, ↓ expands them**
+Swift: +0 added · ~6 modified · -0 deleted

@@ -1602,6 +1602,9 @@ extension LauncherView {
                                             let q = newValue
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
+                                            // Every edit re-collapses menu-only results
+                                            // behind ↓ (apps/commands rows stay instant).
+                                            globalMenuResultsRevealed = false
                                             if globalInlineAppScope == nil {
                                                 scheduleGlobalAppMatchRebuild(query: q)
                                             } else {

@@ -389,7 +389,16 @@ extension LauncherView {
                 }
 
                 switch event.keyCode {
-                case 125:  // Down — move through grouped app/menu rows
+                case 125:  // Down — reveal deferred menu-only results first, then navigate
+                    if !self.globalMenuResultsRevealed,
+                        groupedState.appResults.isEmpty,
+                        self.globalInlineAppScope == nil
+                    {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                            self.globalMenuResultsRevealed = true
+                        }
+                        return nil
+                    }
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )

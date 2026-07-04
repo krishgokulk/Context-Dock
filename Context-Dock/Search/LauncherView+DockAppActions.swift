@@ -929,16 +929,85 @@ extension LauncherView {
         return true
     }
 
+    /// Apps that own the deferred menu-only matches ("save new notes" → Notes) —
+    /// shown as strip pills while the menu sheet is collapsed behind ↓.
+    var globalStripMenuOwnerApps: [(bundleId: String, icon: NSImage?, name: String)] {
+        guard !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch else { return [] }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty,
+            cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+            let state = cachedGlobalGroupedState,
+            state.appResults.isEmpty, state.totalCount > 0
+        else { return [] }
+        var seen = Set<String>()
+        var owners: [(bundleId: String, icon: NSImage?, name: String)] = []
+        let ownerBundleIds =
+            state.menuPills.map(\.sourceBundleId)
+            + state.appMenuGroups.compactMap { $0.pills.first?.sourceBundleId }
+        for bundleId in ownerBundleIds {
+            let trimmed = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed)
+            let icon = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
+            let name = url.map {
+                FileManager.default.displayName(atPath: $0.path)
+                    .replacingOccurrences(of: ".app", with: "")
+            } ?? trimmed
+            owners.append((trimmed, icon, name))
+            if owners.count >= 5 { break }
+        }
+        return owners
+    }
+
     var globalRunningAppStrip: some View {
+        // Deferred menu-only matches: strip shows the OWNING app's pill; ↓ (or tap)
+        // expands the menu result sheet.
+        let menuOwners = globalStripMenuOwnerApps
         // Token-fallback: no row matched the full query → the strip becomes the
         // matching-app icons for each query word (instant feedback; ↓ expands rows).
-        let tokenResults = globalStripShowsTokenMatches
+        let tokenResults = menuOwners.isEmpty && globalStripShowsTokenMatches
             ? tokenMatchedAppResults(
                 for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
             : []
-        let apps = tokenResults.isEmpty ? globalRunningAppStripApps : []
+        let apps = menuOwners.isEmpty && tokenResults.isEmpty ? globalRunningAppStripApps : []
         return Group {
-            if !tokenResults.isEmpty {
+            if !menuOwners.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(menuOwners, id: \.bundleId) { owner in
+                        Button {
+                            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                                globalMenuResultsRevealed = true
+                            }
+                        } label: {
+                            if let icon = owner.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help("\(owner.name) — press ↓ to show results")
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+            } else if !tokenResults.isEmpty {
                 HStack(spacing: 5) {
                     ForEach(Array(tokenResults.enumerated()), id: \.offset) { _, result in
                         Button {

@@ -96,6 +96,9 @@ final class LauncherViewModel: ObservableObject {
 final class GlobalContextViewModel: ObservableObject {
     @Published var state = GlobalContextState()
     @Published var focusedAppPillIndex: Int?
+    /// Menu-only matches (no app/command rows) stay collapsed to the owning app's
+    /// pill in the strip; ↓ reveals the menu result sheet. Reset on query change.
+    @Published var menuResultsRevealed = false
     @Published var cachedAppQuery = ""
     @Published var cachedAppMatches: [SearchResult] = []
     var pendingAppQuery: String?
