@@ -251,6 +251,12 @@ extension LauncherView {
             + "the live context. If no linked integration can do what the user asks, say what "
             + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
             + "\(appName) (Tools tab: CLI, MCP, API, Shortcuts).")
+        if !clis.isEmpty {
+            lines.append(
+                "ACT, don't ask: when a linked CLI can print the information the user wants "
+                + "(status, list, current state), emit the CMD: line immediately instead of "
+                + "asking the user to provide it.")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -346,12 +352,20 @@ extension LauncherView {
     func exitContextDockChatBackToContext() {
         let chatApp = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         let frontApp = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scopedApp = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Bound to the frontmost app when the chat draft OR the locked scope IS the
+        // frontmost app — either way, exiting must land on that app's menu search,
+        // never Global Context.
         let boundToFrontmost =
             !frontApp.isEmpty
-            && l2.targetApp == nil
+            && (l2.targetApp == nil || scopedApp == frontApp)
             && (chatApp.isEmpty || chatApp == frontApp)
         if boundToFrontmost {
             exitContextDockChatSheet()
+            l2.targetApp = nil
+            if !allGlobalInlineAppScopes.isEmpty {
+                clearGlobalInlineAppScope(preserveQuery: false)
+            }
             // Force the frontmost app's Context Dock, not Global Context.
             globalContextActivation = nil
             showContextInDock = true
@@ -1360,6 +1374,9 @@ extension LauncherView {
         query: String
     ) async -> String {
         let normalizedApp = "\(bundleId) \(appName)".lowercased()
+        if normalizedApp.contains("vscode") || bundleId == "com.microsoft.VSCode" {
+            return await vsCodeRuntimeContextPrompt(query: query)
+        }
         guard normalizedApp.contains("tailscale") else { return "" }
 
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1398,6 +1415,36 @@ extension LauncherView {
         State-changing Tailscale commands such as `tailscale up`, `tailscale down`, `tailscale logout`, or `tailscale set ...` still require explicit user approval.
 
         \(blocks.joined(separator: "\n\n"))
+        """
+    }
+
+    /// Live VS Code state: `code --status` prints the running instance's workspace
+    /// folders and open windows — so "what am I working with?" is answered with real
+    /// data instead of asking the user. Read-only, runs only for state-style queries.
+    func vsCodeRuntimeContextPrompt(query: String) async -> String {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wantsState =
+            q.contains("work") || q.contains("project") || q.contains("workspace")
+            || q.contains("file") || q.contains("open") || q.contains("folder")
+            || q.contains("what") || q.contains("which") || q.contains("current")
+        guard wantsState else { return "" }
+
+        // The `code` shim often isn't on PATH — use the linked package's resolved
+        // binary (app-bundle path needs quoting for its spaces).
+        let codeBinary = TerminalPackageManager.shared.packages.first {
+            $0.command == "code" && $0.isInstalled
+        }?.installedPath
+        let codeInvocation = codeBinary.map { "\"\($0)\"" } ?? "code"
+        let result = await TerminalAIBridge.shared.processAICommand(
+            "\(codeInvocation) --status", purpose: "Read VS Code workspace and window state")
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.success, !output.isEmpty else { return "" }
+        return """
+        ## Live VS Code Snapshot (`code --status`)
+        Read-only output from the running VS Code instance. The "Workspace Stats" \
+        section lists the folders and windows actually open — use it as factual state.
+
+        \(String(output.prefix(3000)))
         """
     }
 

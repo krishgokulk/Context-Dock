@@ -72,3 +72,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 12:18 · `819b62ea` · `codex-context-dock-polish-fixes`
 **feat(scoped-chat): always-on app identity + integration inventory block**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 12:44 · `57f70e7a` · `codex-context-dock-polish-fixes`
+**feat(dock): pin button replaces duplicate close, backspace clears+exits chat**
+Swift: +0 added · ~4 modified · -0 deleted

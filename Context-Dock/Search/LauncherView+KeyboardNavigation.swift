@@ -183,6 +183,27 @@ extension LauncherView {
                 }
             }
 
+            // Frontmost-app chat open + empty field: backspace clears the chat and
+            // returns to that app's menu search. This MUST run before the inline-scope
+            // pops below, which would otherwise dump the user into Global Context.
+            if event.keyCode == 51,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed
+            {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                    self.l2.chatMessages = []
+                    if let key = self.l2.activeDockSessionKey {
+                        AppPanelChatStore.shared.clear(for: key)
+                    }
+                    self.l2.isLoading = false
+                    self.l2.currentTask?.cancel()
+                    self.l2.currentTask = nil
+                    self.exitContextDockChatBackToContext()
+                }
+                self.isSearchFieldFocused = true
+                return nil
+            }
+
             if event.keyCode == 51, self.isGlobalContextActive,
                 let scope = self.trailingGlobalInlineAppScopeForBackspace()
             {
