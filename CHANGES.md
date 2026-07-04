@@ -80,3 +80,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-04 12:57 · `577ac456` · `codex-context-dock-polish-fixes`
 **fix(dock): backspace in scoped chat returns to frontmost menu search + VS Code live state**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 14:16 · `0023e379` · `codex-context-dock-polish-fixes`
+**fix(dock): live selection button while dock open + right arrow always drives '+' actions**
+Swift: +0 added · ~2 modified · -0 deleted

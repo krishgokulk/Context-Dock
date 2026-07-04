@@ -1837,34 +1837,47 @@ extension LauncherView {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Open clipboard")
-                            } else if shouldShowSelectionTrailingButton {
-                                selectionTrailingButton
                             } else if isGlobalContextActive {
-                                if isContextDockChatConnected {
-                                    contextDockChatCloseButton
+                                HStack(spacing: 6) {
+                                    // Live selection appears NEXT TO the other trailing
+                                    // controls, never replacing them.
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
+                                    }
+                                    if isContextDockChatConnected {
+                                        contextDockChatCloseButton
+                                    }
                                 }
                             } else if showContextInDock {
                                 // "+" affordance per frontmost app: Finder window → attach the
                                 // current folder for search; any other app → connect frontmost-app
                                 // chat. Pressing → (or the button) turns the "+" into "−".
-                                if isContextDockChatConnected {
-                                    contextDockChatCloseButton
-                                } else if !isCompactSmartScope {
-                                    let finderContext =
-                                        frontmost.bundleID == "com.apple.finder"
-                                        || l2.targetApp?.bundleId == "com.apple.finder"
-                                    if finderContext {
-                                        // Finder window present (not desktop-only) → "+" attaches
-                                        // the current folder for recursive/content search.
-                                        if canAttachCurrentFinderFolderToConversation {
-                                            addFinderFolderButton
+                                // A live selection shows its icon BESIDE the "+", not instead.
+                                HStack(spacing: 6) {
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
+                                    }
+                                    if isContextDockChatConnected {
+                                        contextDockChatCloseButton
+                                    } else if !isCompactSmartScope {
+                                        let finderContext =
+                                            frontmost.bundleID == "com.apple.finder"
+                                            || l2.targetApp?.bundleId == "com.apple.finder"
+                                        if finderContext {
+                                            // Finder window present (not desktop-only) → "+" attaches
+                                            // the current folder for recursive/content search.
+                                            if canAttachCurrentFinderFolderToConversation {
+                                                addFinderFolderButton
+                                            }
+                                        } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
+                                            frontmost.bundleID != Bundle.main.bundleIdentifier
+                                        {
+                                            contextDockChatButton
                                         }
-                                    } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
-                                        frontmost.bundleID != Bundle.main.bundleIdentifier
-                                    {
-                                        contextDockChatButton
                                     }
                                 }
+                            } else if shouldShowSelectionTrailingButton {
+                                selectionTrailingButton
                             }
                         }
                     }
