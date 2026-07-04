@@ -120,3 +120,7 @@ Swift: +0 added · ~0 modified · -0 deleted
 ## 2026-07-05 00:01 · `e1a7b9d4` · `codex-context-dock-polish-fixes`
 **fix(global): menu-only deferral unconditional + animated content collapse**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-05 00:18 · `68106a6e` · `codex-context-dock-polish-fixes`
+**feat(global): full deferral — dock stays compact while typing, ↓ glides sheet in**
+Swift: +0 added · ~3 modified · -0 deleted
