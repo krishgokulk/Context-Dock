@@ -635,7 +635,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         menu.addItem(
             NSMenuItem(
-                title: "Show Launcher (⌥⌥ · \(settings.hotkeyDisplayString))",
+                title: "Show Launcher (⌥⌥)",
                 action: #selector(showLauncherFromMenu), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(
@@ -1028,52 +1028,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func registerGlobalHotkey() {
-        // Use Carbon API for reliable global hotkey registration
-        // Use settings for keyCode and modifiers
-
-        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6E63), id: 1)  // 'ILnc'
-
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
-
-        // Install event handler
-        let handler: EventHandlerUPP = { (nextHandler, theEvent, userData) -> OSStatus in
-            guard let appDelegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee
-            else {
-                return noErr
-            }
-            appDelegate.toggleLauncher()
-            return noErr
+        // Double-press Option (⌥⌥) is the ONLY launcher activation — the legacy
+        // Carbon key combo (⌘D / ⌥Space) is retired and never registered. This
+        // also clears any previously registered launcher hotkey ref.
+        if let hotKeyRef = hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
         }
-
-        var selfPointer = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
-        selfPointer.initialize(to: self)
-
-        InstallEventHandler(
-            GetApplicationEventTarget(), handler, 1, &eventType, selfPointer, &eventHandler)
-
-        // Register the hotkey using settings
-        let status = RegisterEventHotKey(
-            settings.hotkeyKeyCode,
-            settings.hotkeyModifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
-
-        if status != noErr {
-            #if DEBUG
-            print("Failed to register global hotkey: \(status)")
-            #endif
-        } else {
-            #if DEBUG
-            print("Successfully registered global hotkey: \(settings.hotkeyDisplayString)")
-            #endif
-        }
-        // Always add NSEvent monitor as belt-and-suspenders alongside Carbon
-        // (Carbon alone can be unreliable on macOS 14+ for accessory apps)
-        fallbackToNSEventMonitoring()
     }
 
     func unregisterGlobalHotkey() {

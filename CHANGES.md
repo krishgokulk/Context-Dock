@@ -88,3 +88,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 14:28 · `a9035f03` · `codex-context-dock-polish-fixes`
 **fix(dock): selection icon renders beside the '+' button, not instead of it**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-04 14:41 · `24909636` · `codex-context-dock-polish-fixes`
+**fix(dock): selection icon sits right of '+' + menu bar shows real ⌥⌥ shortcut**
+Swift: +0 added · ~2 modified · -0 deleted
