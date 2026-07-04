@@ -997,6 +997,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Always-float: never auto-hide on focus loss (incl. when a launched/menu-acted
         // app comes frontmost). Dismiss only via Escape / hotkey.
         guard !settings.alwaysFloatDock else { return }
+        // Pinned via the pin button: stays floating over every app until unpinned.
+        guard !settings.launcherPinned else { return }
         guard Date() >= suppressHideOnResignUntil else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
@@ -1821,6 +1823,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hideLauncher(force: Bool = false) {
         WebQuickLookPanel.shared.close()
         guard let window = launcherWindow else { return }
+        // Pinned: stay floating over every app — even after actions run. Only a
+        // forced hide (Escape / hotkey toggle) dismisses, which also unpins.
+        if !force && settings.launcherPinned {
+            window.orderFrontRegardless()
+            return
+        }
+        if force { settings.launcherPinned = false }
         if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
             window.alphaValue = 1
             applyPersistentDockBehavior()

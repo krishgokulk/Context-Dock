@@ -68,3 +68,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-04 12:02 · `85d6e4c0` · `codex-context-dock-polish-fixes`
 **perf(global): instant keystroke filtering in Global Context search**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 12:18 · `819b62ea` · `codex-context-dock-polish-fixes`
+**feat(scoped-chat): always-on app identity + integration inventory block**
+Swift: +0 added · ~2 modified · -0 deleted

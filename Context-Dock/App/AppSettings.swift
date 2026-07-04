@@ -830,6 +830,10 @@ class AppSettings: ObservableObject {
     /// When on, the dock never auto-hides on focus loss or after an action runs — it
     /// stays floating until explicitly dismissed (Escape / hotkey).
     @AppStorage("alwaysFloatDock") var alwaysFloatDock: Bool = false
+    /// User pinned the launcher via the pin button: it floats above every app and
+    /// never auto-hides on focus loss until unpinned. Session-scoped by design —
+    /// a relaunch starts unpinned.
+    @Published var launcherPinned: Bool = false
     @AppStorage("enableSpotlightSearch") var enableSpotlightSearch: Bool = true
     @AppStorage("enableL1DocumentSearch") var enableL1DocumentSearch: Bool = true
     @AppStorage("enableL1FileSearch") var enableL1FileSearch: Bool = true

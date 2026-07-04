@@ -401,21 +401,32 @@ extension LauncherView {
         .help(isContextDockChatConnected ? "AI conversation connected" : "Connect AI conversation")
     }
 
+    /// Trailing pin toggle (replaces the old duplicate "−" close button — the scope
+    /// chip's "−" already exits the chat). Pinned = launcher floats over every app
+    /// and never auto-hides until unpinned.
     var contextDockChatCloseButton: some View {
         Button {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                exitContextDockChatAndScope()
+                settings.launcherPinned.toggle()
             }
             isSearchFieldFocused = true
         } label: {
-            Image(systemName: "minus")
+            Image(systemName: settings.launcherPinned ? "pin.fill" : "pin")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary.opacity(0.70))
+                .foregroundStyle(
+                    settings.launcherPinned
+                        ? AnyShapeStyle(Color.orange.opacity(0.9))
+                        : AnyShapeStyle(.secondary.opacity(0.70)))
                 .frame(width: 22, height: 22)
-                .background(Color.white.opacity(0.07), in: Circle())
+                .background(
+                    settings.launcherPinned
+                        ? Color.orange.opacity(0.16) : Color.white.opacity(0.07),
+                    in: Circle())
         }
         .buttonStyle(.plain)
-        .help("Close AI conversation")
+        .help(settings.launcherPinned
+            ? "Unpin — launcher hides normally again"
+            : "Pin — keep floating over all apps")
     }
 
     /// Right-arrow on a non-Finder frontmost app in Context Dock (empty field, idle)

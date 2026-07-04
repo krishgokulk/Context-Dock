@@ -654,7 +654,15 @@ extension LauncherView {
                 }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        // Frontmost-app chat → back to that app's menu search, not Global Context.
+                        // Backspace on an empty frontmost chat: CLEAR the conversation and
+                        // return to the app's menu search — a fresh chat next time.
+                        l2.chatMessages = []
+                        if let key = l2.activeDockSessionKey {
+                            AppPanelChatStore.shared.clear(for: key)
+                        }
+                        l2.isLoading = false
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
                         exitContextDockChatBackToContext()
                     }
                     isSearchFieldFocused = true
