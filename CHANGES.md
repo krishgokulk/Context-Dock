@@ -108,3 +108,7 @@ Swift: +0 added · ~6 modified · -0 deleted
 ## 2026-07-04 23:38 · `d6dbb94b` · `codex-context-dock-polish-fixes`
 **perf(global): async pill-query rebuild + menu-only results deferred behind ↓**
 Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-04 23:44 · `66498371` · `codex-context-dock-polish-fixes`
+**fix(global): no dock jump — open result sheet never collapses mid-typing**
+Swift: +0 added · ~4 modified · -0 deleted
