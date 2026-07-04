@@ -44,6 +44,36 @@ enum AdapterSkillSeeder {
         if changed {
             UserDefaults.standard.set(Array(seeded).sorted(), forKey: seededKey)
         }
+
+        migrateSeededBasicsSkills()
+    }
+
+    /// v1.0 → v1.1: seeded "Assistant Basics" skills gain the app-awareness rule
+    /// (never claim you can't see which app is open). Only touches untouched
+    /// seeded skills — user-edited versions keep their edits.
+    private static func migrateSeededBasicsSkills() {
+        for skill in SkillStore.shared.skills
+        where skill.id.hasPrefix("seed.") && skill.id.hasSuffix(".basics") && skill.version == "1.0" {
+            guard let adapter = AppAdapterManager.shared.adapters.first(where: {
+                $0.bundleId == skill.adapterBundleId
+            }) else { continue }
+            var updated = skill
+            updated.version = "1.1"
+            updated.instructions = basicsInstructions(appName: adapter.appName)
+            SkillStore.shared.upsert(updated)
+        }
+    }
+
+    static func basicsInstructions(appName: String) -> String {
+        """
+        You are assisting inside \(appName) — you always know this is the app in use; \
+        never say you cannot see which app is open. Ground every answer in the live \
+        app context (window title, selection, current document/page) before answering. \
+        Prefer this adapter's linked CLI tools, MCP tools and actions over generic advice — \
+        choose the single best tool for the request. When you run a command, state what \
+        it does in one short sentence first. If no linked tool fits, say what you CAN do \
+        and suggest linking one in Settings → App Adapters → \(appName).
+        """
     }
 
     // MARK: - Skill content
@@ -89,14 +119,8 @@ enum AdapterSkillSeeder {
                 adapterBundleId: adapter.bundleId,
                 name: "\(adapter.appName) Assistant Basics",
                 summary: "Starter skill — edit me to teach the AI your workflow",
-                instructions: """
-                You are assisting inside \(adapter.appName). Ground every answer in the live \
-                app context (window title, selection, current document/page) before answering. \
-                Prefer this adapter's linked CLI tools, MCP tools and actions over generic advice. \
-                When you run a command, state what it does in one short sentence first. \
-                If the request needs something outside \(adapter.appName), say so briefly and \
-                suggest where to do it instead of guessing.
-                """
+                instructions: basicsInstructions(appName: adapter.appName),
+                version: "1.1"
             ))
         }
 

@@ -178,6 +178,82 @@ extension LauncherView {
             """
     }
 
+    /// Identity + integration inventory for the scoped app. ALWAYS injected into
+    /// scoped chat so the model knows which app it serves, what the app is, and
+    /// every tool it may pick (actions, CLI, MCP, API, shortcuts) — or what to
+    /// suggest adding when nothing fits.
+    @MainActor
+    func scopedAppIdentityBlock(bundleId: String, appName: String) -> String {
+        guard !bundleId.isEmpty || !appName.isEmpty else { return "" }
+
+        // What kind of surface is this?
+        let surface: String = {
+            if bundleId.hasPrefix("com.apple.Safari.WebApp") {
+                let host = currentBrowserPageURL()?.host
+                    ?? webResearch.pages.last.flatMap { URL(string: $0.url)?.host }
+                return "a Safari Web App (the website \(host ?? "it wraps") running as a standalone app)"
+            }
+            if isContextDockBrowserBundle(bundleId) { return "a web browser" }
+            return "a macOS app"
+        }()
+
+        var lines: [String] = [
+            "## Scoped App: \(appName)\(bundleId.isEmpty ? "" : " (\(bundleId))")",
+            "This chat is scoped to \(appName) — \(surface). It is the app the user is",
+            "currently using. You DO know which app is open: it is \(appName).",
+            "Never claim you cannot see which app is open or ask the user what app they mean.",
+        ]
+        let windowTitle = (axContext.bundleId == bundleId ? axContext.windowTitle : nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let windowTitle, !windowTitle.isEmpty {
+            lines.append("Frontmost window title: \"\(windowTitle)\"")
+        }
+
+        // Integration inventory
+        let adapter = adapterManager.adapters.first { $0.bundleId == bundleId }
+        let actions = adapter?.actions ?? []
+        let clis = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
+        }
+        let mcpServers = MCPServerManager.shared.servers(forBundleId: bundleId)
+        let apiConns = APIConnectionStore.shared.connections(for: bundleId)
+        let shortcuts = actions.filter { $0.type == .shortcut }
+        let skillCount = SkillStore.shared.skills(for: bundleId).filter(\.isEnabled).count
+
+        lines.append("")
+        lines.append("Integrations linked to \(appName) (pick the best fit for each request):")
+        lines.append(
+            actions.isEmpty
+                ? "- Actions: none"
+                : "- Actions: " + actions.prefix(10).map(\.name).joined(separator: ", "))
+        lines.append(
+            clis.isEmpty
+                ? "- CLI tools: none linked"
+                : "- CLI tools (run via CMD: lines): "
+                    + clis.map { "\($0.command)\($0.isInstalled ? "" : " (not installed)")" }
+                        .joined(separator: ", "))
+        lines.append(
+            mcpServers.isEmpty
+                ? "- MCP servers: none linked"
+                : "- MCP servers: " + mcpServers.map(\.name).joined(separator: ", "))
+        if !apiConns.isEmpty {
+            lines.append("- API connections: " + apiConns.map(\.name).joined(separator: ", "))
+        }
+        if !shortcuts.isEmpty {
+            lines.append("- macOS Shortcuts: " + shortcuts.compactMap(\.shortcutName).joined(separator: ", "))
+        }
+        if skillCount > 0 {
+            lines.append("- Skills: \(skillCount) active (their instructions follow below)")
+        }
+        lines.append("")
+        lines.append(
+            "Tool choice order: MCP tool → linked CLI (CMD:) → adapter action → answer from "
+            + "the live context. If no linked integration can do what the user asks, say what "
+            + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
+            + "\(appName) (Tools tab: CLI, MCP, API, Shortcuts).")
+        return lines.joined(separator: "\n")
+    }
+
     var shouldShowContextDockAIQueryFallback: Bool {
         guard showContextInDock,
             !isGlobalContextActive,
@@ -2482,9 +2558,19 @@ extension LauncherView {
                 let skillsBlock = await MainActor.run {
                     SkillStore.shared.instructionsBlock(for: scopedBundleId)
                 }
+                // Always-present identity + tool inventory: WHICH app this chat is
+                // scoped to and every integration it can use. Without this the model
+                // claims it "cannot see which app is open".
+                let identityBlock = await MainActor.run {
+                    self.scopedAppIdentityBlock(
+                        bundleId: scopedBundleId,
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName
+                    )
+                }
                 let activeContextPrompt = [
-                    finalContextPrompt, runtimeCLIContextPrompt, appleData, mcpBlock,
-                    browserPageBlock, skillsBlock,
+                    identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
+                    mcpBlock, browserPageBlock, skillsBlock,
                 ]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n")

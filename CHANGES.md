@@ -64,3 +64,7 @@ Swift: +1 added · ~4 modified · -0 deleted
 ## 2026-07-04 11:49 · `d28ccd7e` · `codex-context-dock-polish-fixes`
 **fix(skills): empty skill editor sheet — use item-based sheet presentation**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-04 12:02 · `85d6e4c0` · `codex-context-dock-polish-fixes`
+**perf(global): instant keystroke filtering in Global Context search**
+Swift: +0 added · ~2 modified · -0 deleted
