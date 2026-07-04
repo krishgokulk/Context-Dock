@@ -2925,19 +2925,32 @@ extension LauncherView {
         }
 
         // MCP tools from ALL linked app adapters — inject and use the tool loop so the AI
-        // can actually call them (search_items, notes.search, etc.).
+        // can actually call them (search_items, notes.search, etc.). Built-in app
+        // capabilities (Notes/Calendar/Contacts/Reminders/GitHub) join the same loop
+        // under server "builtin".
         let mcpBlock = await MCPRuntime.shared.toolPromptBlockForAll()
+        let builtinBlock = await builtInCapabilityPromptBlock()
         let provider = settings.selectedAIProvider
         let apiKey: String? = {
             let k = settings.getAPIKey(for: provider)
             return k.isEmpty ? nil : k
         }()
 
-        if !mcpBlock.isEmpty && provider != .onDevice && provider != .shortcuts {
-            sysContent += "\n\n" + mcpBlock
+        if (!mcpBlock.isEmpty || !builtinBlock.isEmpty)
+            && provider != .onDevice && provider != .shortcuts
+        {
+            if !mcpBlock.isEmpty { sysContent += "\n\n" + mcpBlock }
+            if !builtinBlock.isEmpty { sysContent += "\n\n" + builtinBlock }
             let mcpRan = MCPRunCollector()
             let commandExecutor: (String, String) async -> (Bool, String) = { command, _ in
                 if let call = self.parseMCPCall(from: command) {
+                    // Built-in capability ids win over MCP server tools (no overlap in practice)
+                    if let output = await self.executeBuiltInCapability(
+                        tool: call.tool, arguments: call.arguments)
+                    {
+                        await mcpRan.add("\(call.tool) via built-in")
+                        return (true, output)
+                    }
                     let result = (try? await MCPRuntime.shared.callToolGlobally(
                         server: call.server, tool: call.tool, arguments: call.arguments
                     )) ?? "MCP tool failed"
@@ -2988,6 +3001,58 @@ extension LauncherView {
         )
     }
 
+    /// Prompt block describing enabled built-in app capabilities (Notes, Calendar,
+    /// Contacts, Reminders, GitHub) so the general chat can call them via the same
+    /// mcp_call JSON with server "builtin". Empty when none are enabled.
+    func builtInCapabilityPromptBlock() async -> String {
+        await MainActor.run {
+            let prefixes = ["notes.", "calendar.", "contacts.", "reminders.", "github."]
+            let caps = CapabilityRegistry.shared.all.filter { cap in
+                prefixes.contains(where: cap.id.hasPrefix)
+            }
+            guard !caps.isEmpty else { return "" }
+            var lines = [
+                "## Built-in App Tools",
+                "You can also call these built-in tools with the same single-line JSON format, using server \"builtin\":",
+                "{\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"<tool id>\", \"arguments\": { … }}}",
+                "",
+                "Available built-in tools:",
+            ]
+            for cap in caps {
+                let fields = cap.inputSchema.fields.map { f in
+                    "\(f.name)\(f.required ? "" : "?")"
+                }.joined(separator: ", ")
+                lines.append("- \(cap.id): \(cap.title) | input: [\(fields)]")
+            }
+            return lines.joined(separator: "\n")
+        }
+    }
+
+    /// Execute a built-in capability requested from the general chat tool loop.
+    /// Returns nil when `tool` is not a registered capability (so the MCP path runs).
+    /// Medium/high-risk capabilities still go through the normal approval UI.
+    func executeBuiltInCapability(tool: String, arguments: [String: Any]) async -> String? {
+        let isRegistered = await MainActor.run {
+            CapabilityRegistry.shared.capability(id: tool) != nil
+        }
+        guard isRegistered else { return nil }
+        let input = arguments.mapValues { value -> String in
+            if let s = value as? String { return s }
+            return "\(value)"
+        }
+        let plan = AIActionPlan(
+            capability: tool, input: input, explanation: "Requested from AI chat"
+        )
+        do {
+            let result = try await AIExecutionEngine.shared.executeWithApproval(
+                plan, context: .none
+            )
+            return result.output
+        } catch {
+            return "Tool \(tool) failed: \(error.localizedDescription)"
+        }
+    }
+
     /// Like `resolveMCPToolCall` but dispatches globally (no bundleId scope).
     func resolveMCPToolCallGlobally(
         in response: String, userQuery: String,
@@ -3004,15 +3069,22 @@ extension LauncherView {
                 return trimmed.isEmpty ? nil : (answer: trimmed, toolsRan: toolsRan)
             }
             let result: String
-            do {
-                result = try await MCPRuntime.shared.callToolGlobally(
-                    server: call.server, tool: call.tool, arguments: call.arguments)
-            } catch {
-                return (
-                    answer: "MCP tool "\(call.tool)" failed: \(error.localizedDescription)",
-                    toolsRan: toolsRan)
+            if let builtinOutput = await executeBuiltInCapability(
+                tool: call.tool, arguments: call.arguments)
+            {
+                result = builtinOutput
+                toolsRan.append("\(call.tool) via built-in")
+            } else {
+                do {
+                    result = try await MCPRuntime.shared.callToolGlobally(
+                        server: call.server, tool: call.tool, arguments: call.arguments)
+                } catch {
+                    return (
+                        answer: "MCP tool “\(call.tool)” failed: \(error.localizedDescription)",
+                        toolsRan: toolsRan)
+                }
+                toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
             }
-            toolsRan.append("\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
             transcript.append(ChatMessage(role: .assistant, content: current))
             let followup =
                 "Tool \"\(call.tool)\" returned:\n\(result)\n\n"
@@ -3026,7 +3098,7 @@ extension LauncherView {
                 systemPromptOverride: systemPrompt.isEmpty ? nil : systemPrompt
             ))?.finalResponse ?? ""
             if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return (answer: "MCP tool "\(call.tool)" result:\n\(result)", toolsRan: toolsRan)
+                return (answer: "MCP tool “\(call.tool)” result:\n\(result)", toolsRan: toolsRan)
             }
             current = next
         }

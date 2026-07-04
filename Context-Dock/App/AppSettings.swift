@@ -896,6 +896,12 @@ class AppSettings: ObservableObject {
     @AppStorage("noteMCPPreferLocalAI") var noteMCPPreferLocalAI: Bool = true
     @AppStorage("noteMCPRequireCloudApproval") var noteMCPRequireCloudApproval: Bool = true
 
+    // Apple system apps MCP — off by default; user opts in per-app
+    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = false
+    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = false
+    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = false
+    @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
+
     // UI Feature Toggles
     @AppStorage("enableStatusBar") var enableStatusBar: Bool = true  // Show status bar extensions
     @AppStorage("enableFrontmostDetection") var enableFrontmostDetection: Bool = true  // Show frontmost app context
