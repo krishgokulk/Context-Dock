@@ -1317,19 +1317,35 @@ extension LauncherView {
             return
         }
 
-        let state = instantGlobalGroupedListNavigationState(for: q)
-        setCachedGlobalGroupedState(query: q, state: state, animated: false)
-        pendingGlobalGroupedQuery = nil
-        globalGroupedTask = nil
+        let commit: () -> Void = {
+            let state = self.instantGlobalGroupedListNavigationState(for: q)
+            self.setCachedGlobalGroupedState(query: q, state: state, animated: false)
+            self.pendingGlobalGroupedQuery = nil
+            self.globalGroupedTask = nil
 
-        let immediateMS = Date().timeIntervalSince(scheduleStarted) * 1_000
-        if immediateMS >= 8 {
-            SearchPerformanceLog.shared.record(
-                label: "scheduleGlobalGroupedListRebuild.sync",
-                elapsedMS: immediateMS,
-                query: q,
-                pills: state.appResults.count + state.menuPills.count
-            )
+            let elapsedMS = Date().timeIntervalSince(scheduleStarted) * 1_000
+            if elapsedMS >= 8 {
+                SearchPerformanceLog.shared.record(
+                    label: "scheduleGlobalGroupedListRebuild.commit",
+                    elapsedMS: elapsedMS,
+                    query: q,
+                    pills: state.appResults.count + state.menuPills.count
+                )
+            }
+        }
+
+        guard delayNanoseconds > 0 else {
+            commit()
+            return
+        }
+        // Keystroke path: coalesce — the build runs between keystrokes, never inside
+        // the key event, so typing stays fluid. Cancelled by the next keystroke.
+        let generation = globalGroupedGeneration
+        pendingGlobalGroupedQuery = q
+        globalGroupedTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !Task.isCancelled, self.globalGroupedGeneration == generation else { return }
+            commit()
         }
     }
 
@@ -1762,14 +1778,26 @@ extension LauncherView {
             return
         }
 
-        scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
-        let state = globalGroupedListNavigationState(for: q)
-        cachedGlobalAppMatches = state.appResults
-        cachedGlobalAppQuery = q
-        pendingGlobalAppQuery = nil
-        pendingGlobalGroupedQuery = nil
-        globalGroupedTask?.cancel()
-        globalAppMatchTask = nil
+        let commit: () -> Void = {
+            self.scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+            let state = self.globalGroupedListNavigationState(for: q)
+            self.cachedGlobalAppMatches = state.appResults
+            self.cachedGlobalAppQuery = q
+            self.pendingGlobalAppQuery = nil
+            self.globalAppMatchTask = nil
+        }
+        guard delayNanoseconds > 0 else {
+            commit()
+            return
+        }
+        // Keystroke path: run between keystrokes so typing never blocks on the build.
+        let generation = globalAppMatchGeneration
+        pendingGlobalAppQuery = q
+        globalAppMatchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !Task.isCancelled, self.globalAppMatchGeneration == generation else { return }
+            commit()
+        }
     }
 
     // Convert GlobalSearchService docs → SearchResult on @MainActor (needs closures + icons).

@@ -96,6 +96,10 @@ final class LauncherViewModel: ObservableObject {
 final class GlobalContextViewModel: ObservableObject {
     @Published var state = GlobalContextState()
     @Published var focusedAppPillIndex: Int?
+    /// Siri-style deferred results: while typing, only the matching-app pill row
+    /// shows; the full grouped result list appears after the user presses ↓.
+    /// Reset when the query is cleared.
+    @Published var resultsRevealed = false
     @Published var cachedAppQuery = ""
     @Published var cachedAppMatches: [SearchResult] = []
     var pendingAppQuery: String?

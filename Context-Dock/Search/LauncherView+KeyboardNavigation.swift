@@ -382,7 +382,13 @@ extension LauncherView {
                 guard groupedState.totalCount > 0 else { return event }
 
                 switch event.keyCode {
-                case 125:  // Down — move through grouped app/menu rows
+                case 125:  // Down — first press reveals the deferred result list, then navigates
+                    if !self.globalResultsRevealed, self.globalInlineAppScope == nil {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                            self.globalResultsRevealed = true
+                        }
+                        return nil
+                    }
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )

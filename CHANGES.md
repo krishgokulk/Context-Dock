@@ -92,3 +92,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-04 14:41 · `24909636` · `codex-context-dock-polish-fixes`
 **fix(dock): selection icon sits right of '+' + menu bar shows real ⌥⌥ shortcut**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-04 14:50 · `5a4d454b` · `codex-context-dock-polish-fixes`
+**feat(hotkey): retire Carbon launch hotkey — double-Option is the only default**
+Swift: +0 added · ~1 modified · -0 deleted

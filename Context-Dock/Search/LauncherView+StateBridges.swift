@@ -447,6 +447,11 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.focusedAppPillIndex = newValue }
     }
 
+    var globalResultsRevealed: Bool {
+        get { globalContextViewModel.resultsRevealed }
+        nonmutating set { globalContextViewModel.resultsRevealed = newValue }
+    }
+
     var cachedGlobalAppQuery: String {
         get { globalContextViewModel.cachedAppQuery }
         nonmutating set { globalContextViewModel.cachedAppQuery = newValue }
