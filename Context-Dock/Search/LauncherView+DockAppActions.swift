@@ -873,54 +873,153 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// Apps matched from the query's word tokens ("mail recent notes" → Mail, Notes).
+    /// Fallback feedback for when no app/command/menu row matches the full query.
+    func tokenMatchedAppResults(for query: String) -> [SearchResult] {
+        let tokens = query.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 3 }
+        guard !tokens.isEmpty else { return [] }
+        var out: [SearchResult] = []
+        var seen = Set<String>()
+        for token in tokens {
+            for match in instantGlobalApplicationMatches(for: token, limit: 1) {
+                guard seen.insert(match.title.lowercased()).inserted else { continue }
+                out.append(match)
+            }
+            if out.count >= 5 { break }
+        }
+        return out
+    }
+
+    /// ↓ on a no-match query: commit the token-matched apps as the grouped result
+    /// rows so the list expands and arrow navigation works. Returns false when the
+    /// query has no token matches either.
+    @discardableResult
+    func expandTokenMatchedAppsIntoResults(for query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        let tokenApps = tokenMatchedAppResults(for: q)
+        guard !tokenApps.isEmpty else { return false }
+        let state = GlobalGroupedListNavigationState(
+            appResults: tokenApps,
+            menuPills: [],
+            menuGroups: [],
+            appMenuGroups: [],
+            menuFirst: false
+        )
+        // Cancel any in-flight keystroke rebuild so it can't overwrite this state.
+        globalGroupedGeneration &+= 1
+        globalGroupedTask?.cancel()
+        globalGroupedTask = nil
+        setCachedGlobalGroupedState(query: q, state: state, animated: false)
+        setGlobalGroupedFocus(0, state: state)
+        return true
+    }
+
+    /// True when the trailing strip is in token-fallback mode: query typed, nothing
+    /// matched apps/commands/menus, but individual words match apps.
+    var globalStripShowsTokenMatches: Bool {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, shouldUsePureGlobalAppSearch else { return false }
+        guard cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+            let state = cachedGlobalGroupedState, state.totalCount == 0
+        else { return false }
+        return true
+    }
+
     var globalRunningAppStrip: some View {
-        let apps = globalRunningAppStripApps
-        if !apps.isEmpty {
-            HStack(spacing: 5) {
-                ForEach(apps, id: \.processIdentifier) { app in
-                    Button {
-                        // Running-app pills are app switchers — activate, unminimize, front,
-                        // and centre the window. They do NOT scope to the app's menus.
-                        activateRunningAppFromDock(app)
-                    } label: {
-                        if let icon = resolvedRunningAppIcon(for: app) {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 17, height: 17)
-                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        } else {
-                            Image(systemName: "app")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary.opacity(0.75))
-                                .frame(width: 17, height: 17)
+        // Token-fallback: no row matched the full query → the strip becomes the
+        // matching-app icons for each query word (instant feedback; ↓ expands rows).
+        let tokenResults = globalStripShowsTokenMatches
+            ? tokenMatchedAppResults(
+                for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            : []
+        let apps = tokenResults.isEmpty ? globalRunningAppStripApps : []
+        return Group {
+            if !tokenResults.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(Array(tokenResults.enumerated()), id: \.offset) { _, result in
+                        Button {
+                            result.action()
+                            searchState.query = ""
+                        } label: {
+                            if let icon = result.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help(result.title)
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .onHover { hovering in
-                        guard acceptsMouseDrivenDockInteraction else { return }
-                        if hovering {
-                            RunningAppPreviewService.shared.scheduleShow(
-                                for: app,
-                                icon: resolvedRunningAppIcon(for: app)
-                            )
-                        } else {
-                            RunningAppPreviewService.shared.scheduleHide()
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+            } else if !apps.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(apps, id: \.processIdentifier) { app in
+                        Button {
+                            // Running-app pills are app switchers — activate, unminimize, front,
+                            // and centre the window. They do NOT scope to the app's menus.
+                            activateRunningAppFromDock(app)
+                        } label: {
+                            if let icon = resolvedRunningAppIcon(for: app) {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .onHover { hovering in
+                            guard acceptsMouseDrivenDockInteraction else { return }
+                            if hovering {
+                                RunningAppPreviewService.shared.scheduleShow(
+                                    for: app,
+                                    icon: resolvedRunningAppIcon(for: app)
+                                )
+                            } else {
+                                RunningAppPreviewService.shared.scheduleHide()
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
             }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
-                        lineWidth: 0.7)
-            )
-            .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
         }
     }
 

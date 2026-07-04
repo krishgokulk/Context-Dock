@@ -1602,8 +1602,6 @@ extension LauncherView {
                                             let q = newValue
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
-                                            // Cleared query re-arms the ↓-to-reveal deferral.
-                                            if q.isEmpty { globalResultsRevealed = false }
                                             if globalInlineAppScope == nil {
                                                 scheduleGlobalAppMatchRebuild(query: q)
                                             } else {

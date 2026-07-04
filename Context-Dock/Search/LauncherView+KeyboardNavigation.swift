@@ -379,16 +379,17 @@ extension LauncherView {
             // view shows dockPillListView instead — Block 3 handles it with full-pills indices.
             if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
                 let groupedState = self.globalGroupedListNavigationState(for: q)
-                guard groupedState.totalCount > 0 else { return event }
-
-                switch event.keyCode {
-                case 125:  // Down — first press reveals the deferred result list, then navigates
-                    if !self.globalResultsRevealed, self.globalInlineAppScope == nil {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            self.globalResultsRevealed = true
-                        }
+                guard groupedState.totalCount > 0 else {
+                    // Nothing matched apps/commands/menus — the trailing strip shows
+                    // token-matched app pills instead. ↓ expands them into result rows.
+                    if event.keyCode == 125, self.expandTokenMatchedAppsIntoResults(for: q) {
                         return nil
                     }
+                    return event
+                }
+
+                switch event.keyCode {
+                case 125:  // Down — move through grouped app/menu rows
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )

@@ -188,54 +188,17 @@ extension LauncherView {
 
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
-        // Siri-style deferral in pure Global Context: while typing, show only the
-        // matching-app pill row (instant, cheap); the full grouped result list
-        // renders after ↓. App scopes and launch hints keep the list immediately.
-        let deferList =
-            !globalResultsRevealed
-            && presentation.scopedMenuAppName == nil
-            && presentation.launchHint == nil
-            && globalInlineAppScope == nil
-            && !presentation.query.isEmpty
-        if deferList {
-            VStack(spacing: 6) {
-                globalAppSearchPillRow(
-                    query: presentation.query, matches: presentation.matches)
-                if !presentation.matches.isEmpty || !presentation.menuPills.isEmpty
-                    || !presentation.appMenuGroups.isEmpty
-                {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Show Results")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(.secondary.opacity(0.75))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            globalResultsRevealed = true
-                        }
-                    }
-                    .help("Press ↓ to show the full result list")
-                }
-            }
-            .padding(.vertical, 4)
-        } else {
-            globalAppSearchListView(
-                query: presentation.query,
-                matches: presentation.matches,
-                menuPills: presentation.menuPills,
-                appMenuGroups: presentation.appMenuGroups,
-                launchHint: presentation.launchHint,
-                scopedMenuAppName: presentation.scopedMenuAppName,
-                scopedMenuActionQuery: presentation.scopedMenuActionQuery,
-                isLoading: presentation.isLoading,
-                menuFirst: false
-            )
-        }
+        globalAppSearchListView(
+            query: presentation.query,
+            matches: presentation.matches,
+            menuPills: presentation.menuPills,
+            appMenuGroups: presentation.appMenuGroups,
+            launchHint: presentation.launchHint,
+            scopedMenuAppName: presentation.scopedMenuAppName,
+            scopedMenuActionQuery: presentation.scopedMenuActionQuery,
+            isLoading: presentation.isLoading,
+            menuFirst: false
+        )
     }
 
     @ViewBuilder

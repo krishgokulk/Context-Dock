@@ -96,3 +96,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 14:50 · `5a4d454b` · `codex-context-dock-polish-fixes`
 **feat(hotkey): retire Carbon launch hotkey — double-Option is the only default**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-04 23:03 · `b4bfdafb` · `codex-context-dock-polish-fixes`
+**feat(global): Siri-style deferred results — pill row while typing, ↓ reveals list**
+Swift: +0 added · ~6 modified · -0 deleted
