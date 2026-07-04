@@ -84,7 +84,11 @@ extension LauncherView {
     }
 
     func isContextDockBrowserBundle(_ bundleId: String) -> Bool {
-        contextDockBrowserBundleIDs.contains(bundleId.trimmingCharacters(in: .whitespacesAndNewlines))
+        let trimmed = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Safari Web Apps (YouTube, YT Music, …) are browsers too — they render a
+        // web page and expose its URL via AX, so they get full browser-scope context.
+        return contextDockBrowserBundleIDs.contains(trimmed)
+            || trimmed.hasPrefix("com.apple.Safari.WebApp")
     }
 
     func sanitizedConversationContextForScope(
@@ -1669,7 +1673,7 @@ extension LauncherView {
             }
             .sorted { $0.1 > $1.1 }
 
-        guard let (bestRule, _) = candidates.first else { return false }
+        guard let (bestRule, bestScore) = candidates.first else { return false }
 
         // Augment AX context with the browser bridge URL when the dock is frontmost
         // (AXContextReader sees the dock as active app, losing the prior Safari URL).
@@ -1692,7 +1696,11 @@ extension LauncherView {
             return true
         }
 
-        // Conditions didn't pass — tell the user what context is needed.
+        // Conditions didn't pass. Only surface the "needs X to run" message when the
+        // user clearly invoked the rule by name (strong match). A weak token overlap
+        // ("download this image" hitting "Download Video") must NOT hijack the chat —
+        // fall through so the AI / scoped CLI can handle the request instead.
+        guard bestScore >= 60 else { return false }
         let urlConditions = bestRule.conditions.filter { $0.field == .currentURL }
         let hint: String
         if !urlConditions.isEmpty {

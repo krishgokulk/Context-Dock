@@ -48,3 +48,7 @@ Swift: +1 added · ~2 modified · -0 deleted
 ## 2026-07-04 09:49 · `e4660520` · `codex-context-dock-polish-fixes`
 **feat(adapters): auto-seed best integration channel (CLI) per app**
 Swift: +1 added · ~2 modified · -0 deleted
+
+## 2026-07-04 10:47 · `237aa8fc` · `codex-context-dock-polish-fixes`
+**fix(dock): attach frontmost document to scoped chat + favicon in chat header**
+Swift: +0 added · ~2 modified · -0 deleted

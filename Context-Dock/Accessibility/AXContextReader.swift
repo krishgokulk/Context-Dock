@@ -343,7 +343,36 @@ final class AXContextReader {
         } else {
             depth = 7
         }
-        return findAddressBar(axApp, maxDepth: depth)
+        if let fromAddressBar = findAddressBar(axApp, maxDepth: depth) {
+            return fromAddressBar
+        }
+        // Safari Web Apps (and kiosk-style windows) have no address bar — read the
+        // URL straight off the AXWebArea instead.
+        return findWebAreaURL(axApp, maxDepth: depth + 3)
+    }
+
+    private func findWebAreaURL(_ elem: AXUIElement, maxDepth: Int, depth: Int = 0) -> String? {
+        guard depth < maxDepth else { return nil }
+
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXWebArea" {
+            var urlRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(elem, "AXURL" as CFString, &urlRef) == .success,
+                let urlRef {
+                if let url = urlRef as? URL { return url.absoluteString }
+                if let s = urlRef as? String, looksLikeURL(s) { return s }
+            }
+            return nil
+        }
+
+        var childRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(elem, kAXChildrenAttribute as CFString, &childRef) == .success,
+              let children = childRef as? [AXUIElement] else { return nil }
+        for child in children {
+            if let found = findWebAreaURL(child, maxDepth: maxDepth, depth: depth + 1) { return found }
+        }
+        return nil
     }
 
     private func findAddressBar(_ elem: AXUIElement, maxDepth: Int, depth: Int = 0) -> String? {
