@@ -932,10 +932,7 @@ extension LauncherView {
     /// Apps that own the deferred menu-only matches ("save new notes" → Notes) —
     /// shown as strip pills while the menu sheet is collapsed behind ↓.
     var globalStripMenuOwnerApps: [(bundleId: String, icon: NSImage?, name: String)] {
-        guard !globalMenuResultsRevealed,
-            !globalContextViewModel.sheetOpenForQuerySession,
-            shouldUsePureGlobalAppSearch
-        else { return [] }
+        guard !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch else { return [] }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty,
             cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),

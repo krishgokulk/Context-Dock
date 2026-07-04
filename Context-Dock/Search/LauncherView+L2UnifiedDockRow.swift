@@ -190,9 +190,6 @@ extension LauncherView {
     /// the sheet stays collapsed; the strip shows the owning app's pill instead.
     func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
         !globalMenuResultsRevealed
-            // Never collapse a sheet that already opened this typing session —
-            // the rows→menu-only transition must not make the dock jump.
-            && !globalContextViewModel.sheetOpenForQuerySession
             && !presentation.query.isEmpty
             && presentation.matches.isEmpty
             && (!presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty)
@@ -203,21 +200,26 @@ extension LauncherView {
 
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
-        if isDeferredMenuOnlyPresentation(presentation) {
-            EmptyView()
-        } else {
-            globalAppSearchListView(
-                query: presentation.query,
-                matches: presentation.matches,
-                menuPills: presentation.menuPills,
-                appMenuGroups: presentation.appMenuGroups,
-                launchHint: presentation.launchHint,
-                scopedMenuAppName: presentation.scopedMenuAppName,
-                scopedMenuActionQuery: presentation.scopedMenuActionQuery,
-                isLoading: presentation.isLoading,
-                menuFirst: false
-            )
+        // Content collapse/expand animates in step with the window's frame glide —
+        // an instant EmptyView swap while the frame animates is what looked jumpy.
+        let deferred = isDeferredMenuOnlyPresentation(presentation)
+        Group {
+            if !deferred {
+                globalAppSearchListView(
+                    query: presentation.query,
+                    matches: presentation.matches,
+                    menuPills: presentation.menuPills,
+                    appMenuGroups: presentation.appMenuGroups,
+                    launchHint: presentation.launchHint,
+                    scopedMenuAppName: presentation.scopedMenuAppName,
+                    scopedMenuActionQuery: presentation.scopedMenuActionQuery,
+                    isLoading: presentation.isLoading,
+                    menuFirst: false
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+            }
         }
+        .animation(.spring(response: 0.26, dampingFraction: 0.9), value: deferred)
     }
 
     @ViewBuilder

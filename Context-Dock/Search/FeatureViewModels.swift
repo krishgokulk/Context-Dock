@@ -99,10 +99,6 @@ final class GlobalContextViewModel: ObservableObject {
     /// Menu-only matches (no app/command rows) stay collapsed to the owning app's
     /// pill in the strip; ↓ reveals the menu result sheet. Reset on query change.
     @Published var menuResultsRevealed = false
-    /// True once the result sheet has opened for the current typing session (any
-    /// app/command rows committed). An open sheet never collapses mid-typing —
-    /// that's what made the dock jump. Cleared when the query empties.
-    var sheetOpenForQuerySession = false
     @Published var cachedAppQuery = ""
     @Published var cachedAppMatches: [SearchResult] = []
     var pendingAppQuery: String?
