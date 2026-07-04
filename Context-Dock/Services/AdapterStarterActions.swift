@@ -171,6 +171,52 @@ enum AdapterStarterActions {
                     accentColor: "teal"
                 )
             ]
+        case "md.obsidian":
+            return [
+                AdapterAction(
+                    id: "starter.obsidian.newNote",
+                    name: "New Note",
+                    icon: "square.and.pencil",
+                    description: "Create a new note in the active vault",
+                    triggers: ["new", "note"],
+                    type: .urlScheme,
+                    urlScheme: "obsidian://new?name={{query}}",
+                    accentColor: "purple"
+                ),
+                AdapterAction(
+                    id: "starter.obsidian.search",
+                    name: "Search Vault",
+                    icon: "magnifyingglass",
+                    description: "Search the active Obsidian vault",
+                    triggers: ["search", "find", "vault"],
+                    type: .urlScheme,
+                    urlScheme: "obsidian://search?query={{query}}",
+                    accentColor: "purple"
+                ),
+            ]
+        case "com.spotify.client":
+            return [
+                AdapterAction(
+                    id: "starter.spotify.playpause",
+                    name: "Play / Pause",
+                    icon: "playpause",
+                    description: "Toggle Spotify playback",
+                    triggers: ["play", "pause", "music"],
+                    type: .applescript,
+                    script: "tell application \"Spotify\" to playpause",
+                    accentColor: "green"
+                ),
+                AdapterAction(
+                    id: "starter.spotify.next",
+                    name: "Next Track",
+                    icon: "forward.end",
+                    description: "Skip to the next track",
+                    triggers: ["next", "skip"],
+                    type: .applescript,
+                    script: "tell application \"Spotify\" to next track",
+                    accentColor: "green"
+                ),
+            ]
         case "com.duckduckgo.macos.browser":
             return [
                 AdapterAction(

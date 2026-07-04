@@ -40,3 +40,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-04 09:20 · `312b1c96` · `codex-context-dock-polish-fixes`
 **Add built-in Calendar, Contacts, Reminders, and GitHub integrations**
 Swift: +4 added · ~4 modified · -0 deleted
+
+## 2026-07-04 09:26 · `a5781606` · `codex-context-dock-polish-fixes`
+**feat(adapters): starter actions for every adapter + built-ins in general chat hub**
+Swift: +1 added · ~2 modified · -0 deleted
