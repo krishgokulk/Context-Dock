@@ -10,6 +10,7 @@ final class MenuWarmCacheService {
     private var idleWarmTask: Task<Void, Never>?
     private var activeWarmPID: pid_t?
     private var lastWarmDateByBundleID: [String: Date] = [:]
+    private var lastStatusMenuWarmDate: Date?
     private var recentBundleIDs: [String] = []
     private var recentAppsByBundleID: [String: NSRunningApplication] = [:]
     private let warmFreshness: TimeInterval = 45
@@ -68,6 +69,29 @@ final class MenuWarmCacheService {
             guard let self else { return }
             await self.warmRunningApps(apps, maxApps: maxApps, freshness: 120)
         }
+    }
+
+    func warmStatusMenuAppsOnLauncherOpen(force: Bool = false) async -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+
+        if !force,
+            let lastStatusMenuWarmDate,
+            Date().timeIntervalSince(lastStatusMenuWarmDate) < 120
+        {
+            return false
+        }
+
+        for _ in 0..<12 where activeWarmPID != nil || AXMenuReader.shared.isScanningMenus {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        guard activeWarmPID == nil,
+              !AXMenuReader.shared.isScanningMenus
+        else { return false }
+        lastStatusMenuWarmDate = Date()
+
+        return await Task.detached(priority: .utility) {
+            StatusMenuBarActionScanner.shared.scanAndStoreInstalledStatusMenus()
+        }.value
     }
 
     private func warmRecentWithFreshness(_ freshness: TimeInterval) async {

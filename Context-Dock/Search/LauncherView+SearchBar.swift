@@ -11,7 +11,7 @@ extension LauncherView {
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
-            && !(isGlobalContextActive && hasActiveDockContextSelection)
+            && !(isGlobalContextActive && hasSelectionScopeSurface)
             && currentSelectionActivationSnapshot(refresh: false) != nil
     }
 
@@ -49,7 +49,7 @@ extension LauncherView {
         }
 
         if let text = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-            text.count > 3
+            !text.isEmpty
         {
             return GlobalContextActivation(
                 autoActivated: false,
@@ -76,7 +76,7 @@ extension LauncherView {
             )
         case .textSelected(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.count > 3 else { return nil }
+            guard !trimmed.isEmpty else { return nil }
             return GlobalContextActivation(
                 autoActivated: false,
                 frozenText: String(trimmed.prefix(120)),
@@ -116,7 +116,7 @@ extension LauncherView {
                 )
             case .text(let text):
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmed.count > 3 else { return nil }
+                guard !trimmed.isEmpty else { return nil }
                 currentContext = .textSelected(trimmed)
                 return GlobalContextActivation(
                     autoActivated: false,
@@ -132,17 +132,23 @@ extension LauncherView {
         return nil
     }
 
+    private func isFileOrTextSelectionActivation(_ activation: GlobalContextActivation) -> Bool {
+        if !activation.frozenFilePaths.isEmpty { return true }
+        if activation.frozenIcon == "text.cursor",
+            activation.frozenText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        {
+            return true
+        }
+        return false
+    }
+
     /// If the launcher opened while text/files were selected, enter Selection Scope (Global
     /// Context + selection) directly instead of Context Dock. Returns true when it activated.
     @discardableResult
     func openInSelectionScopeIfSelectionPresent() -> Bool {
-        let hasFiles =
-            !isDismissedFinderSelection(axContext.selectedFilePaths)
-            && !axContext.selectedFilePaths.isEmpty
-        let hasText =
-            !(axContext.selectedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        guard hasFiles || hasText else { return false }
-        guard let activation = currentSelectionActivationSnapshot(refresh: false) else {
+        guard let activation = currentSelectionActivationSnapshot(refresh: true),
+            isFileOrTextSelectionActivation(activation)
+        else {
             return false
         }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
@@ -163,6 +169,7 @@ extension LauncherView {
                 animated: false
             )
         }
+        prewarmFinderContextualActionsForSelection()
         return true
     }
 
@@ -187,6 +194,7 @@ extension LauncherView {
             )
             requestWindowSizeUpdate(reason: .modeChanged)
         }
+        prewarmFinderContextualActionsForSelection()
     }
 
     @ViewBuilder
@@ -411,11 +419,25 @@ extension LauncherView {
                     // subtle stroke = a single clean edge, no shadow.
                     ZStack {
                         RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .fill(.regularMaterial)
+                            .fill(Color.clear)
+                            .background(GlassBackground(cornerRadius: 28, isDark: isEffectiveDark))
+                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(isEffectiveDark ? 0.075 : 0.14),
+                                        .white.opacity(isEffectiveDark ? 0.018 : 0.04),
+                                        .black.opacity(isEffectiveDark ? 0.035 : 0.012),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
                         // User-adjustable darkness (Appearance ▸ Glass Darkness).
                         if settings.glassDarkness > 0.001 {
                             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .fill(Color.black.opacity(settings.glassDarkness * 0.6))
+                                .fill(Color.black.opacity(settings.glassDarkness * 0.22))
                         }
                     }
                 }
@@ -426,13 +448,14 @@ extension LauncherView {
                         .strokeBorder(
                             LinearGradient(
                                 colors: [
-                                    .white.opacity(isEffectiveDark ? 0.14 : 0.38),
-                                    .white.opacity(isEffectiveDark ? 0.03 : 0.07),
+                                    .white.opacity(isEffectiveDark ? 0.34 : 0.58),
+                                    .white.opacity(isEffectiveDark ? 0.10 : 0.20),
+                                    .white.opacity(isEffectiveDark ? 0.025 : 0.08),
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 1
+                            lineWidth: 0.9
                         )
                 }
             }
@@ -624,7 +647,7 @@ extension LauncherView {
                                         (scopedGlobalAppIcon != nil
                                             || (shouldUsePureGlobalAppSearch
                                                 && !preferFrontmostMenuIcon)
-                                            || hasActiveDockContextSelection)
+                                            || hasSelectionScopeSurface)
                                         ? nil : typedL2AppIcon(for: searchState.query)
                                     let browserPageIcon =
                                         isContextDockChatConnected ? currentBrowserPageIcon() : nil
@@ -1254,7 +1277,7 @@ extension LauncherView {
                                     }
                                 } else if !aiFallbackActive,
                                     !shouldUsePureGlobalAppSearch,
-                                    !hasActiveDockContextSelection,
+                                    !hasSelectionScopeSurface,
                                     isL2ContextActive, l2.targetApp == nil,
                                     let completion = l2.appCompletion,
                                     !completion.ghost.isEmpty,
@@ -1845,7 +1868,7 @@ extension LauncherView {
                             showContextInDock || isGlobalContextActive
                                 || currentDockSurfaceMode == .generalChat
                         let typedMatch =
-                            hasActiveDockContextSelection || shouldUsePureGlobalAppSearch
+                            hasSelectionScopeSurface || shouldUsePureGlobalAppSearch
                             ? nil : typedL2AppIcon(for: searchState.query)
                         let inAppScope =
                             (l2.targetApp != nil || typedMatch != nil) && showContextInDock
@@ -1882,7 +1905,9 @@ extension LauncherView {
                             } else if inContextDock {
                                 // Capsule pill — identical shape to expanded appPillButton
                                 Capsule()
-                                    .fill(.ultraThinMaterial)
+                                    .fill(Color.clear)
+                                    .background(GlassBackground(cornerRadius: 999, isDark: isEffectiveDark))
+                                    .clipShape(Capsule(style: .continuous))
                                     .matchedGeometryEffect(
                                         id: dockResultFocusEffectID,
                                         in: compactScopeFocusNamespace,
@@ -1896,13 +1921,14 @@ extension LauncherView {
                                     // and against the material sheet behind it (general chat /
                                     // integrated panel), where the lighter glass alone vanished.
                                     Capsule()
-                                        .fill(Color.black.opacity(isEffectiveDark ? 0.16 : 0.06))
+                                        .fill(Color.black.opacity(isEffectiveDark ? 0.025 : 0.008))
                                     Capsule()
                                         .fill(
                                             LinearGradient(
                                                 colors: [
-                                                    Color.white.opacity(inAppScope ? 0.17 : 0.15),
-                                                    Color.white.opacity(inAppScope ? 0.035 : 0.03),
+                                                    Color.white.opacity(inAppScope ? 0.12 : 0.10),
+                                                    Color.white.opacity(inAppScope ? 0.036 : 0.03),
+                                                    Color.black.opacity(isEffectiveDark ? 0.015 : 0.004),
                                                 ],
                                                 startPoint: .top,
                                                 endPoint: .bottom
@@ -1914,7 +1940,7 @@ extension LauncherView {
                                             LinearGradient(
                                                 colors: [
                                                     scopeColor.opacity(inAppScope ? 0.055 : 0.06),
-                                                    scopeColor.opacity(inAppScope ? 0.01 : 0.015),
+                                                    scopeColor.opacity(inAppScope ? 0.018 : 0.02),
                                                 ],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
@@ -1931,7 +1957,8 @@ extension LauncherView {
                                             LinearGradient(
                                                 colors: [
                                                     .white.opacity(showIdleGlow ? 0.58 : 0.30),
-                                                    .white.opacity(0.06),
+                                                    .white.opacity(showIdleGlow ? 0.18 : 0.08),
+                                                    .white.opacity(0.035),
                                                 ],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
@@ -2570,7 +2597,7 @@ extension LauncherView {
 
         if isL2ContextActive && isGlobalContextActive
             && lockedSubmenuParent == nil && lockedFindToken == nil
-            && !hasActiveDockContextSelection
+            && !hasSelectionScopeSurface
         {
             let trimmed = newValue.trimmingCharacters(in: .whitespaces)
             let installedScopeMode = contextDockInstalledAppScopeMatching
@@ -2612,7 +2639,7 @@ extension LauncherView {
             }
         } else if lockedSubmenuParent != nil
             || lockedFindToken != nil
-            || (isL2ContextActive && (!isGlobalContextActive || hasActiveDockContextSelection))
+            || (isL2ContextActive && (!isGlobalContextActive || hasSelectionScopeSurface))
         {
             l2.appCompletion = nil
         }

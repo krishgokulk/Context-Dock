@@ -63,6 +63,11 @@ struct AIModeState {
     var isActive: Bool = false
     var messages: [AIChatMessage] = []
     var isLoading: Bool = false
+    /// Live agentic-loop status shown beside the typing indicator
+    /// ("Searching app tools…", "Running search_items via Artifacts…").
+    var loadingStatus: String? = nil
+    /// Tool chips collected during the current request, attached to the final answer.
+    var pendingToolChips: [String] = []
     var currentTask: Task<Void, Never>? = nil
     var streamingId: UUID? = nil
     var attachments: [URL] = []

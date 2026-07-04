@@ -722,37 +722,10 @@ extension LauncherView {
     }
 
     func finderDesktopRecentApplicationPills(query: String) -> [DockPill] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // Running apps only — no Apple recent-items list.
-        // Recently-used-but-closed apps clutter the desktop launcher; running apps are immediately actionable.
-        let running = NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != "com.apple.finder" }
-        let matching = running.filter { app in
-            guard !q.isEmpty else { return true }
-            let name = app.localizedName ?? ""
-            let bundleId = app.bundleIdentifier ?? ""
-            return name.lowercased().contains(q) || bundleId.lowercased().contains(q)
-        }
-        // Non-empty query → only matching apps; empty → all running.
-        let source = q.isEmpty ? running : matching
-        return source.prefix(10).compactMap { app -> DockPill? in
-            guard let url = app.bundleURL else { return nil }
-            let name = app.localizedName ?? url.deletingPathExtension().lastPathComponent
-            var pill = makeDesktopPill(
-                path: url.path,
-                name: name,
-                badge: "Running",
-                rankingKind: "finderRecentApp",
-                query: nil
-            )
-            pill.menuItemImage = app.icon
-            pill.sourceBundleId = app.bundleIdentifier ?? ""
-            pill.sourceAppName = name
-            pill.trackingIdentifier = "finder-running-app:\(app.bundleIdentifier ?? url.path)"
-            pill.searchTerms = [name, app.bundleIdentifier ?? "", "running", "app"]
-            pill.rankingScore = 1_500
-            return pill
-        }
+        // Finder desktop mode is file/folder search only. Running apps belong to
+        // Global Context app search, not this surface; mixing them made Enter/click
+        // launch apps while user expected Desktop/Finder results.
+        []
     }
 
     func dedupeFinderDesktopPills(_ pills: [DockPill]) -> [DockPill] {
@@ -2132,8 +2105,6 @@ extension LauncherView {
         let normalizedQuery = normalizedDockPillText(q)
         let textActions: [(name: String, icon: String, prompt: String)] = [
             ("Explain", "text.magnifyingglass", "Explain this"),
-            ("Summarize", "text.alignleft", "Summarize this"),
-            ("Rewrite", "pencil.line", "Rewrite this clearly"),
             ("Translate", "character.book.closed", "Translate this"),
         ]
         let fileActions: [(name: String, icon: String, prompt: String)] = [
@@ -2141,9 +2112,10 @@ extension LauncherView {
             ("Explain", "text.magnifyingglass", "Explain what this file is about"),
             ("Key points", "list.bullet", "List the key points of this document"),
         ]
+        let nativeWritingTools = isText ? buildNativeSelectionWritingToolPills(query: q) : []
         let actions = isText ? textActions : fileActions
 
-        return actions.compactMap { action -> DockPill? in
+        let chatPills = actions.compactMap { action -> DockPill? in
             let searchable = normalizedDockPillText("\(action.name) \(action.prompt)")
             guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
             var pill = DockPill(
@@ -2163,6 +2135,7 @@ extension LauncherView {
             pill.searchTerms = [action.name, action.prompt, "selection", "ai"]
             return pill
         }
+        return nativeWritingTools + chatPills
     }
 
     /// Pills for apps that can receive the current context (URL, text, file).
@@ -2572,6 +2545,7 @@ extension LauncherView {
 
     func dockPillKindBaseScore(_ pill: DockPill) -> Double {
         switch pill.rankingKind {
+        case "writingTool": return 146
         case "browserCommand": return 142
         case "appLaunch": return 136
         case "appSwitch": return 134

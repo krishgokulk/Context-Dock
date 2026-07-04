@@ -17,30 +17,30 @@ enum Theme {
     /// Fill behind a selected/focused result row.
     static func selectionFill(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.10)
-             : Color.accentColor.opacity(0.16)
+             : Color.white.opacity(0.30)
     }
 
     /// Hairline around a selected row — gives the row an edge in light mode
     /// where a translucent fill alone disappears on bright glass.
     static func selectionStroke(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.16)
-             : Color.accentColor.opacity(0.45)
+             : Color.white.opacity(0.62)
     }
 
     /// Top glass highlight gradient for the dock selection capsule.
     static func selectionGlassTop(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.18)
-             : Color.accentColor.opacity(0.22)
+             : Color.white.opacity(0.46)
     }
 
     static func selectionGlassBottom(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.055)
-             : Color.accentColor.opacity(0.08)
+             : Color.white.opacity(0.14)
     }
 
     static func selectionGlassRim(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.34)
-             : Color.accentColor.opacity(0.40)
+             : Color.white.opacity(0.72)
     }
 
     // MARK: - Surfaces (cards, sheets, panels)

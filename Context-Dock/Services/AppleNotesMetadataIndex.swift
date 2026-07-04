@@ -58,8 +58,18 @@ actor AppleNotesMetadataIndex {
 
     // MARK: - Refresh
 
+    /// Cache-first: when any cached index exists (memory or disk), queries are served
+    /// from it immediately and a stale index refreshes in the background — the caller
+    /// never waits on AppleScript. Only a completely empty index blocks.
     func refreshIfNeeded() async throws {
-        if let last = lastRefresh, Date().timeIntervalSince(last) < staleInterval { return }
+        let isFresh = lastRefresh.map { Date().timeIntervalSince($0) < staleInterval } ?? false
+        if isFresh { return }
+        if !index.isEmpty {
+            if !isRefreshing {
+                Task { try? await self.forceRefresh() }
+            }
+            return
+        }
         if isRefreshing { return }
         try await performRefresh()
     }
@@ -74,23 +84,43 @@ actor AppleNotesMetadataIndex {
         defer { isRefreshing = false }
         // await suspends the actor — background Process runs on its own queue
         let notes = try await AppleNotesExecutionService.shared.fetchAllMetadata()
-        index = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+        // Keep an existing snippet when the batched fetch returned none for that note
+        // (plaintext unavailable) so search quality never regresses.
+        index = Dictionary(uniqueKeysWithValues: notes.map { note in
+            if note.snippet.isEmpty, let old = index[note.id], !old.snippet.isEmpty {
+                return (note.id, NoteMetadata(
+                    id: note.id, title: note.title, folder: note.folder,
+                    modifiedDate: note.modifiedDate, createdDate: note.createdDate,
+                    snippet: old.snippet
+                ))
+            }
+            return (note.id, note)
+        })
         lastRefresh = Date()
         saveToDisk()
     }
 
     // MARK: - Disk cache
 
+    private struct CacheEnvelope: Codable {
+        let refreshedAt: Date
+        let notes: [NoteMetadata]
+    }
+
     private func loadFromDisk() {
-        guard let data = try? Data(contentsOf: cacheURL),
-              let decoded = try? JSONDecoder().decode([NoteMetadata].self, from: data)
-        else { return }
-        index = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
+        guard let data = try? Data(contentsOf: cacheURL) else { return }
+        if let envelope = try? JSONDecoder().decode(CacheEnvelope.self, from: data) {
+            index = Dictionary(uniqueKeysWithValues: envelope.notes.map { ($0.id, $0) })
+            lastRefresh = envelope.refreshedAt
+        } else if let decoded = try? JSONDecoder().decode([NoteMetadata].self, from: data) {
+            // Legacy cache format (bare array, no timestamp)
+            index = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
+        }
     }
 
     private func saveToDisk() {
-        let notes = Array(index.values)
-        if let data = try? JSONEncoder().encode(notes) {
+        let envelope = CacheEnvelope(refreshedAt: lastRefresh ?? Date(), notes: Array(index.values))
+        if let data = try? JSONEncoder().encode(envelope) {
             try? data.write(to: cacheURL, options: .atomic)
         }
     }

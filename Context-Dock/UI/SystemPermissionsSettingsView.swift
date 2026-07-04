@@ -4,6 +4,7 @@ import EventKit
 import Photos
 import Contacts
 import AppKit
+import CoreGraphics
 
 struct SystemPermissionsSettingsView: View {
     @ObservedObject private var permissions = ILAppPermissionCenter.shared
@@ -12,6 +13,7 @@ struct SystemPermissionsSettingsView: View {
     @State private var photosStatus: String = "Unknown"
     @State private var contactsStatus: String = "Unknown"
     @State private var automationStatus: String = "Unknown"
+    @State private var screenRecordingStatus: String = "Unknown"
 
     var body: some View {
         Form {
@@ -53,6 +55,15 @@ struct SystemPermissionsSettingsView: View {
                     statusLabel(automationStatus)
                     Spacer()
                     Button("Open System Settings") { openAutomationSettings() }
+                }
+            }
+            Section(header: Text("Screen Recording"), footer: Text("Allows window previews and visual context from visible apps.")) {
+                HStack {
+                    statusLabel(screenRecordingStatus)
+                    Spacer()
+                    Button(screenRecordingStatus == "Authorized" ? "Open System Settings" : "Request Access") {
+                        requestScreenRecording()
+                    }
                 }
             }
         }
@@ -110,6 +121,7 @@ struct SystemPermissionsSettingsView: View {
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         // Automation (AppleScript) – there's no direct API, guide user to System Settings
         automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
+        screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
 
         #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
@@ -119,6 +131,20 @@ struct SystemPermissionsSettingsView: View {
     private func openAutomationSettings() {
         // Open System Settings Privacy pane (best-effort)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func requestScreenRecording() {
+        if !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+        }
+        screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        openScreenRecordingSettings()
+    }
+
+    private func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -186,6 +212,7 @@ struct SystemPermissionsSection: View {
     @State private var photosStatus: String = "Unknown"
     @State private var contactsStatus: String = "Unknown"
     @State private var automationStatus: String = "Unknown"
+    @State private var screenRecordingStatus: String = "Unknown"
 
     var body: some View {
         Group {
@@ -227,6 +254,15 @@ struct SystemPermissionsSection: View {
                     statusLabel(automationStatus)
                     Spacer()
                     Button("Open System Settings") { openAutomationSettings() }
+                }
+            }
+            Section(header: Text("Screen Recording"), footer: Text("Allows window previews and visual context from visible apps.")) {
+                HStack {
+                    statusLabel(screenRecordingStatus)
+                    Spacer()
+                    Button(screenRecordingStatus == "Authorized" ? "Open System Settings" : "Request Access") {
+                        requestScreenRecording()
+                    }
                 }
             }
         }
@@ -279,6 +315,7 @@ struct SystemPermissionsSection: View {
         #endif
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
+        screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
 
         #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
@@ -287,6 +324,20 @@ struct SystemPermissionsSection: View {
 
     private func openAutomationSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func requestScreenRecording() {
+        if !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+        }
+        screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        openScreenRecordingSettings()
+    }
+
+    private func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
     }

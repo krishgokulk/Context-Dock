@@ -36,6 +36,29 @@ final class AppleNotesMCPServer {
         return results
     }
 
+    /// Live count via a single Apple Event — instant, never triggers a metadata refresh.
+    /// Falls back to the cached index size if the script fails but a cache exists.
+    func noteCount() async throws -> Int {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        do {
+            let count = try await AppleNotesExecutionService.shared.noteCount()
+            AppleNotesMCPAuditLogger.shared.record(
+                toolName: "notes.count",
+                noteIDs: [],
+                riskLevel: .low,
+                approvalStatus: .notRequired
+            )
+            return count
+        } catch {
+            let cached = await AppleNotesMetadataIndex.shared.cachedCount
+            if cached > 0 { return cached }
+            throw error
+        }
+    }
+
     func allMetadata(maxResults: Int = 10_000) async throws -> [NoteMetadata] {
         try assertEnabled()
         guard AppSettings.shared.noteMCPAllowMetadataSearch else {

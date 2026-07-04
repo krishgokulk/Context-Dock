@@ -461,10 +461,6 @@ final class AIProviderRouter {
         let provider = providerOverride ?? AIProfileRouter.provider(for: profile, settings: settings)
         var contextPrompt = contextBuilder.build(request: request)
         contextPrompt = AIProfileRouter.decoratedContextPrompt(contextPrompt, profile: profile, request: request)
-        contextPrompt += attachmentPromptAddendum(
-            attachments: request.attachments,
-            capabilities: capabilities(for: provider)
-        )
         do {
             return try await sendPrepared(request: request, provider: provider, contextPrompt: contextPrompt)
         } catch {
@@ -487,6 +483,24 @@ final class AIProviderRouter {
         {
             throw AIServiceError.unsupportedProvider(
                 "Selected text cloud sharing is disabled in AI settings."
+            )
+        }
+        if !safetyPolicy.isLocal(provider),
+           request.liveContext?.browserCleanMarkdown?.isEmpty == false,
+           !settings.allowSelectedTextCloudSharing
+        {
+            throw AIServiceError.unsupportedProvider(
+                "Web page context cloud sharing is disabled in AI settings."
+            )
+        }
+        if !safetyPolicy.isLocal(provider),
+           request.liveContext?.connectedBrowserContexts.contains(where: {
+            $0.cleanMarkdown?.isEmpty == false
+           }) == true,
+           !settings.allowSelectedTextCloudSharing
+        {
+            throw AIServiceError.unsupportedProvider(
+                "Connected browser context cloud sharing is disabled in AI settings."
             )
         }
         try safetyPolicy.validate(message: request.text, context: request.context, provider: provider)
@@ -569,19 +583,18 @@ final class AIProviderRouter {
         #if DEBUG
         print("🤖 [AIProviderRouter] legacy-facade provider=\(provider.rawValue) attachments=\(attachments.count)")
         #endif
-        if provider == .onDevice {
-            let imageURLs = attachments.filter { $0.kind == .image }.map(\.url)
-            return try await AIProviderService.shared.sendPreparedOnDevice(
-                message: message, contextPrompt: contextPrompt,
-                history: conversationHistory, imageURLs: imageURLs
-            )
-        }
-        let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
-        // Extract readable text from file attachments and note any we couldn't read.
         let attachmentPrompt = attachmentPromptAddendum(
             attachments: attachments,
             capabilities: capabilities(for: provider)
         )
+        if provider == .onDevice {
+            let imageURLs = attachments.filter { $0.kind == .image }.map(\.url)
+            return try await AIProviderService.shared.sendPreparedOnDevice(
+                message: message, contextPrompt: contextPrompt + attachmentPrompt,
+                history: conversationHistory, imageURLs: imageURLs
+            )
+        }
+        let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
         return try await adapter(for: provider).send(
             request: request, contextPrompt: contextPrompt + attachmentPrompt,
             configuration: configuration

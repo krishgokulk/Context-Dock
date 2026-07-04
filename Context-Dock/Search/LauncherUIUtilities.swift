@@ -362,7 +362,14 @@ struct GlassBackground: NSViewRepresentable {
     var isDark: Bool? = nil
     @ObservedObject private var settings = AppSettings.shared
 
-    func makeNSView(context: Context) -> NSVisualEffectView {
+    func makeNSView(context: Context) -> NSView {
+        // macOS 26 Liquid Glass — the same material as Spotlight. Pure glass at 0% darkness.
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.wantsLayer = true
+            configureGlass(glass)
+            return glass
+        }
         let ve = NSVisualEffectView()
         ve.blendingMode = .behindWindow
         ve.state = .active
@@ -371,9 +378,31 @@ struct GlassBackground: NSViewRepresentable {
         return ve
     }
 
-    func updateNSView(_ ve: NSVisualEffectView, context: Context) {
-        ve.blendingMode = .behindWindow
-        configure(ve)
+    func updateNSView(_ view: NSView, context: Context) {
+        if #available(macOS 26.0, *), let glass = view as? NSGlassEffectView {
+            configureGlass(glass)
+            return
+        }
+        if let ve = view as? NSVisualEffectView {
+            ve.blendingMode = .behindWindow
+            configure(ve)
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private func configureGlass(_ glass: NSGlassEffectView) {
+        glass.cornerRadius = cornerRadius
+        let dark = resolvedIsDark
+        glass.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+
+        // `glassDarkness` is stored as 0...1. Use it as extra lens strength:
+        // light mode stays neutral silver glass, dark mode gets smoked glass.
+        let d = max(0, min(1, settings.glassDarkness))
+        if dark {
+            glass.tintColor = NSColor.black.withAlphaComponent(0.18 + d * 0.34)
+        } else {
+            glass.tintColor = NSColor(calibratedWhite: 0.86, alpha: 0.10 + d * 0.12)
+        }
     }
 
     private func configure(_ ve: NSVisualEffectView) {
@@ -387,14 +416,9 @@ struct GlassBackground: NSViewRepresentable {
 
         let dark = resolvedIsDark
 
-        // ── Material: thin frosted glass (hudWindow) in dark, popover in light ──
-        // hudWindow matches SwiftUI .ultraThinMaterial in dark mode — translucent, not heavy.
+        // ── Material: white liquid glass in light, smoked glass in dark ──
         ve.material = dark ? .hudWindow : .popover
-        switch settings.appearanceMode {
-        case "light": ve.appearance = NSAppearance(named: .aqua)
-        case "dark": ve.appearance = NSAppearance(named: .darkAqua)
-        default: ve.appearance = nil
-        }
+        ve.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
 
         // ── Base fill: subtle, lets the blur show through (like ultraThinMaterial) ──
         let base = existingLayer(named: "baseFill", in: rootLayer) {
@@ -408,8 +432,8 @@ struct GlassBackground: NSViewRepresentable {
         base.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         base.backgroundColor =
             dark
-            ? CGColor(red: 0.035, green: 0.04, blue: 0.055, alpha: 0.76)  // dark glass tint
-            : CGColor(red: 0.92, green: 0.925, blue: 0.94, alpha: 0.86)  // light: denser + dimmer for contrast
+            ? CGColor(red: 0.02, green: 0.024, blue: 0.03, alpha: 0.34)
+            : CGColor(red: 0.78, green: 0.80, blue: 0.80, alpha: 0.28)
 
         // ── Gradient overlay: top-bright → bottom-faded, matches input field style ──
         let grad = existingGradientLayer(named: "gradientOverlay", in: rootLayer) {
@@ -423,8 +447,8 @@ struct GlassBackground: NSViewRepresentable {
         grad.frame = ve.bounds
         grad.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         grad.colors = [
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.045 : 0.22),
-            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.005 : 0.01),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.05 : 0.18),
+            CGColor(red: 1, green: 1, blue: 1, alpha: dark ? 0.006 : 0.035),
         ]
         grad.startPoint = CGPoint(x: 0.5, y: 0)  // top
         grad.endPoint = CGPoint(x: 0.5, y: 1)  // bottom
@@ -441,8 +465,8 @@ struct GlassBackground: NSViewRepresentable {
         border.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         border.borderColor =
             dark
-            ? CGColor(red: 1, green: 1, blue: 1, alpha: 0.14)
-            : CGColor(red: 0, green: 0, blue: 0, alpha: 0.08)
+            ? CGColor(red: 1, green: 1, blue: 1, alpha: 0.18)
+            : CGColor(red: 1, green: 1, blue: 1, alpha: 0.42)
         border.borderWidth = 1.0
     }
 

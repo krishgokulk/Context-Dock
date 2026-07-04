@@ -12,12 +12,16 @@ extension LauncherView {
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
-        if reason.isTypingOrContentRefresh
-            && preset.stabilizesResize
-            && !presetChanged
-            && !modeChanged
-        {
-            return
+        if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged && !modeChanged {
+            if let window = AppDelegate.shared?.launcherWindow {
+                let heightDelta = abs(window.frame.height - calculatedHeight)
+                let widthDelta = abs(window.frame.width - calculatedWidth)
+                if heightDelta <= 24 && widthDelta <= 1 {
+                    return
+                }
+            } else {
+                return
+            }
         }
 
         updateWindowSize(animated: animated, debounceNanoseconds: debounceNanoseconds)
@@ -408,7 +412,7 @@ extension LauncherView {
             }
 
             // ── App-pill row navigation (pinned/running or global app search) ──────────
-            let hasActiveContextSel = self.activeSelection != nil
+            let hasActiveContextSel = self.hasSelectionScopeSurface
             // Use the same cached pill list the List View renders. Do not rebuild here;
             // this key monitor runs on every keyDown.
             let pillQuery = self.shouldUseFinderSearchPopover(for: q) ? "" : q
@@ -995,12 +999,14 @@ extension LauncherView {
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
 
-            if animated {
-                // Animate deliberate mode changes, but keep search-result churn unanimated.
+            let shouldAnimateFrame = animated || heightDelta > 80 || widthChanged
+            if shouldAnimateFrame {
+                // Animate visible sheet expand/collapse. Small result churn is filtered before
+                // this path, so typing stays steady while meaningful shape changes glide.
                 NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0.18
+                NSAnimationContext.current.duration = heightDelta > 260 ? 0.26 : 0.20
                 NSAnimationContext.current.timingFunction = CAMediaTimingFunction(
-                    controlPoints: 0.2, 0.9, 0.4, 1.0)
+                    controlPoints: 0.18, 0.92, 0.22, 1.0)
                 window.animator().setFrame(newFrame, display: false)
                 NSAnimationContext.endGrouping()
             } else {
@@ -1505,7 +1511,7 @@ extension LauncherView {
                         return .handled
                     }
                     // Dismiss file/text selection chip (same as clicking "-")
-                    if hasActiveDockContextSelection {
+                    if hasSelectionScopeSurface {
                         dismissSelectionAndStayInGlobalContext()
                         isSearchFieldFocused = true
                         return .handled

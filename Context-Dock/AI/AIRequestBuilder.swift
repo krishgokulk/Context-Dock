@@ -13,7 +13,7 @@ struct AIRequestBuilder {
             attachments: attachments.map(AIAttachment.inferred(from:)),
             mode: .answer,
             source: .aiChat,
-            liveContext: nil
+            liveContext: ContextCollector.shared.snapshot()
         )
     }
 
@@ -21,16 +21,19 @@ struct AIRequestBuilder {
         text: String,
         context: UserContext,
         history: [ChatMessage] = [],
-        attachments: [URL] = []
+        attachments: [URL] = [],
+        mode: AIRequestMode = .answer,
+        capabilityPrompt: String = ""
     ) -> AIRequest {
         AIRequest(
             text: text,
             context: context,
             history: history,
             attachments: attachments.map(AIAttachment.inferred(from:)),
-            mode: .answer,
+            mode: mode,
             source: .globalContext,
-            liveContext: ContextCollector.shared.snapshot()
+            liveContext: ContextCollector.shared.snapshot(),
+            additionalContextPrompt: capabilityPrompt
         )
     }
 

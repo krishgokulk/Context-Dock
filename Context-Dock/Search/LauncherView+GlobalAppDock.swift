@@ -489,7 +489,7 @@ extension LauncherView {
         }
         let menuRowIDs: [String] = menuGroups.map(menuRowID)
         let appRowID: (SearchResult) -> String = { result in
-            "global-app-\(result.id)"
+            "global-app-\(result.trackingIdentifier)"
         }
         let appRowIDs: [String] = matches.map(appRowID)
         let showLaunchHint = launchHint != nil
@@ -560,12 +560,10 @@ extension LauncherView {
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -577,7 +575,7 @@ extension LauncherView {
                                 ? "Results" : "Apps")
                             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                     }
-                    ForEach(indexedMatches, id: \.element.id) { idx, result in
+                    ForEach(indexedMatches, id: \.element.trackingIdentifier) { idx, result in
                         // Match by bundleId → path → localized name (robust for apps whose
                         // indexed bundleId differs from the live one, e.g. ChatGPT), and fall
                         // back to the live running set when runningRegularApps is empty.
@@ -596,7 +594,6 @@ extension LauncherView {
                             action: makeAction(result)
                         )
                         .id(appRowID(result))
-                        .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                         .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                         .contextMenu {
                             if let quitAction = makeQuitAction(result) {
@@ -617,12 +614,10 @@ extension LauncherView {
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -650,7 +645,6 @@ extension LauncherView {
                                 pillIdx, pill in
                                 pillListRow(pill: pill, index: groupBase + pillIdx)
                                     .id("xapp-pill-\(group.id)-\(pill.id)")
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -723,18 +717,14 @@ extension LauncherView {
             .animation(nil, value: hasRenderableRows)
             .onChange(of: focusedAppPillIndex) { idx in
                 guard let idx, idx < appRowIDs.count else { return }
-                withAnimation(.easeOut(duration: 0.08)) {
-                    proxy.scrollTo(appRowIDs[idx], anchor: .center)
-                }
+                proxy.scrollTo(appRowIDs[idx], anchor: .center)
             }
             .onChange(of: l2.focusedPillIndex) { idx in
                 guard let idx, idx >= matches.count else { return }
                 let menuIdx = idx - matches.count
                 DispatchQueue.main.async { refreshQuickLookPreviewForCurrentFocusIfVisible() }
                 if menuIdx >= 0, menuIdx < menuRowIDs.count {
-                    withAnimation(.easeOut(duration: 0.08)) {
-                        proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)
-                    }
+                    proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)
                 } else if menuIdx >= menuGroups.count {
                     // Cross-app group pill — find which group and local index
                     let crossIdx = menuIdx - menuGroups.count
@@ -742,11 +732,9 @@ extension LauncherView {
                     for group in providedAppMenuGroups {
                         let localIdx = crossIdx - offset
                         if localIdx < group.pills.count {
-                            withAnimation(.easeOut(duration: 0.08)) {
-                                proxy.scrollTo(
-                                    "xapp-pill-\(group.id)-\(group.pills[localIdx].id)",
-                                    anchor: .center)
-                            }
+                            proxy.scrollTo(
+                                "xapp-pill-\(group.id)-\(group.pills[localIdx].id)",
+                                anchor: .center)
                             break
                         }
                         offset += group.pills.count
@@ -1228,7 +1216,7 @@ extension LauncherView {
     }
 
     func globalScopedAppIcon(for query: String) -> (icon: NSImage, bundleId: String)? {
-        guard isL2ContextActive, isGlobalContextActive, !hasActiveDockContextSelection else {
+        guard isL2ContextActive, isGlobalContextActive, !hasSelectionScopeSurface else {
             return nil
         }
         let scope = resolveDockScope(for: query)

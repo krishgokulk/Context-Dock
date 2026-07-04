@@ -461,6 +461,38 @@ final class AppMenuCapabilityCache {
         return items
     }
 
+    nonisolated func appAliases(bundleIdentifier: String) -> [String] {
+        guard !bundleIdentifier.isEmpty else { return [] }
+        lock.lock()
+        let records = snapshots[bundleIdentifier]?.records ?? []
+        lock.unlock()
+        guard !records.isEmpty else { return [] }
+
+        var aliases = Set<String>()
+        for record in records.prefix(80) {
+            if let first = record.path.first {
+                let normalized = Self.normalize(first)
+                if normalized.count >= 2,
+                    normalized != "apple",
+                    normalized != "file",
+                    normalized != "edit",
+                    normalized != "view",
+                    normalized != "window",
+                    normalized != "help"
+                {
+                    aliases.insert(normalized)
+                }
+            }
+            let title = Self.normalize(record.title)
+            if title.hasPrefix("quit ") {
+                let alias = String(title.dropFirst("quit ".count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if alias.count >= 2 { aliases.insert(alias) }
+            }
+        }
+        return Array(aliases)
+    }
+
     nonisolated func record(path: [String], bundleIdentifier: String) -> AppMenuCapabilityRecord? {
         lock.lock()
         let records = (snapshots[bundleIdentifier]?.records ?? []).filter {

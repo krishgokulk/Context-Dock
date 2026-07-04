@@ -658,6 +658,11 @@ extension LauncherView {
     /// the user's clipboard is preserved, and an empty selection just times out to nil.
     func peekSelectionViaClipboard(completion: @escaping (String?) -> Void) {
         guard AXIsProcessTrusted() else { completion(nil); return }
+        // Target the app that held the selection. The dock panel is key by now, so a generic
+        // event post would go to the DOCK, not the selected app — deliver ⌘C to its PID.
+        guard let targetPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier,
+            targetPID != 0
+        else { completion(nil); return }
         let pb = NSPasteboard.general
 
         // Snapshot the current pasteboard so we can put it back.
@@ -671,15 +676,16 @@ extension LauncherView {
             } ?? []
         let beforeCount = pb.changeCount
 
-        // Synthetic ⌘C to the (still-frontmost) previous app.
+        // Synthetic ⌘C posted directly to the selected app's process (postToPid), so it lands
+        // there even though the dock window currently has key focus.
         let src = CGEventSource(stateID: .combinedSessionState)
         let keyC: CGKeyCode = 0x08  // 'c'
         let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
         down?.flags = .maskCommand
         let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
         up?.flags = .maskCommand
-        down?.post(tap: .cghidEventTap)
-        up?.post(tap: .cghidEventTap)
+        down?.postToPid(targetPID)
+        up?.postToPid(targetPID)
 
         func restore() {
             pb.clearContents()

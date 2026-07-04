@@ -180,11 +180,11 @@ struct LauncherView: View {
     // Context in dock state
     var showContextInDock: Bool {
         get { appState.contextDock.isActive }
-        nonmutating set { appState.contextDock.isActive = newValue }
+        nonmutating set { appState.setContextDockActiveDeferred(newValue) }
     }
     var globalContextActivation: GlobalContextActivation? {
         get { appState.globalContext.activation }
-        nonmutating set { appState.globalContext.activation = newValue }
+        nonmutating set { appState.setGlobalContextActivationDeferred(newValue) }
     }
     var isGlobalContextActive: Bool { globalContextActivation != nil }
 
@@ -444,6 +444,10 @@ struct LauncherView: View {
         activeSelection != nil || frozenSelectionText != nil
     }
 
+    var hasSelectionScopeSurface: Bool {
+        hasActiveDockContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
+    }
+
     var shouldUsePureGlobalAppSearch: Bool {
         // Only an EXPLICIT Finder scope (the inline Finder chip) means "search
         // files" and should beat global app search. Do NOT use the broad
@@ -453,7 +457,7 @@ struct LauncherView: View {
         let explicitFinderScope =
             globalInlineAppScope?.bundleId == "com.apple.finder"
         return isGlobalContextActive
-            && !hasActiveDockContextSelection
+            && !hasSelectionScopeSurface
             && l2.targetApp == nil
             && !explicitFinderScope
             && searchState.activeSmartQueryKey == nil
@@ -474,7 +478,7 @@ struct LauncherView: View {
 
         // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
         // an empty query — so it's visible the moment the launcher opens with a selection.
-        if isGlobalContextActive && hasActiveDockContextSelection { return true }
+        if isGlobalContextActive && hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
@@ -485,7 +489,7 @@ struct LauncherView: View {
         // Scoped app shows menus on empty query (see l2DockRowPresentation).
         let pills =
             (pillQuery.isEmpty && l2.targetApp == nil) ? [] : contextDockViewModel.visiblePills
-        let hasActiveContextSelection = hasActiveDockContextSelection
+        let hasActiveContextSelection = hasSelectionScopeSurface
 
         let showPinnedRow =
             q.isEmpty
@@ -511,7 +515,7 @@ struct LauncherView: View {
     }
 
     func selectionScopedDockPills(_ pills: [DockPill]) -> [DockPill] {
-        guard isGlobalContextActive, hasActiveDockContextSelection else { return pills }
+        guard isGlobalContextActive, hasSelectionScopeSurface else { return pills }
         return pills.filter { pill in
             guard !pill.isSeparator else { return false }
             let badge = (pill.badge ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -605,7 +609,7 @@ struct LauncherView: View {
             scope.isExplicitAppScope ? "explicit" : "implicit",
             scope.isGlobalScope ? "global" : "local",
             isGlobalContextActive ? "globalActive" : "contextDock",
-            hasActiveDockContextSelection ? "selection" : "noSelection",
+            hasSelectionScopeSurface ? "selection" : "noSelection",
         ].joined(separator: "|")
         if let cached = contextDockViewModel.cachedPreviewPills(
             query: q,
@@ -1034,7 +1038,7 @@ struct LauncherView: View {
     }
 
     func hasFrontmostMenuPillsInCurrentCache(for query: String) -> Bool {
-        guard isGlobalContextActive, !hasActiveDockContextSelection else { return false }
+        guard isGlobalContextActive, !hasSelectionScopeSurface else { return false }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return false }
         guard !resolveDockScope(for: q).isExplicitAppScope else { return false }
@@ -1594,7 +1598,7 @@ struct LauncherView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
         guard isGlobalContextActive || l2.targetApp != nil else { return nil }
-        guard !(isGlobalContextActive && hasActiveDockContextSelection) else { return nil }
+        guard !(isGlobalContextActive && hasSelectionScopeSurface) else { return nil }
         if let target = L2AppActionRouter.shared.explicitAppTarget(for: q) {
             return target.actionQuery
         }
@@ -1970,7 +1974,7 @@ struct LauncherView: View {
     func crossAppMenuGroups(for query: String, limit: Int = 12) -> [AppMenuGroup] {
         guard !query.isEmpty,
             isGlobalContextActive,
-            !hasActiveDockContextSelection,
+            !hasSelectionScopeSurface,
             globalInlineAppScope == nil
         else { return [] }
         let lower = query.lowercased()
@@ -2386,6 +2390,16 @@ struct LauncherView: View {
                 query: searchState.query
             ) {
                 searchResultsContent
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        )
+                    )
+                    .animation(
+                        .spring(response: 0.24, dampingFraction: 0.84),
+                        value: searchState.results.count
+                    )
             }
         case .generalChat, .contextDockChat, .mediaDock:
             EmptyView()

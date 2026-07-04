@@ -1069,11 +1069,16 @@ extension LauncherView {
             let runningApps = await MainActor.run { [self] in
                 self.currentRegularRunningApps()
             }
-            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps)
-            MenuWarmCacheService.shared.warmRecentAppsOnLauncherOpen()
+            await MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps)
+            await MenuWarmCacheService.shared.warmRecentAppsOnLauncherOpen()
+            let statusMenuChanged = await MenuWarmCacheService.shared
+                .warmStatusMenuAppsOnLauncherOpen()
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run { [self] in
                 self.rebuildGlobalSearchIndex()
+                if statusMenuChanged {
+                    self.refreshVisibleGlobalContextAfterMenuCacheUpdate(bundleIdentifier: nil)
+                }
             }
         }
     }

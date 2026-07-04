@@ -36,7 +36,7 @@ final class AppleNotesExecutionService {
 
     // MARK: - Core runner (background thread via Process)
 
-    func runScript(_ script: String) async throws -> String {
+    func runScript(_ script: String, timeout: TimeInterval = 30) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -48,14 +48,47 @@ final class AppleNotesExecutionService {
                 process.standardError = errPipe
                 do {
                     try process.run()
+                    // Hard timeout — a hung osascript (e.g. pending automation-permission
+                    // dialog) must never leave the chat spinner running forever.
+                    var timedOut = false
+                    let killer = DispatchWorkItem {
+                        if process.isRunning {
+                            timedOut = true
+                            process.terminate()
+                        }
+                    }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+                    // Drain both pipes WHILE the process runs — output larger than the 64KB
+                    // pipe buffer otherwise deadlocks: osascript blocks writing stdout while
+                    // we block in waitUntilExit.
+                    var outData = Data()
+                    var errData = Data()
+                    let drainGroup = DispatchGroup()
+                    drainGroup.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                        drainGroup.leave()
+                    }
+                    drainGroup.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                        drainGroup.leave()
+                    }
                     process.waitUntilExit()
-                    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    drainGroup.wait()
+                    killer.cancel()
                     let output = (String(data: outData, encoding: .utf8) ?? "")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     let errText = (String(data: errData, encoding: .utf8) ?? "")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if process.terminationStatus == 0 {
+                    if timedOut {
+                        continuation.resume(
+                            throwing: AppleNotesError.scriptFailed(
+                                "Notes did not respond within \(Int(timeout))s. "
+                                + "Check Automation permission for Notes in System Settings › Privacy."
+                            )
+                        )
+                    } else if process.terminationStatus == 0 {
                         continuation.resume(returning: output)
                     } else {
                         continuation.resume(
@@ -69,48 +102,87 @@ final class AppleNotesExecutionService {
         }
     }
 
+    // MARK: - Instant note count (single Apple Event — no metadata refresh)
+
+    func noteCount() async throws -> Int {
+        let raw = try await runScript(
+            "tell application \"Notes\" to return (count of notes) as string",
+            timeout: 10
+        )
+        guard let count = Int(raw) else { throw AppleNotesError.parseError(raw) }
+        return count
+    }
+
     // MARK: - Fetch all note metadata (title, folder, snippet — no full body)
 
+    /// Batched: each `... of every note` is ONE Apple Event returning a whole list.
+    /// The old per-note loop cost one Apple Event per property per note (plus a full
+    /// HTML `body` render each) — minutes for large libraries; this is 5–6 events total.
+    /// Snippets come from `plaintext` (cheap, no HTML render); if that property is
+    /// unavailable the notes still index with empty snippets.
     func fetchAllMetadata() async throws -> [NoteMetadata] {
         let script = """
-        set output to ""
+        set recSep to character id 30
         tell application "Notes"
-            repeat with n in every note
-                set nId to id of n
-                set nTitle to name of n
-                set rawBody to body of n
-                set nFolder to ""
-                set nMod to modification date of n
-                set nCreated to creation date of n
-                try
-                    set nFolder to name of container of n
-                end try
-                set bodyLen to count of rawBody
-                if bodyLen > 200 then
+            set idList to id of every note
+            set nameList to name of every note
+            set modList to modification date of every note
+            set createdList to creation date of every note
+            try
+                set folderList to name of container of every note
+            on error
+                set folderList to {}
+            end try
+            try
+                set bodyList to plaintext of every note
+            on error
+                set bodyList to {}
+            end try
+        end tell
+        set lineItems to {}
+        set n to count of idList
+        repeat with i from 1 to n
+            set nFolder to ""
+            if (count of folderList) is greater than or equal to i then
+                set fv to item i of folderList
+                if fv is not missing value then set nFolder to fv as string
+            end if
+            set nSnippet to ""
+            if (count of bodyList) is greater than or equal to i then
+                set rawBody to item i of bodyList
+                if (count of rawBody) > 200 then
                     set nSnippet to text 1 thru 200 of rawBody
                 else
                     set nSnippet to rawBody
                 end if
-                set output to output & nId & "|||" & nTitle & "|||" & nFolder & "|||" \\
-                    & (nMod as string) & "|||" & (nCreated as string) & "|||" & nSnippet & "\n"
-            end repeat
-        end tell
+            end if
+            set end of lineItems to (item i of idList) & "|||" & (item i of nameList) & "|||" & nFolder & "|||" & ((item i of modList) as string) & "|||" & ((item i of createdList) as string) & "|||" & nSnippet
+        end repeat
+        set AppleScript's text item delimiters to recSep
+        set output to lineItems as string
+        set AppleScript's text item delimiters to ""
         return output
         """
-        let raw = try await runScript(script)
+        let raw = try await runScript(script, timeout: 60)
         return parseMetadataLines(raw)
     }
 
     private func parseMetadataLines(_ raw: String) -> [NoteMetadata] {
         let formatter = AppleScriptDateFormatter.shared
+        let recordSeparator = Character(UnicodeScalar(30))
         return raw
-            .split(separator: "\n", omittingEmptySubsequences: true)
+            .split(separator: recordSeparator, omittingEmptySubsequences: true)
             .compactMap { line -> NoteMetadata? in
                 let parts = String(line).components(separatedBy: "|||")
                 guard parts.count >= 6 else { return nil }
-                let snippet = parts[5...].joined(separator: "|||").prefix(200)
+                // plaintext snippets can contain newlines — flatten for the one-line index
+                let snippet = parts[5...].joined(separator: "|||")
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "\r", with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .prefix(200)
                 return NoteMetadata(
-                    id: parts[0],
+                    id: parts[0].trimmingCharacters(in: .whitespacesAndNewlines),
                     title: parts[1],
                     folder: parts[2],
                     modifiedDate: formatter.date(from: parts[3]) ?? .distantPast,

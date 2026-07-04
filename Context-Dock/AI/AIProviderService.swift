@@ -762,20 +762,9 @@ class AIProviderService: ObservableObject {
             do {
                 // OCR-extract image content and prepend so the model can reason about it
                 var finalMessage = message
-                if !imageURLs.isEmpty {
-                    let ocrLines: [String] = imageURLs.compactMap { url -> CGImage? in
-                        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-                    }.flatMap { cgImage -> [String] in
-                        let req = VNRecognizeTextRequest()
-                        req.recognitionLevel = .accurate
-                        req.usesLanguageCorrection = true
-                        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                        try? handler.perform([req])
-                        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-                    }
-                    if !ocrLines.isEmpty {
-                        finalMessage = "Image content:\n\(ocrLines.joined(separator: "\n"))\n\nUser request: \(message)"
-                    }
+                let imageContent = onDeviceImageContentBlock(from: imageURLs)
+                if !imageContent.isEmpty {
+                    finalMessage = "\(imageContent)\n\nUser request: \(message)"
                 }
                 let session = try await onDeviceSession(for: contextPrompt)
                 let response = try await session.respond(to: finalMessage)
@@ -958,7 +947,11 @@ class AIProviderService: ObservableObject {
                     var lastLength = 0
                     var finalContent = ""
 
-                    let stream = session.streamResponse(to: message, generating: String.self)
+                    let imageContent = self.onDeviceImageContentBlock(from: imageURLs)
+                    let finalMessage = imageContent.isEmpty
+                        ? message
+                        : "\(imageContent)\n\nUser request: \(message)"
+                    let stream = session.streamResponse(to: finalMessage, generating: String.self)
                     for try await snapshot in stream {
                         let full = snapshot.content
                         let delta = String(full.dropFirst(lastLength))
@@ -987,6 +980,48 @@ class AIProviderService: ObservableObject {
         guard case .filesSelected(let urls) = context else { return [] }
         let imageExtensions = Set(["jpg", "jpeg", "png", "heic", "heif", "gif", "bmp", "tiff", "tif", "webp"])
         return urls.filter { imageExtensions.contains($0.pathExtension.lowercased()) }
+    }
+
+    private func onDeviceImageContentBlock(from imageURLs: [URL]) -> String {
+        guard !imageURLs.isEmpty else { return "" }
+
+        var sections: [String] = []
+        for url in imageURLs.prefix(8) {
+            var lines = ["### \(url.lastPathComponent)"]
+            guard let image = NSImage(contentsOf: url) else {
+                lines.append("Image could not be loaded from \(url.path).")
+                sections.append(lines.joined(separator: "\n"))
+                continue
+            }
+
+            let size = image.size
+            if size.width > 0, size.height > 0 {
+                lines.append("Size: \(Int(size.width)) x \(Int(size.height)) px")
+            }
+
+            if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                try? handler.perform([request])
+                let recognized = (request.results ?? [])
+                    .compactMap { $0.topCandidates(1).first?.string }
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if !recognized.isEmpty {
+                    lines.append("Recognized text:")
+                    lines.append(recognized.joined(separator: "\n"))
+                } else {
+                    lines.append("No readable text detected. Use the image file metadata only.")
+                }
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+
+        if imageURLs.count > 8 {
+            sections.append("... \(imageURLs.count - 8) more image attachment(s) omitted.")
+        }
+        return "## Image Attachments (local OCR)\n" + sections.joined(separator: "\n\n")
     }
 
     /// Returns a cached `LanguageModelSession` for the given system prompt.

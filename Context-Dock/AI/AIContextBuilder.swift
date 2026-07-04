@@ -13,7 +13,13 @@ final class AIContextBuilder {
         prompt += "\nRequest mode: \(request.mode.rawValue)"
         prompt += "\n" + behaviorRule(for: request)
         if let live = request.liveContext {
-            prompt += "\n\n" + liveContextBlock(live)
+            prompt += "\n\n" + liveContextBlock(live, query: request.text)
+        }
+        if request.source == .globalContext || request.source == .aiChat {
+            prompt += "\n\n" + AppWorkflowToolCatalog.shared.generalChatPromptBlock(
+                query: request.text,
+                liveBundleID: request.liveContext?.bundleID
+            )
         }
         if !request.attachments.isEmpty {
             let attachmentSummary = request.attachments.prefix(20).map { attachment in
@@ -54,7 +60,7 @@ final class AIContextBuilder {
         case .globalContext:
             switch request.context {
             case .none:
-                return "Behavior: Answer general request. Do not assume selection or app state."
+                return "Behavior: Answer general request. You may reference registered app workflow tools and saved app chat history when relevant. Do not execute actions unless user explicitly requests execution."
             default:
                 return "Behavior: Answer about explicit selected context. Do not execute actions unless user explicitly requests execution."
             }
@@ -88,7 +94,7 @@ final class AIContextBuilder {
         return parts.joined(separator: " | ")
     }
 
-    private func liveContextBlock(_ context: AIContextSnapshot) -> String {
+    private func liveContextBlock(_ context: AIContextSnapshot, query: String) -> String {
         var lines = ["Shared context snapshot:", "- App: \(context.appName) (\(context.bundleID))"]
         if let title = context.windowTitle, !title.isEmpty { lines.append("- Window: \(title)") }
         if let text = context.selectedText, !text.isEmpty {
@@ -101,6 +107,55 @@ final class AIContextBuilder {
         }
         if let url = context.browserURL, !url.isEmpty { lines.append("- Browser URL: \(url)") }
         if let title = context.browserTitle, !title.isEmpty { lines.append("- Browser title: \(title)") }
+        if let browser = context.browserContext,
+           let markdown = browser.cleanMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !markdown.isEmpty
+        {
+            lines.append("- Web context app: \(browser.appName ?? context.appName)")
+            lines.append("- Web context source: \(browser.source ?? "WebContextEngine")")
+            if let capturedAt = browser.capturedAt {
+                lines.append("- Web context captured: \(relativeDate(capturedAt))")
+            }
+            if let quality = browser.qualityScore {
+                lines.append("- Web context quality: \(Int((quality * 100).rounded()))%")
+            }
+            if let words = browser.wordCount { lines.append("- Web context words: \(words)") }
+            if let codeBlocks = browser.codeBlockCount {
+                lines.append("- Web context code blocks: \(codeBlocks)")
+            }
+            lines.append("- Web context characters: \(markdown.count)")
+            if !browser.headings.isEmpty {
+                lines.append("- Page headings:\n\(browser.headings.prefix(30).map { "  - \($0)" }.joined(separator: "\n"))")
+            }
+            if !browser.links.isEmpty {
+                lines.append("- Page links:\n\(browser.links.prefix(20).map { "  - \($0)" }.joined(separator: "\n"))")
+            }
+            if !browser.images.isEmpty {
+                lines.append("- Page images:\n\(browser.images.prefix(10).map { "  - \($0)" }.joined(separator: "\n"))")
+            }
+            lines.append("Relevant page Markdown:\n\(relevantMarkdown(from: markdown, query: query, limit: 8_000))")
+        }
+        if !context.connectedBrowserContexts.isEmpty {
+            lines.append("Connected running browser contexts:")
+            for browser in context.connectedBrowserContexts.prefix(4) {
+                guard let markdown = browser.cleanMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !markdown.isEmpty
+                else { continue }
+                var header = "- \(browser.appName ?? "Browser")"
+                if let title = browser.title, !title.isEmpty { header += ": \(title)" }
+                header += " | \(browser.url)"
+                if let quality = browser.qualityScore {
+                    header += " | quality \(Int((quality * 100).rounded()))%"
+                }
+                lines.append(header)
+                if !browser.headings.isEmpty {
+                    lines.append("  Headings: \(browser.headings.prefix(8).joined(separator: " | "))")
+                }
+                lines.append(
+                    "  Relevant Markdown:\n\(indent(relevantMarkdown(from: markdown, query: query, limit: 2_200), spaces: 2))"
+                )
+            }
+        }
         if let directory = context.currentDirectory, !directory.isEmpty {
             lines.append("- Current directory: \(directory)")
         }
@@ -111,5 +166,69 @@ final class AIContextBuilder {
             lines.append("- Registered capabilities:\n\(context.registeredCapabilities.prefix(80).map { "  - \($0)" }.joined(separator: "\n"))")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func relevantMarkdown(from markdown: String, query: String, limit: Int) -> String {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmedQuery.isEmpty else { return String(markdown.prefix(limit)) }
+
+        let terms = Set(
+            trimmedQuery
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { $0.count >= 3 }
+        )
+        guard !terms.isEmpty else { return String(markdown.prefix(limit)) }
+
+        let sections = splitMarkdownIntoSections(markdown)
+        let ranked = sections
+            .map { section -> (score: Int, text: String) in
+                let lower = section.lowercased()
+                let score = terms.reduce(0) { partial, term in
+                    partial + lower.components(separatedBy: term).count - 1
+                }
+                return (score, section)
+            }
+            .sorted {
+                if $0.score == $1.score { return $0.text.count > $1.text.count }
+                return $0.score > $1.score
+            }
+
+        let selected = ranked.filter { $0.score > 0 }.prefix(4).map(\.text)
+        let chosen = selected.isEmpty ? Array(sections.prefix(2)) : Array(selected)
+        var output = chosen.joined(separator: "\n\n")
+        if output.count < min(limit, 1_500), let first = sections.first, !output.contains(first) {
+            output = first + "\n\n" + output
+        }
+        return String(output.prefix(limit))
+    }
+
+    private func splitMarkdownIntoSections(_ markdown: String) -> [String] {
+        var sections: [String] = []
+        var current: [String] = []
+        for line in markdown.components(separatedBy: .newlines) {
+            if line.hasPrefix("#"), !current.isEmpty {
+                sections.append(current.joined(separator: "\n"))
+                current = [line]
+            } else {
+                current.append(line)
+            }
+        }
+        if !current.isEmpty { sections.append(current.joined(separator: "\n")) }
+        return sections.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func indent(_ text: String, spaces: Int) -> String {
+        let prefix = String(repeating: " ", count: spaces)
+        return text.components(separatedBy: .newlines).map { prefix + $0 }.joined(separator: "\n")
+    }
+
+    private func relativeDate(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 5 { return "now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        return "\(minutes / 60)h ago"
     }
 }

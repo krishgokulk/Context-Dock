@@ -795,11 +795,19 @@ struct SearchDirectoriesListView: View {
         panel.allowsMultipleSelection = false
         panel.message = "Select a directory to search"
         panel.prompt = "Select"
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            let displayName = url.lastPathComponent
-            // Use URL-based method to create security-scoped bookmark
-            settings.addSearchDirectory(url: url, displayName: displayName)
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                let displayName = url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent
+                settings.addSearchDirectory(url: url, displayName: displayName)
+            }
+        }
+
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(panel.runModal())
         }
     }
 }

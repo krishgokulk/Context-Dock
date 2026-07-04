@@ -533,7 +533,9 @@ extension LauncherView {
             if isKeyboardFocused {
                 if usesMatchedGeometry {
                     Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 999, isDark: isEffectiveDark))
+                        .clipShape(Capsule(style: .continuous))
                         .matchedGeometryEffect(
                             id: dockResultFocusEffectID,
                             in: compactScopeFocusNamespace,
@@ -542,14 +544,17 @@ extension LauncherView {
                         )
                 } else {
                     Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 999, isDark: isEffectiveDark))
+                        .clipShape(Capsule(style: .continuous))
                 }
                 Capsule(style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(isEffectiveDark ? 0.11 : 0.16),
+                                Color.white.opacity(isEffectiveDark ? 0.10 : 0.16),
                                 Color.white.opacity(isEffectiveDark ? 0.035 : 0.07),
+                                Color.black.opacity(isEffectiveDark ? 0.018 : 0.006),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -559,20 +564,21 @@ extension LauncherView {
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.22),
-                                Color.white.opacity(0.05),
+                                Color.white.opacity(isEffectiveDark ? 0.38 : 0.48),
+                                Color.white.opacity(isEffectiveDark ? 0.11 : 0.18),
+                                Color.white.opacity(isEffectiveDark ? 0.035 : 0.08),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 0.6
+                        lineWidth: 0.8
                     )
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7)
-                    .blur(radius: 1.2)
+                    .strokeBorder(Color.white.opacity(isEffectiveDark ? 0.30 : 0.22), lineWidth: 0.9)
+                    .blur(radius: 1.6)
             } else if isHovered {
                 Capsule(style: .continuous)
-                    .fill(Color.primary.opacity(0.055))
+                    .fill(Color.primary.opacity(isEffectiveDark ? 0.045 : 0.035))
             }
         }
     }

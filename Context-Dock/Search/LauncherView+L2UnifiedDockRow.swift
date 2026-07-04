@@ -63,7 +63,7 @@ extension LauncherView {
         let pillQuery = finderSearchPopoverActive ? "" : q
         // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
         // query — so the result sheet is visible the moment the launcher opens with a selection.
-        let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
+        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
         // A scoped app (running-app scope in Global Context) must show its menus on an
         // empty query, just like Context Dock — otherwise the scoped dock stays empty
         // until a keypress. Only the unscoped global/empty state collapses to no pills.
@@ -73,11 +73,17 @@ extension LauncherView {
             : contextDockViewModel.visiblePills
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
-        let hasActiveContextSelection = hasActiveDockContextSelection
+        let hasActiveContextSelection = hasSelectionScopeSurface
         let hasAnySelection =
             hasActiveContextSelection
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
-        let globalAppMatches = currentOrImmediateGlobalAppMatches(for: q)
+        let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
+            (pureGlobalAppSearch && !q.isEmpty)
+            ? globalGroupedListNavigationState(for: q) : nil
+        let globalAppMatches =
+            pureGlobalAppSearch
+            ? (preliminaryGlobalNavState?.appResults ?? [])
+            : currentOrImmediateGlobalAppMatches(for: q)
         let genericAppListQuery = isGenericApplicationListQuery(q)
         let preferFrontmostMenuResults =
             !genericAppListQuery
@@ -101,8 +107,9 @@ extension LauncherView {
             return (scope.scopedAppName, scope.scopedSearchQuery)
         }()
         let globalNavState: GlobalGroupedListNavigationState? =
-            (pureGlobalAppSearch && !q.isEmpty) || effectiveAppScope
-            ? globalGroupedListNavigationState(for: q) : nil
+            effectiveAppScope
+            ? globalGroupedListNavigationState(for: q)
+            : preliminaryGlobalNavState
         let globalMenuPills = globalNavState?.menuGroups.flatMap(\.allPills) ?? []
         let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
         let globalNavIsScopedAppMenus =
