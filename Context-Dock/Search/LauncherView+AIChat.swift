@@ -487,11 +487,29 @@ extension LauncherView {
                     // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
                     HStack(spacing: 8) {
                         if let scopedTarget {
-                            AppBundleIconView(
-                                bundleId: scopedTarget.bundleId,
-                                fallbackSymbol: "bubble.left.and.text.bubble.right",
-                                size: 18, cornerRadius: 4
-                            )
+                            // Browser scope with a connected page → show the SITE's favicon
+                            // so the user sees which page they are chatting with.
+                            if isContextDockBrowserBundle(scopedTarget.bundleId),
+                                let faviconURL = connectedBrowserPageFaviconURL
+                            {
+                                AsyncImage(url: faviconURL) { img in
+                                    img.resizable().scaledToFit()
+                                } placeholder: {
+                                    AppBundleIconView(
+                                        bundleId: scopedTarget.bundleId,
+                                        fallbackSymbol: "bubble.left.and.text.bubble.right",
+                                        size: 18, cornerRadius: 4
+                                    )
+                                }
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            } else {
+                                AppBundleIconView(
+                                    bundleId: scopedTarget.bundleId,
+                                    fallbackSymbol: "bubble.left.and.text.bubble.right",
+                                    size: 18, cornerRadius: 4
+                                )
+                            }
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("Chat with \(contextDockChatTitle(appName: scopedTarget.name, bundleId: scopedTarget.bundleId))")
                                     .font(.system(size: 12, weight: .semibold))
@@ -2200,6 +2218,28 @@ extension LauncherView {
             }
         }
 
+        // Document-based apps (Preview, TextEdit, …): no selection and no Finder
+        // selection, but the app HAS an open document — read it via AXDocument so
+        // "image info?" over a Preview image actually sees the image (vision) or PDF.
+        switch currentContext {
+        case .none, .appFocused:
+            if !isContextDockBrowserBundle(frontmost.bundleID),
+                !isExplicitScopedApp || scopedBundleId == frontmost.bundleID,
+                let docURL = focusedDocumentURLForShareContext()
+            {
+                let ext = docURL.pathExtension.lowercased()
+                let attachable: Set<String> = [
+                    "jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic", "webp",
+                    "pdf", "txt", "md", "rtf", "csv", "json", "log",
+                ]
+                if attachable.contains(ext) {
+                    currentContext = .filesSelected([docURL])
+                }
+            }
+        default:
+            break
+        }
+
         let dockCLIContextPrompt = dockScopedCLIContextPrompt(for: query, scope: dockScope)
 
         // When no CLI tools are configured for the scoped app, offer to auto-create an extension.
@@ -3560,7 +3600,7 @@ extension LauncherView {
         if case .filesSelected(let urls) = currentScopedConversationContext() {
             imageFiles = urls.filter { url in
                 let ext = url.pathExtension.lowercased()
-                return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic"].contains(ext)
+                return ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "heic", "webp"].contains(ext)
             }
         }
 

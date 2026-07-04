@@ -974,6 +974,18 @@ extension LauncherView {
         return URL(string: page.url)?.host ?? currentBrowserPageURL()?.host
     }
 
+    /// Favicon URL for the connected browser page — lets chat headers show the
+    /// site icon so the user sees WHICH page they are chatting with.
+    var connectedBrowserPageFaviconURL: URL? {
+        guard showContextInDock,
+            isContextDockChatConnected
+        else { return nil }
+        let host = webResearch.pages.last.flatMap { URL(string: $0.url)?.host }
+            ?? currentBrowserPageURL()?.host
+        guard let host, !host.isEmpty else { return nil }
+        return URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64")
+    }
+
     func syncSafariTabStrip(force: Bool = false) {
         let cached = SafariTabManager.shared.cachedTabs(maxAge: 45)
         if !cached.isEmpty,
