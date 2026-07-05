@@ -463,8 +463,16 @@ struct LauncherView: View {
         // (no chip) into file search instead of apps/commands/running apps.
         let explicitFinderScope =
             globalInlineAppScope?.bundleId == "com.apple.finder"
+        // The clipboard pill appears whenever the pasteboard changes (0.75s watcher)
+        // — it must NOT hijack the surface while the user is typing a query, or
+        // pure global search dies mid-keystroke (↓ expansion silently bails).
+        // It only claims the surface on an empty field, where clipboard scope lives.
+        let clipboardClaimsSurface =
+            showGlobalClipboardPill && !globalClipboardText.isEmpty
+            && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return isGlobalContextActive
-            && !hasSelectionScopeSurface
+            && !hasActiveDockContextSelection
+            && !clipboardClaimsSurface
             && l2.targetApp == nil
             && !explicitFinderScope
             && searchState.activeSmartQueryKey == nil

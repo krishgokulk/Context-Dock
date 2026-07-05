@@ -160,3 +160,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-05 12:25 · `92201d44` · `codex-context-dock-polish-fixes`
 **feat(global): compact dock for menu-only and single-result queries, spinner while building**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-05 16:21 · `458952d3` · `codex-context-dock-polish-fixes`
+**fix(global): live selection poll no longer kills ↓ expansion**
+Swift: +1 added · ~9 modified · -0 deleted
