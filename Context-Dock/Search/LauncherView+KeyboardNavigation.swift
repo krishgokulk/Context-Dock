@@ -183,6 +183,16 @@ extension LauncherView {
                 }
             }
 
+            // Attached folder search arms the chat — detach it FIRST so backspace
+            // can actually leave folder mode (back to Finder menu search).
+            if event.keyCode == 51,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.detachFinderFolderQueryModeFromEmptyBackspace()
+            {
+                self.isSearchFieldFocused = true
+                return nil
+            }
+
             // Frontmost-app chat open + empty field: backspace clears the chat and
             // returns to that app's menu search. This MUST run before the inline-scope
             // pops below, which would otherwise dump the user into Global Context.

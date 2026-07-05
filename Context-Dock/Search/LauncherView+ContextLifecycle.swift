@@ -652,6 +652,13 @@ extension LauncherView {
                     isSearchFieldFocused = true
                     return
                 }
+                // Attached folder search arms the chat ("search files & ask AI…") — its
+                // detach must win over the chat-exit branch or backspace can never
+                // leave folder mode.
+                if detachFinderFolderQueryModeFromEmptyBackspace() {
+                    isSearchFieldFocused = true
+                    return
+                }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
                         // Backspace on an empty frontmost chat: CLEAR the conversation and

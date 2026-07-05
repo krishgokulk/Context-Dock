@@ -146,6 +146,15 @@ extension LauncherView {
         }
 
         detachFinderFolderSearch()
+        // detachFinderFolderSearch no-ops when the path is already empty — force the
+        // mode off so backspace can never be consumed without actually exiting.
+        finderFolderQueryModeActive = false
+        // Folder mode armed the chat surface; a message-less chat disarms with it so
+        // the dock lands back on the Finder menu search, not an empty chat sheet.
+        if l2.chatMessages.isEmpty {
+            l2.chatArmed = false
+            l2.showChatPopover = false
+        }
         l2.focusedPillIndex = nil
         focusedAppPillIndex = nil
         l2.pillNavViaKeyboard = false

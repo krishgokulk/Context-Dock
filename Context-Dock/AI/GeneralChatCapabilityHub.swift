@@ -100,22 +100,45 @@ final class GeneralChatCapabilityHub {
     }
 
     /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/
-    /// GitHub) — callable with server "builtin" through the same mcp_call JSON.
+    /// GitHub) — callable with server "builtin" through the same mcp_call JSON. Also
+    /// names the DISABLED families so the model suggests enabling them instead of
+    /// claiming it has no access.
     private func builtInCapabilityLines() -> [String] {
-        let prefixes = ["notes.", "calendar.", "contacts.", "reminders.", "github."]
+        let families: [(prefix: String, name: String, flag: String)] = [
+            ("notes.", "Apple Notes", "noteMCPEnabled"),
+            ("calendar.", "Calendar", "calendarMCPEnabled"),
+            ("contacts.", "Contacts", "contactsMCPEnabled"),
+            ("reminders.", "Reminders", "remindersMCPEnabled"),
+            ("github.", "GitHub (gh CLI)", "githubMCPEnabled"),
+        ]
+        let prefixes = families.map(\.prefix)
         let caps = CapabilityRegistry.shared.all.filter { cap in
             prefixes.contains(where: cap.id.hasPrefix)
         }
-        guard !caps.isEmpty else { return [] }
-        var lines = [
-            "",
-            "Built-in tools (call with server \"builtin\", no app needed):",
-        ]
-        for cap in caps {
-            let fields = cap.inputSchema.fields
-                .map { "\($0.name)\($0.required ? "" : "?")" }
-                .joined(separator: ", ")
-            lines.append("- tool \"\(cap.id)\": \(cap.title) | input: [\(fields)]")
+        let disabledNames = families
+            .filter { family in !caps.contains { $0.id.hasPrefix(family.prefix) } }
+            .map(\.name)
+
+        var lines: [String] = []
+        if !caps.isEmpty {
+            lines.append("")
+            lines.append("Built-in tools (call with server \"builtin\", no app needed):")
+            lines.append(
+                "These tools mean you are NOT limited to the local file system or shell — "
+                + "never claim you cannot access an app whose tools are listed here.")
+            for cap in caps {
+                let fields = cap.inputSchema.fields
+                    .map { "\($0.name)\($0.required ? "" : "?")" }
+                    .joined(separator: ", ")
+                lines.append("- tool \"\(cap.id)\": \(cap.title) | input: [\(fields)]")
+            }
+        }
+        if !disabledNames.isEmpty {
+            lines.append("")
+            lines.append(
+                "Built-in integrations currently DISABLED: \(disabledNames.joined(separator: ", ")). "
+                + "When the user asks about these apps, do NOT say you lack access — tell them to "
+                + "flip the built-in toggle in Settings → App Adapters → that app → Tools tab.")
         }
         return lines
     }
