@@ -447,9 +447,23 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.focusedAppPillIndex = newValue }
     }
 
+    /// Sheet expansion has exactly ONE source of truth: `typingSnapshot.phase`.
+    /// This alias keeps existing call sites working — reads report `.expanded`,
+    /// writes transition the phase (false re-derives the pre-expansion phase from
+    /// the current match icons). It can never diverge from the presentation gate.
     var globalMenuResultsRevealed: Bool {
-        get { globalContextViewModel.menuResultsRevealed }
-        nonmutating set { globalContextViewModel.menuResultsRevealed = newValue }
+        get { globalContextViewModel.typingSnapshot.phase == .expanded }
+        nonmutating set {
+            if newValue {
+                globalContextViewModel.typingSnapshot.phase = .expanded
+            } else if globalContextViewModel.typingSnapshot.phase == .expanded {
+                let icons = globalContextViewModel.typingSnapshot.matchDockIcons
+                globalContextViewModel.typingSnapshot.phase =
+                    icons.contains(where: \.isExpandable)
+                    ? .expandable
+                    : (icons.isEmpty ? .typing : .matched)
+            }
+        }
     }
 
     var liveDockSelectionPreviewText: String? {

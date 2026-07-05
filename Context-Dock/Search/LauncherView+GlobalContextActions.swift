@@ -1861,6 +1861,10 @@ extension LauncherView {
         }
     }
 
+    /// THE single entry point for expanding the Global Context result sheet.
+    /// Works from ANY pre-expansion phase (including a stale .idle snapshot), so the
+    /// FIRST ↓ always expands. Order matters: results are computed BEFORE the phase
+    /// flips, so a zero-result query never leaves an expanded-but-empty sheet.
     @discardableResult
     func expandGlobalContextTypingMatch(selectFirst: Bool = true) -> Bool {
         guard isGlobalContextActive,
@@ -1870,14 +1874,30 @@ extension LauncherView {
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return false }
-        let phase = globalContextViewModel.typingSnapshot.phase
-        guard phase == .typing || phase == .matched || phase == .expandable else { return false }
+        guard globalContextViewModel.typingSnapshot.phase != .expanded else { return false }
 
         let started = Date()
+        // 1. Results first — zero results never expand (token-word fallback covers
+        //    "mail recent notes"-style queries where only individual words match).
+        var state = instantGlobalGroupedListNavigationState(for: q)
+        if state.totalCount == 0 {
+            let tokenApps = tokenMatchedAppResults(for: q)
+            guard !tokenApps.isEmpty else { return false }
+            state = GlobalGroupedListNavigationState(
+                appResults: tokenApps,
+                menuPills: [],
+                menuGroups: [],
+                appMenuGroups: [],
+                menuFirst: false
+            )
+        }
+
+        // 2. Single expansion flag flips — every gate (presentation, deferral,
+        //    strip) derives from this one phase.
         globalContextViewModel.prepareTask?.cancel()
         globalContextViewModel.typingSnapshot.phase = .expanded
-        globalMenuResultsRevealed = true
-        let state = instantGlobalGroupedListNavigationState(for: q)
+
+        // 3. Publish the results the sheet will render.
         setCachedGlobalGroupedState(query: q, state: state, animated: false)
         cachedGlobalAppMatches = state.appResults
         cachedGlobalAppQuery = q
@@ -1885,9 +1905,13 @@ extension LauncherView {
         pendingGlobalGroupedQuery = nil
         globalAppMatchTask?.cancel()
         globalGroupedTask?.cancel()
+
+        // 4. Selection lands on the first row.
         if selectFirst, state.totalCount > 0 {
             setGlobalGroupedFocus(globalGroupedVisibleOrder(state: state).first, state: state)
         }
+
+        // 5. Window follows the committed state (animated frame glide).
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {

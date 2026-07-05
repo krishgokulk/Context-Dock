@@ -893,31 +893,6 @@ extension LauncherView {
         return out
     }
 
-    /// ↓ on a no-match query: commit the token-matched apps as the grouped result
-    /// rows so the list expands and arrow navigation works. Returns false when the
-    /// query has no token matches either.
-    @discardableResult
-    func expandTokenMatchedAppsIntoResults(for query: String) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return false }
-        let tokenApps = tokenMatchedAppResults(for: q)
-        guard !tokenApps.isEmpty else { return false }
-        let state = GlobalGroupedListNavigationState(
-            appResults: tokenApps,
-            menuPills: [],
-            menuGroups: [],
-            appMenuGroups: [],
-            menuFirst: false
-        )
-        // Cancel any in-flight keystroke rebuild so it can't overwrite this state.
-        globalGroupedGeneration &+= 1
-        globalGroupedTask?.cancel()
-        globalGroupedTask = nil
-        setCachedGlobalGroupedState(query: q, state: state, animated: false)
-        setGlobalGroupedFocus(0, state: state)
-        return true
-    }
-
     /// True when the trailing strip is in token-fallback mode: query typed, nothing
     /// matched apps/commands/menus, but individual words match apps.
     var globalStripShowsTokenMatches: Bool {
@@ -987,9 +962,7 @@ extension LauncherView {
                 HStack(spacing: 5) {
                     ForEach(menuOwners, id: \.bundleId) { owner in
                         Button {
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                                globalMenuResultsRevealed = true
-                            }
+                            _ = expandGlobalContextTypingMatch(selectFirst: false)
                         } label: {
                             if let icon = owner.icon {
                                 Image(nsImage: icon)

@@ -437,23 +437,17 @@ extension LauncherView {
             if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
                 let groupedState = self.globalGroupedListNavigationState(for: q)
                 guard groupedState.totalCount > 0 else {
-                    // Nothing matched apps/commands/menus — the trailing strip shows
-                    // token-matched app pills instead. ↓ expands them into result rows.
-                    if event.keyCode == 125, self.expandTokenMatchedAppsIntoResults(for: q) {
+                    // Nothing matched apps/commands/menus — ↓ still goes through the
+                    // single expansion entry (its token-word fallback covers this).
+                    if event.keyCode == 125, self.expandGlobalContextTypingMatch(selectFirst: true) {
                         return nil
                     }
                     return event
                 }
 
                 switch event.keyCode {
-                case 125:  // Down — reveal a deferred sheet first, then navigate
-                    if !self.globalMenuResultsRevealed,
-                        self.globalInlineAppScope == nil,
-                        groupedState.appResults.isEmpty || groupedState.totalCount == 1
-                    {
-                        withAnimation(.spring(response: 0.26, dampingFraction: 0.9)) {
-                            self.globalMenuResultsRevealed = true
-                        }
+                case 125:  // Down — FIRST press expands via the single entry, then navigates
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
                         return nil
                     }
                     _ = self.moveGlobalGroupedListFocus(
