@@ -140,3 +140,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-05 11:00 · `b640f8eb` · `codex-context-dock-polish-fixes`
 **fix(dock): poll live text selection as backup for missing AX notifications**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-05 11:05 · `59cec3f1` · `codex-context-dock-polish-fixes`
+**fix(ax): read web-area selection when no element has focus**
+Swift: +0 added · ~1 modified · -0 deleted

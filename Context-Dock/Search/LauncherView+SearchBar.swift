@@ -1850,6 +1850,22 @@ extension LauncherView {
                                     if shouldShowSelectionTrailingButton {
                                         selectionTrailingButton
                                     }
+                                    // Selection Scope active → visible exit affordance
+                                    // (same action as backspace on an empty field).
+                                    if hasSelectionScopeSurface || globalContextActivationHasFrozenPayload {
+                                        Button {
+                                            dismissSelectionAndStayInGlobalContext()
+                                            isSearchFieldFocused = true
+                                        } label: {
+                                            Image(systemName: "minus")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(.secondary.opacity(0.70))
+                                                .frame(width: 22, height: 22)
+                                                .background(Color.white.opacity(0.07), in: Circle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Exit selection scope")
+                                    }
                                 }
                             } else if showContextInDock {
                                 // "+" affordance per frontmost app: Finder window → attach the

@@ -135,11 +135,15 @@ extension LauncherView {
 
     @discardableResult
     func detachFinderFolderQueryModeFromEmptyBackspace() -> Bool {
-        guard finderFolderQueryModeActive else { return false }
+        // Any attached folder detaches on empty backspace — do NOT require the
+        // attachment to still match the live Finder folder (the cached current-
+        // folder path drifts while the dock has focus, which made exit impossible).
+        guard finderFolderQueryModeActive || !attachedFinderFolderSearchPath.isEmpty else {
+            return false
+        }
         guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        guard isFinderFolderSearchAttached() else { return false }
 
         detachFinderFolderSearch()
         l2.focusedPillIndex = nil

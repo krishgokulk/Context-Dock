@@ -444,6 +444,13 @@ struct LauncherView: View {
         activeSelection != nil || frozenSelectionText != nil
     }
 
+    /// Launch-time Selection Scope freezes its payload into the activation
+    /// (not into activeSelection) — backspace-exit must recognize that too.
+    var globalContextActivationHasFrozenPayload: Bool {
+        guard let activation = globalContextActivation else { return false }
+        return activation.frozenText?.isEmpty == false || !activation.frozenFilePaths.isEmpty
+    }
+
     var hasSelectionScopeSurface: Bool {
         hasActiveDockContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
     }

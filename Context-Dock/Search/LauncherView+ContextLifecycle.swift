@@ -668,6 +668,17 @@ extension LauncherView {
                     isSearchFieldFocused = true
                     return
                 }
+                // Attached Finder folder and Selection Scope exit FIRST — a Finder app
+                // scope (l2.targetApp) coexists with both and must not shadow them.
+                if detachFinderFolderQueryModeFromEmptyBackspace() {
+                    isSearchFieldFocused = true
+                    return
+                }
+                if hasActiveDockContextSelection || globalContextActivationHasFrozenPayload {
+                    dismissSelectionAndStayInGlobalContext()
+                    isSearchFieldFocused = true
+                    return
+                }
                 if l2.targetApp != nil || searchState.contextApp != nil
                     || searchState.activeSmartQueryKey != nil
                 {
@@ -678,14 +689,6 @@ extension LauncherView {
                     searchState.lastSmartQuery = ""
                     isSearchFieldFocused = true
                     return
-                }
-                if detachFinderFolderQueryModeFromEmptyBackspace() {
-                    isSearchFieldFocused = true
-                    return
-                }
-                if hasActiveDockContextSelection {
-                    dismissSelectionAndStayInGlobalContext()
-                    isSearchFieldFocused = true
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
