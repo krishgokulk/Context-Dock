@@ -316,7 +316,21 @@ extension LauncherView {
             try? proposal.script.write(to: tmp, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
-            AXTriggerRuleEngine.shared.run(type: .scriptFile, value: tmp.path, envVars: envVars)
+            // Run in the VISIBLE dock terminal — the user watches the clone/build/
+            // install live instead of a silent background process. Context vars are
+            // exported first so $CD_URL etc. resolve inside the script.
+            let consoleKey = prepareScopedWorkspaceTerminal()
+            let term = panelTerminal(for: consoleKey)
+            showLivePanel(.terminal)
+            let exports = envVars.map { key, value in
+                let safe = value
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "\r", with: " ")
+                return "export \(key)=\"\(safe)\""
+            }.joined(separator: "; ")
+            term.sendCommand("\(exports); bash \"\(tmp.path)\"")
         }
     }
 

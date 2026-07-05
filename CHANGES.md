@@ -128,3 +128,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-05 00:41 · `80b270e5` · `codex-context-dock-polish-fixes`
 **fix(global): instant results while matches exist; only no-match collapses to pills**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-05 10:50 · `5f9826f2` · `codex-context-dock-polish-fixes`
+**fix(dock): live text-selection button while dock open + identity-based list nav**
+Swift: +0 added · ~2 modified · -0 deleted
