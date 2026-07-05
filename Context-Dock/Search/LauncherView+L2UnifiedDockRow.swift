@@ -210,28 +210,29 @@ extension LauncherView {
 
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
-        // Content collapse/expand animates in step with the window's frame glide —
-        // an instant EmptyView swap while the frame animates is what looked jumpy.
-        let deferred = isDeferredMenuOnlyPresentation(presentation)
-        Group {
-            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
-                EmptyView()
-            } else if !deferred {
-                globalAppSearchListView(
-                    query: presentation.query,
-                    matches: presentation.matches,
-                    menuPills: presentation.menuPills,
-                    appMenuGroups: presentation.appMenuGroups,
-                    launchHint: presentation.launchHint,
-                    scopedMenuAppName: presentation.scopedMenuAppName,
-                    scopedMenuActionQuery: presentation.scopedMenuActionQuery,
-                    isLoading: presentation.isLoading,
-                    menuFirst: false
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
-            }
-        }
-        .animation(.spring(response: 0.26, dampingFraction: 0.9), value: deferred)
+        // PERSISTENT hierarchy: the results container is ALWAYS in the tree and
+        // reveals by clipped height. Conditional creation (`if expanded { list }`)
+        // rebuilt the view identity on ↓, so the expansion could never animate
+        // continuously from the first key press.
+        let expanded =
+            !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+            && !isDeferredMenuOnlyPresentation(presentation)
+        globalAppSearchListView(
+            query: presentation.query,
+            matches: presentation.matches,
+            menuPills: presentation.menuPills,
+            appMenuGroups: presentation.appMenuGroups,
+            launchHint: presentation.launchHint,
+            scopedMenuAppName: presentation.scopedMenuAppName,
+            scopedMenuActionQuery: presentation.scopedMenuActionQuery,
+            isLoading: presentation.isLoading,
+            menuFirst: false
+        )
+        .frame(maxHeight: expanded ? nil : 0, alignment: .top)
+        .opacity(expanded ? 1 : 0)
+        .clipped()
+        .allowsHitTesting(expanded)
+        .animation(.easeInOut(duration: 0.18), value: expanded)
     }
 
     @ViewBuilder

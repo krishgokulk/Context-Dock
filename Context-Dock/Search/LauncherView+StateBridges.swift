@@ -447,6 +447,12 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.focusedAppPillIndex = newValue }
     }
 
+    /// Compact header vs expanded navigation — pure projection of the phase.
+    var globalContextVisualState: GlobalContextVisualState {
+        globalContextViewModel.typingSnapshot.phase == .expanded
+            ? .expandedNavigation : .compactTyping
+    }
+
     /// Sheet expansion has exactly ONE source of truth: `typingSnapshot.phase`.
     /// This alias keeps existing call sites working — reads report `.expanded`,
     /// writes transition the phase (false re-derives the pre-expansion phase from

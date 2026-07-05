@@ -470,19 +470,17 @@ extension LauncherView {
                         return nil
                     }
                     return event
-                case 53:  // Escape — leave result focus first; keep query intact
+                case 53:  // Escape — collapse expanded sheet to compact typing; keep query
                     if self.globalContextViewModel.typingSnapshot.phase == .expanded {
-                        let hasMatches = !self.globalContextViewModel.typingSnapshot.matchDockIcons.isEmpty
-                        let hasExpandable = self.globalContextViewModel.typingSnapshot.matchDockIcons
-                            .contains(where: { $0.isExpandable })
-                        self.globalContextViewModel.typingSnapshot.phase =
-                            hasExpandable
-                            ? .expandable
-                            : (hasMatches ? .matched : .typing)
+                        // globalMenuResultsRevealed's setter re-derives the pre-expansion
+                        // phase from the current match icons — single source of truth.
+                        self.globalMenuResultsRevealed = false
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
-                        self.globalMenuResultsRevealed = false
+                        // One resize back to the compact bar (mirror of the ↓ expansion).
+                        self.requestWindowSizeUpdate(
+                            reason: .modeChanged, animated: true, debounceNanoseconds: 0)
                         DispatchQueue.main.async { self.reclaimSearchInputFocus() }
                         return nil
                     }

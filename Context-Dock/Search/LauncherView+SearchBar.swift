@@ -708,10 +708,13 @@ extension LauncherView {
                                             || previewGlobalAppResult != nil || l2.targetApp != nil
                                             || typedAppIcon != nil
                                     )
-                                    if isGlobalContextActive && !preferFrontmostMenuIcon
-                                        && l2.targetApp == nil && typedAppIcon == nil
-                                        && previewGlobalAppResult == nil
-                                        && scopedGlobalAppIcon == nil
+                                    // Pure Global Context: the left icon is ALWAYS the
+                                    // DoraX glyph — matching-app icons belong to the
+                                    // match dock on the right and the result rows, never
+                                    // the header. (Explicit app scopes keep their icon.)
+                                    if isGlobalContextActive
+                                        && l2.targetApp == nil
+                                        && globalInlineAppScope == nil
                                     {
                                         if let feedbackIcon = feedbackAppIcon {
                                             // Action in progress (quit/launch/run): show THAT app's
