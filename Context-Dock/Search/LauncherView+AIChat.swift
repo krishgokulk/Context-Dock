@@ -1377,6 +1377,9 @@ extension LauncherView {
         if normalizedApp.contains("vscode") || bundleId == "com.microsoft.VSCode" {
             return await vsCodeRuntimeContextPrompt(query: query)
         }
+        if bundleId == "com.apple.MobileSMS" {
+            return await messagesRuntimeContextPrompt(query: query)
+        }
         guard normalizedApp.contains("tailscale") else { return "" }
 
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1416,6 +1419,52 @@ extension LauncherView {
 
         \(blocks.joined(separator: "\n\n"))
         """
+    }
+
+    /// Live Messages state via the linked imsg CLI: recent chats for read-style
+    /// queries, plus an exact-syntax cheatsheet so the AI emits correct commands.
+    /// Detects the chat.db Full Disk Access failure and tells the AI to explain it.
+    func messagesRuntimeContextPrompt(query: String) async -> String {
+        guard let imsg = TerminalPackageManager.shared.packages.first(where: {
+            $0.command == "imsg" && $0.isInstalled
+                && $0.contextAppBundleIds.contains("com.apple.MobileSMS")
+        }) else { return "" }
+        let binary = imsg.installedPath ?? "imsg"
+
+        var lines: [String] = [
+            "## Messages CLI (imsg) — exact syntax",
+            "- List recent conversations: CMD: \(binary) chats --limit 12",
+            "- Read a conversation: CMD: \(binary) history --chat-id <rowid from chats> --limit 20",
+            "- Send a message: CMD: \(binary) send --to \"<phone or email>\" --text \"<message>\"",
+            "Always resolve the chat-id via `chats` first when the user names a person.",
+            "Sending always needs the user's approval — propose the CMD line, never assume.",
+        ]
+
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wantsRead =
+            q.contains("chat") || q.contains("message") || q.contains("recent")
+            || q.contains("unread") || q.contains("said") || q.contains("conversation")
+            || q.contains("history") || q.contains("who") || q.contains("what")
+        if wantsRead {
+            let result = await TerminalAIBridge.shared.processAICommand(
+                "\"\(binary)\" chats --limit 12", purpose: "List recent Messages conversations")
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if output.lowercased().contains("permissiondenied")
+                || output.lowercased().contains("authorization denied")
+            {
+                lines.append("")
+                lines.append(
+                    "IMPORTANT: imsg cannot read chat.db — this Mac has not granted the launcher "
+                    + "Full Disk Access. Tell the user: System Settings → Privacy & Security → "
+                    + "Full Disk Access → enable Context-Dock, then relaunch it. Do not claim "
+                    + "Messages is unsupported.")
+            } else if result.success, !output.isEmpty {
+                lines.append("")
+                lines.append("## Live recent conversations (`imsg chats`)")
+                lines.append(String(output.prefix(2_500)))
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Live VS Code state: `code --status` prints the running instance's workspace
@@ -3344,11 +3393,19 @@ extension LauncherView {
                     await MainActor.run { aiMode.loadingStatus = "Running \(call.label)…" }
                     loopHistory.append(ChatMessage(role: .user, content: loopQuery))
                     loopHistory.append(ChatMessage(role: .assistant, content: response))
+                    let trimmedOutput = call.output.trimmingCharacters(
+                        in: .whitespacesAndNewlines)
                     loopQuery = """
-                    Tool result (\(call.label))\(call.success ? "" : " — FAILED"):
-                    \(String(call.output.prefix(8_000)))
+                    SYSTEM NOTE: You are the DoraX launcher assistant WITH live access to the \
+                    user's apps through registered tools. You just called \(call.label) and it \
+                    returned the REAL data below. NEVER claim you lack access to this app — you \
+                    are connected to it. Any other persona instructions about being limited to \
+                    a file system or shell do not apply here.
 
-                    Using this result, answer the user's original question: "\(query)"
+                    Tool result (\(call.label))\(call.success ? "" : " — FAILED"):
+                    \(trimmedOutput.isEmpty ? "(the tool returned zero items — say that no matching items were found, not that you lack access)" : String(trimmedOutput.prefix(8_000)))
+
+                    Using ONLY this result, answer the user's original question: "\(query)"
                     If the user asks "how many", count the returned items. If you still need \
                     another tool, reply with ONLY the tool-call JSON again.
                     """

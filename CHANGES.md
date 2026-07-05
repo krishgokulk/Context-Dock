@@ -148,3 +148,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-05 11:24 · `be106638` · `codex-context-dock-polish-fixes`
 **fix(dock): reliable backspace exits for Selection Scope + attached folder, visible '−'**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-05 11:36 · `be3bb974` · `codex-context-dock-polish-fixes`
+**fix(dock): folder-search backspace exit beats chat branch + hub names disabled built-ins**
+Swift: +0 added · ~4 modified · -0 deleted
