@@ -127,12 +127,19 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var selectedClipboardEntryIDs: Set<UUID> = []
     @Published var dismissedFinderSelectionSignature: String?
     @Published var suppressedAutomaticFinderSelectionSignature: String?
+    /// Live text selection observed WHILE the dock is open. Drives ONLY the trailing
+    /// selection button — never axContext / hasSelectionScopeSurface, which would
+    /// silently flip the dock out of pure global app search mid-typing.
+    @Published var liveSelectionPreviewText: String?
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
+    @Published var typingSnapshot = GlobalContextTypingSnapshot()
+    @Published var preparedResults: GlobalContextPreparedResults?
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0
     var groupedTask: Task<Void, Never>?
     var groupedGeneration = 0
+    var prepareTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
 }

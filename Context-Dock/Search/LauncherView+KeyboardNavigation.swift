@@ -7,6 +7,12 @@ extension LauncherView {
         animated: Bool = true,
         debounceNanoseconds: UInt64 = 50_000_000
     ) {
+        if isGlobalContextActive,
+            globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
+            reason.isTypingOrContentRefresh
+        {
+            return
+        }
         let preset = currentDockHeightPreset
         let mode = currentDockSurfaceMode
         let presetChanged = lastAppliedDockHeightPreset != preset
@@ -241,6 +247,47 @@ extension LauncherView {
                 return nil
             }
 
+            if self.isGlobalContextActive,
+                (
+                    self.globalContextViewModel.typingSnapshot.phase == .typing
+                    || self.globalContextViewModel.typingSnapshot.phase == .matched
+                    || self.globalContextViewModel.typingSnapshot.phase == .expandable
+                )
+            {
+                switch event.keyCode {
+                case 125:  // Down
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
+                case 124, 48:  // Right / Tab
+                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: { $0.isExpandable }),
+                        self.expandGlobalContextTypingMatch(selectFirst: true)
+                    {
+                        return nil
+                    }
+                case 36:  // Enter
+                    let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
+                    let exactLaunchIcons = matchIcons.filter { $0.isExactAppPrefix && !$0.isExpandable }
+                    let expandableRunningIcons = matchIcons.filter { $0.isExpandable && $0.isRunning }
+                    if exactLaunchIcons.count == 1, let item = exactLaunchIcons.first {
+                        self.executeMatchDockIcon(item)
+                        return nil
+                    } else if expandableRunningIcons.count == 1 {
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                            return nil
+                        }
+                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable {
+                            if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                                return nil
+                            }
+                    } else if matchIcons.contains(where: { $0.isExpandable }),
+                        self.expandGlobalContextTypingMatch(selectFirst: true)
+                    {
+                        return nil
+                    }
+                default:
+                    break
+                }
+            }
+
             // Right arrow: focus visible Global app result, otherwise accept app ghost text.
             if event.keyCode == 124 {
                 if self.acceptTopGlobalAppGhostCompletionIfPossible() {
@@ -430,6 +477,21 @@ extension LauncherView {
                     }
                     return event
                 case 53:  // Escape — leave result focus first; keep query intact
+                    if self.globalContextViewModel.typingSnapshot.phase == .expanded {
+                        let hasMatches = !self.globalContextViewModel.typingSnapshot.matchDockIcons.isEmpty
+                        let hasExpandable = self.globalContextViewModel.typingSnapshot.matchDockIcons
+                            .contains(where: { $0.isExpandable })
+                        self.globalContextViewModel.typingSnapshot.phase =
+                            hasExpandable
+                            ? .expandable
+                            : (hasMatches ? .matched : .typing)
+                        self.focusedAppPillIndex = nil
+                        self.l2.focusedPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        self.globalMenuResultsRevealed = false
+                        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        return nil
+                    }
                     if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil

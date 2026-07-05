@@ -452,6 +452,11 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.menuResultsRevealed = newValue }
     }
 
+    var liveDockSelectionPreviewText: String? {
+        get { globalContextViewModel.liveSelectionPreviewText }
+        nonmutating set { globalContextViewModel.liveSelectionPreviewText = newValue }
+    }
+
     var cachedGlobalAppQuery: String {
         get { globalContextViewModel.cachedAppQuery }
         nonmutating set { globalContextViewModel.cachedAppQuery = newValue }

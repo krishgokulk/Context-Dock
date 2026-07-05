@@ -12,7 +12,8 @@ extension LauncherView {
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
             && !(isGlobalContextActive && hasSelectionScopeSurface)
-            && currentSelectionActivationSnapshot(refresh: false) != nil
+            && (liveDockSelectionPreviewText != nil
+                || currentSelectionActivationSnapshot(refresh: false) != nil)
     }
 
     func currentSelectionActivationSnapshot(refresh: Bool = false) -> GlobalContextActivation? {
@@ -201,6 +202,7 @@ extension LauncherView {
     var selectionTrailingButton: some View {
         if let selectionIcon = activeSelectionIcon
             ?? currentSelectionActivationSnapshot(refresh: false)?.frozenIcon
+            ?? (liveDockSelectionPreviewText != nil ? "text.cursor" : nil)
         {
             Button(action: openSelectionContextFromTrailingButton) {
                 Image(systemName: selectionIcon)
@@ -248,7 +250,12 @@ extension LauncherView {
                 || l2.showChatPopover
                 || !l2.chatMessages.isEmpty
                 || l2.isLoading
-        case .globalContext, .contextDock:
+        case .globalContext:
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                return false
+            }
+            return hasResultsToShow
+        case .contextDock:
             return hasResultsToShow
         case .mediaDock:
             return false
@@ -261,7 +268,12 @@ extension LauncherView {
             // Content frame == the window's reserved chat area, both driven by the MEASURED chat
             // content height — so the sheet exactly fits the conversation (no clip, no empty box).
             return DockHeightResolver.chatAreaHeight(measuredContentHeight: measuredChatContentHeight)
-        case .globalContext, .contextDock:
+        case .globalContext:
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                return 0
+            }
+            return unifiedSearchContentHeight
+        case .contextDock:
             return unifiedSearchContentHeight
         case .mediaDock:
             return 0
@@ -320,7 +332,15 @@ extension LauncherView {
             return aiMode.messages.isEmpty && !aiMode.isLoading && aiMode.streamingId == nil
         case .contextDockChat:
             return l2.chatMessages.isEmpty && !l2.isLoading
-        case .globalContext, .contextDock, .mediaDock:
+        case .globalContext:
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                return true
+            }
+            return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !shouldShowUnifiedDockModeContent
+                && !usesVerticalListDockLayout
+                && !hasResultsToShow
+        case .contextDock, .mediaDock:
             return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !shouldShowUnifiedDockModeContent
                 && !usesVerticalListDockLayout
@@ -627,6 +647,9 @@ extension LauncherView {
                                             .font(.system(size: 16, weight: .medium))
                                             .frame(width: 24, height: 24)
                                     }
+                                } else if isGlobalContextActive {
+                                    LiquidGlassArrow(size: 24)
+                                        .id("global-context-input-logo")
                                 } else if showContextInDock && settings.enableFrontmostDetection {
                                     // l2.targetApp overrides frontmost icon after Tab completion
                                     let focusedGlobalAppResult =
@@ -811,12 +834,14 @@ extension LauncherView {
                             // Hide standalone icon when a context/scope chip owns the left slot.
                             .opacity(
                                 isSearchBarExpanded
+                                    && !isGlobalContextActive
                                     && (compactScopeKey != nil || l2.targetApp != nil
                                         || globalInlineAppScope != nil
                                         || shouldShowFrontmostContextChip) && showContextInDock ? 0 : 1
                             )
                             .frame(
                                 width: isSearchBarExpanded
+                                    && !isGlobalContextActive
                                     && (compactScopeKey != nil || l2.targetApp != nil
                                         || globalInlineAppScope != nil
                                         || shouldShowFrontmostContextChip) && showContextInDock
@@ -1150,12 +1175,14 @@ extension LauncherView {
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && l2.targetApp == nil
                                     && !suppressScopedEmptyPreview
+                                    && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                                 ? focusedGlobalAppResultForInputPreview() : nil
                             let topGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
                                     && !suppressScopedEmptyPreview
+                                    && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                                 ? topGlobalAppResultForInputPreview() : nil
                             // Spotlight-style: show result name in bar whenever a result is selected (even while typing)
                             let showingResultPreview =
@@ -1606,8 +1633,21 @@ extension LauncherView {
                                             // behind ↓ (apps/commands rows stay instant).
                                             globalMenuResultsRevealed = false
                                             if globalInlineAppScope == nil {
-                                                scheduleGlobalAppMatchRebuild(query: q)
+                                                focusedAppPillIndex = nil
+                                                l2.focusedPillIndex = nil
+                                                cachedGlobalAppQuery = ""
+                                                cachedGlobalAppMatches = []
+                                                cachedGlobalGroupedQuery = ""
+                                                cachedGlobalGroupedState = nil
+                                                globalContextViewModel.cachedGroupedFingerprint = ""
+                                                globalAppMatchTask?.cancel()
+                                                globalGroupedTask?.cancel()
+                                                pendingGlobalAppQuery = nil
+                                                pendingGlobalGroupedQuery = nil
+                                                updateGlobalContextTypingSnapshot(query: q)
                                             } else {
+                                                globalContextViewModel.typingSnapshot =
+                                                    GlobalContextTypingSnapshot()
                                                 scheduleGlobalGroupedListRebuild(query: q)
                                             }
                                         }
@@ -1742,7 +1782,7 @@ extension LauncherView {
 
                             if shouldShowSafariTabStrip {
                                 safariTabStrip
-                            } else if shouldShowGlobalRunningAppStrip {
+                            } else if shouldShowGlobalRunningAppStrip && !isGlobalContextActive {
                                 globalRunningAppStrip
                             }
 
@@ -1750,7 +1790,10 @@ extension LauncherView {
                             // an action (spinner → ✓ / ✗), so there's never a separate tick pill
                             // next to the "+". Covers all phases; the "+" branch below only renders
                             // when there's no active feedback.
-                            if let feedback = launcherViewModel.inlineDockFeedback,
+                            if shouldShowContextMatchDock
+                            {
+                                globalContextMatchDockView
+                            } else if let feedback = launcherViewModel.inlineDockFeedback,
                                 currentDockSurfaceMode != .generalChat
                             {
                                 inlineDockFeedbackActionIcon(feedback)
@@ -2086,7 +2129,9 @@ extension LauncherView {
                                 } else if isGlobalContextActive {
                                     // Global context: empty query shows pinned/running; typed query searches
                                     // pinned, running, and installed applications.
-                                    if shouldShowL2UnifiedDockRow {
+                                    if shouldShowL2UnifiedDockRow
+                                        && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+                                    {
                                         globalContextSurface
                                             .transition(.opacity)
                                     }
@@ -2596,14 +2641,12 @@ extension LauncherView {
                     loadApplicationsInBackground()
                 }
                 if !allowMenuOrCrossAppMatching, globalInlineAppScope == nil {
-                    // 1–2 chars: app rows still filter live (menu / cross-app matching
-                    // stays gated at 3+ chars inside the grouped state builder).
-                    scheduleGlobalAppMatchRebuild(query: q)
+                    updateGlobalContextTypingSnapshot(query: q)
                     resetCollapseTimer()
                     return
                 }
                 if globalInlineAppScope == nil {
-                    scheduleGlobalAppMatchRebuild(query: q)
+                    updateGlobalContextTypingSnapshot(query: q)
                 } else {
                     scheduleGlobalGroupedListRebuild(query: q)
                 }
@@ -2692,6 +2735,50 @@ extension LauncherView {
     }
 
     // MARK: - Separator (for smart positioning)
+    @ViewBuilder
+    var globalContextMatchDockView: some View {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phase: ContextMatchDock.Phase = q.isEmpty ? .idle : .matching
+        let icons = q.isEmpty
+            ? idleContextMatchDockIcons
+            : Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
+        let overflow = q.isEmpty ? 0 : globalContextViewModel.typingSnapshot.matchDockOverflowCount
+        ContextMatchDock(phase: phase, icons: icons, overflowCount: overflow)
+    }
+
+    var shouldShowContextMatchDock: Bool {
+        isGlobalContextActive
+            && shouldUsePureGlobalAppSearch
+            && globalInlineAppScope == nil
+            && !showMediaLayer
+            && !aiMode.isActive
+            && activeSelectionLabel == nil
+    }
+
+    var idleContextMatchDockIcons: [MatchDockIcon] {
+        Array(globalRunningAppStripApps.prefix(4)).map { app in
+            MatchDockIcon(
+                id: "idle-running:\(app.bundleIdentifier ?? String(app.processIdentifier))",
+                bundleID: app.bundleIdentifier,
+                title: app.localizedName ?? app.bundleIdentifier ?? "Application",
+                icon: resolvedRunningAppIcon(for: app) ?? app.icon ?? NSWorkspace.shared.icon(forFileType: "app"),
+                isRunning: true,
+                isExpandable: false,
+                score: 0,
+                isExactAppPrefix: false
+            )
+        }
+    }
+
+    func executeMatchDockIcon(_ item: MatchDockIcon) {
+        guard !item.isExpandable, let bundleID = item.bundleID else { return }
+        if let result = currentOrImmediateGlobalAppMatches(for: searchState.query)
+            .first(where: { bundleIdentifier(forApplicationResult: $0) == bundleID })
+        {
+            executeGlobalAppSearchResult(result)
+        }
+    }
+
     @ViewBuilder
     var separatorView: some View {
         let shouldShowSeparator =

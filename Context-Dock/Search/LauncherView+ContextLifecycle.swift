@@ -276,6 +276,7 @@ extension LauncherView {
                     axContextRefreshTimer?.invalidate()
                     axContextRefreshTimer = nil
                     selectionModel.stop()
+                    liveDockSelectionPreviewText = nil
                     l2.extensionResults = []
                     l2.chatMessages = []
                     l2.isLoading = false
@@ -521,6 +522,10 @@ extension LauncherView {
                     suppressGlobalInlineAppScopeDetection = false
                     dismissedGlobalInlineAppScopes = [:]
                     pendingGlobalAppQuery = nil
+                    globalContextViewModel.prepareTask?.cancel()
+                    globalContextViewModel.prepareTask = nil
+                    globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+                    globalContextViewModel.preparedResults = nil
                     focusedAppPillIndex = nil
                     if showContextInDock {
                         searchState.results = []
@@ -1433,8 +1438,10 @@ extension LauncherView {
     /// Called (debounced 200ms) whenever AXObserver detects a selection/focus change
     /// in the frontmost app. Re-reads only `kAXEnabled` for all cached menu items,
     /// computes the delta (newly enabled items), and surfaces them as context pills.
-    /// Reads the frontmost app's live text selection and merges it into the dock's
-    /// AX context, so the selection button appears/disappears while the dock is open.
+    /// Reads the frontmost app's live text selection into the PREVIEW field that
+    /// drives the trailing selection button. Deliberately does NOT touch axContext:
+    /// writing selectedText there flips hasSelectionScopeSurface, which silently
+    /// exits pure global app search mid-typing (blank sheet on ↓, dead expansion).
     /// Called from the AX selection observer AND the 0.75s live poll (some apps
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
     func refreshLiveSelectionIntoDockContext() {
@@ -1451,14 +1458,10 @@ extension LauncherView {
                 else { return }
                 let newText = newCtx.selectedText?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard self.axContext.selectedText ?? "" != newText else { return }
-                var merged = self.axContext
-                merged.appName = newCtx.appName
-                merged.bundleId = newCtx.bundleId
-                merged.pid = newCtx.pid
-                merged.selectedText = newText.isEmpty ? nil : newText
-                merged.timestamp = Date()
-                self.axContext = merged
+                let preview = newText.isEmpty ? nil : newText
+                if self.liveDockSelectionPreviewText != preview {
+                    self.liveDockSelectionPreviewText = preview
+                }
             }
         }
     }

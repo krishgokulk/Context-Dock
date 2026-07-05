@@ -488,6 +488,13 @@ struct LauncherView: View {
         if isGlobalContextActive && hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil,
+            globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+        {
+            return false
+        }
         if shouldUsePureGlobalAppSearch {
             return !q.isEmpty
         }

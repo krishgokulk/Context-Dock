@@ -1231,9 +1231,15 @@ extension LauncherView {
             maxGroups: menuGroupLimit,
             maxPills: remainingMenuBudget
         )
+        let cachedMenuAppGroups = cachedMenuCapabilityGroups(
+            for: q,
+            excludingBundleIds: Set((contentSearchGroups + menuGroups + fallbackMenuGroups).map(\.id)),
+            maxGroups: menuGroupLimit,
+            maxPills: remainingMenuBudget
+        )
         let resolvedMenuGroups = contentSearchGroups + mergeRunningMenuGroups(
             indexed: menuGroups,
-            cached: fallbackMenuGroups,
+            cached: fallbackMenuGroups + cachedMenuAppGroups,
             maxGroups: menuGroupLimit,
             maxPills: remainingMenuBudget
         )
@@ -1800,6 +1806,101 @@ extension LauncherView {
         }
     }
 
+    func updateGlobalContextTypingSnapshot(query rawQuery: String) {
+        let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil else {
+            globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.preparedResults = nil
+            globalContextViewModel.prepareTask?.cancel()
+            globalContextViewModel.prepareTask = nil
+            return
+        }
+
+        if q.isEmpty {
+            globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.preparedResults = nil
+            globalContextViewModel.prepareTask?.cancel()
+            globalContextViewModel.prepareTask = nil
+            return
+        }
+
+        let matchDockIcons = GlobalContextSearchCoordinator.shared.resolveFastMatchDockIcons(
+            query: q,
+            limit: 12
+        )
+        let hasExpandableMatch = matchDockIcons.contains { $0.isExpandable }
+        globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
+            query: q,
+            phase: hasExpandableMatch ? .expandable : (matchDockIcons.isEmpty ? .typing : .matched),
+            topMatch: nil,
+            matchDockIcons: matchDockIcons,
+            matchDockOverflowCount: max(0, matchDockIcons.count - 3),
+            preparedResultsVersion: globalContextViewModel.typingSnapshot.preparedResultsVersion
+        )
+        scheduleBackgroundGlobalContextPreparation(q)
+    }
+
+    func scheduleBackgroundGlobalContextPreparation(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        globalContextViewModel.prepareTask?.cancel()
+        guard !q.isEmpty else {
+            globalContextViewModel.preparedResults = nil
+            return
+        }
+
+        globalContextViewModel.prepareTask = Task.detached(priority: .userInitiated) {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
+            let prepared = await GlobalContextSearchCoordinator.shared.prepareExpandedResults(query: q)
+            await MainActor.run {
+                guard !Task.isCancelled else { return }
+                guard self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == prepared.query else { return }
+                self.globalContextViewModel.preparedResults = prepared
+                self.globalContextViewModel.typingSnapshot.preparedResultsVersion &+= 1
+            }
+        }
+    }
+
+    @discardableResult
+    func expandGlobalContextTypingMatch(selectFirst: Bool = true) -> Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil
+        else { return false }
+
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        let phase = globalContextViewModel.typingSnapshot.phase
+        guard phase == .typing || phase == .matched || phase == .expandable else { return false }
+
+        let started = Date()
+        globalContextViewModel.prepareTask?.cancel()
+        globalContextViewModel.typingSnapshot.phase = .expanded
+        globalMenuResultsRevealed = true
+        let state = instantGlobalGroupedListNavigationState(for: q)
+        setCachedGlobalGroupedState(query: q, state: state, animated: false)
+        cachedGlobalAppMatches = state.appResults
+        cachedGlobalAppQuery = q
+        pendingGlobalAppQuery = nil
+        pendingGlobalGroupedQuery = nil
+        globalAppMatchTask?.cancel()
+        globalGroupedTask?.cancel()
+        if selectFirst, state.totalCount > 0 {
+            setGlobalGroupedFocus(globalGroupedVisibleOrder(state: state).first, state: state)
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+        let elapsedMS = Date().timeIntervalSince(started) * 1_000
+        if elapsedMS >= 4 {
+            SearchPerformanceLog.shared.record(
+                label: "global.expandTypingMatch",
+                elapsedMS: elapsedMS,
+                query: q,
+                pills: state.totalCount
+            )
+        }
+        return true
+    }
+
     // Convert GlobalSearchService docs → SearchResult on @MainActor (needs closures + icons).
     func searchResults(from docs: [GlobalSearchService.SearchDocument], query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2072,8 +2173,11 @@ extension LauncherView {
         withTransaction(transaction) {
             globalAppMatchTask?.cancel()
             globalGroupedTask?.cancel()
+            globalContextViewModel.prepareTask?.cancel()
             pendingGlobalAppQuery = nil
             pendingGlobalGroupedQuery = nil
+            globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.preparedResults = nil
             cachedGlobalAppQuery = ""
             cachedGlobalAppMatches = []
             cachedGlobalGroupedQuery = ""
@@ -2800,6 +2904,77 @@ extension LauncherView {
             groups.append(AppMenuGroup(
                 id: "running-cache-group-\(bundleId)",
                 appName: appName,
+                icon: icon,
+                pills: descriptors.map(makeCrossAppMenuDockPill)
+            ))
+            remaining -= descriptors.count
+        }
+
+        return groups
+    }
+
+    func cachedMenuCapabilityGroups(
+        for query: String,
+        excludingBundleIds rawExcludedBundleIds: Set<String>,
+        maxGroups: Int,
+        maxPills: Int
+    ) -> [AppMenuGroup] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2, maxGroups > 0, maxPills > 0 else { return [] }
+        var groups: [AppMenuGroup] = []
+        var remaining = maxPills
+        var seenPaths = Set<String>()
+        var excludedBundleIds = Set(rawExcludedBundleIds.map(normalizedDockPillText))
+        let perAppLimit = max(3, min(6, maxPills))
+        let runningBundleIds = Set(
+            (currentRegularRunningApps() + runningRegularApps)
+                .compactMap(\.bundleIdentifier)
+                .map(normalizedDockPillText)
+        )
+
+        for summary in AppMenuCapabilityCache.shared.summaries() {
+            guard remaining > 0, groups.count < maxGroups else { break }
+            let bundleId = summary.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            let bundleKey = normalizedDockPillText(bundleId)
+            guard !bundleId.isEmpty, excludedBundleIds.insert(bundleKey).inserted else { continue }
+
+            let items = GlobalContextEngine.shared.cachedMenuItems(
+                bundleIdentifier: bundleId,
+                appName: summary.appName,
+                query: q,
+                maxResults: min(perAppLimit, remaining)
+            )
+            let icon = resolvedApplicationIcon(bundleIdentifier: bundleId, appName: summary.appName)
+            let descriptors = items.compactMap { item -> GlobalMenuDescriptor? in
+                let path = item.path
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && $0 != "-" }
+                guard path.count > 1, item.children.isEmpty else { return nil }
+                let root = path.first.map(normalizedDockPillText) ?? ""
+                guard !root.isEmpty, root != "apple" else { return nil }
+                let key = "\(bundleId):\(path.joined(separator: ">"))"
+                guard seenPaths.insert(key).inserted else { return nil }
+                return GlobalMenuDescriptor(
+                    id: "cached-capability-\(bundleId)-\(path.joined(separator: ">"))",
+                    name: item.title,
+                    badge: MenuShortcutFormatter.display(
+                        char: item.shortcutChar,
+                        modifiers: item.shortcutModifiers
+                    ),
+                    statusBadge: runningBundleIds.contains(bundleKey) ? nil : "Needs launch",
+                    bundleID: bundleId,
+                    appName: summary.appName,
+                    appIcon: icon,
+                    path: path,
+                    shortcutChar: item.shortcutChar,
+                    shortcutModifiers: item.shortcutModifiers,
+                    rankingScore: GlobalSearchService.SourceKind.runningMenu.rawValue - 1
+                )
+            }
+            guard !descriptors.isEmpty else { continue }
+            groups.append(AppMenuGroup(
+                id: "cached-capability-group-\(bundleId)",
+                appName: summary.appName,
                 icon: icon,
                 pills: descriptors.map(makeCrossAppMenuDockPill)
             ))
@@ -3841,6 +4016,9 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
             guard !q.isEmpty || globalInlineAppScope != nil else { return 0 }
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                return 0
+            }
             let groupedKey = globalGroupedStateCacheKey(for: q)
             let state = globalGroupedListNavigationState(for: q)
             if state.totalCount > 0 {
@@ -3884,6 +4062,9 @@ extension LauncherView {
         let rowCount = currentListViewDockRowCount
         guard rowCount > 0 else { return 0 }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if isGlobalContextActive, globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+            return 86
+        }
         if shouldUsePureGlobalAppSearch, !q.isEmpty {
             let groupedKey = globalGroupedStateCacheKey(for: q)
             let state = globalGroupedListNavigationState(for: q)
@@ -3983,6 +4164,9 @@ extension LauncherView {
         // + animated resize, no empty box). Frontmost Context Dock keeps a fixed scroll
         // container so it never resizes while typing.
         if isGlobalContextActive {
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                return "global-typing"
+            }
             return "global:\(Int(measuredGlobalListContentHeight / 8))"
         }
         // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
@@ -3995,6 +4179,9 @@ extension LauncherView {
     /// sheet sizes to this (via currentListViewDockContentHeight) and the resize token
     /// reacts to it, so the window settles to fit the actual rendered rows.
     func updateMeasuredGlobalListHeight(_ height: CGFloat) {
+        if isGlobalContextActive, globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+            return
+        }
         let clamped = max(0, height)
         guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
         measuredGlobalListContentHeight = clamped

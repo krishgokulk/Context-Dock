@@ -78,7 +78,8 @@ extension LauncherView {
             hasActiveContextSelection
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
         let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
-            (pureGlobalAppSearch && !q.isEmpty)
+            (pureGlobalAppSearch && !q.isEmpty
+                && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch)
             ? globalGroupedListNavigationState(for: q) : nil
         let globalAppMatches =
             pureGlobalAppSearch
@@ -213,7 +214,9 @@ extension LauncherView {
         // an instant EmptyView swap while the frame animates is what looked jumpy.
         let deferred = isDeferredMenuOnlyPresentation(presentation)
         Group {
-            if !deferred {
+            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+                EmptyView()
+            } else if !deferred {
                 globalAppSearchListView(
                     query: presentation.query,
                     matches: presentation.matches,
@@ -253,9 +256,11 @@ extension LauncherView {
         if shouldUsePureGlobalAppSearch {
             l2.appCompletion = nil
             l2.showResultsPopover = false
-            // Keystroke path — default delay coalesces the build between keystrokes
-            // so typing never blocks on it.
-            scheduleGlobalAppMatchRebuild(query: newQuery)
+            if globalInlineAppScope == nil {
+                updateGlobalContextTypingSnapshot(query: newQuery)
+            } else {
+                scheduleGlobalGroupedListRebuild(query: newQuery)
+            }
             return
         }
         if isFinderDesktopOnlyMode {
@@ -283,7 +288,11 @@ extension LauncherView {
             loadApplicationsInBackground()
         }
         if shouldUsePureGlobalAppSearch {
-            scheduleGlobalAppMatchRebuild(query: pillQuery, delayNanoseconds: 0)
+            if globalInlineAppScope == nil {
+                updateGlobalContextTypingSnapshot(query: pillQuery)
+            } else {
+                scheduleGlobalGroupedListRebuild(query: pillQuery, delayNanoseconds: 0)
+            }
             return
         }
         if isFinderDesktopOnlyMode {

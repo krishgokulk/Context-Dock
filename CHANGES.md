@@ -156,3 +156,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-05 11:50 · `2f02843c` · `codex-context-dock-polish-fixes`
 **feat(messages): imsg runtime probe + FDA detection; harden tool-result followup**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-05 12:25 · `92201d44` · `codex-context-dock-polish-fixes`
+**feat(global): compact dock for menu-only and single-result queries, spinner while building**
+Swift: +0 added · ~4 modified · -0 deleted

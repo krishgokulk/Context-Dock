@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 struct GlobalContextSearchSnapshot {
@@ -13,8 +14,8 @@ struct GlobalContextSearchSnapshot {
 final class GlobalContextSearchCoordinator {
     nonisolated static let shared = GlobalContextSearchCoordinator()
     private let lock = NSLock()
-    private var cachedKey: CacheKey?
-    private var cachedSnapshot: GlobalContextSearchSnapshot?
+    nonisolated(unsafe) private var cachedKey: CacheKey?
+    nonisolated(unsafe) private var cachedSnapshot: GlobalContextSearchSnapshot?
 
     nonisolated private init() {}
 
@@ -79,6 +80,384 @@ final class GlobalContextSearchCoordinator {
         cachedSnapshot = snapshot
         lock.unlock()
         return snapshot
+    }
+
+    nonisolated func resolveFastTopMatch(query rawQuery: String) -> GlobalContextTopMatch? {
+        let started = Date()
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return nil }
+
+        let docs = GlobalSearchService.shared.query(
+            query,
+            limit: 80,
+            includeCachedMenus: true,
+            includeRunningCachedMenus: true
+        )
+        guard !docs.isEmpty else {
+            recordFastTopMatchTiming(started: started, query: query, matched: false)
+            return nil
+        }
+
+        var installedExactPrefix: GlobalSearchService.SearchDocument?
+        var runningExactPrefix: GlobalSearchService.SearchDocument?
+        var commandExactPrefix: GlobalSearchService.SearchDocument?
+        var installedFuzzy: GlobalSearchService.SearchDocument?
+        var runningFuzzy: GlobalSearchService.SearchDocument?
+        var commandFuzzy: GlobalSearchService.SearchDocument?
+        var cachedMenuCounts: [String: (doc: GlobalSearchService.SearchDocument, count: Int)] = [:]
+
+        func isPrefixMatch(_ doc: GlobalSearchService.SearchDocument) -> Bool {
+            if doc.normalizedTitle.hasPrefix(query) { return true }
+            if doc.titleWords.contains(where: { $0.hasPrefix(query) }) { return true }
+            if doc.aliases.contains(where: { $0.hasPrefix(query) }) { return true }
+            return !doc.acronym.isEmpty && doc.acronym.hasPrefix(query)
+        }
+
+        for doc in docs {
+            switch doc.action {
+            case .cachedMenu(let bundleId, _, _, _, _):
+                guard !bundleId.isEmpty else { continue }
+                let current = cachedMenuCounts[bundleId]
+                cachedMenuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
+            case .systemCommandScope:
+                if isPrefixMatch(doc) {
+                    if commandExactPrefix == nil { commandExactPrefix = doc }
+                } else if commandFuzzy == nil {
+                    commandFuzzy = doc
+                }
+            default:
+                let running = doc.sourceKind == .running
+                if running {
+                    if isPrefixMatch(doc) {
+                        if runningExactPrefix == nil { runningExactPrefix = doc }
+                    } else if runningFuzzy == nil {
+                        runningFuzzy = doc
+                    }
+                } else {
+                    if isPrefixMatch(doc) {
+                        if installedExactPrefix == nil { installedExactPrefix = doc }
+                    } else if installedFuzzy == nil {
+                        installedFuzzy = doc
+                    }
+                }
+            }
+        }
+
+        func topMatch(
+            from doc: GlobalSearchService.SearchDocument,
+            kind: GlobalContextTopMatch.Kind,
+            idPrefix: String? = nil
+        ) -> GlobalContextTopMatch {
+            let id: String
+            if let idPrefix {
+                id = "\(idPrefix):\(doc.id)"
+            } else {
+                id = doc.id
+            }
+            return GlobalContextTopMatch(
+                id: id,
+                kind: kind,
+                title: doc.title,
+                subtitle: doc.subtitle.isEmpty ? nil : doc.subtitle,
+                bundleID: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                iconKey: doc.bundleId.isEmpty ? doc.filePath : doc.bundleId,
+                query: query,
+                cachedMenuMatchCount: 0,
+                isExpandable: false
+            )
+        }
+
+        let menuTop = cachedMenuCounts.values
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.doc.title.localizedCaseInsensitiveCompare($1.doc.title) == .orderedAscending
+            }
+            .first
+            .map { entry -> GlobalContextTopMatch in
+                let doc = entry.doc
+                let subtitlePrefix = doc.sourceKind == .runningMenu ? "Running app" : "Cached menus"
+                let suffix = entry.count == 1 ? "cached menu match" : "cached menu matches"
+                return GlobalContextTopMatch(
+                    id: "cached-menu-app:\(doc.bundleId):\(query)",
+                    kind: .cachedMenuApp,
+                    title: {
+                        if case .cachedMenu(_, let appName, _, _, _) = doc.action {
+                            return appName
+                        }
+                        return doc.title
+                    }(),
+                    subtitle: "\(subtitlePrefix) · \(entry.count) \(suffix)",
+                    bundleID: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                    iconKey: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                    query: query,
+                    cachedMenuMatchCount: entry.count,
+                    isExpandable: true
+                )
+            }
+
+        let match: GlobalContextTopMatch?
+        if let doc = installedExactPrefix {
+            match = topMatch(from: doc, kind: .installedApp)
+        } else if let doc = runningExactPrefix {
+            match = topMatch(from: doc, kind: .runningApp)
+        } else if let doc = commandExactPrefix {
+            match = topMatch(from: doc, kind: .globalCommand, idPrefix: "global-command")
+        } else if let menuTop {
+            match = menuTop
+        } else if let doc = installedFuzzy {
+            match = topMatch(from: doc, kind: .installedApp)
+        } else if let doc = runningFuzzy {
+            match = topMatch(from: doc, kind: .runningApp)
+        } else if let doc = commandFuzzy {
+            match = topMatch(from: doc, kind: .globalCommand, idPrefix: "global-command")
+        } else {
+            match = nil
+        }
+
+        recordFastTopMatchTiming(started: started, query: query, matched: match != nil)
+        return match
+    }
+
+    nonisolated func resolveFastMatchDockIcons(query rawQuery: String, limit: Int = 12) -> [MatchDockIcon] {
+        let started = Date()
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty, limit > 0 else { return [] }
+
+        let docs = GlobalSearchService.shared.query(
+            query,
+            limit: max(limit * 12, 48),
+            includeCachedMenus: true,
+            includeRunningCachedMenus: true
+        )
+
+        var menuCounts: [String: (doc: GlobalSearchService.SearchDocument, count: Int)] = [:]
+        var appDocs: [GlobalSearchService.SearchDocument] = []
+        var commandDocs: [GlobalSearchService.SearchDocument] = []
+        var seenAppIDs = Set<String>()
+
+        func isPrefixMatch(_ doc: GlobalSearchService.SearchDocument) -> Bool {
+            if doc.normalizedTitle.hasPrefix(query) { return true }
+            if doc.titleWords.contains(where: { $0.hasPrefix(query) }) { return true }
+            if doc.aliases.contains(where: { $0.hasPrefix(query) }) { return true }
+            return !doc.acronym.isEmpty && doc.acronym.hasPrefix(query)
+        }
+
+        func score(for doc: GlobalSearchService.SearchDocument, menuCount: Int = 0) -> Double {
+            let prefix = isPrefixMatch(doc)
+            switch doc.action {
+            case .cachedMenu:
+                return 30_000 + Double(menuCount)
+            case .systemCommandScope:
+                return 20_000 + doc.rankingBoost
+            default:
+                if prefix, doc.sourceKind == .running {
+                    return 40_000 + doc.rankingBoost
+                }
+                if prefix {
+                    return 50_000 + doc.rankingBoost
+                }
+                return 10_000 + doc.rankingBoost + (doc.sourceKind == .running ? 100 : 0)
+            }
+        }
+
+        for doc in docs {
+            switch doc.action {
+            case .cachedMenu(let bundleId, _, _, _, _):
+                guard !bundleId.isEmpty else { continue }
+                let current = menuCounts[bundleId]
+                menuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
+            case .systemCommandScope:
+                if commandDocs.count < limit {
+                    commandDocs.append(doc)
+                }
+            default:
+                let key = doc.bundleId.isEmpty ? doc.id : doc.bundleId
+                guard seenAppIDs.insert(key).inserted else { continue }
+                if appDocs.count < limit {
+                    appDocs.append(doc)
+                }
+            }
+        }
+
+        var itemsByID: [String: MatchDockIcon] = [:]
+        var orderedIDs: [String] = []
+
+        func append(_ item: MatchDockIcon) {
+            if let existing = itemsByID[item.id] {
+                itemsByID[item.id] = MatchDockIcon(
+                    id: existing.id,
+                    bundleID: existing.bundleID ?? item.bundleID,
+                    title: existing.title,
+                    icon: existing.icon,
+                    isRunning: existing.isRunning || item.isRunning,
+                    isExpandable: existing.isExpandable || item.isExpandable,
+                    score: max(existing.score, item.score),
+                    isExactAppPrefix: existing.isExactAppPrefix || item.isExactAppPrefix
+                )
+                return
+            }
+            itemsByID[item.id] = item
+            orderedIDs.append(item.id)
+        }
+
+        let runningBundleIDs = Set(
+            NSWorkspace.shared.runningApplications
+                .compactMap(\.bundleIdentifier)
+                .map { $0.lowercased() }
+        )
+
+        for doc in appDocs {
+            let itemID = doc.bundleId.isEmpty ? doc.id : "match-dock:\(doc.bundleId)"
+            append(MatchDockIcon(
+                id: itemID,
+                bundleID: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                title: doc.title,
+                icon: doc.icon ?? NSWorkspace.shared.icon(forFileType: "app"),
+                isRunning: doc.sourceKind == .running,
+                isExpandable: false,
+                score: score(for: doc),
+                isExactAppPrefix: isPrefixMatch(doc)
+            ))
+        }
+
+        for entry in menuCounts.values.sorted(by: { lhs, rhs in
+            if lhs.count != rhs.count { return lhs.count > rhs.count }
+            return lhs.doc.title.localizedCaseInsensitiveCompare(rhs.doc.title) == .orderedAscending
+        }) {
+            let doc = entry.doc
+            let appName: String
+            if case .cachedMenu(_, let name, _, _, _) = doc.action {
+                appName = name
+            } else {
+                appName = doc.title
+            }
+            append(MatchDockIcon(
+                id: doc.bundleId.isEmpty ? "cached-menu-app:\(appName):\(query)" : "match-dock:\(doc.bundleId)",
+                bundleID: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                title: appName,
+                icon: doc.icon ?? NSWorkspace.shared.icon(forFileType: "app"),
+                isRunning: doc.sourceKind == .runningMenu,
+                isExpandable: true,
+                score: score(for: doc, menuCount: entry.count),
+                isExactAppPrefix: false
+            ))
+        }
+
+        let fallbackMenuOwners = cachedMenuOwnerMatches(
+            query: query,
+            excludingBundleIDs: Set(menuCounts.keys.map { $0.lowercased() }),
+            limit: limit
+        )
+        for owner in fallbackMenuOwners {
+            append(MatchDockIcon(
+                id: "match-dock:\(owner.bundleID)",
+                bundleID: owner.bundleID,
+                title: owner.appName,
+                icon: owner.icon,
+                isRunning: runningBundleIDs.contains(owner.bundleID.lowercased()),
+                isExpandable: true,
+                score: 30_000 + Double(owner.matchCount),
+                isExactAppPrefix: false
+            ))
+        }
+
+        for doc in commandDocs {
+            append(MatchDockIcon(
+                id: "global-command:\(doc.id)",
+                bundleID: doc.bundleId.isEmpty ? nil : doc.bundleId,
+                title: doc.title,
+                icon: doc.icon ?? NSWorkspace.shared.icon(forFileType: "app"),
+                isRunning: false,
+                isExpandable: false,
+                score: score(for: doc),
+                isExactAppPrefix: false
+            ))
+        }
+
+        let items = orderedIDs.compactMap { itemsByID[$0] }
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+            .prefix(limit)
+        let output = Array(items)
+        let elapsedMS = Date().timeIntervalSince(started) * 1_000
+        if elapsedMS >= 4 {
+            SearchPerformanceLog.shared.record(
+                label: "global.resolveFastMatchDockIcons",
+                elapsedMS: elapsedMS,
+                query: query,
+                pills: output.count
+            )
+        }
+        return output
+    }
+
+    nonisolated private func cachedMenuOwnerMatches(
+        query: String,
+        excludingBundleIDs: Set<String>,
+        limit: Int
+    ) -> [(bundleID: String, appName: String, icon: NSImage, matchCount: Int)] {
+        guard !query.isEmpty, limit > 0 else { return [] }
+        var owners: [(bundleID: String, appName: String, icon: NSImage, matchCount: Int)] = []
+        var seen = excludingBundleIDs
+        for summary in AppMenuCapabilityCache.shared.summaries() {
+            let bundleID = summary.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bundleID.isEmpty, seen.insert(bundleID.lowercased()).inserted else { continue }
+            let items = GlobalContextEngine.shared.cachedMenuItems(
+                bundleIdentifier: bundleID,
+                appName: summary.appName,
+                query: query,
+                maxResults: 3
+            )
+            guard !items.isEmpty else { continue }
+            let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+                ?? NSWorkspace.shared.icon(forFileType: "app")
+            owners.append((bundleID, summary.appName, icon, items.count))
+            if owners.count >= limit { break }
+        }
+        return owners
+    }
+
+    nonisolated func prepareExpandedResults(query rawQuery: String) async -> GlobalContextPreparedResults {
+        let started = Date()
+        let snapshot = self.snapshot(
+            query: rawQuery,
+            limit: 48,
+            includeCachedMenus: false,
+            includeRunningCachedMenus: true
+        )
+        let elapsedMS = Date().timeIntervalSince(started) * 1_000
+        if elapsedMS >= 8 {
+            SearchPerformanceLog.shared.record(
+                label: "global.prepareExpandedResults",
+                elapsedMS: elapsedMS,
+                query: snapshot.query,
+                pills: snapshot.appDocuments.count + snapshot.menuDocuments.count
+            )
+        }
+        return GlobalContextPreparedResults(
+            query: snapshot.query,
+            appDocumentIDs: snapshot.appDocuments.map(\.id),
+            menuDocumentIDs: snapshot.menuDocuments.map(\.id)
+        )
+    }
+
+    nonisolated private func recordFastTopMatchTiming(
+        started: Date,
+        query: String,
+        matched: Bool
+    ) {
+        let elapsedMS = Date().timeIntervalSince(started) * 1_000
+        if elapsedMS >= 4 {
+            SearchPerformanceLog.shared.record(
+                label: "global.resolveFastTopMatch matched=\(matched)",
+                elapsedMS: elapsedMS,
+                query: query,
+                pills: matched ? 1 : 0
+            )
+        }
     }
 }
 
