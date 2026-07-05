@@ -136,3 +136,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-05 10:54 · `a8d52316` · `codex-context-dock-polish-fixes`
 **fix(proposals): Run Once streams in the visible dock terminal**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-05 11:00 · `b640f8eb` · `codex-context-dock-polish-fixes`
+**fix(dock): poll live text selection as backup for missing AX notifications**
+Swift: +0 added · ~1 modified · -0 deleted
