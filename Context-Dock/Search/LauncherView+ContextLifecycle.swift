@@ -1426,6 +1426,29 @@ extension LauncherView {
     func handleSelectionChange() {
         guard showContextInDock else { return }
 
+        // Text selected in the frontmost app WHILE the dock is open must surface the
+        // selection button (next to running-app pills / tab pills) live. The menu
+        // refresh below never reads the selection, so do it here, event-driven.
+        if let app = contextTargetApp(), !contextDockIsFrontmostApplication {
+            let pid = app.processIdentifier
+            Task.detached(priority: .userInitiated) {
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
+                let newCtx = await AXContextReader.shared.current
+                await MainActor.run {
+                    guard self.showContextInDock,
+                        self.contextTargetApp()?.processIdentifier == pid
+                    else { return }
+                    let newText = newCtx.selectedText?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard self.axContext.selectedText ?? "" != newText else { return }
+                    var merged = self.axContext
+                    merged.selectedText = newText.isEmpty ? nil : newText
+                    merged.timestamp = Date()
+                    self.axContext = merged
+                }
+            }
+        }
+
         if !liveMenuItems.isEmpty {
             let items = liveMenuItems
             let previousIDs = previousEnabledIDs

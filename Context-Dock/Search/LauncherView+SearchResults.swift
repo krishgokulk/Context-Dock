@@ -88,9 +88,15 @@ extension LauncherView {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
-                guard idx < visiblePills.count else { return }
+                // Resolve the focused pill from the KEYBOARD's array (raw order) and
+                // scroll to it by id — the rendered list is re-clustered, so indexing
+                // into it directly scrolls to the wrong row (or none at all).
+                let source = contextDockViewModel.visiblePills
+                guard idx >= 0, idx < source.count else { return }
+                let targetID = source[idx].id
+                guard visiblePills.contains(where: { $0.id == targetID }) else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                    proxy.scrollTo("pill-list-\(visiblePills[idx].id)", anchor: .center)
+                    proxy.scrollTo("pill-list-\(targetID)", anchor: .center)
                 }
                 DispatchQueue.main.async {
                     refreshQuickLookPreviewForCurrentFocusIfVisible()
@@ -605,7 +611,15 @@ extension LauncherView {
             // above these menu rows), it owns the selection — don't ALSO highlight the
             // first menu row, or two rows show the focus ring at once.
             && !globalAppListOwnsDefaultFirstSelection
-        let isKeyboardFocused = l2.focusedPillIndex == index || isDefaultFirstRow
+        // Keyboard focus by IDENTITY, not row index: the keyboard navigates the raw
+        // pill array while this list renders a re-clustered copy — index equality
+        // diverges the moment clustering reorders, breaking highlight + autoscroll.
+        let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
+            let source = contextDockViewModel.visiblePills
+            guard idx >= 0, idx < source.count else { return nil }
+            return source[idx].id
+        }
+        let isKeyboardFocused = keyboardFocusedPillID == pill.id || isDefaultFirstRow
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let isDisabled = !pill.isEnabled && !isStaleAvailabilityMenuPill(pill)

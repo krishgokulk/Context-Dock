@@ -124,3 +124,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-05 00:18 · `68106a6e` · `codex-context-dock-polish-fixes`
 **feat(global): full deferral — dock stays compact while typing, ↓ glides sheet in**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-05 00:41 · `80b270e5` · `codex-context-dock-polish-fixes`
+**fix(global): instant results while matches exist; only no-match collapses to pills**
+Swift: +0 added · ~3 modified · -0 deleted
