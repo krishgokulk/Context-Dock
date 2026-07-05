@@ -716,13 +716,13 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let groupedKey = globalGroupedStateCacheKey(for: q)
         guard !q.isEmpty else { return false }
-        if cachedGlobalGroupedQuery == groupedKey, let state = cachedGlobalGroupedState,
-           !state.appResults.isEmpty || !state.menuPills.isEmpty {
+        // Committed state for the current query → done, no spinner.
+        if cachedGlobalGroupedQuery == groupedKey, cachedGlobalGroupedState != nil {
             return false
         }
-        if GlobalSearchService.shared.documentCount > 0 { return false }
         if searchState.isLoadingApps { return q.count >= 3 }
-        return pendingGlobalAppQuery == q || pendingGlobalGroupedQuery == groupedKey
+        // Build in flight for this query (coalesced keystroke rebuild) → spinner.
+        return pendingGlobalAppQuery == q || pendingGlobalGroupedQuery == q
     }
 
     var shouldShowContextDockInputLoadingIndicator: Bool {

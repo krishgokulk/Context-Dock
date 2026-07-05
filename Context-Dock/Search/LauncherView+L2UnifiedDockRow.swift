@@ -189,17 +189,22 @@ extension LauncherView {
     /// Menu-only match (no app/command rows) that has not been revealed with ↓ yet —
     /// the sheet stays collapsed; the strip shows the owning app's pill instead.
     func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
-        // Results (apps, commands, frontmost menus) render instantly while matches
-        // exist. ONLY the no-match state collapses to the compact dock: the strip
-        // shows token-matched app pills; ↓ expands them into rows.
-        !globalMenuResultsRevealed
-            && !presentation.query.isEmpty
-            && presentation.matches.isEmpty
-            && presentation.menuPills.isEmpty
-            && presentation.appMenuGroups.isEmpty
-            && presentation.scopedMenuAppName == nil
-            && presentation.launchHint == nil
-            && globalInlineAppScope == nil
+        // Sheet policy while typing in pure Global Context:
+        //  • 2+ app/command rows → instant sheet (classic launcher feel)
+        //  • menu-only matches   → compact dock, owning-app pill in strip, ↓ reveals
+        //  • exactly 1 row       → compact dock, that app's pill + ghost text, ↓ reveals
+        //  • nothing at all      → compact dock, token-matched app pills, ↓ expands
+        guard !globalMenuResultsRevealed,
+            !presentation.query.isEmpty,
+            presentation.scopedMenuAppName == nil,
+            presentation.launchHint == nil,
+            globalInlineAppScope == nil
+        else { return false }
+        let hasMenus = !presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty
+        let menuOnly = presentation.matches.isEmpty && hasMenus
+        let singleResult = presentation.matches.count == 1 && !hasMenus
+        let nothing = presentation.matches.isEmpty && !hasMenus
+        return menuOnly || singleResult || nothing
     }
 
     @ViewBuilder

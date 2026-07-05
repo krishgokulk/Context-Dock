@@ -152,3 +152,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-05 11:36 · `be3bb974` · `codex-context-dock-polish-fixes`
 **fix(dock): folder-search backspace exit beats chat branch + hub names disabled built-ins**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-05 11:50 · `2f02843c` · `codex-context-dock-polish-fixes`
+**feat(messages): imsg runtime probe + FDA detection; harden tool-result followup**
+Swift: +0 added · ~1 modified · -0 deleted

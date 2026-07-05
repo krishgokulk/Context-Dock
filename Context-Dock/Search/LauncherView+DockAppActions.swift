@@ -960,13 +960,27 @@ extension LauncherView {
     }
 
     var globalRunningAppStrip: some View {
-        let menuOwners: [(bundleId: String, icon: NSImage?, name: String)] = []
-        // Token-fallback: no row matched the full query → the strip becomes the
-        // matching-app icons for each query word (instant feedback; ↓ expands rows).
-        let tokenResults = globalStripShowsTokenMatches
-            ? tokenMatchedAppResults(
-                for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-            : []
+        // Deferred menu-only matches: strip shows the OWNING app's pill (Messages
+        // for "new message"); ↓ or tap expands the sheet.
+        let menuOwners = globalStripMenuOwnerApps
+        // Deferred single result + token fallback share the SearchResult pill row.
+        let tokenResults: [SearchResult] = {
+            guard menuOwners.isEmpty, !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch
+            else { return [] }
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !q.isEmpty,
+                cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+                let state = cachedGlobalGroupedState
+            else { return [] }
+            // Exactly one row → show it as the pill instead of a half-empty sheet.
+            if state.appResults.count == 1, state.menuPills.isEmpty, state.appMenuGroups.isEmpty {
+                return state.appResults
+            }
+            if state.totalCount == 0 {
+                return tokenMatchedAppResults(for: q)
+            }
+            return []
+        }()
         let apps = menuOwners.isEmpty && tokenResults.isEmpty ? globalRunningAppStripApps : []
         return Group {
             if !menuOwners.isEmpty {

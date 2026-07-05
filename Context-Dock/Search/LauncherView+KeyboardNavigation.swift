@@ -399,7 +399,16 @@ extension LauncherView {
                 }
 
                 switch event.keyCode {
-                case 125:  // Down — move through grouped app/menu rows
+                case 125:  // Down — reveal a deferred sheet first, then navigate
+                    if !self.globalMenuResultsRevealed,
+                        self.globalInlineAppScope == nil,
+                        groupedState.appResults.isEmpty || groupedState.totalCount == 1
+                    {
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.9)) {
+                            self.globalMenuResultsRevealed = true
+                        }
+                        return nil
+                    }
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )
