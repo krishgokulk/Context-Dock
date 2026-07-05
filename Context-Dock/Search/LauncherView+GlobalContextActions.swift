@@ -1898,6 +1898,11 @@ extension LauncherView {
         globalContextViewModel.typingSnapshot.phase = .expanded
 
         // 3. Publish the results the sheet will render.
+        // Generation bumps kill in-flight keystroke rebuilds even if they already
+        // passed their sleep — cancel() alone loses the race and lets a stale
+        // (often empty) rebuild overwrite this committed state right after ↓.
+        globalAppMatchGeneration &+= 1
+        globalGroupedGeneration &+= 1
         setCachedGlobalGroupedState(query: q, state: state, animated: false)
         cachedGlobalAppMatches = state.appResults
         cachedGlobalAppQuery = q
@@ -1905,6 +1910,8 @@ extension LauncherView {
         pendingGlobalGroupedQuery = nil
         globalAppMatchTask?.cancel()
         globalGroupedTask?.cancel()
+        globalAppMatchTask = nil
+        globalGroupedTask = nil
 
         // 4. Selection lands on the first row.
         if selectFirst, state.totalCount > 0 {

@@ -168,3 +168,7 @@ Swift: +1 added · ~9 modified · -0 deleted
 ## 2026-07-05 16:29 · `010eb7dc` · `codex-context-dock-polish-fixes`
 **fix(global): clipboard pill no longer kills pure global search mid-typing**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-05 16:46 · `3c90d808` · `codex-context-dock-polish-fixes`
+**refactor(global): single source of truth for ↓ sheet expansion**
+Swift: +0 added · ~6 modified · -0 deleted

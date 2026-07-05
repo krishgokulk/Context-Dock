@@ -235,11 +235,14 @@ final class GlobalContextSearchCoordinator {
         var commandDocs: [GlobalSearchService.SearchDocument] = []
         var seenAppIDs = Set<String>()
 
-        func isPrefixMatch(_ doc: GlobalSearchService.SearchDocument) -> Bool {
-            if doc.normalizedTitle.hasPrefix(query) { return true }
-            if doc.titleWords.contains(where: { $0.hasPrefix(query) }) { return true }
-            if doc.aliases.contains(where: { $0.hasPrefix(query) }) { return true }
-            return !doc.acronym.isEmpty && doc.acronym.hasPrefix(query)
+        func isPrefixMatch(
+            _ doc: GlobalSearchService.SearchDocument, against term: String? = nil
+        ) -> Bool {
+            let needle = term ?? query
+            if doc.normalizedTitle.hasPrefix(needle) { return true }
+            if doc.titleWords.contains(where: { $0.hasPrefix(needle) }) { return true }
+            if doc.aliases.contains(where: { $0.hasPrefix(needle) }) { return true }
+            return !doc.acronym.isEmpty && doc.acronym.hasPrefix(needle)
         }
 
         func score(for doc: GlobalSearchService.SearchDocument, menuCount: Int = 0) -> Double {
@@ -276,6 +279,33 @@ final class GlobalContextSearchCoordinator {
                 if appDocs.count < limit {
                     appDocs.append(doc)
                 }
+            }
+        }
+
+        // Multi-word queries ("new text messages") rarely match one full title —
+        // fall back to per-word prefix matching so the dock icons show the apps
+        // the user is actually naming (Messages, TextEdit …), one per word.
+        if appDocs.isEmpty, menuCounts.isEmpty, query.contains(" ") {
+            for token in query.split(separator: " ").map(String.init) where token.count >= 3 {
+                let tokenDocs = GlobalSearchService.shared.query(
+                    token,
+                    limit: 8,
+                    includeCachedMenus: false,
+                    includeRunningCachedMenus: false
+                )
+                for doc in tokenDocs {
+                    switch doc.action {
+                    case .cachedMenu, .systemCommandScope:
+                        continue
+                    default:
+                        guard isPrefixMatch(doc, against: token) else { continue }
+                        let key = doc.bundleId.isEmpty ? doc.id : doc.bundleId
+                        guard seenAppIDs.insert(key).inserted else { continue }
+                        appDocs.append(doc)
+                    }
+                    break  // best prefix match per word only
+                }
+                if appDocs.count >= 5 { break }
             }
         }
 
