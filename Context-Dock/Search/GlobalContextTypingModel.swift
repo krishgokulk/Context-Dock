@@ -127,7 +127,14 @@ struct ContextMatchDock: View {
                     .transition(.opacity)
             }
         }
-        .frame(width: 128, height: 24, alignment: .trailing)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
+        )
+        .frame(width: 136, height: 26, alignment: .trailing)
         .animation(.easeInOut(duration: 0.10), value: icons)
         .animation(.easeInOut(duration: 0.10), value: overflowCount)
     }

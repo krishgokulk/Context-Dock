@@ -176,3 +176,7 @@ Swift: +0 added · ~6 modified · -0 deleted
 ## 2026-07-05 16:53 · `3be44a68` · `codex-context-dock-polish-fixes`
 **fix(global): ↓ expansion race + per-word match icons for multi-word queries**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-05 21:46 · `bc636379` · `codex-context-dock-polish-fixes`
+**feat(global): persistent results container, DoraX-only header icon, Escape resize**
+Swift: +0 added · ~5 modified · -0 deleted

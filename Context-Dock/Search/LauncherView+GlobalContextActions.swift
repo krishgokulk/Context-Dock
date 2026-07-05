@@ -1918,7 +1918,15 @@ extension LauncherView {
             setGlobalGroupedFocus(globalGroupedVisibleOrder(state: state).first, state: state)
         }
 
-        // 5. Window follows the committed state (animated frame glide).
+        // 5. Prime the height estimate from the committed rows — the real measurement
+        //    was suppressed during compact typing, so the stale value would size the
+        //    window to the compact bar (the "↓ shrinks the dock" bug). The rendered
+        //    list refines this via updateMeasuredGlobalListHeight right after commit.
+        let estimatedRows = CGFloat(min(state.totalCount, 12))
+        measuredGlobalListContentHeight = min(
+            max(estimatedRows * 52 + 36, 86), listViewVisibleHeight)
+
+        // 6. Window follows the committed state (animated frame glide).
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {
@@ -4216,6 +4224,15 @@ extension LauncherView {
         let clamped = max(0, height)
         guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
         measuredGlobalListContentHeight = clamped
+        // Expanded navigation: the window must follow the REAL rendered height once
+        // SwiftUI commits the list — the ↓ expansion only primed an estimate.
+        if isGlobalContextActive,
+            globalContextViewModel.typingSnapshot.phase == .expanded,
+            clamped > 1
+        {
+            requestWindowSizeUpdate(
+                reason: .contentSettled, animated: true, debounceNanoseconds: 30_000_000)
+        }
     }
 
 

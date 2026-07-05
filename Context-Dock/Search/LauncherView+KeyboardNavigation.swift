@@ -257,7 +257,12 @@ extension LauncherView {
                 switch event.keyCode {
                 case 125:  // Down
                     if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
-                case 124, 48:  // Right / Tab
+                case 124, 48:  // Right / Tab — ghost completion FIRST, then expansion
+                    if event.keyCode == 124,
+                        self.acceptTopGlobalAppGhostCompletionIfPossible()
+                    {
+                        return nil
+                    }
                     if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: { $0.isExpandable }),
                         self.expandGlobalContextTypingMatch(selectFirst: true)
                     {
