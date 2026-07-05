@@ -132,3 +132,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-05 10:50 · `5f9826f2` · `codex-context-dock-polish-fixes`
 **fix(dock): live text-selection button while dock open + identity-based list nav**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-05 10:54 · `a8d52316` · `codex-context-dock-polish-fixes`
+**fix(proposals): Run Once streams in the visible dock terminal**
+Swift: +0 added · ~1 modified · -0 deleted

@@ -1423,31 +1423,43 @@ extension LauncherView {
     /// Called (debounced 200ms) whenever AXObserver detects a selection/focus change
     /// in the frontmost app. Re-reads only `kAXEnabled` for all cached menu items,
     /// computes the delta (newly enabled items), and surfaces them as context pills.
+    /// Reads the frontmost app's live text selection and merges it into the dock's
+    /// AX context, so the selection button appears/disappears while the dock is open.
+    /// Called from the AX selection observer AND the 0.75s live poll (some apps
+    /// don't emit AXSelectedTextChanged for web-area mouse selections).
+    func refreshLiveSelectionIntoDockContext() {
+        guard showContextInDock, !contextDockIsFrontmostApplication,
+            let app = contextTargetApp()
+        else { return }
+        let pid = app.processIdentifier
+        Task.detached(priority: .userInitiated) {
+            await AXContextReader.shared.refreshSelectionOnly(from: app)
+            let newCtx = await AXContextReader.shared.current
+            await MainActor.run {
+                guard self.showContextInDock,
+                    self.contextTargetApp()?.processIdentifier == pid
+                else { return }
+                let newText = newCtx.selectedText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard self.axContext.selectedText ?? "" != newText else { return }
+                var merged = self.axContext
+                merged.appName = newCtx.appName
+                merged.bundleId = newCtx.bundleId
+                merged.pid = newCtx.pid
+                merged.selectedText = newText.isEmpty ? nil : newText
+                merged.timestamp = Date()
+                self.axContext = merged
+            }
+        }
+    }
+
     func handleSelectionChange() {
         guard showContextInDock else { return }
 
         // Text selected in the frontmost app WHILE the dock is open must surface the
         // selection button (next to running-app pills / tab pills) live. The menu
         // refresh below never reads the selection, so do it here, event-driven.
-        if let app = contextTargetApp(), !contextDockIsFrontmostApplication {
-            let pid = app.processIdentifier
-            Task.detached(priority: .userInitiated) {
-                await AXContextReader.shared.refreshSelectionOnly(from: app)
-                let newCtx = await AXContextReader.shared.current
-                await MainActor.run {
-                    guard self.showContextInDock,
-                        self.contextTargetApp()?.processIdentifier == pid
-                    else { return }
-                    let newText = newCtx.selectedText?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard self.axContext.selectedText ?? "" != newText else { return }
-                    var merged = self.axContext
-                    merged.selectedText = newText.isEmpty ? nil : newText
-                    merged.timestamp = Date()
-                    self.axContext = merged
-                }
-            }
-        }
+        refreshLiveSelectionIntoDockContext()
 
         if !liveMenuItems.isEmpty {
             let items = liveMenuItems
@@ -1510,6 +1522,9 @@ extension LauncherView {
         // A file selected in Finder WHILE the dock is open must surface the trailing
         // selection button live — the lightweight AX poll below never reads selection.
         refreshFinderSelectionContextFromFinder()
+        // Same for live TEXT selections (browser pages, editors): poll as backup for
+        // apps whose web areas don't emit AXSelectedTextChanged.
+        refreshLiveSelectionIntoDockContext()
 
         let bundleId = app.bundleIdentifier ?? ""
         let pid = app.processIdentifier
