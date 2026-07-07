@@ -127,17 +127,18 @@ struct ContextMatchDock: View {
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, icons.isEmpty && overflowCount == 0 ? 0 : 8)
         .padding(.vertical, 4)
-        .frame(width: 156, height: 30, alignment: .center)
+        .frame(height: 30, alignment: .center)
+        .fixedSize(horizontal: true, vertical: false)
         .opacity(phase == .matching ? 0.74 : 1.0)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
         )
-        .animation(.easeInOut(duration: 0.10), value: icons)
-        .animation(.easeInOut(duration: 0.10), value: overflowCount)
+        .animation(.easeOut(duration: 0.08), value: icons.map(\.id))
+        .animation(.easeOut(duration: 0.08), value: overflowCount > 0)
     }
 
     private func accessibilityLabel(for item: MatchDockIcon) -> String {

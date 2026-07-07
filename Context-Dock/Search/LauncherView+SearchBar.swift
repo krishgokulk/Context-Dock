@@ -2812,6 +2812,8 @@ extension LauncherView {
         isGlobalContextActive
             && shouldUsePureGlobalAppSearch
             && globalInlineAppScope == nil
+            && focusedAppPillIndex == nil
+            && searchState.selectedIndex == nil
             && !showMediaLayer
             && !aiMode.isActive
             && activeSelectionLabel == nil
