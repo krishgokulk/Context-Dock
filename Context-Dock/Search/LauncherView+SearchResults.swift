@@ -615,9 +615,25 @@ extension LauncherView {
         // pill array while this list renders a re-clustered copy — index equality
         // diverges the moment clustering reorders, breaking highlight + autoscroll.
         let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
-            let source = contextDockViewModel.visiblePills
-            guard idx >= 0, idx < source.count else { return nil }
-            return source[idx].id
+            let source: [DockPill] = {
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    return visibleGlobalGroupedListNavigationState(for: q).menuPills
+                }
+                return contextDockViewModel.visiblePills
+            }()
+            let sourceIndex: Int = {
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    let state = visibleGlobalGroupedListNavigationState(for: q)
+                    return idx - state.appResults.count
+                }
+                return idx
+            }()
+            guard sourceIndex >= 0, sourceIndex < source.count else { return nil }
+            return source[sourceIndex].id
         }
         let isKeyboardFocused = keyboardFocusedPillID == pill.id || isDefaultFirstRow
         let isHov = listViewHoveredIndex == index
@@ -790,7 +806,18 @@ extension LauncherView {
     func groupedMenuPillRow(group: MenuPillGroup, index: Int) -> some View {
         let primary = group.primaryPill
         let accent = accentColor(for: primary.accentColorName)
-        let isKeyboardFocused = l2.focusedPillIndex == index
+        let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
+            if shouldUsePureGlobalAppSearch {
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let state = visibleGlobalGroupedListNavigationState(for: q)
+                let menuIndex = idx - state.appResults.count
+                guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
+                return state.menuPills[menuIndex].id
+            }
+            return nil
+        }
+        let isKeyboardFocused = l2.focusedPillIndex == index || keyboardFocusedPillID == primary.id
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let subtitle =

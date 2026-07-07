@@ -1526,6 +1526,23 @@ extension LauncherView {
         return state.menuFirst ? menuIndices + appIndices : appIndices + menuIndices
     }
 
+    func globalGroupedTitle(
+        at index: Int,
+        state: GlobalGroupedListNavigationState
+    ) -> String? {
+        guard index >= 0, index < state.totalCount else { return nil }
+        let title: String
+        if index < state.appResults.count {
+            title = state.appResults[index].title
+        } else {
+            let menuIndex = index - state.appResults.count
+            guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
+            title = state.menuPills[menuIndex].name
+        }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func setGlobalGroupedFocus(
         _ index: Int?,
         state: GlobalGroupedListNavigationState
@@ -1642,22 +1659,20 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
 
-        // Keep ghost completion compile-safe and behaviorally aligned with the
-        // same app-result pipeline used by expansion. MatchDockIcon is visual-only
-        // and should not be required as a text-completion source.
+        // Ghost must use the same visible order as the result sheet. If first row is
+        // a menu command, preview that command, not the first app result.
         if let prepared = globalContextViewModel.preparedResults,
             prepared.query == q.lowercased(),
-            let title = prepared.navigationState?.appResults.first?.title
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !title.isEmpty
+            let state = prepared.navigationState,
+            let index = globalGroupedVisibleOrder(state: state).first,
+            let title = globalGroupedTitle(at: index, state: state)
         {
             return title
         }
 
         let state = globalGroupedListNavigationState(for: q.lowercased())
-        if let title = state.appResults.first?.title
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !title.isEmpty
+        if let index = globalGroupedVisibleOrder(state: state).first,
+            let title = globalGroupedTitle(at: index, state: state)
         {
             return title
         }
