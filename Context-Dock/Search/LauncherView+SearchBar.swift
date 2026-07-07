@@ -1184,19 +1184,19 @@ extension LauncherView {
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && l2.targetApp == nil
                                     && !suppressScopedEmptyPreview
-                                    && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                                 ? focusedGlobalAppResultForInputPreview() : nil
                             let topGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
                                     && !suppressScopedEmptyPreview
-                                    && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                                 ? topGlobalAppResultForInputPreview() : nil
-                            // Spotlight-style: show result name in bar whenever a result is selected (even while typing)
-                            let showingResultPreview =
-                                focusedDockPill != nil || focusedGlobalAppResult != nil
-                                || topGlobalAppResult != nil || selectedResult != nil
+                            let topGlobalContextTitle =
+                                allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
+                                    && !aiFallbackActive
+                                    && l2.targetApp == nil
+                                    && !suppressScopedEmptyPreview
+                                ? topContextMatchDockTitleForInputPreview() : nil
                             ZStack(alignment: .leading) {
                                 if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {
                                     globalInlineScopeQueryOverlay
@@ -1256,6 +1256,23 @@ extension LauncherView {
                                                 .lineLimit(1)
                                         }
                                         Text("  —  \(selectedResultAction(result))")
+                                            .font(.system(size: inputTextSize, weight: .regular))
+                                            .foregroundStyle(.secondary.opacity(0.35))
+                                    }
+                                } else if let title = topGlobalContextTitle,
+                                    title.lowercased().hasPrefix(searchState.query.lowercased()),
+                                    !searchState.query.isEmpty
+                                {
+                                    let typed = searchState.query
+                                    HStack(spacing: 0) {
+                                        Text(typed)
+                                            .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                            .foregroundStyle(.clear)
+                                        Text(String(title.dropFirst(typed.count)))
+                                            .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                            .foregroundStyle(.secondary.opacity(0.45))
+                                            .lineLimit(1)
+                                        Text("  — ↵")
                                             .font(.system(size: inputTextSize, weight: .regular))
                                             .foregroundStyle(.secondary.opacity(0.35))
                                     }
@@ -1824,6 +1841,20 @@ extension LauncherView {
                                         }
                                         .buttonStyle(.plain)
                                         .help("Clear")
+                                    }
+                                }
+                            } else if let result = focusedGlobalAppResultForInputPreview() {
+                                HStack(spacing: 8) {
+                                    if let icon = result.icon {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 28, height: 28)
+                                            .clipShape(
+                                                RoundedRectangle(
+                                                    cornerRadius: 6, style: .continuous)
+                                            )
+                                            .shadow(radius: 2)
                                     }
                                 }
                             } else if let result = selectedResult {
@@ -2740,20 +2771,88 @@ extension LauncherView {
     var globalContextMatchDockView: some View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let phase: ContextMatchDock.Phase = q.isEmpty ? .idle : .matching
-        let expandedIcons = expandedGlobalContextMatchDockIcons(for: q)
+        let orderedIcons = orderedGlobalContextMatchDockIcons(for: q, limit: 3)
         let icons =
             q.isEmpty
             ? idleContextMatchDockIcons
-            : (expandedIcons.isEmpty
+            : (orderedIcons.isEmpty
                 ? Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
-                : expandedIcons)
+                : orderedIcons)
         let overflow =
             q.isEmpty
             ? 0
-            : (expandedIcons.isEmpty
+            : (orderedIcons.isEmpty
                 ? globalContextViewModel.typingSnapshot.matchDockOverflowCount
                 : max(0, visibleGlobalGroupedListNavigationState(for: q).totalCount - icons.count))
         ContextMatchDock(phase: phase, icons: icons, overflowCount: overflow)
+    }
+
+    func orderedGlobalContextMatchDockIcons(for query: String, limit: Int) -> [MatchDockIcon] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, limit > 0 else { return [] }
+
+        let state = visibleGlobalGroupedListNavigationState(for: q)
+        let ordered = globalGroupedVisibleOrder(state: state)
+        var icons: [MatchDockIcon] = []
+        var seen = Set<String>()
+
+        for index in ordered {
+            guard icons.count < limit else { break }
+            guard let item = matchDockIconForGlobalGroupedRow(index, state: state) else { continue }
+            let key = item.bundleID?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? "title:\(normalizedDockPillText(item.title))"
+            guard seen.insert(key).inserted else { continue }
+            icons.append(item)
+        }
+
+        return icons
+    }
+
+    func matchDockIconForGlobalGroupedRow(
+        _ index: Int,
+        state: GlobalGroupedListNavigationState
+    ) -> MatchDockIcon? {
+        guard index >= 0, index < state.totalCount else { return nil }
+        if index < state.appResults.count {
+            let result = state.appResults[index]
+            let bundleID = bundleIdentifier(forApplicationResult: result)
+            guard let icon = result.icon
+                ?? resolvedApplicationIcon(bundleIdentifier: bundleID, appName: result.title)
+            else { return nil }
+            return MatchDockIcon(
+                id: "ordered-app:\(result.trackingIdentifier)",
+                bundleID: bundleID,
+                title: result.title,
+                icon: icon,
+                isRunning: result.subtitle == "Running",
+                isExpandable: false,
+                score: result.score,
+                isExactAppPrefix: false
+            )
+        }
+
+        let menuIndex = index - state.appResults.count
+        guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
+        let pill = state.menuPills[menuIndex]
+        let bundleID = pill.sourceBundleId.isEmpty ? nil : pill.sourceBundleId
+        let icon =
+            bundleID.flatMap { sourceAppIcon(bundleId: $0) }
+            ?? pill.menuItemImage
+            ?? NSImage(systemSymbolName: pill.icon, accessibilityDescription: pill.name)
+        guard let icon else { return nil }
+        return MatchDockIcon(
+            id: "ordered-menu:\(pill.id)",
+            bundleID: bundleID,
+            title: pill.sourceAppName.isEmpty ? pill.name : pill.sourceAppName,
+            icon: icon,
+            isRunning: !pill.sourceBundleId.isEmpty
+                && NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == pill.sourceBundleId
+                },
+            isExpandable: false,
+            score: 0,
+            isExactAppPrefix: false
+        )
     }
 
     func expandedGlobalContextMatchDockIcons(for query: String) -> [MatchDockIcon] {
@@ -2813,6 +2912,7 @@ extension LauncherView {
             && shouldUsePureGlobalAppSearch
             && globalInlineAppScope == nil
             && focusedAppPillIndex == nil
+            && l2.focusedPillIndex == nil
             && searchState.selectedIndex == nil
             && !showMediaLayer
             && !aiMode.isActive

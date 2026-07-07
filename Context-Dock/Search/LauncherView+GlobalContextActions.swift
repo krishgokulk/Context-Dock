@@ -1268,7 +1268,7 @@ extension LauncherView {
                 )
             }
             return mergeGlobalRowsPreservingPriority(
-                [runningRows, appRows, commandRows],
+                [appRows, runningRows, commandRows],
                 limit: appRowLimit
             )
         }()
