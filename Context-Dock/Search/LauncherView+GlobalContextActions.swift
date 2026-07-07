@@ -3901,7 +3901,7 @@ extension LauncherView {
                 query: actionQuery
             )
         }
-        var visible =
+        let visible =
             pills
             .filter { pill in
                 guard !pill.isSeparator else { return false }
@@ -3927,19 +3927,24 @@ extension LauncherView {
                     dockPillTokens(nameLower + " " + contextLower + " " + termsLower))
                 return !actionTokens.intersection(pillTokens).isEmpty
             }
-        // Universal first action: any app scope with leftover query always offers
-        // an in-app content search, even when no menu/index entry matches.
-        if !isPseudoExtensionScope, !actionQuery.isEmpty {
-            visible.insert(
-                makeScopedAppContentSearchPill(
+        var sorted = sortScopedGlobalAppPills(visible, query: actionQuery)
+        guard actionQuery.isEmpty else {
+            // Content search is a fallback action, not the primary command. Keep real
+            // app menus first so "safari new private window" executes Safari's menu,
+            // while still offering an in-app search when no command matches.
+            if !isPseudoExtensionScope {
+                let contentSearch = makeScopedAppContentSearchPill(
                     actionQuery: actionQuery,
                     bundleId: scope.scopedBundleId,
                     appName: scope.scopedAppName,
                     appPath: appPath
-                ), at: 0)
-        }
-        let sorted = sortScopedGlobalAppPills(visible, query: actionQuery)
-        guard actionQuery.isEmpty else {
+                )
+                if sorted.isEmpty {
+                    sorted = [contentSearch]
+                } else if sorted.count < maxListViewDockPills {
+                    sorted.append(contentSearch)
+                }
+            }
             return Array(sorted.prefix(maxListViewDockPills))
         }
 
@@ -3999,6 +4004,9 @@ extension LauncherView {
                 pill.rankingKind != "contentSearch"
             {
                 score += 260
+            }
+            if title.contains("@"), !title.contains(query), pill.rankingKind != "contentSearch" {
+                score -= 140
             }
         } else {
             if pill.keyboardShortcutLabel?.isEmpty == false || pill.badge?.contains("⌘") == true {
@@ -4528,6 +4536,9 @@ extension LauncherView {
         // Encoding row/measured height here caused visible jumps while typing.
         if isGlobalContextActive {
             return "global:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
+        }
+        if showContextInDock {
+            return "scoped:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
         // per app, so row count alone undercounts) — react to the measured height in 8px

@@ -741,7 +741,8 @@ extension LauncherView {
             }
             .onChange(of: matches.count) { count in
                 guard let idx = focusedAppPillIndex else { return }
-                let totalCount = count + visibleMenuPills.count
+                let crossAppMenuCount = providedAppMenuGroups.reduce(0) { $0 + $1.pills.count }
+                let totalCount = count + visibleMenuPills.count + crossAppMenuCount
                 if totalCount <= 0 {
                     focusedAppPillIndex = nil
                     l2.focusedPillIndex = nil

@@ -482,8 +482,8 @@ extension LauncherView {
                         )
                 }
             }
-            .animation(isGlobalContextActive ? nil : .spring(response: 0.30, dampingFraction: 0.88), value: usesVerticalListDockLayout)
-            .animation(isGlobalContextActive ? nil : .spring(response: 0.34, dampingFraction: 0.90), value: listViewResizeToken)
+            .animation((isGlobalContextActive || showContextInDock) ? nil : .spring(response: 0.30, dampingFraction: 0.88), value: usesVerticalListDockLayout)
+            .animation((isGlobalContextActive || showContextInDock) ? nil : .spring(response: 0.34, dampingFraction: 0.90), value: listViewResizeToken)
             .animation(.easeOut(duration: 0.12), value: idle)
             Spacer(minLength: 0)
         }
