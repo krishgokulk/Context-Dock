@@ -1718,7 +1718,7 @@ extension LauncherView {
         else { return false }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = globalGroupedListNavigationState(for: q)
+        let state = visibleGlobalGroupedListNavigationState(for: q)
         let matches =
             state.appResults.isEmpty
             ? currentOrImmediateGlobalAppMatches(for: q)
@@ -3989,7 +3989,17 @@ extension LauncherView {
             if title == query { score += 900 }
             if title.hasPrefix(query) { score += 620 }
             if title.contains(query) { score += 420 }
+            if title != query, title.contains(query), pill.rankingKind != "contentSearch" {
+                score += 380
+            }
             if context.contains(query) || terms.contains(query) { score += 220 }
+            let queryTokens = Set(dockPillTokens(query))
+            let titleTokens = Set(dockPillTokens(title))
+            if !queryTokens.isEmpty, queryTokens.isSubset(of: titleTokens),
+                pill.rankingKind != "contentSearch"
+            {
+                score += 260
+            }
         } else {
             if pill.keyboardShortcutLabel?.isEmpty == false || pill.badge?.contains("⌘") == true {
                 score += 42
@@ -4021,7 +4031,7 @@ extension LauncherView {
             }
         }
 
-        if pill.rankingKind == "contentSearch" { score += query.isEmpty ? -80 : 500 }
+        if pill.rankingKind == "contentSearch" { score += query.isEmpty ? -80 : -180 }
         if pill.rankingKind == "browserCommand" { score += query.isEmpty ? 120 : 820 }
         if pill.rankingKind == "nativeWindow" { score += query.isEmpty ? 12 : 80 }
         if query.isEmpty {
