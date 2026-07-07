@@ -127,13 +127,15 @@ struct ContextMatchDock: View {
                     .transition(.opacity)
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(width: 156, height: 30, alignment: .center)
         .opacity(phase == .matching ? 0.74 : 1.0)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
         )
-        .frame(width: 136, height: 26, alignment: .trailing)
         .animation(.easeInOut(duration: 0.10), value: icons)
         .animation(.easeInOut(duration: 0.10), value: overflowCount)
     }

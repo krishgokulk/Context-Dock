@@ -2738,11 +2738,72 @@ extension LauncherView {
     var globalContextMatchDockView: some View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let phase: ContextMatchDock.Phase = q.isEmpty ? .idle : .matching
-        let icons = q.isEmpty
+        let expandedIcons = expandedGlobalContextMatchDockIcons(for: q)
+        let icons =
+            q.isEmpty
             ? idleContextMatchDockIcons
-            : Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
-        let overflow = q.isEmpty ? 0 : globalContextViewModel.typingSnapshot.matchDockOverflowCount
+            : (expandedIcons.isEmpty
+                ? Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
+                : expandedIcons)
+        let overflow =
+            q.isEmpty
+            ? 0
+            : (expandedIcons.isEmpty
+                ? globalContextViewModel.typingSnapshot.matchDockOverflowCount
+                : max(0, visibleGlobalGroupedListNavigationState(for: q).totalCount - icons.count))
         ContextMatchDock(phase: phase, icons: icons, overflowCount: overflow)
+    }
+
+    func expandedGlobalContextMatchDockIcons(for query: String) -> [MatchDockIcon] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty,
+            globalContextViewModel.typingSnapshot.phase == .expanded
+        else { return [] }
+
+        let state = visibleGlobalGroupedListNavigationState(for: q)
+        let ordered = Array(globalGroupedVisibleOrder(state: state).prefix(3))
+        return ordered.compactMap { index -> MatchDockIcon? in
+            if index < state.appResults.count {
+                let result = state.appResults[index]
+                let bundleID = bundleIdentifier(forApplicationResult: result)
+                guard let icon = result.icon
+                    ?? resolvedApplicationIcon(bundleIdentifier: bundleID, appName: result.title)
+                else { return nil }
+                return MatchDockIcon(
+                    id: "expanded-app:\(result.trackingIdentifier)",
+                    bundleID: bundleID,
+                    title: result.title,
+                    icon: icon,
+                    isRunning: result.subtitle == "Running",
+                    isExpandable: false,
+                    score: result.score,
+                    isExactAppPrefix: false
+                )
+            }
+
+            let menuIndex = index - state.appResults.count
+            guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
+            let pill = state.menuPills[menuIndex]
+            let bundleID = pill.sourceBundleId.isEmpty ? nil : pill.sourceBundleId
+            let icon =
+                bundleID.flatMap { sourceAppIcon(bundleId: $0) }
+                ?? pill.menuItemImage
+                ?? NSImage(systemSymbolName: pill.icon, accessibilityDescription: pill.name)
+            guard let icon else { return nil }
+            return MatchDockIcon(
+                id: "expanded-menu:\(pill.id)",
+                bundleID: bundleID,
+                title: pill.sourceAppName.isEmpty ? pill.name : pill.sourceAppName,
+                icon: icon,
+                isRunning: !pill.sourceBundleId.isEmpty
+                    && NSWorkspace.shared.runningApplications.contains {
+                        $0.bundleIdentifier == pill.sourceBundleId
+                    },
+                isExpandable: false,
+                score: 0,
+                isExactAppPrefix: false
+            )
+        }
     }
 
     var shouldShowContextMatchDock: Bool {
