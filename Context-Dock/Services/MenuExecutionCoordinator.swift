@@ -274,6 +274,57 @@ final class MenuExecutionCoordinator {
         }
     }
 
+    /// Live-verified menu execution for DoraX Action Chat (General AI Chat).
+    /// Unlike `executeDockMenuAction` this has no dock-UI callbacks and reports the
+    /// outcome back to the caller so chat can only claim success when it happened.
+    /// The target menu item is re-read from the LIVE menu bar before executing —
+    /// cached records alone are never trusted for execution.
+    func executeVerifiedMenuAction(
+        bundleIdentifier: String,
+        path: [String],
+        cachedShortcutChar: String? = nil,
+        cachedShortcutModifiers: Int = 0
+    ) async -> (success: Bool, message: String) {
+        guard !path.isEmpty else { return (false, "Empty menu path.") }
+        guard Self.ensureAccessibilityTrustOrPrompt() else {
+            return (false, "Accessibility permission is required to run menu actions.")
+        }
+        guard let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
+        }) else {
+            return (false, "The app isn't running, so the menu action can't be verified.")
+        }
+        let pid = app.processIdentifier
+        if app.isHidden { app.unhide() }
+        app.activate(options: [.activateIgnoringOtherApps])
+        await AXActionResolver.waitForActivation(of: app)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        guard let liveMatch = await Self.waitForExecutableMenuItem(
+            path: path, app: app, in: pid, attempts: 3, pauseNanoseconds: 100_000_000
+        ), liveMatch.isEnabled else {
+            return (false, "\(path.joined(separator: " → ")) isn't available in "
+                + "\(app.localizedName ?? bundleIdentifier) right now — nothing was executed.")
+        }
+
+        let shortcutChar = (cachedShortcutChar?.isEmpty == false
+            ? cachedShortcutChar : liveMatch.shortcutChar)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let shortcutModifiers = cachedShortcutModifiers != 0
+            ? cachedShortcutModifiers : liveMatch.shortcutModifiers
+        let pathLabel = liveMatch.path.joined(separator: " → ")
+
+        // Fastest verified strategy first: post the item's own shortcut, then AX click.
+        if !shortcutChar.isEmpty,
+           AXMenuReader.shared.executeShortcut(char: shortcutChar, modifiers: shortcutModifiers, in: pid) {
+            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+        }
+        if AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid) {
+            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+        }
+        return (false, "Found \(pathLabel) but the click didn't register — nothing was confirmed.")
+    }
+
     func executeWindowManagementActionIfNeeded(
         path: [String],
         sourceApp: NSRunningApplication

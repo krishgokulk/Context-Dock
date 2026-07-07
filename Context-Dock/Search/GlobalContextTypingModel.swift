@@ -97,19 +97,19 @@ struct ContextMatchDock: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                         .accessibilityLabel(accessibilityLabel(for: item))
 
-                    if item.isRunning {
+                    if item.isRunning && phase == .idle {
                         Circle()
-                            .fill(Color.green.opacity(0.9))
-                            .frame(width: 5, height: 5)
+                            .fill(Color.green.opacity(0.72))
+                            .frame(width: 4.5, height: 4.5)
                             .offset(x: 2, y: 2)
                     }
                 }
-                .overlay(alignment: .topTrailing) {
-                    if item.isExpandable {
+                .overlay(alignment: .bottomTrailing) {
+                    if item.isExpandable && phase == .idle {
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .offset(x: 4, y: -4)
+                            .font(.system(size: 6.5, weight: .bold))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .offset(x: 3, y: 3)
                     }
                 }
                 .id(item.id)
@@ -119,16 +119,15 @@ struct ContextMatchDock: View {
 
             if overflowCount > 0 {
                 Text("+\(overflowCount)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.65))
                     .monospacedDigit()
-                    .frame(width: 26, alignment: .center)
+                    .frame(width: 24, alignment: .center)
                     .accessibilityLabel("\(overflowCount) more matches")
                     .transition(.opacity)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .opacity(phase == .matching ? 0.74 : 1.0)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)
@@ -156,7 +155,18 @@ struct GlobalContextPreparedResults: Equatable {
     let appDocumentIDs: [String]
     let menuDocumentIDs: [String]
 
+    // Backward-compat placeholders for older call sites expecting navigation metadata
+    // These are optional and default to nil so existing logic can gate on availability.
+    let navigationState: GlobalGroupedListNavigationState? = nil
+    let state: GlobalGroupedListNavigationState? = nil
+
     var isEmpty: Bool {
         appDocumentIDs.isEmpty && menuDocumentIDs.isEmpty
+    }
+
+    static func == (lhs: GlobalContextPreparedResults, rhs: GlobalContextPreparedResults) -> Bool {
+        return lhs.query == rhs.query
+            && lhs.appDocumentIDs == rhs.appDocumentIDs
+            && lhs.menuDocumentIDs == rhs.menuDocumentIDs
     }
 }

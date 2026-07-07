@@ -9,7 +9,8 @@ extension LauncherView {
     ) {
         if isGlobalContextActive,
             globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
-            reason.isTypingOrContentRefresh
+            reason.isTypingOrContentRefresh,
+            !hasMatchingGlobalContextResults
         {
             return
         }
@@ -18,7 +19,9 @@ extension LauncherView {
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
-        if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged && !modeChanged {
+        if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged
+            && !modeChanged
+        {
             if let window = AppDelegate.shared?.launcherWindow {
                 let heightDelta = abs(window.frame.height - calculatedHeight)
                 let widthDelta = abs(window.frame.width - calculatedWidth)
@@ -248,11 +251,9 @@ extension LauncherView {
             }
 
             if self.isGlobalContextActive,
-                (
-                    self.globalContextViewModel.typingSnapshot.phase == .typing
-                    || self.globalContextViewModel.typingSnapshot.phase == .matched
-                    || self.globalContextViewModel.typingSnapshot.phase == .expandable
-                )
+                self.shouldUsePureGlobalAppSearch,
+                !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.globalContextViewModel.typingSnapshot.phase != .expanded
             {
                 switch event.keyCode {
                 case 125:  // Down
@@ -263,15 +264,21 @@ extension LauncherView {
                     {
                         return nil
                     }
-                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: { $0.isExpandable }),
+                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: {
+                        $0.isExpandable
+                    }),
                         self.expandGlobalContextTypingMatch(selectFirst: true)
                     {
                         return nil
                     }
                 case 36:  // Enter
                     let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
-                    let exactLaunchIcons = matchIcons.filter { $0.isExactAppPrefix && !$0.isExpandable }
-                    let expandableRunningIcons = matchIcons.filter { $0.isExpandable && $0.isRunning }
+                    let exactLaunchIcons = matchIcons.filter {
+                        $0.isExactAppPrefix && !$0.isExpandable
+                    }
+                    let expandableRunningIcons = matchIcons.filter {
+                        $0.isExpandable && $0.isRunning
+                    }
                     if exactLaunchIcons.count == 1, let item = exactLaunchIcons.first {
                         self.executeMatchDockIcon(item)
                         return nil
@@ -279,10 +286,11 @@ extension LauncherView {
                         if self.expandGlobalContextTypingMatch(selectFirst: true) {
                             return nil
                         }
-                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable {
-                            if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                                return nil
-                            }
+                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable
+                    {
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                            return nil
+                        }
                     } else if matchIcons.contains(where: { $0.isExpandable }),
                         self.expandGlobalContextTypingMatch(selectFirst: true)
                     {
@@ -300,6 +308,16 @@ extension LauncherView {
                 }
                 if self.activateFocusedGlobalAppScopeIfPossible() {
                     return nil
+                }
+                if self.isGlobalContextActive,
+                    self.shouldUsePureGlobalAppSearch,
+                    self.globalInlineAppScope == nil,
+                    self.globalContextViewModel.typingSnapshot.phase != .expanded,
+                    !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                        return nil
+                    }
                 }
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     self.focusTopGlobalAppResultIfPossible()
@@ -409,7 +427,7 @@ extension LauncherView {
                 .lowercased()
 
             if event.keyCode == 36,
-                (self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed),
+                self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed,
                 q.isEmpty
             {
                 self.exitContextDockChatAndScope()
@@ -440,21 +458,22 @@ extension LauncherView {
             // (cross-app or empty). When frontmost HAS menus (preferFrontmostMenuResults=true),
             // view shows dockPillListView instead — Block 3 handles it with full-pills indices.
             if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
-                let groupedState = self.globalGroupedListNavigationState(for: q)
-                guard groupedState.totalCount > 0 else {
+                let state = self.visibleGlobalGroupedListNavigationState(for: q)
+                if state.totalCount == 0 {
                     // Nothing matched apps/commands/menus — ↓ still goes through the
                     // single expansion entry (its token-word fallback covers this).
-                    if event.keyCode == 125, self.expandGlobalContextTypingMatch(selectFirst: true) {
+                    switch event.keyCode {
+                    case 125: // Down
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
                         return nil
+                    default:
+                        return event
                     }
-                    return event
                 }
 
                 switch event.keyCode {
                 case 125:  // Down — FIRST press expands via the single entry, then navigates
-                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                        return nil
-                    }
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )
@@ -500,11 +519,11 @@ extension LauncherView {
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
                 case 51:  // Delete/Backspace — quit focused running app row, else clear focus
-                    if self.currentGlobalGroupedFocusIndex(state: groupedState) != nil {
-                        if self.quitFocusedGlobalAppResultIfPossible(state: groupedState) {
+                    if self.currentGlobalGroupedFocusIndex(state: state) != nil {
+                        if self.quitFocusedGlobalAppResultIfPossible(state: state) {
                             return nil
                         }
-                        self.setGlobalGroupedFocus(nil, state: groupedState)
+                        self.setGlobalGroupedFocus(nil, state: state)
                         return nil
                     }
                     return event
@@ -646,7 +665,8 @@ extension LauncherView {
                     }
                     // Render-default: first row is shown pre-selected (focusedAppPillIndex nil) while
                     // typing — Enter launches it (the ghost top result), matching the highlight.
-                    if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .isEmpty,
                         let first = appPills.first
                     {
                         first.execute()
@@ -835,18 +855,15 @@ extension LauncherView {
                     )
                     return nil
                 }
-                if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded()
-                {
+                if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded() {
                     return nil
                 }
 
-                if self.executeFirstMatchingFinderFolderPillIfNeeded()
-                {
+                if self.executeFirstMatchingFinderFolderPillIfNeeded() {
                     return nil
                 }
 
-                if self.executeFirstAttachedFinderFolderResultIfNeeded()
-                {
+                if self.executeFirstAttachedFinderFolderResultIfNeeded() {
                     return nil
                 }
 
@@ -1037,7 +1054,10 @@ extension LauncherView {
                 "window.heightUpdate",
                 query: searchState.query
             )
-            defer { SearchPerformanceLog.shared.endInterval("window.heightUpdate", state: heightSignpost) }
+            defer {
+                SearchPerformanceLog.shared.endInterval(
+                    "window.heightUpdate", state: heightSignpost)
+            }
 
             let heightPreset = self.currentDockHeightPreset
             let surfaceMode = self.currentDockSurfaceMode
@@ -1254,6 +1274,13 @@ extension LauncherView {
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
+                    if globalContextViewModel.typingSnapshot.phase != .expanded {
+                        if expandGlobalContextTypingMatch(selectFirst: true) {
+                            return .handled
+                        }
+                        return .handled
+                    }
+
                     _ = moveGlobalGroupedListFocus(
                         direction: settings.effectiveDockAtBottom ? -1 : 1
                     )
@@ -1554,7 +1581,8 @@ extension LauncherView {
                 if inlineShareActive {
                     inlineShareActive = false
                     isSearchFieldFocused = true
-                    scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+                    scheduleDockPillRebuild(
+                        query: searchState.query, delayNanoseconds: 0, refreshContext: false)
                     return .handled
                 }
                 // App scope or app panel: ESC exits scope and returns to L1 (stays open)
@@ -1601,7 +1629,8 @@ extension LauncherView {
                     if inlineShareActive {
                         inlineShareActive = false
                         isSearchFieldFocused = true
-                        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                        scheduleDockPillRebuild(
+                            query: "", delayNanoseconds: 0, refreshContext: false)
                         return .handled
                     }
                     // Unlock locked submenu parent first
@@ -1689,7 +1718,7 @@ extension LauncherView {
                 }
                 // In a browser with an empty field, right-arrow grabs the current
                 // page and immediately arms app-scoped chat for that page.
-                if (isGlobalContextActive || showContextInDock),
+                if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,
@@ -1702,7 +1731,7 @@ extension LauncherView {
                     openInlineAIChatPanel()
                     return .handled
                 }
-                if (isGlobalContextActive || showContextInDock),
+                if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,

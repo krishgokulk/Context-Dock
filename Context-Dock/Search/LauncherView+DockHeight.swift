@@ -28,6 +28,11 @@ extension LauncherView {
             ? 56
             : max(50, dockRowHeight + dockVerticalPadding)
         let indexingBarHeight: CGFloat = fileIndexManager.progress.isIndexing ? 30 : 0
+        let pureGlobalCompactTyping =
+            isGlobalContextActive
+            && shouldUsePureGlobalAppSearch
+            && globalInlineAppScope == nil
+            && globalContextViewModel.typingSnapshot.phase != .expanded
 
         return DockHeightMetrics(
             surfaceMode: currentDockSurfaceMode,
@@ -45,23 +50,28 @@ extension LauncherView {
             mediaHasDuration: mediaObserver.duration > 0,
             contextDockChatMessageCount: l2.chatMessages.count,
             listViewDockHeight: listViewDockHeight,
-            resultCount: searchState.results.count,
-            loadingApps: searchState.isLoadingApps,
-            l1ResultsReservedHeight: l1ResultsReservedHeight,
+            resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
+            loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
+            l1ResultsReservedHeight: pureGlobalCompactTyping ? 0 : l1ResultsReservedHeight,
             measuredChatContentHeight: measuredChatContentHeight
         )
     }
 
     private var currentDockHeightPresetMetrics: DockHeightPresetMetrics {
-        DockHeightPresetMetrics(
+        let pureGlobalCompactTyping =
+            isGlobalContextActive
+            && shouldUsePureGlobalAppSearch
+            && globalInlineAppScope == nil
+            && globalContextViewModel.typingSnapshot.phase != .expanded
+        return DockHeightPresetMetrics(
             surfaceMode: currentDockSurfaceMode,
             usesVerticalListDockLayout: usesVerticalListDockLayout,
             listViewDockHeight: listViewDockHeight,
             showsFinderSearchResultsPanel: shouldShowFinderSearchResultsPanel(for: searchState.query),
-            showsContextDockAppPanel: shouldShowContextDockAppPanel,
+            showsContextDockAppPanel: pureGlobalCompactTyping ? false : shouldShowContextDockAppPanel,
             compactSmartScope: isCompactSmartScope,
-            resultCount: searchState.results.count,
-            loadingApps: searchState.isLoadingApps,
+            resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
+            loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             searchBarExpanded: isSearchBarExpanded,
             aiMessageCount: aiMode.messages.count
         )

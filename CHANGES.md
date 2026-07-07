@@ -180,3 +180,11 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-05 21:46 · `bc636379` · `codex-context-dock-polish-fixes`
 **feat(global): persistent results container, DoraX-only header icon, Escape resize**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-05 23:59 · `8ef4d9b2` · `codex-context-dock-polish-fixes`
+**fix(global): ↓ expansion sizes correctly, match dock in one capsule, → completes ghost first**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-07 15:28 · `3153c1bb` · `codex-context-dock-polish-fixes`
+**WIP checkpoint: global context flow**
+Swift: +4 added · ~11 modified · -0 deleted

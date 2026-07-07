@@ -500,8 +500,6 @@ extension LauncherView {
             !matches.isEmpty || !visibleMenuPills.isEmpty || !providedAppMenuGroups.isEmpty
             || showLaunchHint
         let isEmpty = !isLoading && !hasRenderableRows
-        let listHeight: CGFloat = hasRenderableRows ? listViewVisibleHeight : 86
-
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -712,7 +710,7 @@ extension LauncherView {
             }
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(height: listHeight, alignment: .topLeading)
+            .frame(minHeight: isEmpty ? 86 : 0, maxHeight: listViewVisibleHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .animation(nil, value: hasRenderableRows)
             .onChange(of: focusedAppPillIndex) { idx in

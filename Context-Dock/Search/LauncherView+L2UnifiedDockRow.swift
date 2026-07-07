@@ -78,12 +78,19 @@ extension LauncherView {
             hasActiveContextSelection
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
         let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
-            (pureGlobalAppSearch && !q.isEmpty
-                && !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch)
+            (pureGlobalAppSearch && !q.isEmpty)
             ? globalGroupedListNavigationState(for: q) : nil
         let globalAppMatches =
             pureGlobalAppSearch
-            ? (preliminaryGlobalNavState?.appResults ?? [])
+            ? (
+                preliminaryGlobalNavState?.appResults.isEmpty == false
+                ? (preliminaryGlobalNavState?.appResults ?? [])
+                : (
+                    globalContextViewModel.typingSnapshot.phase == .expanded
+                    ? matchDockIconRowsForExpandedSheet(query: q)
+                    : []
+                )
+            )
             : currentOrImmediateGlobalAppMatches(for: q)
         let genericAppListQuery = isGenericApplicationListQuery(q)
         let preferFrontmostMenuResults =
@@ -102,6 +109,8 @@ extension LauncherView {
             ? activeGlobalInlineDockScope(for: q)
             : nil
         let effectiveAppScope = inlineGlobalScope?.isExplicitAppScope == true
+        let transientScopedMenuState =
+            effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil
         let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
         let scopedMenuListContext: (appName: String, actionQuery: String)? = {
             guard let scope = inlineGlobalScope, scope.isExplicitAppScope else { return nil }
@@ -109,13 +118,19 @@ extension LauncherView {
         }()
         let globalNavState: GlobalGroupedListNavigationState? =
             effectiveAppScope
-            ? globalGroupedListNavigationState(for: q)
+            ? (
+                transientScopedMenuState == nil
+                ? globalGroupedListNavigationState(for: q)
+                : transientScopedMenuState
+            )
             : preliminaryGlobalNavState
-        let globalMenuPills = globalNavState?.menuGroups.flatMap(\.allPills) ?? []
+        let globalNavIsScopedAppMenus: Bool = {
+            guard let s = globalNavState else { return false }
+            return s.appResults.isEmpty && !s.appMenuGroups.isEmpty
+        }()
+        let globalMenuPills =
+            globalNavIsScopedAppMenus ? [] : (globalNavState?.menuGroups.flatMap(\.allPills) ?? [])
         let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
-        let globalNavIsScopedAppMenus =
-            globalNavState?.appResults.isEmpty == true
-            && !(globalNavState?.appMenuGroups.isEmpty ?? true)
         let showGlobalAppSearch =
             (pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
             || effectiveAppScope
@@ -157,8 +172,7 @@ extension LauncherView {
             dockAtBottom: settings.effectiveDockAtBottom,
             globalSearch: L2GlobalSearchPresentation(
                 query: q,
-                matches: globalNavIsScopedAppMenus
-                    ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
+                matches: globalNavIsScopedAppMenus ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
                 menuPills: globalMenuPills,
                 appMenuGroups: globalCrossAppGroups,
                 launchHint: scopedAppLaunchHint,
@@ -190,6 +204,9 @@ extension LauncherView {
     /// Menu-only match (no app/command rows) that has not been revealed with ↓ yet —
     /// the sheet stays collapsed; the strip shows the owning app's pill instead.
     func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
+        if isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil {
+            return false
+        }
         // Sheet policy while typing in pure Global Context:
         //  • 2+ app/command rows → instant sheet (classic launcher feel)
         //  • menu-only matches   → compact dock, owning-app pill in strip, ↓ reveals
@@ -215,8 +232,10 @@ extension LauncherView {
         // rebuilt the view identity on ↓, so the expansion could never animate
         // continuously from the first key press.
         let expanded =
-            !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
-            && !isDeferredMenuOnlyPresentation(presentation)
+            isGlobalContextActive && shouldUsePureGlobalAppSearch && globalInlineAppScope == nil
+            ? hasExpandedGlobalContextResults
+            : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+                && !isDeferredMenuOnlyPresentation(presentation))
         globalAppSearchListView(
             query: presentation.query,
             matches: presentation.matches,

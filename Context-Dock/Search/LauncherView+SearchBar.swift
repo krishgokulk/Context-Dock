@@ -251,10 +251,7 @@ extension LauncherView {
                 || !l2.chatMessages.isEmpty
                 || l2.isLoading
         case .globalContext:
-            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
-                return false
-            }
-            return hasResultsToShow
+            return false
         case .contextDock:
             return hasResultsToShow
         case .mediaDock:
@@ -269,10 +266,7 @@ extension LauncherView {
             // content height — so the sheet exactly fits the conversation (no clip, no empty box).
             return DockHeightResolver.chatAreaHeight(measuredContentHeight: measuredChatContentHeight)
         case .globalContext:
-            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
-                return 0
-            }
-            return unifiedSearchContentHeight
+            return 0
         case .contextDock:
             return unifiedSearchContentHeight
         case .mediaDock:
@@ -333,9 +327,13 @@ extension LauncherView {
         case .contextDockChat:
             return l2.chatMessages.isEmpty && !l2.isLoading
         case .globalContext:
-            if globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch {
+            if shouldUsePureGlobalAppSearch,
+                globalInlineAppScope == nil,
+                globalContextViewModel.typingSnapshot.phase != .expanded
+            {
                 return true
             }
+            if hasExpandedGlobalContextResults { return false }
             return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !shouldShowUnifiedDockModeContent
                 && !usesVerticalListDockLayout
@@ -375,6 +373,11 @@ extension LauncherView {
 
                 dockBaseView(inDockMode: inDockMode, fillWidth: true, embeddedInSheet: !idle)
                     .frame(width: resultsPanelWidth, alignment: .leading)
+                    .transaction { tx in
+                        if isGlobalContextActive {
+                            tx.animation = nil
+                        }
+                    }
                     .onDrop(
                         of: [.fileURL, .text, .plainText, .url],
                         isTargeted: clipboardDropTargetedBinding
@@ -479,7 +482,9 @@ extension LauncherView {
                         )
                 }
             }
-            .animation(nil, value: idle)
+            .animation(isGlobalContextActive ? nil : .spring(response: 0.30, dampingFraction: 0.88), value: usesVerticalListDockLayout)
+            .animation(isGlobalContextActive ? nil : .spring(response: 0.34, dampingFraction: 0.90), value: listViewResizeToken)
+            .animation(.easeOut(duration: 0.12), value: idle)
             Spacer(minLength: 0)
         }
         .frame(width: calculatedWidth, alignment: .leading)
@@ -520,6 +525,7 @@ extension LauncherView {
                 let globalAppNavActive =
                     focusedAppPillIndex != nil && isGlobalContextActive
                     && currentDockSurfaceMode != .generalChat
+                    && !shouldUsePureGlobalAppSearch
                     && !usesVerticalListDockLayout
                 let pillNavActive = actionPillNavActive || globalAppNavActive
                 let compactScopeKey = isCompactSmartScope ? searchState.activeSmartQueryKey : nil
@@ -1652,13 +1658,6 @@ extension LauncherView {
                                             }
                                         }
                                         scheduleDeferredQueryChange(from: oldValue, to: newValue)
-                                        if currentDockSurfaceMode == .globalContext,
-                                            !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                        {
-                                            DispatchQueue.main.async {
-                                                self.reclaimSearchInputFocus()
-                                            }
-                                        }
                                     }
                                     .onChange(of: isSearchFieldFocused) { oldValue, newValue in
                                         if newValue {

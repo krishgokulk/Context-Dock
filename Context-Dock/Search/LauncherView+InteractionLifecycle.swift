@@ -477,8 +477,10 @@ extension LauncherView {
 
     var shouldWarmFrontmostBrowserContext: Bool {
         let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Global Context typing is cache-first: do not warm/read live browser context
+        // from the keystroke path. Browser warmup belongs to Chat/Context Dock work.
         return currentDockSurfaceMode == .generalChat || aiMode.isLoading || l2.isLoading
-            || (showContextInDock && !query.isEmpty)
+            || (showContextInDock && !isGlobalContextActive && !query.isEmpty)
     }
 
     func cancelBrowserContextWarmup() {
@@ -617,7 +619,6 @@ extension LauncherView {
                 settings.autoDetectedAppKey = settings.appKey(
                     forBundleID: bundleID, appName: appName)
 
-
                 // Re-detect context (selected text/files/browser tab/clipboard) and then refresh suggestions.
                 // This ensures suggestions update based on actual user selection, not just the app name.
                 if bundleID != "com.apple.finder" {
@@ -629,7 +630,9 @@ extension LauncherView {
                 let isFinderDesktop = bundleID == "com.apple.finder" && !finderHasActiveWindow()
                 detectAndUpdateContext()
 
-                if showContextInDock && !isFinderDesktop {
+                // Global Context is cache-first. Do not live-reload L2 menus while the
+                // Global Context surface is active; cached/global matching owns that path.
+                if showContextInDock && !isGlobalContextActive && !isFinderDesktop {
                     updateL2Results([])
                     reloadMenuForApp(app)
                 }

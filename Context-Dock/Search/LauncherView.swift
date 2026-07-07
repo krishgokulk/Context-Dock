@@ -496,15 +496,9 @@ struct LauncherView: View {
         if isGlobalContextActive && hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            globalInlineAppScope == nil,
-            globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
-        {
-            return false
-        }
         if shouldUsePureGlobalAppSearch {
-            return !q.isEmpty
+            guard !q.isEmpty else { return false }
+            return hasExpandedGlobalContextResults
         }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
@@ -2354,9 +2348,35 @@ struct LauncherView: View {
     }
 
     // Shared condition: whether any results panel should be visible.
+    var hasMatchingGlobalContextResults: Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
+        if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
+        return !matchDockIconRowsForExpandedSheet(query: q).isEmpty
+    }
+
+    var hasExpandedGlobalContextResults: Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil,
+            globalContextViewModel.typingSnapshot.phase == .expanded
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
+        if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
+        return !matchDockIconRowsForExpandedSheet(query: q).isEmpty
+    }
+
     var hasResultsToShow: Bool {
         guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
+        if hasExpandedGlobalContextResults { return true }
         return !searchState.results.isEmpty
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (shouldShowContextDockAppPanel

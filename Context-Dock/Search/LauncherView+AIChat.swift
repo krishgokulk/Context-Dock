@@ -809,6 +809,9 @@ extension LauncherView {
                             selectionShareConfirmCard(pending)
                                 .id("pending-share")
                         }
+                        // DoraX Action Chat: first-run approval for executable actions.
+                        GeneralAIActionApprovalCard()
+                            .id("general-ai-action-approval")
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
@@ -3305,6 +3308,22 @@ extension LauncherView {
                     "\n\nAttachment contents — use these to answer the user's question:\n\n"
                     + contentBlocks.joined(separator: "\n\n")
             }
+        }
+
+        // DoraX Action Chat: executable requests ("open safari new private window",
+        // "add reminder to buy milk") resolve to real capability routes and execute
+        // with approval instead of getting an instructional chatbot answer.
+        if attachments.isEmpty,
+           let actionAnswer = await generalAIExecutableActionAnswer(query: query) {
+            return actionAnswer
+        }
+
+        // Named-app status grounding: "what's going on with vs code?" answers from
+        // live app state (context readers, code --status, menu cache, MCP inventory)
+        // — the same powers frontmost-app chat has — instead of provider guesses.
+        let appRuntimeBlock = await generalAppRuntimeContextBlock(for: query)
+        if !appRuntimeBlock.isEmpty {
+            sysContent += "\n\n" + appRuntimeBlock
         }
 
         if let mcpAnswer = try await directGeneralAppMCPAnswer(
