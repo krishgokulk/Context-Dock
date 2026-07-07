@@ -1709,9 +1709,11 @@ extension LauncherView {
                                                     findToken, userMessage: "find \(trimmed)")
                                                 return
                                             }
-                                            if l2.focusedPillIndex != nil,
-                                                executeFocusedOrDirectAppPillIfNeeded()
-                                            {
+                                            // No focusedPillIndex precondition: the first row is
+                                            // shown pre-selected (render default) while typing —
+                                            // Enter must run it (e.g. "xco" → Xcode Switch), not
+                                            // fall through to the scoped chat/search below.
+                                            if executeFocusedOrDirectAppPillIfNeeded() {
                                                 return
                                             }
                                             if executeFirstMatchingFinderFolderPillIfNeeded() {

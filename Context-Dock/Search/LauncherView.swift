@@ -1665,26 +1665,37 @@ struct LauncherView: View {
     @discardableResult
     func executeFocusedOrDirectAppPillIfNeeded() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pills = buildDockPills(query: q)
+        // Prefer the pill list the user is LOOKING at (same source as the rendered rows),
+        // so Enter executes the visibly highlighted row. Fall back to a fresh build when
+        // the cached list hasn't resolved yet (debounced pipeline mid-flight).
+        let displayed = currentVisibleDockPills(for: q)
+        let pills = displayed.contains(where: { !$0.isSeparator })
+            ? displayed
+            : buildDockPills(query: q)
         guard !pills.isEmpty else { return false }
 
         if let idx = l2.focusedPillIndex, idx < pills.count {
-            executeFirstOrFocusedPill()
+            let pill =
+                pills[idx].isSeparator
+                ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
+                : pills[idx]
+            executeDockPill(pill)
+            searchState.query = ""
+            l2.focusedPillIndex = nil
             return true
         }
 
-        // The first selectable pill is shown pre-selected while typing (render default). Enter must
-        // launch it — matching the visible highlight / ghost text — even when it isn't a recognised
-        // "direct app action" query. Question-style queries return no pills (handled upstream), so
-        // this never steals the Enter-to-AI path.
-        let hasDefaultHighlightedPill =
-            !q.isEmpty && pills.contains(where: { !$0.isSeparator })
         let isDirectAction = directAppActionQuery(for: q).map(isDirectAppActionQuery) ?? false
-        guard hasDefaultHighlightedPill || isDirectAction else {
+        guard let defaultPill = pills.first(where: { !$0.isSeparator }),
+            shouldExecuteDefaultDockPillOnSubmit(
+                query: q,
+                pill: defaultPill,
+                isDirectAction: isDirectAction
+            )
+        else {
             return false
         }
 
-        let defaultPill = pills.first(where: { !$0.isSeparator })
         let isPureScopedSelection: Bool = {
             guard let target = l2.targetApp else { return false }
             let aliases = dockPillAppAliases(appName: target.name, bundleId: target.bundleId)
@@ -1695,7 +1706,6 @@ struct LauncherView: View {
             ? (pills.first(where: { !$0.isSeparator && $0.rankingKind != "appLaunch" })
                 ?? defaultPill)
             : defaultPill
-        guard let pill else { return false }
 
         let scope = resolveDockScope(for: q)
         let isScopedCLIQuery =
@@ -1710,6 +1720,48 @@ struct LauncherView: View {
         searchState.query = ""
         l2.focusedPillIndex = nil
         return true
+    }
+
+    func shouldExecuteDefaultDockPillOnSubmit(
+        query: String,
+        pill: DockPill,
+        isDirectAction: Bool
+    ) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+
+        // Focused rows always execute before this helper. Nil-focus/default-first must
+        // not steal Enter from scoped chat or question-style input.
+        if isContextDockChatRoutingLocked || l2.chatArmed || l2.showChatPopover { return false }
+        if isQuestionLikeAppPartialQuery(q) { return false }
+        if isDirectAction { return true }
+
+        let haystack = [
+            pill.name,
+            pill.badge ?? "",
+            pill.menuContext ?? "",
+            pill.sourceAppName,
+            pill.searchTerms.joined(separator: " "),
+        ]
+        .joined(separator: " ")
+        .lowercased()
+        .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+
+        let queryTokens = q
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .map(String.init)
+        guard !queryTokens.isEmpty else { return false }
+        let rowMatchesQuery = queryTokens.allSatisfy { haystack.contains($0) }
+        guard rowMatchesQuery else { return false }
+
+        if pill.rankingKind == "appSwitch" { return true }
+        if ["menu", "submenuParent", "submenuChild", "nativeWindow", "browserCommand"]
+            .contains(pill.rankingKind)
+        {
+            return true
+        }
+        return false
     }
 
     @discardableResult
