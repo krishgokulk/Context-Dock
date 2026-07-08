@@ -739,7 +739,9 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
 
     var description: String {
         switch self {
-        case .onDevice: return "Uses Apple's on-device AI. Private and requires no API key."
+        case .onDevice:
+            return
+                "Uses Apple's Foundation Models through the native Swift API for local Apple Intelligence. Requires no API key."
         case .googleGemini: return "Google's Gemini AI models. Requires API key."
         case .openAI: return "OpenAI's GPT models. Requires API key."
         case .anthropic: return "Anthropic's Claude models. Requires API key."
@@ -830,6 +832,10 @@ class AppSettings: ObservableObject {
     /// When on, the dock never auto-hides on focus loss or after an action runs — it
     /// stays floating until explicitly dismissed (Escape / hotkey).
     @AppStorage("alwaysFloatDock") var alwaysFloatDock: Bool = false
+    /// User pinned the launcher via the pin button: it floats above every app and
+    /// never auto-hides on focus loss until unpinned. Session-scoped by design —
+    /// a relaunch starts unpinned.
+    @Published var launcherPinned: Bool = false
     @AppStorage("enableSpotlightSearch") var enableSpotlightSearch: Bool = true
     @AppStorage("enableL1DocumentSearch") var enableL1DocumentSearch: Bool = true
     @AppStorage("enableL1FileSearch") var enableL1FileSearch: Bool = true
@@ -895,6 +901,12 @@ class AppSettings: ObservableObject {
     @AppStorage("noteMCPAllowDelete") var noteMCPAllowDelete: Bool = false
     @AppStorage("noteMCPPreferLocalAI") var noteMCPPreferLocalAI: Bool = true
     @AppStorage("noteMCPRequireCloudApproval") var noteMCPRequireCloudApproval: Bool = true
+
+    // Apple system apps MCP — off by default; user opts in per-app
+    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = false
+    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = false
+    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = false
+    @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 
     // UI Feature Toggles
     @AppStorage("enableStatusBar") var enableStatusBar: Bool = true  // Show status bar extensions
@@ -966,6 +978,13 @@ class AppSettings: ObservableObject {
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =
         "http://localhost:1234/v1"
     @AppStorage("openAICompatibleModelID") var openAICompatibleModelID: String = ""
+    // Dedicated AppleScript-automation model (e.g. Osaurus AppleScript-8B/16B on
+    // 127.0.0.1:1337/v1). Optional + independent of the main chat provider: used ONLY
+    // to turn NL automation intents into AppleScript in the action/execution layer.
+    @AppStorage("appleScriptModelEnabled") var appleScriptModelEnabled: Bool = false
+    @AppStorage("appleScriptModelEndpoint") var appleScriptModelEndpoint: String =
+        "http://127.0.0.1:1337/v1"
+    @AppStorage("appleScriptModelID") var appleScriptModelID: String = ""
     // Subscription bridge endpoints (VibeProxy default: localhost:8317)
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"

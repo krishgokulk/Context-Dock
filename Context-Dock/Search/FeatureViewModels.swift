@@ -124,12 +124,19 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var selectedClipboardEntryIDs: Set<UUID> = []
     @Published var dismissedFinderSelectionSignature: String?
     @Published var suppressedAutomaticFinderSelectionSignature: String?
+    /// Live text selection observed WHILE the dock is open. Drives ONLY the trailing
+    /// selection button — never axContext / hasSelectionScopeSurface, which would
+    /// silently flip the dock out of pure global app search mid-typing.
+    @Published var liveSelectionPreviewText: String?
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
+    @Published var typingSnapshot = GlobalContextTypingSnapshot()
+    @Published var preparedResults: GlobalContextPreparedResults?
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0
     var groupedTask: Task<Void, Never>?
     var groupedGeneration = 0
+    var prepareTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
 }
@@ -165,9 +172,9 @@ final class ContextDockViewModel: ObservableObject {
     @Published var inlineShareActive = false
     @Published var lockedFindToken: LauncherView.AppFindToken?
     @Published var showFindTokenMenu = false
-    @Published var crossAppMenuTargetPID: pid_t = 0
-    @Published var crossAppMenuNeedsLiveLoad = false
-    @Published var warmingMenuBundleIds: Set<String> = []
+    var crossAppMenuTargetPID: pid_t = 0
+    var crossAppMenuNeedsLiveLoad = false
+    var warmingMenuBundleIds: Set<String> = []
     @Published var hoveredDockPillIndex: Int?
     @Published var isHoveringPillRow = false
     @Published var listViewHoveredIndex: Int?

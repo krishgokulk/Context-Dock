@@ -182,8 +182,12 @@ extension LauncherView {
                     menuLoadTask?.cancel()
                     let useCacheOnly = isGlobalContextActive
                     if let app = activeApp {
-                        let cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
+                        var cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
                             for: app, maxResults: 120)
+                        if cachedItems.isEmpty {
+                            cachedItems = ContextDockEngine.shared.cachedMenuItems(
+                                for: app, maxResults: 120)
+                        }
                         if !cachedItems.isEmpty {
                             liveMenuItems = menuItemsVisibleInActiveDockMode(cachedItems)
                             menuDebugText =
@@ -191,6 +195,8 @@ extension LauncherView {
                             lastLiveMenuSignature = menuSignature(for: liveMenuItems)
                             previousEnabledIDs = Set(liveMenuItems.filter(\.isEnabled).map(\.id))
                             syncRecentAppsFromAppleMenu(cachedItems)
+                            scheduleDockPillRebuild(
+                                query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
                         }
                     }
                     menuLoadTask = Task.detached(priority: .userInitiated) {
@@ -198,10 +204,19 @@ extension LauncherView {
                         guard let app, !app.isTerminated else { return }
                         let pid = app.processIdentifier
                         let name = app.localizedName ?? ""
+                        // Don't warm Finder in desktop-only mode (no window) — its menus aren't
+                        // shown there (files are), and the open-to-populate scan would flash
+                        // Finder's menus for nothing.
+                        let isFinderApp = app.bundleIdentifier == "com.apple.finder"
+                        let finderDesktopOnly =
+                            isFinderApp ? (await MainActor.run { self.isFinderDesktopOnlyMode }) : false
+                        let skipFinderDesktopWarm = isFinderApp && finderDesktopOnly
                         var items: [AXMenuItem] = []
                         if useCacheOnly {
                             items = GlobalContextEngine.shared.cachedMenuItems(
                                 for: app, maxResults: 120)
+                        } else if skipFinderDesktopWarm {
+                            items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
                         } else {
                             await MenuWarmCacheService.shared.warm(app: app, force: false)
                             items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
@@ -267,12 +282,22 @@ extension LauncherView {
                     axContextRefreshTimer?.invalidate()
                     axContextRefreshTimer = nil
                     selectionModel.stop()
+                    liveDockSelectionPreviewText = nil
                     l2.extensionResults = []
-                    l2.chatMessages = []
-                    l2.isLoading = false
-                    l2.activeRequestID = nil
-                    l2.currentTask?.cancel()
-                    l2.currentTask = nil
+                    // NEVER destroy an active conversation on dock hide: an approved chat
+                    // command (`code --status`) can activate its target app, which auto-hides
+                    // the launcher — wiping messages + scope here killed the chat mid-answer.
+                    // Menus/pills below still reset; the chat + pinned scope survive so the
+                    // next open resumes exactly where the user left off.
+                    let hasActiveChat =
+                        l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty
+                    if !hasActiveChat {
+                        l2.chatMessages = []
+                        l2.isLoading = false
+                        l2.activeRequestID = nil
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
+                    }
                     liveMenuRefreshTask?.cancel()
                     liveMenuRefreshTask = nil
                     menuAvailabilityRefreshTask?.cancel()
@@ -291,7 +316,11 @@ extension LauncherView {
                     focusedAppPillIndex = nil
                     adapterContextData = [:]
                     l2.appCompletion = nil
-                    l2.targetApp = nil
+                    // Keep the pinned scope alive with an active chat (see hasActiveChat
+                    // above) so reopening the dock lands back in the same conversation.
+                    if !hasActiveChat {
+                        l2.targetApp = nil
+                    }
                     menuLoadTask?.cancel()
                     crossAppMenuTask?.cancel()
                 }
@@ -512,6 +541,10 @@ extension LauncherView {
                     suppressGlobalInlineAppScopeDetection = false
                     dismissedGlobalInlineAppScopes = [:]
                     pendingGlobalAppQuery = nil
+                    globalContextViewModel.prepareTask?.cancel()
+                    globalContextViewModel.prepareTask = nil
+                    globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+                    globalContextViewModel.preparedResults = nil
                     focusedAppPillIndex = nil
                     if showContextInDock {
                         searchState.results = []
@@ -643,10 +676,37 @@ extension LauncherView {
                     isSearchFieldFocused = true
                     return
                 }
+                // Attached folder search arms the chat ("search files & ask AI…") — its
+                // detach must win over the chat-exit branch or backspace can never
+                // leave folder mode.
+                if detachFinderFolderQueryModeFromEmptyBackspace() {
+                    isSearchFieldFocused = true
+                    return
+                }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        exitContextDockChatAndScope()
+                        // Backspace on an empty frontmost chat: CLEAR the conversation and
+                        // return to the app's menu search — a fresh chat next time.
+                        l2.chatMessages = []
+                        if let key = l2.activeDockSessionKey {
+                            AppPanelChatStore.shared.clear(for: key)
+                        }
+                        l2.isLoading = false
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
+                        exitContextDockChatBackToContext()
                     }
+                    isSearchFieldFocused = true
+                    return
+                }
+                // Attached Finder folder and Selection Scope exit FIRST — a Finder app
+                // scope (l2.targetApp) coexists with both and must not shadow them.
+                if detachFinderFolderQueryModeFromEmptyBackspace() {
+                    isSearchFieldFocused = true
+                    return
+                }
+                if hasActiveDockContextSelection || globalContextActivationHasFrozenPayload {
+                    dismissSelectionAndStayInGlobalContext()
                     isSearchFieldFocused = true
                     return
                 }
@@ -660,14 +720,6 @@ extension LauncherView {
                     searchState.lastSmartQuery = ""
                     isSearchFieldFocused = true
                     return
-                }
-                if detachFinderFolderQueryModeFromEmptyBackspace() {
-                    isSearchFieldFocused = true
-                    return
-                }
-                if hasActiveDockContextSelection {
-                    dismissSelectionAndStayInGlobalContext()
-                    isSearchFieldFocused = true
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
@@ -757,11 +809,15 @@ extension LauncherView {
                             globalContextActivation = nil
                         }
                     }
-                    // Clear stale AX selection and clipboard pill from the previous app
-                    axContext = .empty
-                    currentContext = .none
-                    showGlobalClipboardPill = false
-                    globalClipboardText = ""
+                    // Clear stale AX selection only when moving to a different external app.
+                    // When Context-Dock itself becomes frontmost, preserve the prior app's
+                    // selection so the trailing selection-scope button can still appear.
+                    if bundleID != ownId {
+                        axContext = .empty
+                        currentContext = .none
+                        showGlobalClipboardPill = false
+                        globalClipboardText = ""
+                    }
                     // Stamp time so autoSwitch won't re-fire from the AX observer debounce
                     frontmost.lastSwitchDate = Date()
                     if bundleID == "com.apple.finder" {
@@ -865,6 +921,7 @@ extension LauncherView {
                 showContextInDock = true
                 globalContextActivation = nil
                 setFrontmostAppContextOnly(reason: "activate context dock")
+                _ = currentSelectionActivationSnapshot(refresh: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { notification in
                 beginMouseDrivenInteractionGrace()
@@ -883,6 +940,7 @@ extension LauncherView {
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
                 inlineShareActive = false
+                _ = currentSelectionActivationSnapshot(refresh: true)
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 activateSearchField()
             }
@@ -936,10 +994,19 @@ extension LauncherView {
 
     func handleLauncherWindowOpened() {
         beginMouseDrivenInteractionGrace()
-        l2.showChatPopover = false
-        l2.chatArmed = false
-        l2.chatDraftAppName = ""
-        l2.chatDraftBundleId = ""
+        // Resume an ACTIVE frontmost-app chat instead of disarming it: wiping the
+        // draft scope here re-keyed the session to the new frontmost app (Finder),
+        // which swapped a mid-flight MinkNote/Code conversation for an empty one.
+        // Only a chat the user exited (chatDismissed) or an empty idle draft resets.
+        let resumesActiveChat =
+            !l2.chatDismissed
+            && (l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty)
+        if !resumesActiveChat {
+            l2.showChatPopover = false
+            l2.chatArmed = false
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
         suppressOpenResize = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
             suppressOpenResize = false
@@ -993,6 +1060,22 @@ extension LauncherView {
                     }
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)
+
+                    // AX gave no selection (e.g. Electron apps don't expose selectedText) —
+                    // fall back to a clipboard peek so a text selection still surfaces the
+                    // selection chip / scope. Only when nothing else is already active.
+                    if self.activeSelection == nil, self.frozenSelectionText == nil,
+                        self.searchState.query.isEmpty
+                    {
+                        self.peekSelectionViaClipboard { text in
+                            guard let text, self.activeSelection == nil else { return }
+                            self.currentContext = .textSelected(text)
+                            _ = self.openInSelectionScopeIfSelectionPresent()
+                            self.scheduleDockPillRebuild(
+                                query: "", delayNanoseconds: 0, refreshContext: false)
+                            self.requestWindowSizeUpdate(reason: .modeChanged)
+                        }
+                    }
                 }
             }
         }
@@ -1037,11 +1120,16 @@ extension LauncherView {
             let runningApps = await MainActor.run { [self] in
                 self.currentRegularRunningApps()
             }
-            MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps)
-            MenuWarmCacheService.shared.warmRecentAppsOnLauncherOpen()
+            await MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(runningApps)
+            await MenuWarmCacheService.shared.warmRecentAppsOnLauncherOpen()
+            let statusMenuChanged = await MenuWarmCacheService.shared
+                .warmStatusMenuAppsOnLauncherOpen()
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             await MainActor.run { [self] in
                 self.rebuildGlobalSearchIndex()
+                if statusMenuChanged {
+                    self.refreshVisibleGlobalContextAfterMenuCacheUpdate(bundleIdentifier: nil)
+                }
             }
         }
     }
@@ -1378,8 +1466,41 @@ extension LauncherView {
     /// Called (debounced 200ms) whenever AXObserver detects a selection/focus change
     /// in the frontmost app. Re-reads only `kAXEnabled` for all cached menu items,
     /// computes the delta (newly enabled items), and surfaces them as context pills.
+    /// Reads the frontmost app's live text selection into the PREVIEW field that
+    /// drives the trailing selection button. Deliberately does NOT touch axContext:
+    /// writing selectedText there flips hasSelectionScopeSurface, which silently
+    /// exits pure global app search mid-typing (blank sheet on ↓, dead expansion).
+    /// Called from the AX selection observer AND the 0.75s live poll (some apps
+    /// don't emit AXSelectedTextChanged for web-area mouse selections).
+    func refreshLiveSelectionIntoDockContext() {
+        guard showContextInDock, !contextDockIsFrontmostApplication,
+            let app = contextTargetApp()
+        else { return }
+        let pid = app.processIdentifier
+        Task.detached(priority: .userInitiated) {
+            await AXContextReader.shared.refreshSelectionOnly(from: app)
+            let newCtx = await AXContextReader.shared.current
+            await MainActor.run {
+                guard self.showContextInDock,
+                    self.contextTargetApp()?.processIdentifier == pid
+                else { return }
+                let newText = newCtx.selectedText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let preview = newText.isEmpty ? nil : newText
+                if self.liveDockSelectionPreviewText != preview {
+                    self.liveDockSelectionPreviewText = preview
+                }
+            }
+        }
+    }
+
     func handleSelectionChange() {
         guard showContextInDock else { return }
+
+        // Text selected in the frontmost app WHILE the dock is open must surface the
+        // selection button (next to running-app pills / tab pills) live. The menu
+        // refresh below never reads the selection, so do it here, event-driven.
+        refreshLiveSelectionIntoDockContext()
 
         if !liveMenuItems.isEmpty {
             let items = liveMenuItems
@@ -1439,6 +1560,12 @@ extension LauncherView {
         refreshCachedFinderCurrentDirectory(for: app.bundleIdentifier ?? "")
         checkClipboardForGlobalContext()
         autoReturnFromGlobalContextIfNeeded()
+        // A file selected in Finder WHILE the dock is open must surface the trailing
+        // selection button live — the lightweight AX poll below never reads selection.
+        refreshFinderSelectionContextFromFinder()
+        // Same for live TEXT selections (browser pages, editors): poll as backup for
+        // apps whose web areas don't emit AXSelectedTextChanged.
+        refreshLiveSelectionIntoDockContext()
 
         let bundleId = app.bundleIdentifier ?? ""
         let pid = app.processIdentifier

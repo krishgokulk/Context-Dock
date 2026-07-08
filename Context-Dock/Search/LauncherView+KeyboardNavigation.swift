@@ -7,17 +7,30 @@ extension LauncherView {
         animated: Bool = true,
         debounceNanoseconds: UInt64 = 50_000_000
     ) {
+        if isGlobalContextActive,
+            globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
+            reason.isTypingOrContentRefresh,
+            !hasMatchingGlobalContextResults
+        {
+            return
+        }
         let preset = currentDockHeightPreset
         let mode = currentDockSurfaceMode
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
-        if reason.isTypingOrContentRefresh
-            && preset.stabilizesResize
-            && !presetChanged
+        if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged
             && !modeChanged
         {
-            return
+            if let window = AppDelegate.shared?.launcherWindow {
+                let heightDelta = abs(window.frame.height - calculatedHeight)
+                let widthDelta = abs(window.frame.width - calculatedWidth)
+                if heightDelta <= 24 && widthDelta <= 1 {
+                    return
+                }
+            } else {
+                return
+            }
         }
 
         updateWindowSize(animated: animated, debounceNanoseconds: debounceNanoseconds)
@@ -179,6 +192,37 @@ extension LauncherView {
                 }
             }
 
+            // Attached folder search arms the chat — detach it FIRST so backspace
+            // can actually leave folder mode (back to Finder menu search).
+            if event.keyCode == 51,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.detachFinderFolderQueryModeFromEmptyBackspace()
+            {
+                self.isSearchFieldFocused = true
+                return nil
+            }
+
+            // Frontmost-app chat open + empty field: backspace clears the chat and
+            // returns to that app's menu search. This MUST run before the inline-scope
+            // pops below, which would otherwise dump the user into Global Context.
+            if event.keyCode == 51,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed
+            {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                    self.l2.chatMessages = []
+                    if let key = self.l2.activeDockSessionKey {
+                        AppPanelChatStore.shared.clear(for: key)
+                    }
+                    self.l2.isLoading = false
+                    self.l2.currentTask?.cancel()
+                    self.l2.currentTask = nil
+                    self.exitContextDockChatBackToContext()
+                }
+                self.isSearchFieldFocused = true
+                return nil
+            }
+
             if event.keyCode == 51, self.isGlobalContextActive,
                 let scope = self.trailingGlobalInlineAppScopeForBackspace()
             {
@@ -206,6 +250,64 @@ extension LauncherView {
                 return nil
             }
 
+            if self.isGlobalContextActive,
+                self.shouldUsePureGlobalAppSearch,
+                !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.globalContextViewModel.typingSnapshot.phase != .expanded
+            {
+                switch event.keyCode {
+                case 125:  // Down
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
+                case 124, 48:  // Right / Tab — ghost completion FIRST, then expansion
+                    if event.keyCode == 124,
+                        self.acceptTopGlobalAppGhostCompletionIfPossible()
+                    {
+                        return nil
+                    }
+                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: {
+                        $0.isExpandable
+                    }),
+                        self.expandGlobalContextTypingMatch(selectFirst: true)
+                    {
+                        return nil
+                    }
+                case 36:  // Enter
+                    // Execute the top grouped row directly — the SAME row the leading input
+                    // icon previews (top app OR top menu command, e.g. "quit music" → Quit
+                    // Music ⌘Q). Enter runs it instead of expanding the sheet; ↓ still expands
+                    // to browse the other rows.
+                    if self.executeFocusedGlobalGroupedListRow() {
+                        return nil
+                    }
+                    let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
+                    let exactLaunchIcons = matchIcons.filter {
+                        $0.isExactAppPrefix && !$0.isExpandable
+                    }
+                    let expandableRunningIcons = matchIcons.filter {
+                        $0.isExpandable && $0.isRunning
+                    }
+                    if exactLaunchIcons.count == 1, let item = exactLaunchIcons.first {
+                        self.executeMatchDockIcon(item)
+                        return nil
+                    } else if expandableRunningIcons.count == 1 {
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                            return nil
+                        }
+                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable
+                    {
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                            return nil
+                        }
+                    } else if matchIcons.contains(where: { $0.isExpandable }),
+                        self.expandGlobalContextTypingMatch(selectFirst: true)
+                    {
+                        return nil
+                    }
+                default:
+                    break
+                }
+            }
+
             // Right arrow: focus visible Global app result, otherwise accept app ghost text.
             if event.keyCode == 124 {
                 if self.acceptTopGlobalAppGhostCompletionIfPossible() {
@@ -214,18 +316,27 @@ extension LauncherView {
                 if self.activateFocusedGlobalAppScopeIfPossible() {
                     return nil
                 }
+                if self.isGlobalContextActive,
+                    self.shouldUsePureGlobalAppSearch,
+                    self.globalInlineAppScope == nil,
+                    self.globalContextViewModel.typingSnapshot.phase != .expanded,
+                    !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
+                        return nil
+                    }
+                }
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     self.focusTopGlobalAppResultIfPossible()
                 {
                     return nil
                 }
-                if self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    self.currentSelectionActivationSnapshot(refresh: true) != nil
-                {
-                    self.openSelectionContextFromTrailingButton()
+                // Right arrow always drives the "+" actions (attach folder / frontmost
+                // chat). Selection Scope opens ONLY from clicking its trailing icon.
+                if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
                     return nil
                 }
-                if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
+                if self.connectFrontmostAppChatFromEmptyFieldIfNeeded() {
                     return nil
                 }
                 if let findToken = self.lockedFindToken,
@@ -250,7 +361,10 @@ extension LauncherView {
             }
             // Tab in global context explicitly enters app scope.
             // Typing alone stays global so cross-app suggestions cannot steal the query.
-            if event.keyCode == 48, self.isGlobalContextActive {
+            // Exception: in Finder desktop-only mode the query is a file/folder search —
+            // Tab must NOT switch to a same-named app (e.g. "screen" → Screen Sharing),
+            // which would hijack the Finder scope and drop the file results.
+            if event.keyCode == 48, self.isGlobalContextActive, !self.isFinderDesktopOnlyMode {
                 if self.shouldUsePureGlobalAppSearch,
                     let result = self.focusedOrTopGlobalAppResult(),
                     let bundleId = self.bundleIdentifier(forApplicationResult: result)
@@ -320,7 +434,7 @@ extension LauncherView {
                 .lowercased()
 
             if event.keyCode == 36,
-                (self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed),
+                self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed,
                 q.isEmpty
             {
                 self.exitContextDockChatAndScope()
@@ -331,7 +445,10 @@ extension LauncherView {
                 return nil
             }
 
-            if self.isGlobalContextActive,
+            // Cycle the running-app scope on ←/→ with an empty query — in Global Context
+            // AND in an app scope already entered from it (l2.targetApp set), so the user
+            // can right-arrow from one scoped app to the next.
+            if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 123 || event.keyCode == 124,
                 self.focusedAppPillIndex == nil,
@@ -348,11 +465,22 @@ extension LauncherView {
             // (cross-app or empty). When frontmost HAS menus (preferFrontmostMenuResults=true),
             // view shows dockPillListView instead — Block 3 handles it with full-pills indices.
             if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
-                let groupedState = self.globalGroupedListNavigationState(for: q)
-                guard groupedState.totalCount > 0 else { return event }
+                let state = self.visibleGlobalGroupedListNavigationState(for: q)
+                if state.totalCount == 0 {
+                    // Nothing matched apps/commands/menus — ↓ still goes through the
+                    // single expansion entry (its token-word fallback covers this).
+                    switch event.keyCode {
+                    case 125: // Down
+                        if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
+                        return nil
+                    default:
+                        return event
+                    }
+                }
 
                 switch event.keyCode {
-                case 125:  // Down — move through grouped app/menu rows
+                case 125:  // Down — FIRST press expands via the single entry, then navigates
+                    if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
                     _ = self.moveGlobalGroupedListFocus(
                         direction: self.settings.effectiveDockAtBottom ? -1 : 1
                     )
@@ -373,7 +501,20 @@ extension LauncherView {
                         return nil
                     }
                     return event
-                case 53:  // Escape — leave result focus first; keep query intact
+                case 53:  // Escape — collapse expanded sheet to compact typing; keep query
+                    if self.globalContextViewModel.typingSnapshot.phase == .expanded {
+                        // globalMenuResultsRevealed's setter re-derives the pre-expansion
+                        // phase from the current match icons — single source of truth.
+                        self.globalMenuResultsRevealed = false
+                        self.focusedAppPillIndex = nil
+                        self.l2.focusedPillIndex = nil
+                        self.l2.pillNavViaKeyboard = false
+                        // One resize back to the compact bar (mirror of the ↓ expansion).
+                        self.requestWindowSizeUpdate(
+                            reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+                        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+                        return nil
+                    }
                     if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil
@@ -385,11 +526,11 @@ extension LauncherView {
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
                 case 51:  // Delete/Backspace — quit focused running app row, else clear focus
-                    if self.currentGlobalGroupedFocusIndex(state: groupedState) != nil {
-                        if self.quitFocusedGlobalAppResultIfPossible(state: groupedState) {
+                    if self.currentGlobalGroupedFocusIndex(state: state) != nil {
+                        if self.quitFocusedGlobalAppResultIfPossible(state: state) {
                             return nil
                         }
-                        self.setGlobalGroupedFocus(nil, state: groupedState)
+                        self.setGlobalGroupedFocus(nil, state: state)
                         return nil
                     }
                     return event
@@ -399,14 +540,17 @@ extension LauncherView {
             }
 
             // ── App-pill row navigation (pinned/running or global app search) ──────────
-            let hasActiveContextSel = self.activeSelection != nil
+            let hasActiveContextSel = self.hasSelectionScopeSurface
             // Use the same cached pill list the List View renders. Do not rebuild here;
             // this key monitor runs on every keyDown.
             let pillQuery = self.shouldUseFinderSearchPopover(for: q) ? "" : q
-            let actionPills =
+            // renderedOrderDockPills = the exact order the list renders (clustered),
+            // with a fallback build while the debounced pipeline is mid-flight — so
+            // ↑/↓ walk the rows in visual order and Enter runs the highlighted row.
+            let actionPills: [DockPill] =
                 q.isEmpty
                 ? self.selectionScopedDockPills(self.cachedDockPills)
-                : (pillQuery.isEmpty ? [] : self.contextDockViewModel.visiblePills)
+                : (pillQuery.isEmpty ? [] : self.renderedOrderDockPills(for: pillQuery))
             let showPinnedRow =
                 q.isEmpty
                 && self.l2.targetApp == nil
@@ -531,7 +675,8 @@ extension LauncherView {
                     }
                     // Render-default: first row is shown pre-selected (focusedAppPillIndex nil) while
                     // typing — Enter launches it (the ghost top result), matching the highlight.
-                    if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .isEmpty,
                         let first = appPills.first
                     {
                         first.execute()
@@ -720,18 +865,15 @@ extension LauncherView {
                     )
                     return nil
                 }
-                if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded()
-                {
+                if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded() {
                     return nil
                 }
 
-                if self.executeFirstMatchingFinderFolderPillIfNeeded()
-                {
+                if self.executeFirstMatchingFinderFolderPillIfNeeded() {
                     return nil
                 }
 
-                if self.executeFirstAttachedFinderFolderResultIfNeeded()
-                {
+                if self.executeFirstAttachedFinderFolderResultIfNeeded() {
                     return nil
                 }
 
@@ -922,7 +1064,10 @@ extension LauncherView {
                 "window.heightUpdate",
                 query: searchState.query
             )
-            defer { SearchPerformanceLog.shared.endInterval("window.heightUpdate", state: heightSignpost) }
+            defer {
+                SearchPerformanceLog.shared.endInterval(
+                    "window.heightUpdate", state: heightSignpost)
+            }
 
             let heightPreset = self.currentDockHeightPreset
             let surfaceMode = self.currentDockSurfaceMode
@@ -986,12 +1131,14 @@ extension LauncherView {
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
 
-            if animated {
-                // Animate deliberate mode changes, but keep search-result churn unanimated.
+            let shouldAnimateFrame = animated || heightDelta > 80 || widthChanged
+            if shouldAnimateFrame {
+                // Animate visible sheet expand/collapse. Small result churn is filtered before
+                // this path, so typing stays steady while meaningful shape changes glide.
                 NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0.18
+                NSAnimationContext.current.duration = heightDelta > 260 ? 0.26 : 0.20
                 NSAnimationContext.current.timingFunction = CAMediaTimingFunction(
-                    controlPoints: 0.2, 0.9, 0.4, 1.0)
+                    controlPoints: 0.18, 0.92, 0.22, 1.0)
                 window.animator().setFrame(newFrame, display: false)
                 NSAnimationContext.endGrouping()
             } else {
@@ -1137,6 +1284,13 @@ extension LauncherView {
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
+                    if globalContextViewModel.typingSnapshot.phase != .expanded {
+                        if expandGlobalContextTypingMatch(selectFirst: true) {
+                            return .handled
+                        }
+                        return .handled
+                    }
+
                     _ = moveGlobalGroupedListFocus(
                         direction: settings.effectiveDockAtBottom ? -1 : 1
                     )
@@ -1437,7 +1591,8 @@ extension LauncherView {
                 if inlineShareActive {
                     inlineShareActive = false
                     isSearchFieldFocused = true
-                    scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+                    scheduleDockPillRebuild(
+                        query: searchState.query, delayNanoseconds: 0, refreshContext: false)
                     return .handled
                 }
                 // App scope or app panel: ESC exits scope and returns to L1 (stays open)
@@ -1484,7 +1639,8 @@ extension LauncherView {
                     if inlineShareActive {
                         inlineShareActive = false
                         isSearchFieldFocused = true
-                        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                        scheduleDockPillRebuild(
+                            query: "", delayNanoseconds: 0, refreshContext: false)
                         return .handled
                     }
                     // Unlock locked submenu parent first
@@ -1496,7 +1652,7 @@ extension LauncherView {
                         return .handled
                     }
                     // Dismiss file/text selection chip (same as clicking "-")
-                    if hasActiveDockContextSelection {
+                    if hasSelectionScopeSurface {
                         dismissSelectionAndStayInGlobalContext()
                         isSearchFieldFocused = true
                         return .handled
@@ -1514,14 +1670,14 @@ extension LauncherView {
                     }
                     if shouldShowContextDockChatSheet || l2.showChatPopover {
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            exitContextDockChatAndScope()
+                            exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true
                         return .handled
                     }
                     if l2.chatArmed {
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                            exitContextDockChatAndScope()
+                            exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true
                         return .handled
@@ -1572,7 +1728,7 @@ extension LauncherView {
                 }
                 // In a browser with an empty field, right-arrow grabs the current
                 // page and immediately arms app-scoped chat for that page.
-                if (isGlobalContextActive || showContextInDock),
+                if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,
@@ -1585,7 +1741,7 @@ extension LauncherView {
                     openInlineAIChatPanel()
                     return .handled
                 }
-                if (isGlobalContextActive || showContextInDock),
+                if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,

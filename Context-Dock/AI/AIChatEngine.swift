@@ -21,7 +21,13 @@ final class AIChatEngine: ObservableObject {
         defer { isLoading = false }
 
         let response = try await router.send(
-            AIRequest(text: message, context: context, history: messages, source: .aiChat)
+            AIRequest(
+                text: message,
+                context: context,
+                history: messages,
+                source: .aiChat,
+                liveContext: ContextCollector.shared.snapshot()
+            )
         )
         messages.append(ChatMessage(role: .assistant, content: response))
         return response

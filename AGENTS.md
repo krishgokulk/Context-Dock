@@ -22,14 +22,23 @@ Architecture truth files live in `docs/architecture/`.
 
 This is a pure Xcode project — no Makefile, no SPM package at the root.
 
+**After every code edit, build + relaunch with the shared script — never raw `xcodebuild` + `open`:**
+
 ```bash
-# Build from CLI (run from repo root)
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Debug build
+./scripts/dev-run.sh     # builds Debug into .build/XcodeDerivedData and relaunches THAT app
+```
 
-# Clean + build
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock clean build
+Why this rule exists: both Codex and Claude work in this repo (VS Code + desktop apps). Raw
+`xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
+agents' build — launching a `~/Library/Developer/Xcode/DerivedData` path has shipped a
+**stale app** before. `dev-run.sh` is the single source of truth for which binary runs;
+Claude follows the same rule via CLAUDE.md.
 
-# Build for release
+```bash
+# Build only, no launch (same DerivedData as dev-run.sh)
+./scripts/build-debug.sh
+
+# Build for release (only via ship.sh in practice)
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 

@@ -12,6 +12,107 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
+private enum NativeWritingToolAction: String, CaseIterable {
+    case show
+    case proofread
+    case rewrite
+    case friendly
+    case professional
+    case concise
+    case summarize
+    case keyPoints
+    case list
+    case table
+    case compose
+
+    var title: String {
+        switch self {
+        case .show: return "Show Writing Tools"
+        case .proofread: return "Proofread"
+        case .rewrite: return "Rewrite"
+        case .friendly: return "Make Friendly"
+        case .professional: return "Make Professional"
+        case .concise: return "Make Concise"
+        case .summarize: return "Summarize"
+        case .keyPoints: return "Create Key Points"
+        case .list: return "Make List"
+        case .table: return "Make Table"
+        case .compose: return "Compose..."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .show, .compose: return "apple.intelligence"
+        case .proofread: return "checkmark.seal"
+        case .rewrite: return "pencil.line"
+        case .friendly: return "face.smiling"
+        case .professional: return "briefcase"
+        case .concise: return "text.word.spacing"
+        case .summarize: return "text.alignleft"
+        case .keyPoints: return "list.bullet.rectangle"
+        case .list: return "list.bullet"
+        case .table: return "tablecells"
+        }
+    }
+
+    var aliases: [String] {
+        switch self {
+        case .show: return ["writing tools", "apple intelligence", "show writing tools"]
+        case .proofread: return ["proofread", "spelling", "grammar", "fix writing"]
+        case .rewrite: return ["rewrite", "rephrase", "improve writing"]
+        case .friendly: return ["friendly", "make friendly", "warmer"]
+        case .professional: return ["professional", "make professional", "formal"]
+        case .concise: return ["concise", "shorten", "make concise"]
+        case .summarize: return ["summarize", "summarise", "summary"]
+        case .keyPoints: return ["key points", "bullet points", "create key points"]
+        case .list: return ["list", "make list"]
+        case .table: return ["table", "make table"]
+        case .compose: return ["compose", "draft", "write"]
+        }
+    }
+
+    var requiresSelection: Bool {
+        self != .show && self != .compose
+    }
+
+    func prompt(for text: String) -> String {
+        let instruction: String
+        switch self {
+        case .show:
+            instruction = "Help improve this writing."
+        case .proofread:
+            instruction = "Proofread this text. Fix spelling, grammar, punctuation, and obvious typos. Preserve meaning and tone."
+        case .rewrite:
+            instruction = "Rewrite this text clearly. Preserve meaning."
+        case .friendly:
+            instruction = "Rewrite this text in a friendly, natural tone. Preserve meaning."
+        case .professional:
+            instruction = "Rewrite this text in a professional tone. Preserve meaning."
+        case .concise:
+            instruction = "Rewrite this text concisely. Remove redundancy. Preserve key meaning."
+        case .summarize:
+            instruction = "Summarize this text concisely."
+        case .keyPoints:
+            instruction = "Extract key points from this text as short bullets."
+        case .list:
+            instruction = "Convert this text into a clean list."
+        case .table:
+            instruction = "Convert this text into a clean Markdown table when possible."
+        case .compose:
+            instruction = "Use this selected text as writing instructions. Compose the requested final text."
+        }
+        return """
+        \(instruction)
+
+        Return only final text. No preface. No explanation. No quotation marks unless part of text.
+
+        Text:
+        \(text)
+        """
+    }
+}
+
 extension LauncherView {
     func scopedSystemCommandPills(
         scopedBundleId: String,
@@ -1975,6 +2076,13 @@ extension LauncherView {
         appName: String,
         query: String
     ) -> [DockPill] {
+        if isBrowserMenuSource(bundleIdentifier) {
+            return buildBrowserNativeCommandPills(
+                bundleIdentifier: bundleIdentifier,
+                appName: appName,
+                query: query
+            )
+        }
         switch bundleIdentifier {
         case "com.apple.systempreferences":
             return buildSystemSettingsPills(
@@ -1984,6 +2092,427 @@ extension LauncherView {
             )
         default:
             return []
+        }
+    }
+
+    func buildNativeWritingToolPills(query q: String) -> [DockPill] {
+        guard let writingContext = nativeWritingToolContext else { return [] }
+
+        let normalizedQuery = normalizedDockPillText(q)
+        let queryMatchesWritingTools =
+            normalizedQuery.isEmpty
+            || [
+                "writing", "writing tools", "apple intelligence", "intelligence",
+                "proofread", "rewrite", "friendly", "professional", "concise",
+                "summarize", "summary", "key points", "list", "table"
+            ].contains { term in
+                term.hasPrefix(normalizedQuery) || term.contains(normalizedQuery)
+                    || normalizedQuery.contains(term)
+            }
+        guard queryMatchesWritingTools else { return [] }
+
+        let sourcePID =
+            writingContext.pid != 0
+            ? writingContext.pid
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        guard sourcePID != 0 else { return [] }
+
+        let sourceBundleId =
+            writingContext.bundleId.isEmpty ? frontmost.bundleID : writingContext.bundleId
+        let sourceAppName =
+            writingContext.appName.isEmpty ? frontmost.name : writingContext.appName
+        let filteredActions = NativeWritingToolAction.allCases.filter { action in
+            guard !normalizedQuery.isEmpty else { return true }
+            let searchable = normalizedDockPillText(([action.title] + action.aliases).joined(separator: " "))
+            return searchable.contains(normalizedQuery)
+                || action.aliases.map(normalizedDockPillText).contains { alias in
+                    alias.hasPrefix(normalizedQuery) || normalizedQuery.contains(alias)
+                }
+        }
+
+        return filteredActions.prefix(normalizedQuery.isEmpty ? 10 : 12).map { action in
+            var pill = DockPill(
+                id: "writing-tool-\(sourcePID)-\(action.rawValue)",
+                name: action.title,
+                icon: action.icon,
+                accentColorName: "purple",
+                badge: "DoraX",
+                execute: {
+                    executeNativeWritingTool(
+                        action,
+                        context: writingContext,
+                        sourcePID: sourcePID,
+                        sourceBundleId: sourceBundleId,
+                        sourceAppName: sourceAppName
+                    )
+                }
+            )
+            pill.menuItemImage = nil
+            pill.menuItemName = action.title
+            pill.menuContext = "Writing Tools"
+            pill.rankingKind = "writingTool"
+            pill.rankingScore = 95_000 - Double(NativeWritingToolAction.allCases.firstIndex(of: action) ?? 0)
+            pill.sourceBundleId = sourceBundleId
+            pill.sourceAppName = sourceAppName
+            pill.isEnabled = true
+            pill.hasLiveAvailability = true
+            pill.menuStatusBadge = action.requiresSelection ? "Selection" : "Native"
+            pill.trackingIdentifier = "writing-tool:\(sourceBundleId):\(action.rawValue)"
+            pill.searchTerms = [sourceAppName, "writing tools", "apple intelligence", action.title] + action.aliases
+            return pill
+        }
+    }
+
+    func buildNativeSelectionWritingToolPills(query q: String) -> [DockPill] {
+        guard case .text(let selectedText) = activeSelection,
+              !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+
+        let writingContext = nativeWritingToolContext
+            ?? AXContext(
+                appName: AppDelegate.shared?.previousFrontmostApp?.localizedName ?? axContext.appName,
+                bundleId: AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? axContext.bundleId,
+                pid: AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? axContext.pid,
+                selectedText: selectedText,
+                currentURL: axContext.currentURL,
+                windowTitle: axContext.windowTitle,
+                focusedElementRole: axContext.focusedElementRole
+            )
+        let sourcePID =
+            writingContext.pid != 0
+            ? writingContext.pid
+            : (AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0)
+        guard sourcePID != 0 else { return [] }
+
+        let sourceBundleId = writingContext.bundleId.isEmpty ? frontmost.bundleID : writingContext.bundleId
+        let sourceAppName = writingContext.appName.isEmpty ? frontmost.name : writingContext.appName
+        let normalizedQuery = normalizedDockPillText(q)
+        let filteredActions = NativeWritingToolAction.allCases.filter { action in
+            guard !normalizedQuery.isEmpty else { return true }
+            let searchable = normalizedDockPillText(([action.title] + action.aliases).joined(separator: " "))
+            return searchable.contains(normalizedQuery)
+                || action.aliases.map(normalizedDockPillText).contains { alias in
+                    alias.hasPrefix(normalizedQuery) || normalizedQuery.contains(alias)
+                }
+        }
+
+        return filteredActions.prefix(normalizedQuery.isEmpty ? 10 : 12).map { action in
+            var pill = DockPill(
+                id: "selection-writing-tool-\(sourcePID)-\(action.rawValue)",
+                name: action.title,
+                icon: action.icon,
+                accentColorName: "purple",
+                badge: "Selection",
+                execute: {
+                    executeNativeWritingTool(
+                        action,
+                        context: writingContext,
+                        sourcePID: sourcePID,
+                        sourceBundleId: sourceBundleId,
+                        sourceAppName: sourceAppName
+                    )
+                }
+            )
+            pill.menuContext = "Writing Tools"
+            pill.rankingKind = "writingTool"
+            pill.rankingScore = 100_000 - Double(NativeWritingToolAction.allCases.firstIndex(of: action) ?? 0)
+            pill.sourceBundleId = sourceBundleId
+            pill.sourceAppName = sourceAppName
+            pill.menuItemName = action.title
+            pill.menuStatusBadge = "Native"
+            pill.trackingIdentifier = "selection-writing-tool:\(sourceBundleId):\(action.rawValue)"
+            pill.searchTerms = [sourceAppName, "selection", "writing tools", "apple intelligence", action.title] + action.aliases
+            return pill
+        }
+    }
+
+    var shouldSurfaceNativeWritingTools: Bool {
+        nativeWritingToolContext != nil
+    }
+
+    var nativeWritingToolContext: AXContext? {
+        let ownBundleId = Bundle.main.bundleIdentifier ?? ""
+        for context in [axContext, AXContextReader.shared.current] {
+            guard context.bundleId != ownBundleId else { continue }
+            guard context.isInTextField || context.hasSelection || hasSelectionScopeSurface else { continue }
+            guard !context.bundleId.isEmpty || context.pid != 0 else { continue }
+            return context
+        }
+        return nil
+    }
+
+    func nativeWritingToolQueryMatches(_ query: String) -> Bool {
+        let normalizedQuery = normalizedDockPillText(query)
+        guard !normalizedQuery.isEmpty else { return false }
+        return NativeWritingToolAction.allCases.contains { action in
+            let terms = ([action.title] + action.aliases + ["writing tools", "apple intelligence"])
+                .map(normalizedDockPillText)
+            return terms.contains { term in
+                term == normalizedQuery || term.hasPrefix(normalizedQuery)
+                    || term.contains(normalizedQuery) || normalizedQuery.contains(term)
+            }
+        }
+    }
+
+    private func executeNativeWritingTool(
+        _ action: NativeWritingToolAction,
+        context: AXContext,
+        sourcePID: pid_t,
+        sourceBundleId: String,
+        sourceAppName: String
+    ) {
+        if action == .show {
+            searchState.query = "writing tools"
+            return
+        }
+
+        let selectedText = nativeWritingToolSelectedText(context: context)
+        guard !selectedText.isEmpty else {
+            DockActionFeedback.showResult("Select text first", icon: "apple.intelligence", success: false)
+            return
+        }
+
+        DockActionFeedback.showResult("\(action.title)…", icon: action.icon, success: true)
+        Task { @MainActor in
+            do {
+                let request = AIRequest(
+                    text: action.prompt(for: selectedText),
+                    context: .textSelected(selectedText),
+                    mode: .answer,
+                    source: isGlobalContextActive ? .globalContext : .contextDock,
+                    liveContext: ContextCollector.shared.snapshot()
+                )
+                let response = try await AIProviderRouter.shared.send(request)
+                let output = cleanedNativeWritingToolOutput(response)
+                guard !output.isEmpty else {
+                    DockActionFeedback.showResult("No writing result", icon: action.icon, success: false)
+                    return
+                }
+                pasteNativeWritingToolOutput(output, sourcePID: sourcePID)
+                DockActionFeedback.showResult("\(action.title) pasted", icon: action.icon, success: true)
+            } catch {
+                DockActionFeedback.showResult(error.localizedDescription, icon: "exclamationmark.triangle", success: false)
+            }
+        }
+    }
+
+    func nativeWritingToolSelectedText(context: AXContext) -> String {
+        let candidates: [String?] = [
+            context.selectedText,
+            axContext.selectedText,
+            AXContextReader.shared.current.selectedText,
+            {
+                if case .text(let text) = activeSelection { return text }
+                return nil
+            }(),
+        ]
+        return candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
+    }
+
+    func cleanedNativeWritingToolOutput(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            text = text.replacingOccurrences(of: "```markdown", with: "")
+                .replacingOccurrences(of: "```text", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text
+    }
+
+    func pasteNativeWritingToolOutput(_ text: String, sourcePID: pid_t) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        let targetApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == sourcePID }
+            ?? AppDelegate.shared?.previousFrontmostApp
+        let targetPID = sourcePID != 0 ? sourcePID : (targetApp?.processIdentifier ?? 0)
+        hideLauncherAfterResultExecution()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            if let targetApp, !targetApp.isTerminated {
+                targetApp.activate(options: [.activateIgnoringOtherApps])
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                postNativeWritingToolPasteShortcut(to: targetPID)
+            }
+        }
+    }
+
+    func postNativeWritingToolPasteShortcut(to pid: pid_t) {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        let keyCode: CGKeyCode = 9
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        keyDown?.flags = .maskCommand
+        keyUp?.flags = .maskCommand
+        if pid > 0 {
+            keyDown?.postToPid(pid)
+            keyUp?.postToPid(pid)
+        } else {
+            keyDown?.post(tap: .cghidEventTap)
+            keyUp?.post(tap: .cghidEventTap)
+        }
+    }
+
+    func nativeWritingToolMenuItems(sourcePID: pid_t, sourceAppName: String) -> [AXMenuItem] {
+        var candidates: [AXMenuItem] = []
+
+        func appendFlattened(_ items: [AXMenuItem]) {
+            for item in items {
+                candidates.append(item)
+                if !item.children.isEmpty {
+                    appendFlattened(item.children)
+                }
+            }
+        }
+
+        appendFlattened(liveMenuItems)
+
+        let axInfoItems = AXContextReader.shared.current.menuItems.compactMap { info -> AXMenuItem? in
+            let path = info.fullPath
+                .components(separatedBy: " > ")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard let title = path.last, !title.isEmpty else { return nil }
+            return AXMenuItem(
+                title: title,
+                path: path,
+                isEnabled: info.enabled,
+                element: AXUIElementCreateApplication(sourcePID),
+                children: [],
+                sourcePID: sourcePID,
+                sourceAppName: sourceAppName,
+                isAppleMenu: path.first == "Apple",
+                hasLiveAvailability: true,
+                shortcutChar: nil,
+                shortcutModifiers: 0
+            )
+        }
+        appendFlattened(axInfoItems)
+
+        var seen = Set<String>()
+        let filtered = candidates.filter { item in
+            guard isNativeWritingToolMenuItem(item) else { return false }
+            let key = item.path.joined(separator: " > ").lowercased()
+            guard seen.insert(key).inserted else { return false }
+            return true
+        }
+        return orderNativeWritingToolItems(filtered)
+    }
+
+    func fallbackNativeWritingToolMenuItems(
+        sourcePID: pid_t,
+        sourceAppName: String
+    ) -> [AXMenuItem] {
+        let fallbackTitles = [
+            "Show Writing Tools",
+            "Proofread",
+            "Rewrite",
+            "Make Friendly",
+            "Make Professional",
+            "Make Concise",
+            "Summarize",
+            "Create Key Points",
+            "Make List",
+            "Make Table"
+        ]
+        return fallbackTitles.map { title in
+            AXMenuItem(
+                title: title,
+                path: ["Edit", "Writing Tools", title],
+                isEnabled: true,
+                element: AXUIElementCreateApplication(sourcePID),
+                children: [],
+                sourcePID: sourcePID,
+                sourceAppName: sourceAppName,
+                isAppleMenu: false,
+                hasLiveAvailability: false,
+                shortcutChar: nil,
+                shortcutModifiers: 0
+            )
+        }
+    }
+
+    func isNativeWritingToolMenuItem(_ item: AXMenuItem) -> Bool {
+        guard item.children.isEmpty else { return false }
+        let normalizedTitle = normalizedDockPillText(item.title)
+        let normalizedPath = item.path.map(normalizedDockPillText)
+        guard normalizedPath.contains("writing tools") else { return false }
+        let blockedTitles: Set<String> = ["writing tools", "learn more"]
+        guard !blockedTitles.contains(normalizedTitle) else { return false }
+        return true
+    }
+
+    func orderNativeWritingToolItems(_ items: [AXMenuItem]) -> [AXMenuItem] {
+        let preferred = [
+            "show writing tools": 0,
+            "proofread": 1,
+            "rewrite": 2,
+            "make friendly": 3,
+            "make professional": 4,
+            "make concise": 5,
+            "summarize": 6,
+            "summary": 6,
+            "create key points": 7,
+            "key points": 7,
+            "make list": 8,
+            "list": 8,
+            "make table": 9,
+            "table": 9
+        ]
+        return items.sorted { lhs, rhs in
+            let lhsRank = preferred[normalizedDockPillText(lhs.title)] ?? 100
+            let rhsRank = preferred[normalizedDockPillText(rhs.title)] ?? 100
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    func buildBrowserNativeCommandPills(
+        bundleIdentifier: String,
+        appName: String,
+        query: String
+    ) -> [DockPill] {
+        let commands = BrowserNativeCommandService.shared.matchingCommands(for: query)
+        guard !commands.isEmpty else { return [] }
+
+        let appIcon = resolvedApplicationIcon(bundleIdentifier: bundleIdentifier, appName: appName)
+        return commands.map { command in
+            var pill = DockPill(
+                id: "browser-native-command:\(bundleIdentifier):\(command.rawValue)",
+                name: command.title,
+                icon: command.icon,
+                accentColorName: "blue",
+                badge: appName,
+                execute: {
+                    Task { @MainActor in
+                        BrowserNativeCommandService.shared.execute(
+                            command,
+                            bundleIdentifier: bundleIdentifier,
+                            appName: appName
+                        )
+                    }
+                }
+            )
+            pill.sourceBundleId = bundleIdentifier
+            pill.sourceAppName = appName
+            pill.rankingKind = "browserCommand"
+            pill.trackingIdentifier = "browser-native-command:\(bundleIdentifier):\(command.rawValue)"
+            pill.searchTerms = Array(Set(command.aliases + [
+                command.title,
+                appName,
+                "browser",
+                "tab",
+                "navigation",
+            ]))
+            pill.rankingScore = 20_000
+            pill.menuItemImage = appIcon
+            pill.hasLiveAvailability = true
+            pill.menuStatusBadge = "Native"
+            pill.keyboardShortcutLabel = command.shortcutLabel
+            return pill
         }
     }
 
@@ -2106,7 +2635,7 @@ extension LauncherView {
 
         if shouldUsePureGlobalAppSearch,
             isGlobalContextActive,
-            !hasActiveDockContextSelection,
+            !hasSelectionScopeSurface,
             l2.targetApp == nil,
             let inlineScope = globalInlineAppScope
         {
@@ -2273,10 +2802,15 @@ extension LauncherView {
 
         let hints: String
         if bundleId == "com.apple.finder" || lowerName == "finder" {
-            hints =
-                attachedFinderFolderSearchPath.isEmpty
-                ? "search files and folders in \(finderDesktopSearchScopeLabel)"
-                : "search this folder, open files, menu cmds"
+            if !attachedFinderFolderSearchPath.isEmpty {
+                hints = "search this folder, open files, menu cmds"
+            } else if isFinderDesktopOnlyMode {
+                // No Finder window — desktop file search over the user's folders.
+                hints = "search files and folders in \(finderDesktopSearchScopeLabel)"
+            } else {
+                // Finder window present — live menus/actions like any app; → for current folder.
+                hints = "search menus, actions, → current folder"
+            }
         } else if AXWebReader.shared.isBrowser(bundleId: bundleId) {
             hints = "tabs, page cmds, menu cmds"
         } else if bundleId == "com.microsoft.VSCode" || lowerName.contains("code") {
@@ -2348,7 +2882,16 @@ extension LauncherView {
 
     func syncL2DockSession(force: Bool = false) {
         let newKey = currentL2DockSessionKey
-        guard force || newKey != l2.activeDockSessionKey else { return }
+        let keyChanged = newKey != l2.activeDockSessionKey
+        guard force || keyChanged else { return }
+
+        // Same session re-synced (force from window open / layer toggle): keep the
+        // in-memory conversation AND the in-flight request. Cancelling here killed
+        // a loading answer every time the launcher was hidden and reopened.
+        guard keyChanged else {
+            updateL2Results([])
+            return
+        }
 
         if let previousKey = l2.activeDockSessionKey {
             AppPanelChatStore.shared.save(l2.chatMessages, for: previousKey)
@@ -2438,12 +2981,12 @@ extension LauncherView {
         if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
-            crossAppMenuNeedsLiveLoad = true
-            seedCrossAppMenuCache(for: targetApp)
-            loadCrossAppMenu(for: targetApp)
+            DispatchQueue.main.async {
+                self.crossAppMenuNeedsLiveLoad = true
+                self.seedCrossAppMenuCache(for: targetApp)
+                self.loadCrossAppMenu(for: targetApp)
+            }
         } else {
-            crossAppMenuTargetPID = 0
-            crossAppMenuNeedsLiveLoad = false
             // App not running — load from persistent disk cache so command palette still works.
             // Actions route via executeCachedMenuAction (no live PID needed).
             let cached = GlobalContextEngine.shared.cachedMenuItems(
@@ -2453,7 +2996,11 @@ extension LauncherView {
                 query: "",
                 maxResults: 120
             )
-            crossAppMenuItems = cached
+            DispatchQueue.main.async {
+                self.crossAppMenuTargetPID = 0
+                self.crossAppMenuNeedsLiveLoad = false
+                self.crossAppMenuItems = cached
+            }
         }
 
         if shouldSyncSession {
@@ -2802,6 +3349,17 @@ extension LauncherView {
                 await MainActor.run {
                     guard self.crossAppMenuTargetPID == pid else { return }
                     self.crossAppMenuItems = preparedItems
+                    // Rebuild the dock so the freshly loaded menus render right away.
+                    // Without this, a scoped app with CACHED menus stayed empty until an
+                    // unrelated keypress (e.g. Cmd) kicked SwiftUI into rebuilding — the
+                    // "running-app scope shows nothing in Global Context" bug.
+                    if !preparedItems.isEmpty {
+                        self.scheduleDockPillRebuild(
+                            query: self.searchState.query, delayNanoseconds: 0,
+                            refreshContext: false)
+                        self.refreshVisibleGlobalContextAfterMenuCacheUpdate(
+                            bundleIdentifier: app.bundleIdentifier ?? "")
+                    }
                     // No cached menu for this scoped app → force a live AX scan so its
                     // commands actually appear (otherwise the scoped dock stays empty).
                     self.warmMenuCacheIfNeeded(
@@ -2896,8 +3454,10 @@ extension LauncherView {
             return
         }
 
+        // Pure Global Context uses the global app-search path, not this dock-pill build.
+        // (Scoping a running app exits Global Context, so this never fires for an app scope.)
         if isGlobalContextActive,
-            !hasActiveDockContextSelection,
+            !hasSelectionScopeSurface,
             !showGlobalClipboardPill,
             !isContextDockChatConnected
         {
@@ -2948,13 +3508,34 @@ extension LauncherView {
     }
 
     func replaceCachedDockPills(_ pills: [DockPill], preserveFocus: Bool) {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let focusedRenderedPillID: String? = {
+            guard preserveFocus,
+                let focusedIndex = l2.focusedPillIndex,
+                usesVerticalListDockLayout
+            else { return nil }
+            let rendered = renderedOrderDockPills(for: q)
+            guard rendered.indices.contains(focusedIndex) else { return nil }
+            return rendered[focusedIndex].id
+        }()
+
         contextDockViewModel.replaceCachedPills(
             pills,
-            preserveFocus: preserveFocus,
+            preserveFocus: preserveFocus && focusedRenderedPillID == nil,
             focusedIndex: l2.focusedPillIndex,
             setFocusedIndex: { l2.focusedPillIndex = $0 },
             clearPillKeyboardNavigation: { l2.pillNavViaKeyboard = false }
         )
+
+        guard preserveFocus, let focusedRenderedPillID else { return }
+        let rendered = renderedOrderDockPills(for: q)
+        if let newIndex = rendered.firstIndex(where: { $0.id == focusedRenderedPillID && !$0.isSeparator }) {
+            l2.focusedPillIndex = newIndex
+            return
+        }
+
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
     }
 
     func logDockPerformance(_ label: String, started: Date, query: String) {
@@ -2980,12 +3561,37 @@ extension LauncherView {
         // Selection Scope FIRST — dedicated to the selection. Runs before the question-style
         // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
         // point is to ask the AI about the selection). Never empty → stable result sheet.
-        if isGlobalContextActive && hasActiveDockContextSelection {
-            var sel: [DockPill] = [selectionScopeAskAIPill(query: q)]
+        if isGlobalContextActive && hasSelectionScopeSurface {
+            let finderFilePills = buildFinderFilePills(query: q)
+            let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
+            let macOSExtensionPills = buildMacOSExtensionActionPills(
+                query: q,
+                excludingTitles: finderMenuTitleSet
+            )
+            let extensionTitleSet = finderMenuTitleSet.union(
+                macOSExtensionPills.map { normalizedDockPillText($0.name) }
+            )
+            let finderMenuPills = buildFinderSelectionMenuPills(
+                query: q,
+                excludingTitles: extensionTitleSet,
+                allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
+            )
+            var sel: [DockPill] = finderFilePills + macOSExtensionPills + finderMenuPills
+            sel.append(selectionScopeAskAIPill(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-            return sel
+            return dedupeRankedDockPills(
+                rankDockPills(
+                    sel,
+                    rawQuery: q,
+                    rankingQuery: q,
+                    scopedBundleId: "com.apple.finder",
+                    scopedAppName: "Finder",
+                    isExplicitAppScope: false,
+                    includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            )
         }
 
         if isQuestionStyleDockQuery(q) { return [] }
@@ -3054,6 +3660,7 @@ extension LauncherView {
         // pills, executed by object identity. This is DoraX's share source, not AX.
         pills.append(contentsOf: buildShareQueryDestinationPills(query: q))
         pills.append(contentsOf: buildContextDockSelectionAIPills(query: q))
+        pills.append(contentsOf: buildNativeWritingToolPills(query: q))
         // Safari page-level command pills (search, click, open) — appear before AX menu items
         pills.append(contentsOf: buildSafariCommandPills(query: q))
         pills.append(contentsOf: buildSafariRecentURLPills(query: q))
@@ -3122,15 +3729,23 @@ extension LauncherView {
         let scopedBundleId = scope.scopedBundleId
         let scopedAppName = scope.scopedAppName
         let scopedSearchQuery = scope.scopedSearchQuery
+        let scopedShareDestinationPills: [DockPill] = {
+            guard isExplicitAppScope, !scopedSearchQuery.isEmpty else { return [] }
+            return buildShareQueryDestinationPills(query: scopedSearchQuery)
+        }()
         let appContentSearchPill: DockPill? = {
             guard !isGlobalContextActive, !isGlobalScope,
                 !scopedBundleId.isEmpty, !scopedAppName.isEmpty,
+                scopedShareDestinationPills.isEmpty,
                 let intent = AppContentSearchRouter.shared.scopedIntent(
                     for: scopedSearchQuery,
                     bundleId: scopedBundleId,
                     appName: scopedAppName
                 )
             else { return nil }
+            if isBrowserMenuSource(scopedBundleId) {
+                return browserContentSearchDockPill(intent)
+            }
             return appContentSearchDockPill(intent)
         }()
         let isFinderScopedDock =
@@ -3162,7 +3777,11 @@ extension LauncherView {
         let rawMacOSExtensionActionPills =
             isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
             ? buildMacOSExtensionActionPills(query: q) : []
-        let rawFinderFilePills = rawMacOSExtensionActionPills
+        let rawFinderFilePills =
+            (isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
+                ? buildFinderFilePills(query: q)
+                : [])
+            + rawMacOSExtensionActionPills
         // User-added search directories belong only to Finder desktop mode.
         // When a Finder window is frontmost, Context Dock should stay on that
         // window's menus/actions/selection, not global directory search.
@@ -3179,13 +3798,13 @@ extension LauncherView {
             isFinderScopedDock
             ? buildAttachedFinderFolderPills(
                 query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery) : []
-        let finderFileTitleSet = Set(rawMacOSExtensionActionPills.map { normalizedDockPillText($0.name) })
+        let finderFileTitleSet = Set(rawFinderFilePills.map { normalizedDockPillText($0.name) })
         let rawFinderSelectionMenuPills =
             isFinderScopedDock && !finderFolderAttachedForDock && !isFinderDesktopOnlyMode
             ? buildFinderSelectionMenuPills(
                 query: q,
                 excludingTitles: finderFileTitleSet,
-                allowedRootNames: ["file", "open with", "tags"]
+                allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             ) : []
         let filteredFinderSelectionMenuPills = rawFinderSelectionMenuPills
         let payloadActionPills: [DockPill] = {
@@ -3408,12 +4027,12 @@ extension LauncherView {
             isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmost.bundleID
         // Selection Scope (Global Context + active selection) is dedicated to the selection —
         // share + AI actions only. Don't surface the frontmost app's menus there.
-        let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
+        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
         let useSeededMenuPills =
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
             && !isScopedToOtherApp && !inSelectionScope
 
-        if isGlobalContextActive && hasActiveDockContextSelection {
+        if isGlobalContextActive && hasSelectionScopeSurface {
             pills.append(contentsOf: crossAppPills)
         }
 
@@ -3489,7 +4108,9 @@ extension LauncherView {
                 let shareItems = ShareIntentRouter.shared.shareableItems(
                     for: effectiveAXContextForConversation())
                 if !shareItems.isEmpty {
-                    return pills + shareDestinationPills(listingItems: shareItems, filter: "")
+                    return dedupeRankedDockPills(
+                        pills + shareDestinationPills(listingItems: shareItems, filter: "")
+                    )
                 }
             }
             let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
@@ -3508,8 +4129,8 @@ extension LauncherView {
                 let pid = child.sourcePID != 0 ? child.sourcePID : frontPID
                 let sc = child.shortcutChar
                 let mod = child.shortcutModifiers
-                // Bare "Share"/"Share…" → reveal destinations; a real child (Mail/
-                // AirDrop/Notes) → click its EXACT menu path (never resolve by title).
+                // Bare "Share"/"Share…" or a Share child (Mail/AirDrop/Notes) routes
+                // through native NSSharingService, not an AX submenu click.
                 let isBareShareMenuItem = isShareSheetTitle(child.title)
                 let parentIsShare = normalizedDockPillText(subCtx.parent.title).contains("share")
                 let shareChild = child
@@ -3520,7 +4141,7 @@ extension LauncherView {
                     accentColorName: "blue",
                     badge: subCtx.parent.title,
                     execute: {
-                        if isBareShareMenuItem {
+                        if isBareShareMenuItem || parentIsShare {
                             executeShareAction(item: shareChild)
                             return
                         }
@@ -3602,6 +4223,8 @@ extension LauncherView {
         pills.append(contentsOf: semanticFinderPills)
 
         pills.append(contentsOf: semanticFinderQuickActionPills)
+
+        pills.append(contentsOf: scopedShareDestinationPills)
 
         if !isFinderDesktopOnlyMode {
             pills.append(
@@ -3688,11 +4311,31 @@ extension LauncherView {
             }
             return false
         }
+        let frontmostLiveMenuMatches: (NSRunningApplication, String) -> [AXMenuItem] = {
+            app, filterQ in
+            let frontPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+            guard app.processIdentifier != 0,
+                app.processIdentifier == frontPID,
+                !liveMenuItems.isEmpty
+            else { return [] }
+            let filter = isGlobalScope ? menuItemsForGlobalContext : menuItemsAllowedForCurrentScope
+            return dedupeMenuItems(
+                filter(liveMenuItems.filter { menuItemMatchesQuery($0, filterQ) })
+            )
+        }
         let pureScopeMenuLimit = 10
         let pureScopeCandidateLimit = 12
         let scopedRunningMenuMatches: (NSRunningApplication, String, Bool) -> [AXMenuItem] = {
             app, filterQ, preferCached in
             let pid = app.processIdentifier
+            let liveAuthoritativeMatches = frontmostLiveMenuMatches(app, filterQ)
+            if !liveAuthoritativeMatches.isEmpty {
+                return orderedScopedMenuMatches(
+                    liveAuthoritativeMatches,
+                    filterQuery: filterQ,
+                    limit: preferCached ? pureScopeMenuLimit : 16
+                )
+            }
             let cachedMatches = crossAppMenuItems.filter { item in
                 item.sourcePID == pid
                     && menuItemMatchesQuery(item, filterQ)
@@ -3830,13 +4473,21 @@ extension LauncherView {
             {
                 let filterQ = actionQuery.isEmpty ? q : actionQuery
                 let candidateLimit = filterQ.isEmpty ? 80 : 24
-                let cachedMatches = crossAppMenuItems.filter { item in
-                    item.sourcePID == targetApp.processIdentifier
-                        && menuItemMatchesQuery(item, filterQ)
-                }
+                let liveAuthoritativeMatches = frontmostLiveMenuMatches(targetApp, filterQ)
+                let cachedMatches =
+                    liveAuthoritativeMatches.isEmpty
+                    ? crossAppMenuItems.filter { item in
+                        item.sourcePID == targetApp.processIdentifier
+                            && menuItemMatchesQuery(item, filterQ)
+                    }
+                    : liveAuthoritativeMatches
+                let persistentMatches =
+                    liveAuthoritativeMatches.isEmpty
+                    ? persistentMenuMatches(targetApp, filterQ, candidateLimit)
+                    : []
                 let matches = dedupeMenuItems(
                     menuItemsAllowedForCurrentScope(
-                        cachedMatches + persistentMenuMatches(targetApp, filterQ, candidateLimit)
+                        cachedMatches + persistentMatches
                     )
                 )
                 return orderedScopedMenuMatches(matches, filterQuery: filterQ, limit: 16)
@@ -3846,6 +4497,7 @@ extension LauncherView {
                 menuItemMatchesQuery(item, q)
             }
             let persistentMatches: [AXMenuItem] = {
+                guard cachedMatches.isEmpty else { return [] }
                 guard let app = AppDelegate.shared?.previousFrontmostApp else { return [] }
                 return persistentMenuMatches(app, q, 24)
             }()
@@ -4259,7 +4911,7 @@ extension LauncherView {
             }
         }
         if !isExplicitAppScope {
-            if !(isGlobalContextActive && hasActiveDockContextSelection) {
+            if !(isGlobalContextActive && hasSelectionScopeSurface) {
                 pills += crossAppPills
             }
         }
@@ -4313,14 +4965,14 @@ extension LauncherView {
                 || pill.rankingKind == "finderSelection" || pill.rankingKind == "payload"
                 || pill.rankingKind == "cliTool" || pill.rankingKind == "tool"
                 || pill.rankingKind == "userExtension" || pill.rankingKind == "submenuChild"
-                || pill.rankingKind == "submenuParent"
+                || pill.rankingKind == "submenuParent" || pill.rankingKind == "writingTool"
         }
 
         // When global context has an active file/folder/text selection and no explicit app scope,
         // keep the Finder/menu surface broad. The selection state should feel like the native
         // menu bar after selecting a file: File/Edit/View/Go/Window/Help commands stay available,
         // while app launch/recent-app rows are still removed by the selection-scoped filter.
-        guard isGlobalContextActive && hasActiveDockContextSelection && !isExplicitAppScope else {
+        guard isGlobalContextActive && hasSelectionScopeSurface && !isExplicitAppScope else {
             return enabled
         }
         return selectionScopedDockPills(enabled)

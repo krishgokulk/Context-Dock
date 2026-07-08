@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GlobalContextSurface: View {
     let presentation: L2DockRowPresentation
+    let isFinderDesktopOnlyMode: Bool
     let onPillQueryChange: (String) -> Void
     let onAppear: () -> Void
     let onFinderDesktopModeChange: (Bool) async -> Void
@@ -14,6 +15,7 @@ struct GlobalContextSurface: View {
 
     init(
         presentation: L2DockRowPresentation,
+        isFinderDesktopOnlyMode: Bool,
         onPillQueryChange: @escaping (String) -> Void,
         onAppear: @escaping () -> Void,
         onFinderDesktopModeChange: @escaping (Bool) async -> Void,
@@ -25,6 +27,7 @@ struct GlobalContextSurface: View {
         @ViewBuilder dockPillContent: () -> some View
     ) {
         self.presentation = presentation
+        self.isFinderDesktopOnlyMode = isFinderDesktopOnlyMode
         self.onPillQueryChange = onPillQueryChange
         self.onAppear = onAppear
         self.onFinderDesktopModeChange = onFinderDesktopModeChange
@@ -49,8 +52,12 @@ struct GlobalContextSurface: View {
             .id("global-context-surface")
             .onChange(of: presentation.pillQuery, perform: onPillQueryChange)
             .onAppear(perform: onAppear)
-            .task {
-                await onFinderDesktopModeChange(false)
+            .task(id: isFinderDesktopOnlyMode) {
+                // Prime/refresh the Finder desktop cache when an explicit Finder scope is
+                // active in Global Context — same as Context Dock. Hardcoding false here
+                // cleared the cache, so global Finder desktop search missed folders the
+                // Context Dock found.
+                await onFinderDesktopModeChange(isFinderDesktopOnlyMode)
             }
             .gesture(swipeGesture)
     }

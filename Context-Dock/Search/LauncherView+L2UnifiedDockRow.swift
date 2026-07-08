@@ -11,6 +11,7 @@ extension LauncherView {
         let presentation = l2DockRowPresentation
         GlobalContextSurface(
             presentation: presentation,
+            isFinderDesktopOnlyMode: isFinderDesktopOnlyMode,
             onPillQueryChange: handleL2PillQueryChange,
             onAppear: { handleL2DockRowAppear(pillQuery: presentation.pillQuery) },
             onFinderDesktopModeChange: { enabled in
@@ -62,18 +63,35 @@ extension LauncherView {
         let pillQuery = finderSearchPopoverActive ? "" : q
         // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
         // query — so the result sheet is visible the moment the launcher opens with a selection.
-        let inSelectionScope = isGlobalContextActive && hasActiveDockContextSelection
+        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
+        // A scoped app (running-app scope in Global Context) must show its menus on an
+        // empty query, just like Context Dock — otherwise the scoped dock stays empty
+        // until a keypress. Only the unscoped global/empty state collapses to no pills.
         let pills =
-            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope
+            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil
             ? []
             : contextDockViewModel.visiblePills
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
-        let hasActiveContextSelection = hasActiveDockContextSelection
+        let hasActiveContextSelection = hasSelectionScopeSurface
         let hasAnySelection =
             hasActiveContextSelection
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
-        let globalAppMatches = currentOrImmediateGlobalAppMatches(for: q)
+        let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
+            (pureGlobalAppSearch && !q.isEmpty)
+            ? globalGroupedListNavigationState(for: q) : nil
+        let globalAppMatches =
+            pureGlobalAppSearch
+            ? (
+                preliminaryGlobalNavState?.appResults.isEmpty == false
+                ? (preliminaryGlobalNavState?.appResults ?? [])
+                : (
+                    globalContextViewModel.typingSnapshot.phase == .expanded
+                    ? matchDockIconRowsForExpandedSheet(query: q)
+                    : []
+                )
+            )
+            : currentOrImmediateGlobalAppMatches(for: q)
         let genericAppListQuery = isGenericApplicationListQuery(q)
         let preferFrontmostMenuResults =
             !genericAppListQuery
@@ -91,19 +109,28 @@ extension LauncherView {
             ? activeGlobalInlineDockScope(for: q)
             : nil
         let effectiveAppScope = inlineGlobalScope?.isExplicitAppScope == true
+        let transientScopedMenuState =
+            effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil
         let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
         let scopedMenuListContext: (appName: String, actionQuery: String)? = {
             guard let scope = inlineGlobalScope, scope.isExplicitAppScope else { return nil }
             return (scope.scopedAppName, scope.scopedSearchQuery)
         }()
         let globalNavState: GlobalGroupedListNavigationState? =
-            (pureGlobalAppSearch && !q.isEmpty) || effectiveAppScope
-            ? globalGroupedListNavigationState(for: q) : nil
-        let globalMenuPills = globalNavState?.menuGroups.flatMap(\.allPills) ?? []
+            effectiveAppScope
+            ? (
+                transientScopedMenuState == nil
+                ? globalGroupedListNavigationState(for: q)
+                : transientScopedMenuState
+            )
+            : preliminaryGlobalNavState
+        let globalNavIsScopedAppMenus: Bool = {
+            guard let s = globalNavState else { return false }
+            return s.appResults.isEmpty && !s.appMenuGroups.isEmpty
+        }()
+        let globalMenuPills =
+            globalNavIsScopedAppMenus ? [] : (globalNavState?.menuGroups.flatMap(\.allPills) ?? [])
         let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
-        let globalNavIsScopedAppMenus =
-            globalNavState?.appResults.isEmpty == true
-            && !(globalNavState?.appMenuGroups.isEmpty ?? true)
         let showGlobalAppSearch =
             (pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
             || effectiveAppScope
@@ -145,8 +172,7 @@ extension LauncherView {
             dockAtBottom: settings.effectiveDockAtBottom,
             globalSearch: L2GlobalSearchPresentation(
                 query: q,
-                matches: globalNavIsScopedAppMenus
-                    ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
+                matches: globalNavIsScopedAppMenus ? [] : (globalNavState?.appResults ?? displayedGlobalAppMatches),
                 menuPills: globalMenuPills,
                 appMenuGroups: globalCrossAppGroups,
                 launchHint: scopedAppLaunchHint,
@@ -175,8 +201,41 @@ extension LauncherView {
         }
     }
 
+    /// Menu-only match (no app/command rows) that has not been revealed with ↓ yet —
+    /// the sheet stays collapsed; the strip shows the owning app's pill instead.
+    func isDeferredMenuOnlyPresentation(_ presentation: L2GlobalSearchPresentation) -> Bool {
+        if isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil {
+            return false
+        }
+        // Sheet policy while typing in pure Global Context:
+        //  • 2+ app/command rows → instant sheet (classic launcher feel)
+        //  • menu-only matches   → compact dock, owning-app pill in strip, ↓ reveals
+        //  • exactly 1 row       → compact dock, that app's pill + ghost text, ↓ reveals
+        //  • nothing at all      → compact dock, token-matched app pills, ↓ expands
+        guard !globalMenuResultsRevealed,
+            !presentation.query.isEmpty,
+            presentation.scopedMenuAppName == nil,
+            presentation.launchHint == nil,
+            globalInlineAppScope == nil
+        else { return false }
+        let hasMenus = !presentation.menuPills.isEmpty || !presentation.appMenuGroups.isEmpty
+        let menuOnly = presentation.matches.isEmpty && hasMenus
+        let singleResult = presentation.matches.count == 1 && !hasMenus
+        let nothing = presentation.matches.isEmpty && !hasMenus
+        return menuOnly || singleResult || nothing
+    }
+
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
+        // PERSISTENT hierarchy: the results container is ALWAYS in the tree and
+        // reveals by clipped height. Conditional creation (`if expanded { list }`)
+        // rebuilt the view identity on ↓, so the expansion could never animate
+        // continuously from the first key press.
+        let expanded =
+            isGlobalContextActive && shouldUsePureGlobalAppSearch && globalInlineAppScope == nil
+            ? hasExpandedGlobalContextResults
+            : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+                && !isDeferredMenuOnlyPresentation(presentation))
         globalAppSearchListView(
             query: presentation.query,
             matches: presentation.matches,
@@ -188,6 +247,11 @@ extension LauncherView {
             isLoading: presentation.isLoading,
             menuFirst: false
         )
+        .frame(maxHeight: expanded ? nil : 0, alignment: .top)
+        .opacity(expanded ? 1 : 0)
+        .clipped()
+        .allowsHitTesting(expanded)
+        .animation(.easeInOut(duration: 0.18), value: expanded)
     }
 
     @ViewBuilder
@@ -212,7 +276,11 @@ extension LauncherView {
         if shouldUsePureGlobalAppSearch {
             l2.appCompletion = nil
             l2.showResultsPopover = false
-            scheduleGlobalAppMatchRebuild(query: newQuery, delayNanoseconds: 0)
+            if globalInlineAppScope == nil {
+                updateGlobalContextTypingSnapshot(query: newQuery)
+            } else {
+                scheduleGlobalGroupedListRebuild(query: newQuery)
+            }
             return
         }
         if isFinderDesktopOnlyMode {
@@ -240,7 +308,11 @@ extension LauncherView {
             loadApplicationsInBackground()
         }
         if shouldUsePureGlobalAppSearch {
-            scheduleGlobalAppMatchRebuild(query: pillQuery, delayNanoseconds: 0)
+            if globalInlineAppScope == nil {
+                updateGlobalContextTypingSnapshot(query: pillQuery)
+            } else {
+                scheduleGlobalGroupedListRebuild(query: pillQuery, delayNanoseconds: 0)
+            }
             return
         }
         if isFinderDesktopOnlyMode {
@@ -260,6 +332,13 @@ extension LauncherView {
                 )
             }
             await refreshFinderDesktopRecentPills()
+            // Build the COMPLETE index (all file types, incl images) so the instant filter is
+            // stable for any query — not just whatever the L1 document/file index happened to
+            // hold. Cheap to re-run (Spotlight + dedupe); persists for the session.
+            if finderDesktopFullIndexPrimed == false {
+                finderDesktopFullIndexPrimed = true
+                await primeFinderDesktopFullIndex()
+            }
         } else {
             contextDockViewModel.finderDesktopSearchTask?.cancel()
             contextDockViewModel.finderDesktopSearchTask = nil

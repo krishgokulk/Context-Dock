@@ -41,7 +41,7 @@ enum AppleNotesMCPCapabilities {
                 title: "Search Apple Notes",
                 appBundleID: "com.apple.Notes",
                 inputSchema: .init(fields: [
-                    .init(name: "query", description: "Search query matching note title, body snippet, or folder", required: true),
+                    .init(name: "query", description: "Search query matching note title, body, folder, or URLs", required: true),
                     .init(name: "maxResults", description: "Maximum notes to return (default 10)", required: false),
                 ]),
                 riskLevel: .low
@@ -53,14 +53,28 @@ enum AppleNotesMCPCapabilities {
                     throw AppleNotesError.notEnabled
                 }
                 let max = Int(request.input["maxResults"] ?? "10") ?? 10
-                let results = try await AppleNotesMCPServer.shared.search(query: query, maxResults: max)
+
+                // Phase 1: fast metadata index search (blocks on first run to build index)
+                var results = try await AppleNotesMCPServer.shared.search(query: query, maxResults: max)
+
+                // Phase 2: fall back to full-body scan if metadata search yields nothing
+                // (catches URLs, links, and content buried past the 500-char snippet)
+                if results.isEmpty {
+                    results = try await AppleNotesMCPServer.shared.deepSearch(query: query, maxResults: max)
+                }
+
                 if results.isEmpty {
                     return .init(success: true, output: "No notes found matching '\(query)'.")
                 }
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateStyle = .medium
+                dateFormatter.timeStyle = .short
                 let body = results.map { n in
-                    "ID: \(n.id)\nTitle: \(n.title)\nFolder: \(n.folder)\nModified: \(n.modifiedDate)\nSnippet: \(n.snippet)"
+                    let modified = dateFormatter.string(from: n.modifiedDate)
+                    let snippet = n.snippet.isEmpty ? "(no preview)" : n.snippet
+                    return "ID: \(n.id)\nTitle: \(n.title)\nFolder: \(n.folder.isEmpty ? "—" : n.folder)\nModified: \(modified)\nSnippet: \(snippet)"
                 }.joined(separator: "\n---\n")
-                return .init(success: true, output: "Found \(results.count) note(s):\n\n\(body)")
+                return .init(success: true, output: "Found \(results.count) note(s) matching '\(query)':\n\n\(body)")
             }
         )
     }
@@ -107,9 +121,12 @@ enum AppleNotesMCPCapabilities {
                 }
                 let note = try await AppleNotesMCPServer.shared.readNote(id: noteID, providerName: "local")
                 let bodyText = AppleNotesExecutionService.shared.stripHTML(note.body)
+                let df = DateFormatter()
+                df.dateStyle = .medium
+                df.timeStyle = .short
                 return .init(
                     success: true,
-                    output: "Title: \(note.title)\nFolder: \(note.folder)\nModified: \(note.modified)\n\nContent:\n\(bodyText)"
+                    output: "Title: \(note.title)\nFolder: \(note.folder.isEmpty ? "—" : note.folder)\nModified: \(df.string(from: note.modified))\n\nContent:\n\(bodyText)"
                 )
             }
         )
@@ -293,10 +310,15 @@ enum AppleNotesMCPCapabilities {
                     throw AppleNotesError.notEnabled
                 }
                 let max = Int(request.input["maxResults"] ?? "5") ?? 5
+                // Ensure index is populated before looking up the note
+                let idxCount = await AppleNotesMetadataIndex.shared.cachedCount
+                if idxCount == 0 {
+                    try await AppleNotesMetadataIndex.shared.forceRefresh()
+                }
                 guard let target = await AppleNotesMetadataIndex.shared.note(id: noteID) else {
                     return .init(
                         success: false,
-                        output: "Note \(noteID) not in metadata index. Run notes.search first."
+                        output: "Note \(noteID) not found. Try notes.search first to get a valid note ID."
                     )
                 }
                 // Keyword search over cached metadata only — no body reads

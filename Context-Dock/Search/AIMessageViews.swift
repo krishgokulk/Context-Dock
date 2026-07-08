@@ -281,6 +281,11 @@ struct AIChatMessageView: View {
     var onInstallExtension: (() -> Void)? = nil
     var onInstallProposal: ((String) -> Void)? = nil
     var onRunOnceProposal: ((String) -> Void)? = nil
+    /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
+    /// symbol beside user messages, the scoped app's icon beside assistant answers.
+    /// Both nil (General Chat) → renders exactly as before, no avatars.
+    var userAvatarSymbol: String? = nil
+    var assistantAvatarImage: NSImage? = nil
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -368,6 +373,14 @@ struct AIChatMessageView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
+            if message.role != .user, let avatar = assistantAvatarImage {
+                Image(nsImage: avatar)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 22, height: 22)
+                    .padding(.top, 5)
+                    .padding(.trailing, 7)
+            }
             if message.role == .user { Spacer(minLength: 52) }
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
@@ -457,6 +470,15 @@ struct AIChatMessageView: View {
                 }
             }
 
+            if message.role == .user, let symbol = userAvatarSymbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(providerColor)
+                    .frame(width: 22, height: 22)
+                    .background(providerColor.opacity(0.14), in: Circle())
+                    .padding(.top, 5)
+                    .padding(.leading, 7)
+            }
             if message.role == .assistant { Spacer(minLength: 52) }
         }
     }

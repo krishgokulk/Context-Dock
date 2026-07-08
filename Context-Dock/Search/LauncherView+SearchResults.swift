@@ -88,9 +88,16 @@ extension LauncherView {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
-                guard idx < visiblePills.count else { return }
+                // Keyboard now walks the same clustered order the list renders —
+                // resolve the focused pill from that order and scroll to it by id.
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let source = renderedOrderDockPills(for: q)
+                guard idx >= 0, idx < source.count else { return }
+                let targetID = source[idx].id
+                guard visiblePills.contains(where: { $0.id == targetID }) else { return }
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                    proxy.scrollTo("pill-list-\(visiblePills[idx].id)", anchor: .center)
+                    proxy.scrollTo("pill-list-\(targetID)", anchor: .center)
                 }
                 DispatchQueue.main.async {
                     refreshQuickLookPreviewForCurrentFocusIfVisible()
@@ -533,7 +540,9 @@ extension LauncherView {
             if isKeyboardFocused {
                 if usesMatchedGeometry {
                     Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 999, isDark: isEffectiveDark))
+                        .clipShape(Capsule(style: .continuous))
                         .matchedGeometryEffect(
                             id: dockResultFocusEffectID,
                             in: compactScopeFocusNamespace,
@@ -542,14 +551,17 @@ extension LauncherView {
                         )
                 } else {
                     Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 999, isDark: isEffectiveDark))
+                        .clipShape(Capsule(style: .continuous))
                 }
                 Capsule(style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(isEffectiveDark ? 0.11 : 0.16),
+                                Color.white.opacity(isEffectiveDark ? 0.10 : 0.16),
                                 Color.white.opacity(isEffectiveDark ? 0.035 : 0.07),
+                                Color.black.opacity(isEffectiveDark ? 0.018 : 0.006),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -559,20 +571,21 @@ extension LauncherView {
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.22),
-                                Color.white.opacity(0.05),
+                                Color.white.opacity(isEffectiveDark ? 0.38 : 0.48),
+                                Color.white.opacity(isEffectiveDark ? 0.11 : 0.18),
+                                Color.white.opacity(isEffectiveDark ? 0.035 : 0.08),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 0.6
+                        lineWidth: 0.8
                     )
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7)
-                    .blur(radius: 1.2)
+                    .strokeBorder(Color.white.opacity(isEffectiveDark ? 0.30 : 0.22), lineWidth: 0.9)
+                    .blur(radius: 1.6)
             } else if isHovered {
                 Capsule(style: .continuous)
-                    .fill(Color.primary.opacity(0.055))
+                    .fill(Color.primary.opacity(isEffectiveDark ? 0.045 : 0.035))
             }
         }
     }
@@ -599,7 +612,34 @@ extension LauncherView {
             // above these menu rows), it owns the selection — don't ALSO highlight the
             // first menu row, or two rows show the focus ring at once.
             && !globalAppListOwnsDefaultFirstSelection
-        let isKeyboardFocused = l2.focusedPillIndex == index || isDefaultFirstRow
+        // Keyboard focus by IDENTITY, not row index: the keyboard navigates the raw
+        // pill array while this list renders a re-clustered copy — index equality
+        // diverges the moment clustering reorders, breaking highlight + autoscroll.
+        let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
+            let source: [DockPill] = {
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    return visibleGlobalGroupedListNavigationState(for: q).menuPills
+                }
+                // Same clustered order the list renders AND the keyboard walks.
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                return renderedOrderDockPills(for: q)
+            }()
+            let sourceIndex: Int = {
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    let state = visibleGlobalGroupedListNavigationState(for: q)
+                    return idx - state.appResults.count
+                }
+                return idx
+            }()
+            guard sourceIndex >= 0, sourceIndex < source.count else { return nil }
+            return source[sourceIndex].id
+        }
+        let isKeyboardFocused = keyboardFocusedPillID == pill.id || isDefaultFirstRow
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let isDisabled = !pill.isEnabled && !isStaleAvailabilityMenuPill(pill)
@@ -614,10 +654,11 @@ extension LauncherView {
         Button {
             guard !isDisabled else { return }
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
             executeDockPill(pill)
             searchState.query = ""
-            l2.focusedPillIndex = nil
-            listViewHoveredIndex = nil
             // Teach intent: user picked a menu action for this query
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         } label: {
@@ -770,7 +811,18 @@ extension LauncherView {
     func groupedMenuPillRow(group: MenuPillGroup, index: Int) -> some View {
         let primary = group.primaryPill
         let accent = accentColor(for: primary.accentColorName)
-        let isKeyboardFocused = l2.focusedPillIndex == index
+        let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
+            if shouldUsePureGlobalAppSearch {
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let state = visibleGlobalGroupedListNavigationState(for: q)
+                let menuIndex = idx - state.appResults.count
+                guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
+                return state.menuPills[menuIndex].id
+            }
+            return nil
+        }
+        let isKeyboardFocused = l2.focusedPillIndex == index || keyboardFocusedPillID == primary.id
         let isHov = listViewHoveredIndex == index
         let isActive = isKeyboardFocused || isHov
         let subtitle =
@@ -827,10 +879,11 @@ extension LauncherView {
                             let q = searchState.query.trimmingCharacters(
                                 in: .whitespacesAndNewlines
                             ).lowercased()
+                            l2.focusedPillIndex = nil
+                            l2.pillNavViaKeyboard = false
+                            listViewHoveredIndex = nil
                             executeDockPill(pill)
                             searchState.query = ""
-                            l2.focusedPillIndex = nil
-                            listViewHoveredIndex = nil
                             if !q.isEmpty {
                                 AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true)
                             }
@@ -884,45 +937,18 @@ extension LauncherView {
         .onTapGesture {
             // Tap on the row (not a chip) executes the primary pill
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
             executeDockPill(primary)
             searchState.query = ""
-            l2.focusedPillIndex = nil
-            listViewHoveredIndex = nil
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         }
     }
 
     @ViewBuilder
     var pinnedAppsListView: some View {
-        let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
-        let basePinned = settings.pinnedApps
-        let visiblePinned =
-            searchQuery.isEmpty
-            ? basePinned
-            : basePinned.filter { $0.name.lowercased().contains(searchQuery) }
-
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 2) {
-                ForEach(Array(visiblePinned.enumerated()), id: \.element.id) { idx, app in
-                    let isRunning = runningApp(for: app) != nil
-                    appListRow(
-                        icon: resolvedPinnedIcon(for: app),
-                        name: app.name,
-                        subtitle: isRunning ? "Running" : "Launch",
-                        index: idx,
-                        action: {
-                            launchPinnedApp(app)
-                            if isGlobalContextActive {
-                                scheduleContextDockTransition(
-                                    bundleId: app.bundleIdentifier, appName: app.name)
-                            }
-                        }
-                    )
-                    .id("app-list-\(idx)")
-                }
-            }
-            .padding(6)
-        }
+        EmptyView()
         .frame(maxHeight: 320)
         .background {
             ZStack {
@@ -978,6 +1004,7 @@ extension LauncherView {
         defaultsToFirstSelection: Bool = false,
         quitAction: (() -> Void)? = nil,
         quitPhase: DockInlineFeedback.Phase? = nil,
+        previewApp: NSRunningApplication? = nil,
         action: @escaping () -> Void
     ) -> some View {
         // Spotlight-style default selection: in a typed-query RESULT list, the first row reads as
@@ -1124,6 +1151,11 @@ extension LauncherView {
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 hoveredAppPillIndex = hovering ? index : nil
             }
+            if hovering, let previewApp {
+                RunningAppPreviewService.shared.scheduleShow(for: previewApp, icon: icon)
+            } else if !hovering {
+                RunningAppPreviewService.shared.scheduleHide()
+            }
         }
     }
 
@@ -1131,6 +1163,17 @@ extension LauncherView {
         resolveDockScope(
             for: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         ).isExplicitAppScope
+    }
+
+    /// The exact pill order the List View renders (clustered by group). Keyboard
+    /// navigation MUST walk this order — navigating the raw score-interleaved array
+    /// while the list renders a re-clustered copy makes ↑/↓ jump between sections.
+    /// Horizontal pill row renders the raw order, so it returns the raw list there.
+    func renderedOrderDockPills(for query: String) -> [DockPill] {
+        let cached = contextDockViewModel.visiblePills
+        let base = cached.isEmpty ? currentVisibleDockPills(for: query) : cached
+        guard usesVerticalListDockLayout else { return base }
+        return clusterPillsByGroup(Array(base.prefix(maxListViewDockPills)))
     }
 
     var shouldShowL2UnifiedDockRow: Bool {
@@ -1142,17 +1185,29 @@ extension LauncherView {
         }
         if isGlobalContextActive {
             if q.isEmpty {
-                return !settings.pinnedApps.isEmpty
+                return false
             }
             if shouldUsePureGlobalAppSearch {
                 return true
             }
             let visiblePills = currentVisibleDockPills(for: q)
+            if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                return true
+            }
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
         if !isGlobalContextActive {
-            return true
+            // Keep the row while the debounced pill build is in flight (no flicker), but
+            // once the query resolves to ZERO results collapse back to the compact input
+            // capsule — never park an empty results container under the search bar.
+            if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                return true
+            }
+            if pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
+                return true
+            }
+            return currentVisibleDockPills(for: q).contains { !$0.isSeparator }
         }
         if pendingDockPillQuery == q, pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
             return true

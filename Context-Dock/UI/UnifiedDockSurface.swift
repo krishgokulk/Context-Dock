@@ -33,21 +33,40 @@ struct UnifiedDockSurface<Content: View>: View {
     var body: some View {
         content
             .frame(width: width, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
+            .background {
+                RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
+                    .fill(Color.clear)
+                    .background(GlassBackground(cornerRadius: size.cornerRadius, isDark: isDark))
+                    .clipShape(RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous))
+                RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(isDark ? 0.075 : 0.13),
+                                .white.opacity(isDark ? 0.018 : 0.035),
+                                .black.opacity(isDark ? 0.05 : 0.055),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                .white.opacity(isDark ? 0.16 : 0.42),
-                                .white.opacity(isDark ? 0.035 : 0.08),
+                                .white.opacity(isDark ? 0.34 : 0.50),
+                                .white.opacity(isDark ? 0.10 : 0.20),
+                                .white.opacity(isDark ? 0.025 : 0.08),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1
+                        lineWidth: 0.9
                     )
             }
+            .shadow(color: .black.opacity(isDark ? 0.30 : 0.13), radius: size.shadowRadius, y: 14)
     }
 }
 
@@ -82,13 +101,16 @@ struct UnifiedDockInputBar<Leading: View, Trailing: View>: View {
         .padding(.horizontal, 10)
         .background {
             Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color.clear)
+                .background(GlassBackground(cornerRadius: height / 2, isDark: isDark))
+                .clipShape(Capsule(style: .continuous))
             Capsule(style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(isFocused ? (isDark ? 0.22 : 0.32) : (isDark ? 0.13 : 0.22)),
-                            Color.white.opacity(isFocused ? (isDark ? 0.06 : 0.10) : (isDark ? 0.03 : 0.06)),
+                            Color.white.opacity(isFocused ? (isDark ? 0.13 : 0.20) : (isDark ? 0.08 : 0.15)),
+                            Color.white.opacity(isFocused ? (isDark ? 0.035 : 0.12) : (isDark ? 0.02 : 0.075)),
+                            Color.black.opacity(isDark ? 0.025 : 0.006),
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -98,8 +120,9 @@ struct UnifiedDockInputBar<Leading: View, Trailing: View>: View {
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(isFocused ? (isDark ? 0.65 : 0.78) : (isDark ? 0.32 : 0.48)),
-                            Color.white.opacity(isDark ? 0.06 : 0.14),
+                            Color.white.opacity(isFocused ? (isDark ? 0.74 : 0.92) : (isDark ? 0.46 : 0.72)),
+                            Color.white.opacity(isDark ? 0.10 : 0.34),
+                            Color.white.opacity(isDark ? 0.035 : 0.16),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -150,7 +173,9 @@ struct UnifiedDockRowBackground: View {
         ZStack {
             if isFocused {
                 Capsule(style: .continuous)
-                    .fill(isDark ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.accentColor))
+                    .fill(Color.clear)
+                    .background(GlassBackground(cornerRadius: 999, isDark: isDark))
+                    .clipShape(Capsule(style: .continuous))
                 Capsule(style: .continuous)
                     .fill(
                         LinearGradient(
@@ -171,7 +196,7 @@ struct UnifiedDockRowBackground: View {
                 }
             } else if isHovered && isEnabled {
                 Capsule(style: .continuous)
-                    .fill(isDark ? Color.white.opacity(0.08) : Color.accentColor.opacity(0.12))
+                    .fill(isDark ? Color.white.opacity(0.065) : Color.white.opacity(0.22))
             }
         }
     }
@@ -189,7 +214,6 @@ struct UnifiedDockSectionHeader: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.thinMaterial)
     }
 }
 

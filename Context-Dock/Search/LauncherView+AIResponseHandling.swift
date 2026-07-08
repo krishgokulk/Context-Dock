@@ -308,16 +308,75 @@ extension LauncherView {
             centered: true)
         switch proposal.scriptType.lowercased() {
         case "applescript":
-            AXTriggerRuleEngine.shared.run(
-                type: .appleScript, value: proposal.script, envVars: envVars)
+            // Run directly so failures surface. AXTriggerRuleEngine's AppleScript path
+            // discards the error (executeAndReturnError(nil)), which is why "Add reminder"
+            // reported success but nothing appeared — a permission denial or bad script
+            // was swallowed. Capture the error and tell the user what actually happened.
+            let outcome = runProposalAppleScript(proposal.script)
+            if outcome.ok {
+                AppToast.show(
+                    "\(proposal.name) ran", icon: "checkmark.circle.fill",
+                    tint: .green, duration: 2.0, centered: true)
+                let detail = outcome.message.isEmpty ? "" : " \(outcome.message)"
+                l2.chatMessages.append(
+                    AIChatMessage(role: .tool, content: "✅ \(proposal.name) ran.\(detail)"))
+            } else {
+                AppToast.show(
+                    "\(proposal.name) failed", icon: "exclamationmark.triangle.fill",
+                    tint: .orange, duration: 3.5, centered: true)
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: "⚠️ \(proposal.name) didn't run:\n\n\(outcome.message)",
+                        isError: true))
+            }
         default:
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("proposal_\(UUID().uuidString).sh")
             try? proposal.script.write(to: tmp, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
-            AXTriggerRuleEngine.shared.run(type: .scriptFile, value: tmp.path, envVars: envVars)
+            // Run in the VISIBLE dock terminal — the user watches the clone/build/
+            // install live instead of a silent background process. Context vars are
+            // exported first so $CD_URL etc. resolve inside the script.
+            let consoleKey = prepareScopedWorkspaceTerminal()
+            let term = panelTerminal(for: consoleKey)
+            showLivePanel(.terminal)
+            let exports = envVars.map { key, value in
+                let safe = value
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "\r", with: " ")
+                return "export \(key)=\"\(safe)\""
+            }.joined(separator: "; ")
+            term.sendCommand("\(exports); bash \"\(tmp.path)\"")
         }
+    }
+
+    /// Run a proposal's AppleScript synchronously and return whether it succeeded plus a
+    /// human message. Unlike the trigger engine it does NOT discard the error dictionary,
+    /// so permission denials and script bugs are reported instead of failing silently.
+    func runProposalAppleScript(_ source: String) -> (ok: Bool, message: String) {
+        guard let script = NSAppleScript(source: source) else {
+            return (false, "The AppleScript couldn't be compiled.")
+        }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if let error {
+            let message = error[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error."
+            let code = error[NSAppleScript.errorNumber] as? Int
+            // -1743 = errAEEventNotPermitted: the target app's Automation permission isn't granted.
+            if code == -1743 || message.lowercased().contains("not allowed to send apple events") {
+                return (
+                    false,
+                    "\(message)\n\nGrant it in System Settings → Privacy & Security → Automation → "
+                    + "Context-Dock, enable the target app, then run it again."
+                )
+            }
+            return (false, message)
+        }
+        return (true, result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 
     /// Save a proposal as a persistent Context Trigger rule.

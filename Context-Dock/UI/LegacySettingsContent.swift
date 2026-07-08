@@ -795,11 +795,19 @@ struct SearchDirectoriesListView: View {
         panel.allowsMultipleSelection = false
         panel.message = "Select a directory to search"
         panel.prompt = "Select"
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            let displayName = url.lastPathComponent
-            // Use URL-based method to create security-scoped bookmark
-            settings.addSearchDirectory(url: url, displayName: displayName)
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                let displayName = url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent
+                settings.addSearchDirectory(url: url, displayName: displayName)
+            }
+        }
+
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(panel.runModal())
         }
     }
 }
@@ -856,6 +864,9 @@ struct AIProviderSettingsView: View {
     @State private var isDiscoveringCompatibleModels = false
     @State private var compatibleModels: [String] = []
     @State private var compatibleModelDiscoveryError: String?
+    @State private var isTestingAppleScriptModel = false
+    @State private var appleScriptModelTestMessage: String?
+    @State private var appleScriptModelTestOK = false
     @State private var isRunningProviderQA = false
     
     enum ConnectionTestResult {
@@ -927,7 +938,11 @@ struct AIProviderSettingsView: View {
                     
                     providerConfigurationView
                 }
-                
+
+                Divider()
+
+                appleScriptAutomationModelView
+
                 // Test Connection Button
                 if settings.selectedAIProvider != .onDevice && settings.selectedAIProvider != .shortcuts {
                     Divider()
@@ -1227,7 +1242,96 @@ struct AIProviderSettingsView: View {
             )
         }
     }
-    
+
+    // Optional specialist backend: a model fine-tuned for NL→AppleScript (e.g. Osaurus
+    // AppleScript-8B/16B). Independent of the chat provider above — used only by the
+    // action/execution layer when no deterministic route exists. Chat stays on whatever
+    // provider is selected.
+    private var appleScriptAutomationModelView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "applescript")
+                    .foregroundStyle(.orange)
+                Text("AppleScript Automation Model")
+                    .font(.headline)
+                Spacer()
+                Toggle("", isOn: $settings.appleScriptModelEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+            Text("Optional specialist that turns automation requests into AppleScript in the action layer — your chat provider above is unchanged. Great with Osaurus AppleScript-8B/16B; it does NOT chat, so don't set it as your main model.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if settings.appleScriptModelEnabled {
+                Button("Osaurus Preset") {
+                    settings.appleScriptModelEndpoint = "http://127.0.0.1:1337/v1"
+                    if settings.appleScriptModelID.isEmpty {
+                        settings.appleScriptModelID = "AppleScript-8B"
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                Text("Endpoint")
+                    .font(.subheadline).fontWeight(.medium)
+                TextField("http://127.0.0.1:1337/v1", text: $settings.appleScriptModelEndpoint)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Model ID")
+                    .font(.subheadline).fontWeight(.medium)
+                TextField("AppleScript-8B", text: $settings.appleScriptModelID)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack {
+                    Button(action: testAppleScriptModel) {
+                        HStack(spacing: 6) {
+                            if isTestingAppleScriptModel {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "network")
+                            }
+                            Text("Test AppleScript Model")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        isTestingAppleScriptModel
+                        || settings.appleScriptModelEndpoint.isEmpty
+                        || settings.appleScriptModelID.isEmpty)
+                    if let appleScriptModelTestMessage {
+                        Label(
+                            appleScriptModelTestMessage,
+                            systemImage: appleScriptModelTestOK
+                                ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(appleScriptModelTestOK ? .green : .red)
+                        .lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+
+    private func testAppleScriptModel() {
+        isTestingAppleScriptModel = true
+        appleScriptModelTestMessage = nil
+        Task {
+            let result = await AppleScriptModelService.shared.testConnection()
+            await MainActor.run {
+                isTestingAppleScriptModel = false
+                switch result {
+                case let .success(message):
+                    appleScriptModelTestOK = true
+                    appleScriptModelTestMessage = message
+                case let .failure(error):
+                    appleScriptModelTestOK = false
+                    appleScriptModelTestMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func bridgeConfigView(
         title: String,
         subtitle: String,

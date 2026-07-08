@@ -26,6 +26,66 @@ struct AdapterSkill: Identifiable, Codable, Equatable {
         self.summary = summary; self.instructions = instructions; self.version = version
         self.isEnabled = isEnabled; self.updatedAt = updatedAt
     }
+
+    /// Parse a web `SKILL.md` (Claude / Osaurus style — YAML frontmatter + markdown body)
+    /// into an editable AdapterSkill for `bundleId`. Frontmatter keys used: `name`,
+    /// `description` → summary, `metadata.version` (or top-level `version`) → version.
+    /// Everything after the closing `---` becomes the instructions body. Files with no
+    /// frontmatter still import: the first `# Heading` (or filename) is the name and the
+    /// whole text is the body.
+    static func fromSkillMarkdown(
+        _ text: String, bundleId: String, fallbackName: String = "Imported Skill"
+    ) -> AdapterSkill? {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        var name = ""
+        var summary = ""
+        var version = "1.0"
+        var body = normalized
+
+        // Frontmatter must be the very first line (allowing a leading BOM/whitespace).
+        let leading = normalized.drop { $0 == "\u{FEFF}" || $0 == "\n" || $0 == " " }
+        if leading.hasPrefix("---") {
+            let afterOpen = leading.dropFirst(3).drop { $0 == "\n" }
+            if let closeRange = afterOpen.range(of: "\n---") {
+                let front = String(afterOpen[afterOpen.startIndex..<closeRange.lowerBound])
+                body = String(afterOpen[closeRange.upperBound...])
+                    .drop { $0 == "\n" || $0 == " " || $0 == "-" }
+                    .description
+                for rawLine in front.split(separator: "\n", omittingEmptySubsequences: false) {
+                    let line = String(rawLine)
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    func value(after key: String) -> String? {
+                        guard trimmed.lowercased().hasPrefix(key) else { return nil }
+                        let raw = trimmed.dropFirst(key.count).trimmingCharacters(in: .whitespaces)
+                        return raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    }
+                    if let v = value(after: "name:"), name.isEmpty { name = v }
+                    else if let v = value(after: "description:"), summary.isEmpty { summary = v }
+                    else if let v = value(after: "version:") { version = v }
+                }
+            }
+        }
+
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            if let heading = trimmedBody.split(separator: "\n").first(where: {
+                $0.trimmingCharacters(in: .whitespaces).hasPrefix("# ")
+            }) {
+                name = heading.trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "# ", with: "")
+            }
+        }
+        if name.isEmpty { name = fallbackName }
+        guard !trimmedBody.isEmpty else { return nil }
+
+        return AdapterSkill(
+            adapterBundleId: bundleId,
+            name: name,
+            summary: summary,
+            instructions: trimmedBody,
+            version: version.isEmpty ? "1.0" : version
+        )
+    }
 }
 
 @MainActor

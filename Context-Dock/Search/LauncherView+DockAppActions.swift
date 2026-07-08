@@ -113,7 +113,11 @@ extension LauncherView {
         }
 
         let launchId = DockActionFeedback.start(
-            "Opening", subject: urlAppName, icon: "arrow.up.right.circle.fill", tint: .accentColor)
+            "Opening",
+            subject: urlAppName,
+            icon: "arrow.up.right.circle.fill",
+            tint: .accentColor,
+            bundleID: resolvedBundleId)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -129,7 +133,11 @@ extension LauncherView {
 
             await MainActor.run {
                 let name = launchedApp?.localizedName ?? urlAppName
-                DockActionFeedback.complete(launchId, label: "\(name) opened")
+                DockActionFeedback.complete(
+                    launchId,
+                    label: "\(name) opened",
+                    subject: name,
+                    bundleID: launchedApp?.bundleIdentifier ?? resolvedBundleId)
             }
         }
     }
@@ -161,7 +169,9 @@ extension LauncherView {
     /// Called when an app is launched/activated from global context.
     /// Hides launcher immediately, then updates Context Dock state after activation.
     func scheduleContextDockTransition(bundleId: String?, appName: String) {
-        hideLauncherAfterResultExecution()
+        // Don't hide the dock while the app launches — keep it visible and let it morph
+        // into the launched app's Context Dock (premium launch, no hide+relaunch flicker).
+        AppDelegate.shared?.holdDockThroughAppLaunch()
         let normalizedAppName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedBundleId = bundleId?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackBundleId = NSWorkspace.shared.runningApplications.first { app in
@@ -240,7 +250,10 @@ extension LauncherView {
         setFrontmostAppContextOnly(reason: "global launch became frontmost")
         syncL2DockSession(force: true)
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
-        hideLauncherAfterResultExecution()
+        // Stay visible on the launched app's Context Dock instead of hiding. The app keeps
+        // focus (we don't steal it); the dock floats above showing its context actions.
+        suppressAutomaticGlobalContextUntil = Date().addingTimeInterval(1.6)
+        AppDelegate.shared?.holdDockThroughAppLaunch()
     }
 
     func terminateRunningAppFromDock(_ app: NSRunningApplication) {
@@ -676,11 +689,19 @@ extension LauncherView {
     }
 
     func liveBrowserPageURLString() -> String? {
-        let pid = AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+        let previousApp = AppDelegate.shared?.previousFrontmostApp
+        let pid = previousApp?.processIdentifier ?? 0
+        // Fresh on-demand AX read — the only source that works for Safari Web Apps
+        // (no extension, no address bar, cached context may point at the dock).
+        let liveAXRead: String? = {
+            guard let previousApp, let bundleId = previousApp.bundleIdentifier else { return nil }
+            return AXContextReader.shared.liveCurrentURL(pid: pid, bundleId: bundleId)
+        }()
         return (SafariBrowserBridge.shared.isFresh ? SafariBrowserBridge.shared.latestContext?.url : nil)
             ?? AXWebReader.shared.cachedSnapshot(for: pid)?.url
             ?? axContext.currentURL
             ?? AXContextReader.shared.current.currentURL
+            ?? liveAXRead
             ?? SafariTabManager.shared.lastSelectedTab()?.url
     }
 
@@ -706,7 +727,10 @@ extension LauncherView {
             && searchState.contextApp == nil
             && searchState.selectedIndex == nil
             && !isContextDockChatConnected
-            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp == nil)
+            // Show in Global Context (no active selection), AND in an explicit app scope
+            // (l2.targetApp set) so the strip stays after scoping from the strip and the user
+            // can right-arrow to the next app. Hidden only for the plain frontmost Context Dock.
+            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp != nil)
     }
 
     var currentGlobalScopedBundleID: String? {
@@ -738,17 +762,24 @@ extension LauncherView {
                     && bundleID != frontmostBundle
                     && bundleID != scopedBundle
             }
-        // Finder always leads the strip in Global Context.
-        let finder = NSWorkspace.shared.runningApplications.first {
-            $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
-        }
+        // Finder leads the strip in Global Context as the entry into desktop file-search —
+        // but once Finder IS the active scope it owns the chip, so drop it from the strip
+        // (otherwise it shows twice: scope chip + strip icon). Show only the other apps.
+        let finder =
+            scopedBundle == "com.apple.finder"
+            ? nil
+            : NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
+            }
         return (Array([finder].compactMap { $0 }) + others)
             .prefix(5)
             .map { $0 }
     }
 
     var globalScopeCycleApps: [NSRunningApplication] {
-        guard isGlobalContextActive,
+        // Available in Global Context AND in an app scope entered from it (l2.targetApp set),
+        // so right-arrow keeps cycling to the next running app after the first scope.
+        guard isGlobalContextActive || l2.targetApp != nil,
             showContextInDock,
             !aiMode.isActive,
             !showMediaLayer,
@@ -791,14 +822,31 @@ extension LauncherView {
         if bundleID == "com.apple.finder" {
             detachFinderFolderSearch()
         }
+        // FINDER stays in Global Context → Global Context Finder desktop file search (the
+        // universal "search files & folders" mode). EVERY OTHER app EXITS Global Context into
+        // a clean Context Dock app scope (preserveGlobalContext = false → activateInlineDockAppScope
+        // clears globalContextActivation) so its menus build through the Context Dock surface
+        // and Cmd is inert. The running-app strip + right-arrow cycling stay alive in both via
+        // their l2.targetApp / isGlobalContextActive-aware gates.
+        let keepGlobalForFinder = bundleID == "com.apple.finder"
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
             queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "" : nil,
-            preserveGlobalContext: true
+            preserveGlobalContext: keepGlobalForFinder
         )
         if activated {
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Rebuild scoped results immediately (no Cmd "kick" needed). Finder's provider is
+            // the desktop/current-folder file index — prime it; every other app uses the
+            // cached-menu provider via the normal pill rebuild. Both run cache-only.
+            if isFinderDesktopOnlyMode {
+                primeFinderDesktopModeCache(commitQuery: q.lowercased(), preserveFocus: true)
+            } else {
+                scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
+            }
+            requestWindowSizeUpdate(reason: .panelChanged)
             // Run AFTER activateInlineDockAppScope's own focus toggle settles, so this is
             // the authoritative last focus claim — otherwise the racing toggles leave the
             // field unfocused (no caret, can't type) after a right-arrow scope.
@@ -830,44 +878,207 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// Apps matched from the query's word tokens ("mail recent notes" → Mail, Notes).
+    /// Fallback feedback for when no app/command/menu row matches the full query.
+    func tokenMatchedAppResults(for query: String) -> [SearchResult] {
+        let tokens = query.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 3 }
+        guard !tokens.isEmpty else { return [] }
+        var out: [SearchResult] = []
+        var seen = Set<String>()
+        for token in tokens {
+            for match in instantGlobalApplicationMatches(for: token, limit: 1) {
+                guard seen.insert(match.title.lowercased()).inserted else { continue }
+                out.append(match)
+            }
+            if out.count >= 5 { break }
+        }
+        return out
+    }
+
+    /// True when the trailing strip is in token-fallback mode: query typed, nothing
+    /// matched apps/commands/menus, but individual words match apps.
+    var globalStripShowsTokenMatches: Bool {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, shouldUsePureGlobalAppSearch else { return false }
+        guard cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+            let state = cachedGlobalGroupedState, state.totalCount == 0
+        else { return false }
+        return true
+    }
+
+    /// Apps that own the deferred menu-only matches ("save new notes" → Notes) —
+    /// shown as strip pills while the menu sheet is collapsed behind ↓.
+    var globalStripMenuOwnerApps: [(bundleId: String, icon: NSImage?, name: String)] {
+        guard !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch else { return [] }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty,
+            cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+            let state = cachedGlobalGroupedState,
+            state.appResults.isEmpty, state.totalCount > 0
+        else { return [] }
+        var seen = Set<String>()
+        var owners: [(bundleId: String, icon: NSImage?, name: String)] = []
+        let ownerBundleIds =
+            state.menuPills.map(\.sourceBundleId)
+            + state.appMenuGroups.compactMap { $0.pills.first?.sourceBundleId }
+        for bundleId in ownerBundleIds {
+            let trimmed = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed)
+            let icon = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
+            let name = url.map {
+                FileManager.default.displayName(atPath: $0.path)
+                    .replacingOccurrences(of: ".app", with: "")
+            } ?? trimmed
+            owners.append((trimmed, icon, name))
+            if owners.count >= 5 { break }
+        }
+        return owners
+    }
+
     var globalRunningAppStrip: some View {
-        let apps = globalRunningAppStripApps
-        if !apps.isEmpty {
-            HStack(spacing: 5) {
-                ForEach(apps, id: \.processIdentifier) { app in
-                    Button {
-                        // Running-app pills are app switchers — activate, unminimize, front,
-                        // and centre the window. They do NOT scope to the app's menus.
-                        activateRunningAppFromDock(app)
-                    } label: {
-                        if let icon = resolvedRunningAppIcon(for: app) {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 17, height: 17)
-                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        } else {
-                            Image(systemName: "app")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary.opacity(0.75))
-                                .frame(width: 17, height: 17)
+        // Deferred menu-only matches: strip shows the OWNING app's pill (Messages
+        // for "new message"); ↓ or tap expands the sheet.
+        let menuOwners = globalStripMenuOwnerApps
+        // Deferred single result + token fallback share the SearchResult pill row.
+        let tokenResults: [SearchResult] = {
+            guard menuOwners.isEmpty, !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch
+            else { return [] }
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !q.isEmpty,
+                cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
+                let state = cachedGlobalGroupedState
+            else { return [] }
+            // Exactly one row → show it as the pill instead of a half-empty sheet.
+            if state.appResults.count == 1, state.menuPills.isEmpty, state.appMenuGroups.isEmpty {
+                return state.appResults
+            }
+            if state.totalCount == 0 {
+                return tokenMatchedAppResults(for: q)
+            }
+            return []
+        }()
+        let apps = menuOwners.isEmpty && tokenResults.isEmpty ? globalRunningAppStripApps : []
+        return Group {
+            if !menuOwners.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(menuOwners, id: \.bundleId) { owner in
+                        Button {
+                            _ = expandGlobalContextTypingMatch(selectFirst: false)
+                        } label: {
+                            if let icon = owner.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help("\(owner.name) — press ↓ to show results")
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+            } else if !tokenResults.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(Array(tokenResults.enumerated()), id: \.offset) { _, result in
+                        Button {
+                            result.action()
+                            searchState.query = ""
+                        } label: {
+                            if let icon = result.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help(result.title)
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
+            } else if !apps.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(apps, id: \.processIdentifier) { app in
+                        Button {
+                            // Running-app pills are app switchers — activate, unminimize, front,
+                            // and centre the window. They do NOT scope to the app's menus.
+                            activateRunningAppFromDock(app)
+                        } label: {
+                            if let icon = resolvedRunningAppIcon(for: app) {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 17, height: 17)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            } else {
+                                Image(systemName: "app")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.secondary.opacity(0.75))
+                                    .frame(width: 17, height: 17)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .onHover { hovering in
+                            guard acceptsMouseDrivenDockInteraction else { return }
+                            if hovering {
+                                RunningAppPreviewService.shared.scheduleShow(
+                                    for: app,
+                                    icon: resolvedRunningAppIcon(for: app)
+                                )
+                            } else {
+                                RunningAppPreviewService.shared.scheduleHide()
+                            }
                         }
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .help("Switch to \(app.localizedName ?? "app")")
                 }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
+                            lineWidth: 0.7)
+                )
+                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
             }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
-                        lineWidth: 0.7)
-            )
-            .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
         }
     }
 
@@ -927,6 +1138,18 @@ extension LauncherView {
         let title = page.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty { return title }
         return URL(string: page.url)?.host ?? currentBrowserPageURL()?.host
+    }
+
+    /// Favicon URL for the connected browser page — lets chat headers show the
+    /// site icon so the user sees WHICH page they are chatting with.
+    var connectedBrowserPageFaviconURL: URL? {
+        guard showContextInDock,
+            isContextDockChatConnected
+        else { return nil }
+        let host = webResearch.pages.last.flatMap { URL(string: $0.url)?.host }
+            ?? currentBrowserPageURL()?.host
+        guard let host, !host.isEmpty else { return nil }
+        return URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64")
     }
 
     func syncSafariTabStrip(force: Bool = false) {

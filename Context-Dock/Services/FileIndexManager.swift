@@ -133,6 +133,11 @@ final class FileIndexManager: ObservableObject {
         var seen = Set<String>()
         var scored: [(IndexedFile, Double)] = []
 
+        for file in specialFolderMatches(query: q) {
+            guard seen.insert(file.path).inserted else { continue }
+            scored.append((file, 5_000))
+        }
+
         // 1. Prefix match on indexed names
         let prefix = String(q.prefix(4))
         for (key, files) in nameIndex where key.hasPrefix(prefix) {
@@ -176,6 +181,33 @@ final class FileIndexManager: ObservableObject {
                 filePath: file.path,
                 contactData: nil
             )
+        }
+    }
+
+    private func specialFolderMatches(query q: String) -> [IndexedFile] {
+        let aliases = [
+            "application", "applications", "apps", "app folder", "application folder",
+            "mac applications", "macos applications", "macintosh hd applications"
+        ]
+        guard aliases.contains(where: { $0.hasPrefix(q) || q.hasPrefix($0) || $0.contains(q) }) else {
+            return []
+        }
+
+        let candidates: [(title: String, path: String, score: Double)] = [
+            ("Applications", "/Applications", 5_000),
+            ("System Applications", "/System/Applications", 4_800),
+            ("Utilities", "/Applications/Utilities", 4_600),
+            ("System Utilities", "/System/Applications/Utilities", 4_500)
+        ]
+
+        return candidates.compactMap { candidate in
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir),
+                isDir.boolValue
+            else { return nil }
+            var attrs: [FileAttributeKey: Any] = [.type: FileAttributeType.typeDirectory]
+            attrs[.modificationDate] = Date.distantPast
+            return IndexedFile(url: URL(fileURLWithPath: candidate.path), attributes: attrs)
         }
     }
 

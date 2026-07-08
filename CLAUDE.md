@@ -18,18 +18,27 @@ Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specifi
 
 Architecture truth files live in `docs/architecture/`.
 
-## Build
+## Build & run (canonical — use the script)
 
 This is a pure Xcode project — no Makefile, no SPM package at the root.
 
+**After every code edit, build + relaunch with the shared script — never raw `xcodebuild` + `open`:**
+
 ```bash
-# Build from CLI (run from repo root)
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Debug build
+./scripts/dev-run.sh     # builds Debug into .build/XcodeDerivedData and relaunches THAT app
+```
 
-# Clean + build
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock clean build
+Why this rule exists: both Claude and Codex work in this repo (VS Code + desktop apps). Raw
+`xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
+agents' build — launching by `find ~/Library/Developer/Xcode/DerivedData …` has shipped a
+**stale app** before. `dev-run.sh` is the single source of truth for which binary runs;
+Codex follows the same rule via AGENTS.md.
 
-# Build for release
+```bash
+# Build only, no launch (same DerivedData as dev-run.sh)
+./scripts/build-debug.sh
+
+# Build for release (only via ship.sh in practice)
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 
@@ -174,6 +183,24 @@ These skills are installed and activate automatically based on your request:
 | Swift Package Manager / dependencies | swiftpm |
 | GitHub PRs / issues | github |
 | Address PR review comments | gh-address-comments |
+| Modern SwiftUI API review (deep dive) | swiftui-pro |
+| Swift 6.2 concurrency review (actors, `@concurrent`, isolation) | swift-concurrency-pro |
+| App Intents / Siri / Shortcuts / Spotlight schemas | app-intents |
+| Core Data stack, threading, migrations, CloudKit sync | core-data-expert |
+| SwiftUI accessibility audit (VoiceOver, Dynamic Type) | swiftui-accessibility-auditor |
+| UIKit accessibility audit (iOS/iPadOS) | uikit-accessibility-auditor |
+| AppKit accessibility audit (macOS) | appkit-accessibility-auditor |
+
+Note: `swiftui-pro` overlaps with `swiftui-patterns` (the former is a deep API/hygiene review skill; the latter covers app architecture/scene structure) — use whichever matches the task. Similarly, `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general AppKit bridging).
+
+Vendored (not plugin-installed) skills above live in `Context-Dock/skills/<name>/SKILL.md`, copied directly from their upstream repos:
+- swiftui-pro ← https://github.com/twostraws/SwiftUI-Agent-Skill
+- swift-concurrency-pro ← https://github.com/twostraws/Swift-Concurrency-Agent-Skill
+- app-intents ← https://github.com/n0an/App-Intents-Agent-Skill
+- core-data-expert ← https://github.com/AvdLee/Core-Data-Agent-Skill
+- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ← https://github.com/rgmez/apple-accessibility-skills (shared docs in `skills/apple-accessibility-shared/`)
+
+These are plain files, not yet under `.claude/skills/`, so they won't auto-trigger via the skill-discovery mechanism the plugin-installed skills above use. Move them into `.claude/skills/` (e.g. `mv skills .claude/skills`) if you want Claude Code to auto-discover them the same way.
 
 ## Apple Documentation
 

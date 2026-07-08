@@ -119,6 +119,7 @@ struct LauncherView: View {
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
     @State var finderDesktopRecentPills: [DockPill] = []
     @State var finderDesktopIndexedPills: [DockPill] = []  // all user-folder files, pre-loaded for instant filter
+    @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
@@ -179,11 +180,11 @@ struct LauncherView: View {
     // Context in dock state
     var showContextInDock: Bool {
         get { appState.contextDock.isActive }
-        nonmutating set { appState.contextDock.isActive = newValue }
+        nonmutating set { appState.setContextDockActiveDeferred(newValue) }
     }
     var globalContextActivation: GlobalContextActivation? {
         get { appState.globalContext.activation }
-        nonmutating set { appState.globalContext.activation = newValue }
+        nonmutating set { appState.setGlobalContextActivationDeferred(newValue) }
     }
     var isGlobalContextActive: Bool { globalContextActivation != nil }
 
@@ -443,6 +444,17 @@ struct LauncherView: View {
         activeSelection != nil || frozenSelectionText != nil
     }
 
+    /// Launch-time Selection Scope freezes its payload into the activation
+    /// (not into activeSelection) — backspace-exit must recognize that too.
+    var globalContextActivationHasFrozenPayload: Bool {
+        guard let activation = globalContextActivation else { return false }
+        return activation.frozenText?.isEmpty == false || !activation.frozenFilePaths.isEmpty
+    }
+
+    var hasSelectionScopeSurface: Bool {
+        hasActiveDockContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
+    }
+
     var shouldUsePureGlobalAppSearch: Bool {
         // Only an EXPLICIT Finder scope (the inline Finder chip) means "search
         // files" and should beat global app search. Do NOT use the broad
@@ -451,8 +463,16 @@ struct LauncherView: View {
         // (no chip) into file search instead of apps/commands/running apps.
         let explicitFinderScope =
             globalInlineAppScope?.bundleId == "com.apple.finder"
+        // The clipboard pill appears whenever the pasteboard changes (0.75s watcher)
+        // — it must NOT hijack the surface while the user is typing a query, or
+        // pure global search dies mid-keystroke (↓ expansion silently bails).
+        // It only claims the surface on an empty field, where clipboard scope lives.
+        let clipboardClaimsSurface =
+            showGlobalClipboardPill && !globalClipboardText.isEmpty
+            && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return isGlobalContextActive
             && !hasActiveDockContextSelection
+            && !clipboardClaimsSurface
             && l2.targetApp == nil
             && !explicitFinderScope
             && searchState.activeSmartQueryKey == nil
@@ -473,16 +493,19 @@ struct LauncherView: View {
 
         // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
         // an empty query — so it's visible the moment the launcher opens with a selection.
-        if isGlobalContextActive && hasActiveDockContextSelection { return true }
+        if isGlobalContextActive && hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
-            return !q.isEmpty
+            guard !q.isEmpty else { return false }
+            return hasExpandedGlobalContextResults
         }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
-        let pills = pillQuery.isEmpty ? [] : contextDockViewModel.visiblePills
-        let hasActiveContextSelection = hasActiveDockContextSelection
+        // Scoped app shows menus on empty query (see l2DockRowPresentation).
+        let pills =
+            (pillQuery.isEmpty && l2.targetApp == nil) ? [] : contextDockViewModel.visiblePills
+        let hasActiveContextSelection = hasSelectionScopeSurface
 
         let showPinnedRow =
             q.isEmpty
@@ -508,7 +531,7 @@ struct LauncherView: View {
     }
 
     func selectionScopedDockPills(_ pills: [DockPill]) -> [DockPill] {
-        guard isGlobalContextActive, hasActiveDockContextSelection else { return pills }
+        guard isGlobalContextActive, hasSelectionScopeSurface else { return pills }
         return pills.filter { pill in
             guard !pill.isSeparator else { return false }
             let badge = (pill.badge ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -602,7 +625,7 @@ struct LauncherView: View {
             scope.isExplicitAppScope ? "explicit" : "implicit",
             scope.isGlobalScope ? "global" : "local",
             isGlobalContextActive ? "globalActive" : "contextDock",
-            hasActiveDockContextSelection ? "selection" : "noSelection",
+            hasSelectionScopeSurface ? "selection" : "noSelection",
         ].joined(separator: "|")
         if let cached = contextDockViewModel.cachedPreviewPills(
             query: q,
@@ -1031,7 +1054,7 @@ struct LauncherView: View {
     }
 
     func hasFrontmostMenuPillsInCurrentCache(for query: String) -> Bool {
-        guard isGlobalContextActive, !hasActiveDockContextSelection else { return false }
+        guard isGlobalContextActive, !hasSelectionScopeSurface else { return false }
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return false }
         guard !resolveDockScope(for: q).isExplicitAppScope else { return false }
@@ -1514,16 +1537,20 @@ struct LauncherView: View {
     /// Clears the input field afterwards so the dock is ready for the next command.
     func executeFirstOrFocusedPill() {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pills = buildDockPills(query: q)
+        // Focused index refers to the rendered (clustered) order — execute from the
+        // same order or Enter runs a different row than the highlighted one.
+        let rendered = renderedOrderDockPills(for: q)
+        let pills = rendered.isEmpty ? buildDockPills(query: q) : rendered
         guard let idx = l2.focusedPillIndex, idx < pills.count else { return }
         let pill =
             pills[idx].isSeparator
             ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
             : pills[idx]
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
         executeDockPill(pill)
         // Clear input and focus so dock returns to default state
         searchState.query = ""
-        l2.focusedPillIndex = nil
     }
 
     func executeDockPill(_ pill: DockPill) {
@@ -1591,7 +1618,7 @@ struct LauncherView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
         guard isGlobalContextActive || l2.targetApp != nil else { return nil }
-        guard !(isGlobalContextActive && hasActiveDockContextSelection) else { return nil }
+        guard !(isGlobalContextActive && hasSelectionScopeSurface) else { return nil }
         if let target = L2AppActionRouter.shared.explicitAppTarget(for: q) {
             return target.actionQuery
         }
@@ -1642,26 +1669,38 @@ struct LauncherView: View {
     @discardableResult
     func executeFocusedOrDirectAppPillIfNeeded() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pills = buildDockPills(query: q)
+        // Prefer the pill list the user is LOOKING at (rendered, clustered order),
+        // so Enter executes the visibly highlighted row. Fall back to a fresh build when
+        // the cached list hasn't resolved yet (debounced pipeline mid-flight).
+        let displayed = renderedOrderDockPills(for: q)
+        let pills = displayed.contains(where: { !$0.isSeparator })
+            ? displayed
+            : buildDockPills(query: q)
         guard !pills.isEmpty else { return false }
 
         if let idx = l2.focusedPillIndex, idx < pills.count {
-            executeFirstOrFocusedPill()
+            let pill =
+                pills[idx].isSeparator
+                ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
+                : pills[idx]
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            executeDockPill(pill)
+            searchState.query = ""
             return true
         }
 
-        // The first selectable pill is shown pre-selected while typing (render default). Enter must
-        // launch it — matching the visible highlight / ghost text — even when it isn't a recognised
-        // "direct app action" query. Question-style queries return no pills (handled upstream), so
-        // this never steals the Enter-to-AI path.
-        let hasDefaultHighlightedPill =
-            !q.isEmpty && pills.contains(where: { !$0.isSeparator })
         let isDirectAction = directAppActionQuery(for: q).map(isDirectAppActionQuery) ?? false
-        guard hasDefaultHighlightedPill || isDirectAction else {
+        guard let defaultPill = pills.first(where: { !$0.isSeparator }),
+            shouldExecuteDefaultDockPillOnSubmit(
+                query: q,
+                pill: defaultPill,
+                isDirectAction: isDirectAction
+            )
+        else {
             return false
         }
 
-        let defaultPill = pills.first(where: { !$0.isSeparator })
         let isPureScopedSelection: Bool = {
             guard let target = l2.targetApp else { return false }
             let aliases = dockPillAppAliases(appName: target.name, bundleId: target.bundleId)
@@ -1672,7 +1711,6 @@ struct LauncherView: View {
             ? (pills.first(where: { !$0.isSeparator && $0.rankingKind != "appLaunch" })
                 ?? defaultPill)
             : defaultPill
-        guard let pill else { return false }
 
         let scope = resolveDockScope(for: q)
         let isScopedCLIQuery =
@@ -1683,10 +1721,53 @@ struct LauncherView: View {
             return false
         }
 
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
         executeDockPill(pill)
         searchState.query = ""
-        l2.focusedPillIndex = nil
         return true
+    }
+
+    func shouldExecuteDefaultDockPillOnSubmit(
+        query: String,
+        pill: DockPill,
+        isDirectAction: Bool
+    ) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+
+        // Focused rows always execute before this helper. Nil-focus/default-first must
+        // not steal Enter from scoped chat or question-style input.
+        if isContextDockChatRoutingLocked || l2.chatArmed || l2.showChatPopover { return false }
+        if isQuestionLikeAppPartialQuery(q) { return false }
+        if isDirectAction { return true }
+
+        let haystack = [
+            pill.name,
+            pill.badge ?? "",
+            pill.menuContext ?? "",
+            pill.sourceAppName,
+            pill.searchTerms.joined(separator: " "),
+        ]
+        .joined(separator: " ")
+        .lowercased()
+        .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+
+        let queryTokens = q
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .map(String.init)
+        guard !queryTokens.isEmpty else { return false }
+        let rowMatchesQuery = queryTokens.allSatisfy { haystack.contains($0) }
+        guard rowMatchesQuery else { return false }
+
+        if pill.rankingKind == "appSwitch" { return true }
+        if ["menu", "submenuParent", "submenuChild", "nativeWindow", "browserCommand"]
+            .contains(pill.rankingKind)
+        {
+            return true
+        }
+        return false
     }
 
     @discardableResult
@@ -1931,10 +2012,18 @@ struct LauncherView: View {
                     // Modern inline dock feedback (tick at the dock's trailing edge
                     // + ghost message in the input), not a separate floating pill.
                     DockActionFeedback.showResult(
-                        result.message, icon: "checkmark.circle.fill", success: true)
+                        result.message,
+                        icon: "checkmark.circle.fill",
+                        success: true,
+                        subject: result.app?.localizedName,
+                        bundleID: result.app?.bundleIdentifier ?? bundleID)
                 case .unavailable, .launchFailed:
                     DockActionFeedback.showResult(
-                        result.message, icon: "exclamationmark.triangle.fill", success: false)
+                        result.message,
+                        icon: "exclamationmark.triangle.fill",
+                        success: false,
+                        subject: result.app?.localizedName,
+                        bundleID: result.app?.bundleIdentifier ?? bundleID)
                 }
 
                 // Quitting an app from its own scope: drop that app's pill so the
@@ -1959,7 +2048,7 @@ struct LauncherView: View {
     func crossAppMenuGroups(for query: String, limit: Int = 12) -> [AppMenuGroup] {
         guard !query.isEmpty,
             isGlobalContextActive,
-            !hasActiveDockContextSelection,
+            !hasSelectionScopeSurface,
             globalInlineAppScope == nil
         else { return [] }
         let lower = query.lowercased()
@@ -2317,9 +2406,35 @@ struct LauncherView: View {
     }
 
     // Shared condition: whether any results panel should be visible.
+    var hasMatchingGlobalContextResults: Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
+        if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
+        return !matchDockIconRowsForExpandedSheet(query: q).isEmpty
+    }
+
+    var hasExpandedGlobalContextResults: Bool {
+        guard isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil,
+            globalContextViewModel.typingSnapshot.phase == .expanded
+        else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return false }
+        if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
+        if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
+        return !matchDockIconRowsForExpandedSheet(query: q).isEmpty
+    }
+
     var hasResultsToShow: Bool {
         guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
+        if hasExpandedGlobalContextResults { return true }
         return !searchState.results.isEmpty
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (shouldShowContextDockAppPanel
@@ -2375,6 +2490,16 @@ struct LauncherView: View {
                 query: searchState.query
             ) {
                 searchResultsContent
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        )
+                    )
+                    .animation(
+                        .spring(response: 0.24, dampingFraction: 0.84),
+                        value: searchState.results.count
+                    )
             }
         case .generalChat, .contextDockChat, .mediaDock:
             EmptyView()
@@ -2977,64 +3102,12 @@ struct LauncherView: View {
                     Label("Send Message", systemImage: "message")
                 }
             } else if result.type == .application {
-                if settings.isPinned(path: result.subtitle) {
-                    Button {
-                        if let pinnedApp = settings.pinnedApps.first(where: {
-                            $0.path == result.subtitle
-                        }) {
-                            settings.unpinApp(pinnedApp)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        settings.pinApp(name: result.title, path: result.subtitle)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
+                EmptyView()
             } else if result.type == .shortcut {
-                let shortcutPath = result.subtitle.isEmpty ? result.title : result.subtitle
-                if settings.pinnedApps.contains(where: { $0.path == shortcutPath }) {
-                    Button {
-                        if let pinnedItem = settings.pinnedApps.first(where: {
-                            $0.path == shortcutPath
-                        }) {
-                            settings.unpinApp(pinnedItem)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        settings.pinItem(name: result.title, path: shortcutPath, type: .shortcut)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
+                EmptyView()
             } else if let filePath = result.filePath,
                 result.type == .file || result.type == .folder || result.type == .document
             {
-                if settings.pinnedApps.contains(where: { $0.path == filePath }) {
-                    Button {
-                        if let pinnedItem = settings.pinnedApps.first(where: { $0.path == filePath }
-                        ) {
-                            settings.unpinApp(pinnedItem)
-                        }
-                    } label: {
-                        Label("Unpin from Launcher", systemImage: "pin.slash")
-                    }
-                } else {
-                    Button {
-                        let itemType: PinnedApp.PinnedItemType =
-                            result.type == .folder ? .folder : .file
-                        settings.pinItem(name: result.title, path: filePath, type: itemType)
-                    } label: {
-                        Label("Pin to Launcher", systemImage: "pin")
-                    }
-                }
-                Divider()
                 Button {
                     NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: "")
                 } label: {

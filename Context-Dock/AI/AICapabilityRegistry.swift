@@ -91,12 +91,21 @@ final class CapabilityRegistry {
         capabilitiesByID[capability.id] = capability
     }
 
+    func registerAppleNotesMCPIfNeeded() {
+        guard AppSettings.shared.noteMCPEnabled else { return }
+        guard capabilitiesByID["notes.search"] == nil else { return }
+        AppleNotesMCPCapabilities.register(in: self)
+    }
+
     func promptBlock(for bundleID: String?) -> String {
         let entries = capabilities(for: bundleID).map { capability in
             let fields = capability.inputSchema.fields.map(\.name).joined(separator: ", ")
             return "- \(capability.id): \(capability.title) | risk=\(capability.riskLevel.rawValue) | input=[\(fields)]"
         }
-        return "Registered capabilities:\n" + entries.joined(separator: "\n")
+        return [
+            "Registered capabilities:\n" + entries.joined(separator: "\n"),
+            AppWorkflowToolCatalog.shared.promptBlock(for: bundleID)
+        ].joined(separator: "\n\n")
     }
 
     private func registerBuiltIns() {
@@ -104,9 +113,23 @@ final class CapabilityRegistry {
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
+        AppWorkflowToolCatalog.shared.register(in: self)
         // Apple Notes MCP — only registered when explicitly enabled
         if AppSettings.shared.noteMCPEnabled {
             AppleNotesMCPCapabilities.register(in: self)
+        }
+        // Apple system app MCP capabilities — each guarded by its own flag
+        if AppSettings.shared.calendarMCPEnabled {
+            AppleCalendarMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.contactsMCPEnabled {
+            AppleContactsMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.remindersMCPEnabled {
+            AppleRemindersMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.githubMCPEnabled {
+            GitHubMCPCapabilities.register(in: self)
         }
 
         register(
@@ -345,6 +368,9 @@ final class AIResponseParser {
         guard let data = cleaned.data(using: .utf8),
               let plan = try? JSONDecoder().decode(AIActionPlan.self, from: data)
         else {
+            throw AICapabilityError.invalidPlan
+        }
+        guard !plan.capability.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AICapabilityError.invalidPlan
         }
         guard CapabilityRegistry.shared.capability(id: plan.capability) != nil else {

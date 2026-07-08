@@ -126,6 +126,23 @@ class TerminalAIBridge: ObservableObject {
 
     /// Process an AI-generated terminal command
     func processAICommand(_ command: String, purpose: String) async -> (success: Bool, output: String) {
+        // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
+        // reach the shell. URL-shaped placeholders are substituted with the live page
+        // URL when we have one; anything else unresolved blocks with a clear message.
+        var command = command
+        switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
+        case .clean:
+            break
+        case .resolved(let fixed):
+            command = fixed
+        case .unresolvable(let token):
+            return (
+                false,
+                "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
+                + "the current page. Open the exact page (e.g. the video you want) and ask again."
+            )
+        }
+
         let classifier = TerminalCommandClassifier.shared
         let classification = classifier.classify(command)
 
@@ -201,6 +218,36 @@ class TerminalAIBridge: ObservableObject {
         pendingApproval = nil
     }
 
+    /// Run a command the user already approved via an inline chat card. Applies the same
+    /// placeholder resolution + critical-command block as `processAICommand`, but NEVER
+    /// re-prompts and NEVER touches the pending-approval continuation. Uses the reliable
+    /// background/terminal executor (real exit code + captured output), not a PTY marker
+    /// wait — so an inline "Approve & Run" always produces output.
+    func runPreApprovedCommand(_ command: String) async -> (success: Bool, output: String) {
+        var command = command
+        switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
+        case .clean:
+            break
+        case .resolved(let fixed):
+            command = fixed
+        case .unresolvable(let token):
+            return (
+                false,
+                "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
+                + "the current page. Open the exact page and ask again."
+            )
+        }
+        let classification = TerminalCommandClassifier.shared.classify(command)
+        if classification.riskLevel == .critical {
+            let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
+            if let alternative = classification.suggestedAlternative {
+                return (false, "\(message)\n\nAlternative: \(alternative)")
+            }
+            return (false, message)
+        }
+        return await executeCommand(command, classification: classification, wasApproved: true)
+    }
+
     // MARK: - Direct Execution
 
     /// Execute a command directly in the terminal
@@ -240,7 +287,126 @@ class TerminalAIBridge: ObservableObject {
         // Log to audit trail
         logExecution(execution)
 
+        // Download / conversion finished with a real file → badge it in the
+        // notification scope so the user can find + reveal the result.
+        if exitCode == 0, let produced = Self.detectProducedFile(command: command, output: output) {
+            ILauncherNotificationManager.shared.fileReady(
+                name: produced.lastPathComponent, url: produced)
+        }
+
         return (exitCode == 0, output)
+    }
+
+    // MARK: - Placeholder resolution
+
+    enum PlaceholderResolution {
+        case clean
+        case resolved(String)
+        case unresolvable(String)
+    }
+
+    /// Live page URL usable to fill URL-shaped placeholders (browser or Safari Web App).
+    private func currentPageURLForSubstitution() -> String? {
+        if SafariBrowserBridge.shared.isFresh,
+            let url = SafariBrowserBridge.shared.latestContext?.url, !url.isEmpty {
+            return url
+        }
+        let ctx = AXContextReader.shared.current
+        if let url = ctx.currentURL, !url.isEmpty { return url }
+        if let app = AppDelegate.shared?.previousFrontmostApp,
+            let bundleId = app.bundleIdentifier,
+            let live = AXContextReader.shared.liveCurrentURL(
+                pid: app.processIdentifier, bundleId: bundleId) {
+            return live
+        }
+        return nil
+    }
+
+    /// Finds AI placeholder tokens (ALL_CAPS_WITH_UNDERSCORES, `<angle placeholders>`).
+    /// URL/link/video/page-shaped ones are replaced with `pageURL`; any other
+    /// placeholder makes the command unresolvable.
+    static func resolvePlaceholders(in command: String, pageURL: String?) -> PlaceholderResolution {
+        let patterns = [
+            "[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+",   // CURRENT_VIDEO_URL, PASTE_LINK_HERE
+            "<[A-Za-z][A-Za-z0-9 _-]*>",       // <url>, <video url>
+        ]
+        var result = command
+        var didSubstitute = false
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let matches = regex.matches(
+                in: result, range: NSRange(result.startIndex..., in: result))
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                let token = String(result[range])
+                let upper = token.uppercased()
+                // Real shell tokens like $HOME or ${HTTP_PROXY} must survive.
+                if range.lowerBound > result.startIndex,
+                    ["$", "{", "%"].contains(String(result[result.index(before: range.lowerBound)])) {
+                    continue
+                }
+                // Env assignments (HTTP_PROXY=…) are real shell syntax, not placeholders.
+                if range.upperBound < result.endIndex, result[range.upperBound] == "=" {
+                    continue
+                }
+                let urlShaped = ["URL", "LINK", "VIDEO", "PAGE", "ADDRESS"].contains {
+                    upper.contains($0)
+                }
+                if urlShaped, let pageURL, !pageURL.isEmpty {
+                    result.replaceSubrange(range, with: pageURL)
+                    didSubstitute = true
+                } else if upper.contains("_") || token.hasPrefix("<") {
+                    return .unresolvable(token)
+                }
+            }
+        }
+        return didSubstitute ? .resolved(result) : .clean
+    }
+
+    // MARK: - Produced-file detection (downloads, conversions)
+
+    /// Best-effort: find the file a download/convert command produced, from its
+    /// output ("Destination: …", "Merging formats into …") or its output argument.
+    static func detectProducedFile(command: String, output: String) -> URL? {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+
+        func existingURL(_ rawPath: String) -> URL? {
+            let path = rawPath.trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+            guard !path.isEmpty else { return nil }
+            let candidates = path.hasPrefix("/") || path.hasPrefix("~")
+                ? [URL(fileURLWithPath: (path as NSString).expandingTildeInPath)]
+                : [
+                    home.appendingPathComponent(path),
+                    home.appendingPathComponent("Downloads/\(path)"),
+                    URL(fileURLWithPath: fm.currentDirectoryPath).appendingPathComponent(path),
+                ]
+            return candidates.first { fm.fileExists(atPath: $0.path) }
+        }
+
+        // yt-dlp / youtube-dl / ffmpeg-style output lines, last match wins
+        for line in output.components(separatedBy: .newlines).reversed() {
+            if let r = line.range(of: "Destination: ") {
+                if let url = existingURL(String(line[r.upperBound...])) { return url }
+            }
+            if let r = line.range(of: "Merging formats into \"") {
+                let rest = String(line[r.upperBound...])
+                if let end = rest.firstIndex(of: "\""),
+                    let url = existingURL(String(rest[..<end])) { return url }
+            }
+            if let r = line.range(of: "has already been downloaded") {
+                let prefix = String(line[..<r.lowerBound])
+                    .replacingOccurrences(of: "[download]", with: "")
+                if let url = existingURL(prefix) { return url }
+            }
+        }
+
+        // curl -o / wget -O / ffmpeg <out> / HandBrakeCLI -o: explicit output argument
+        let tokens = command.components(separatedBy: .whitespaces)
+        for (idx, token) in tokens.enumerated() where ["-o", "-O", "--output"].contains(token) {
+            if idx + 1 < tokens.count, let url = existingURL(tokens[idx + 1]) { return url }
+        }
+        return nil
     }
 
     // MARK: - TUI Detection

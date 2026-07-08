@@ -3,6 +3,34 @@ import Foundation
 import SwiftUI
 
 extension LauncherView {
+    func prewarmFinderContextualActionsForSelection(delayNanoseconds: UInt64 = 180_000_000) {
+        let selectedURLs = effectiveFinderSelectionURLsForPills()
+        guard !selectedURLs.isEmpty else { return }
+        guard !FinderContextualMenuActionSource.shared.hasFreshCache(for: selectedURLs) else {
+            return
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard self.isGlobalContextActive, self.hasActiveDockContextSelection else { return }
+
+            let currentURLs = self.effectiveFinderSelectionURLsForPills()
+            guard !currentURLs.isEmpty else { return }
+            guard !FinderContextualMenuActionSource.shared.hasFreshCache(for: currentURLs) else {
+                return
+            }
+
+            let actions = FinderContextualMenuActionSource.shared.actions(for: currentURLs)
+            guard !actions.isEmpty else { return }
+
+            self.scheduleDockPillRebuild(
+                query: self.searchState.query,
+                delayNanoseconds: 0,
+                refreshContext: false
+            )
+        }
+    }
+
     func buildMacOSExtensionActionPills(
         query rawQuery: String,
         excludingTitles: Set<String> = []
@@ -105,7 +133,13 @@ extension LauncherView {
         let selectedURLs = effectiveFinderSelectionURLsForPills()
         guard !selectedURLs.isEmpty else { return [] }
         let normalizedQuery = normalizedDockPillText(query)
-        let actions = FinderContextualMenuActionSource.shared.cachedActions(for: selectedURLs)
+        let actions: [FinderContextualMenuAction] = {
+            if FinderContextualMenuActionSource.shared.hasFreshCache(for: selectedURLs) {
+                return FinderContextualMenuActionSource.shared.cachedActions(for: selectedURLs)
+            }
+            guard normalizedQuery.count >= 2 else { return [] }
+            return FinderContextualMenuActionSource.shared.actions(for: selectedURLs)
+        }()
 
         return actions.compactMap { action -> DockPill? in
             let normalizedTitle = normalizedDockPillText(action.title)

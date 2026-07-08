@@ -9,5 +9,9 @@ xcodebuild \
   -scheme Context-Dock \
   -configuration Debug \
   -derivedDataPath "$DERIVED_DATA_DIR" \
-  CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" \
+  CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
   build
+# Default is SIGNED (Apple Development): unsigned ad-hoc builds have no stable
+# designated requirement, so macOS re-prompts Accessibility/Keychain on every
+# launch — deadly for an AX-driven app. Export CODE_SIGNING_ALLOWED=NO only for
+# environments without the signing cert (CI).

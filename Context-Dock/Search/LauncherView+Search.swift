@@ -78,7 +78,7 @@ extension LauncherView {
 
             // L1 Global Context with no selection is app-control mode; L2 renders
             // the app/app-menu rows, so L1 file search must stay out.
-            if !hasActiveDockContextSelection {
+            if !hasSelectionScopeSurface {
                 debounceTask?.cancel()
                 searchState.results = []
                 searchState.selectedIndex = nil

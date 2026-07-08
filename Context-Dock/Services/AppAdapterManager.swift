@@ -358,6 +358,30 @@ final class AppAdapterManager: ObservableObject {
         mirrorVirtualScopeAdaptersIntoGlobalCommands(deduped)
         loadErrors = errors
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
+        await seedStarterActionsIntoEmptyAdapters()
+        await AdapterIntegrationSeeder.seedIfNeeded()
+        AdapterSkillSeeder.seedIfNeeded()
+    }
+
+    /// One-time backfill: any existing adapter with zero actions gets its starter set,
+    /// so no adapter ever shows "No actions yet". Seeds each bundle id at most once —
+    /// a user who deletes the starter action won't see it come back.
+    private func seedStarterActionsIntoEmptyAdapters() async {
+        let empties = adapters.filter {
+            $0.actions.isEmpty
+                && !$0.bundleId.hasPrefix("scope://")
+                && !AdapterStarterActions.alreadySeeded($0.bundleId)
+        }
+        guard !empties.isEmpty else { return }
+        for adapter in empties {
+            var updated = adapter
+            updated.actions = AdapterStarterActions.starters(
+                for: adapter.bundleId, appName: adapter.appName)
+            updated.isBuiltIn = false
+            AdapterStarterActions.markSeeded(adapter.bundleId)
+            persistAdapter(updated, to: adapter.sourceFileURL ?? adapterFileURL(for: updated))
+        }
+        await loadUserAdapters()
     }
 
     @discardableResult
@@ -565,8 +589,9 @@ final class AppAdapterManager: ObservableObject {
             icon: trimmedIcon.isEmpty ? "app.fill" : trimmedIcon,
             isEnabled: true,
             isBuiltIn: false,
-            actions: []
+            actions: AdapterStarterActions.starters(for: trimmedBundleId, appName: trimmedAppName)
         )
+        AdapterStarterActions.markSeeded(trimmedBundleId)
         persistAdapter(adapter, to: fileURL)
         await loadUserAdapters()
     }

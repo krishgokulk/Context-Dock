@@ -124,6 +124,7 @@ extension LauncherView {
         let label: String
         let subtitle: String?
         let hoverKey: String
+        let previewApp: NSRunningApplication?
         let action: () -> Void
         let destructiveAction: (() -> Void)?
         let removeAction: (() -> Void)?
@@ -137,13 +138,15 @@ extension LauncherView {
         var items: [DockPillItem] = []
         for (idx, app) in pinnedApps.enumerated() {
             let c = app
-            let isRunning = runningApp(for: app) != nil
+            let previewApp = runningApp(for: app)
+            let isRunning = previewApp != nil
             items.append(
                 DockPillItem(
                     id: "pinned-\(app.id)", index: idx,
                     icon: resolvedPinnedIcon(for: app), label: app.name,
                     subtitle: isRunning ? "Running" : "Launch",
                     hoverKey: "dock-pinned-\(app.id.uuidString)",
+                    previewApp: previewApp,
                     action: {
                         launchPinnedApp(c)
                         if isGlobalContextActive {
@@ -164,6 +167,7 @@ extension LauncherView {
                     icon: resolvedRunningAppIcon(for: app), label: app.localizedName ?? "App",
                     subtitle: "Running",
                     hoverKey: "dock-running-\(app.processIdentifier)",
+                    previewApp: app,
                     action: {
                         activateRunningAppFromDock(c)
                         if isGlobalContextActive {
@@ -182,7 +186,7 @@ extension LauncherView {
     var pinnedAndRecentAppsRow: some View {
         let searchQuery = searchState.query.trimmingCharacters(in: .whitespaces).lowercased()
 
-        let basePinnedApps = settings.pinnedApps
+        let basePinnedApps: [PinnedApp] = []
         let visiblePinnedApps =
             searchQuery.isEmpty
             ? basePinnedApps
@@ -209,6 +213,7 @@ extension LauncherView {
                         icon: p.icon, label: p.label, subtitle: p.subtitle, hoverKey: p.hoverKey,
                         focused: false, index: p.index, isExpanded: false,
                         destructiveAction: p.destructiveAction, removeAction: p.removeAction,
+                        previewApp: p.previewApp,
                         action: p.action
                     )
                     .transition(
@@ -220,7 +225,7 @@ extension LauncherView {
                     appPillButton(
                         icon: f.icon, label: f.label, subtitle: f.subtitle, hoverKey: f.hoverKey,
                         focused: true, index: f.index, isExpanded: true,
-                        destructiveAction: nil, removeAction: nil, action: f.action
+                        destructiveAction: nil, removeAction: nil, previewApp: f.previewApp, action: f.action
                     )
                     .frame(maxWidth: .infinity)
                     .transition(.opacity)
@@ -230,6 +235,7 @@ extension LauncherView {
                         icon: n.icon, label: n.label, subtitle: n.subtitle, hoverKey: n.hoverKey,
                         focused: false, index: n.index, isExpanded: false,
                         destructiveAction: n.destructiveAction, removeAction: n.removeAction,
+                        previewApp: n.previewApp,
                         action: n.action
                     )
                     .transition(
@@ -251,6 +257,7 @@ extension LauncherView {
                                 hoverKey: "dock-pinned-\(app.id.uuidString)",
                                 focused: idx == focusedIdx, index: idx,
                                 removeAction: { settings.unpinApp(app) },
+                                previewApp: runningApp(for: app),
                                 action: {
                                     launchPinnedApp(app)
                                     if isGlobalContextActive {
@@ -270,12 +277,6 @@ extension LauncherView {
                                     .opacity(max(0.45, 1 - abs(phase.value) * 0.38))
                             }
                             .contextMenu {
-                                Button {
-                                    settings.unpinApp(app)
-                                } label: {
-                                    Label("Unpin from Launcher", systemImage: "pin.slash")
-                                }
-                                Divider()
                                 Button {
                                     launchPinnedApp(app)
                                 } label: {
@@ -328,12 +329,7 @@ extension LauncherView {
         }
 
         let makePinAction: (SearchResult) -> (() -> Void)? = { result in
-            guard let path = result.filePath, !settings.isPinned(path: path) else { return nil }
-            return {
-                let bid = bundleIdentifierForApplicationPath(path)
-                settings.pinApp(name: result.title, path: path, bundleIdentifier: bid)
-                AppUsageLearner.shared.recordAction("pin:\(result.title)", inBundleID: nil)
-            }
+            nil
         }
 
         if matches.isEmpty {
@@ -356,7 +352,9 @@ extension LauncherView {
                         icon: prev.icon, label: prev.title,
                         hoverKey: "gsearch-\(prev.title)", focused: false, index: pi,
                         isExpanded: false, destructiveAction: makeQuitAction(prev),
-                        pinAction: makePinAction(prev), action: makeAction(prev)
+                        pinAction: makePinAction(prev),
+                        previewApp: runningApplication(forGlobalResult: prev),
+                        action: makeAction(prev)
                     )
                     .transition(
                         .asymmetric(
@@ -368,7 +366,9 @@ extension LauncherView {
                     icon: focused.icon, label: focused.title,
                     hoverKey: "gsearch-\(focused.title)", focused: true, index: focIdx,
                     isExpanded: true, destructiveAction: makeQuitAction(focused),
-                    pinAction: makePinAction(focused), action: makeAction(focused)
+                    pinAction: makePinAction(focused),
+                    previewApp: runningApplication(forGlobalResult: focused),
+                    action: makeAction(focused)
                 )
                 .frame(maxWidth: .infinity)
                 .transition(.opacity)
@@ -379,7 +379,9 @@ extension LauncherView {
                         icon: next.icon, label: next.title,
                         hoverKey: "gsearch-\(next.title)", focused: false, index: ni,
                         isExpanded: false, destructiveAction: makeQuitAction(next),
-                        pinAction: makePinAction(next), action: makeAction(next)
+                        pinAction: makePinAction(next),
+                        previewApp: runningApplication(forGlobalResult: next),
+                        action: makeAction(next)
                     )
                     .transition(
                         .asymmetric(
@@ -403,6 +405,7 @@ extension LauncherView {
                                 isExpanded: false,
                                 destructiveAction: makeQuitAction(result),
                                 pinAction: makePinAction(result),
+                                previewApp: runningApplication(forGlobalResult: result),
                                 action: makeAction(result)
                             )
                             .id("gsearch-pill-\(idx)")
@@ -486,7 +489,7 @@ extension LauncherView {
         }
         let menuRowIDs: [String] = menuGroups.map(menuRowID)
         let appRowID: (SearchResult) -> String = { result in
-            "global-app-\(result.id)"
+            "global-app-\(result.trackingIdentifier)"
         }
         let appRowIDs: [String] = matches.map(appRowID)
         let showLaunchHint = launchHint != nil
@@ -497,8 +500,6 @@ extension LauncherView {
             !matches.isEmpty || !visibleMenuPills.isEmpty || !providedAppMenuGroups.isEmpty
             || showLaunchHint
         let isEmpty = !isLoading && !hasRenderableRows
-        let listHeight: CGFloat = hasRenderableRows ? listViewVisibleHeight : 86
-
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -522,13 +523,7 @@ extension LauncherView {
             return { terminateRunningAppFromDock(runningApp) }
         }
         let makePinAction: (SearchResult) -> (() -> Void)? = { result in
-            guard result.type == .application else { return nil }
-            guard let path = result.filePath, !settings.isPinned(path: path) else { return nil }
-            return {
-                let bid = bundleIdentifierForApplicationPath(path)
-                settings.pinApp(name: result.title, path: path, bundleIdentifier: bid)
-                AppUsageLearner.shared.recordAction("pin:\(result.title)", inBundleID: nil)
-            }
+            nil
         }
 
         return ScrollViewReader { proxy in
@@ -563,12 +558,10 @@ extension LauncherView {
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -580,7 +573,7 @@ extension LauncherView {
                                 ? "Results" : "Apps")
                             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                     }
-                    ForEach(indexedMatches, id: \.element.id) { idx, result in
+                    ForEach(indexedMatches, id: \.element.trackingIdentifier) { idx, result in
                         // Match by bundleId → path → localized name (robust for apps whose
                         // indexed bundleId differs from the live one, e.g. ChatGPT), and fall
                         // back to the live running set when runningRegularApps is empty.
@@ -595,19 +588,13 @@ extension LauncherView {
                             defaultsToFirstSelection: true,
                             quitAction: isRunning ? makeQuitAction(result) : nil,
                             quitPhase: appQuitFeedbackPhase(bundleID: runningApp?.bundleIdentifier),
+                            previewApp: runningApp,
                             action: makeAction(result)
                         )
                         .id(appRowID(result))
-                        .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                         .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                         .contextMenu {
-                            if let pinAction = makePinAction(result) {
-                                Button(action: pinAction) {
-                                    Label("Pin to Launcher", systemImage: "pin")
-                                }
-                            }
                             if let quitAction = makeQuitAction(result) {
-                                Divider()
                                 Button(role: .destructive, action: quitAction) {
                                     Label("Quit \(result.title)", systemImage: "xmark.circle")
                                 }
@@ -625,12 +612,10 @@ extension LauncherView {
                             if group.isGrouped {
                                 groupedMenuPillRow(group: group, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             } else {
                                 pillListRow(pill: group.primaryPill, index: matches.count + idx)
                                     .id(menuRowID(group))
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -658,7 +643,6 @@ extension LauncherView {
                                 pillIdx, pill in
                                 pillListRow(pill: pill, index: groupBase + pillIdx)
                                     .id("xapp-pill-\(group.id)-\(pill.id)")
-                                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                                     .contextDockBottomListFlip(settings.effectiveDockAtBottom)
                             }
                         }
@@ -726,23 +710,19 @@ extension LauncherView {
             }
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(height: listHeight, alignment: .topLeading)
+            .frame(minHeight: isEmpty ? 86 : 0, maxHeight: listViewVisibleHeight, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .animation(nil, value: hasRenderableRows)
             .onChange(of: focusedAppPillIndex) { idx in
                 guard let idx, idx < appRowIDs.count else { return }
-                withAnimation(.easeOut(duration: 0.08)) {
-                    proxy.scrollTo(appRowIDs[idx], anchor: .center)
-                }
+                proxy.scrollTo(appRowIDs[idx], anchor: .center)
             }
             .onChange(of: l2.focusedPillIndex) { idx in
                 guard let idx, idx >= matches.count else { return }
                 let menuIdx = idx - matches.count
                 DispatchQueue.main.async { refreshQuickLookPreviewForCurrentFocusIfVisible() }
                 if menuIdx >= 0, menuIdx < menuRowIDs.count {
-                    withAnimation(.easeOut(duration: 0.08)) {
-                        proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)
-                    }
+                    proxy.scrollTo(menuRowIDs[menuIdx], anchor: .center)
                 } else if menuIdx >= menuGroups.count {
                     // Cross-app group pill — find which group and local index
                     let crossIdx = menuIdx - menuGroups.count
@@ -750,11 +730,9 @@ extension LauncherView {
                     for group in providedAppMenuGroups {
                         let localIdx = crossIdx - offset
                         if localIdx < group.pills.count {
-                            withAnimation(.easeOut(duration: 0.08)) {
-                                proxy.scrollTo(
-                                    "xapp-pill-\(group.id)-\(group.pills[localIdx].id)",
-                                    anchor: .center)
-                            }
+                            proxy.scrollTo(
+                                "xapp-pill-\(group.id)-\(group.pills[localIdx].id)",
+                                anchor: .center)
                             break
                         }
                         offset += group.pills.count
@@ -763,7 +741,8 @@ extension LauncherView {
             }
             .onChange(of: matches.count) { count in
                 guard let idx = focusedAppPillIndex else { return }
-                let totalCount = count + visibleMenuPills.count
+                let crossAppMenuCount = providedAppMenuGroups.reduce(0) { $0 + $1.pills.count }
+                let totalCount = count + visibleMenuPills.count + crossAppMenuCount
                 if totalCount <= 0 {
                     focusedAppPillIndex = nil
                     l2.focusedPillIndex = nil
@@ -1236,7 +1215,7 @@ extension LauncherView {
     }
 
     func globalScopedAppIcon(for query: String) -> (icon: NSImage, bundleId: String)? {
-        guard isL2ContextActive, isGlobalContextActive, !hasActiveDockContextSelection else {
+        guard isL2ContextActive, isGlobalContextActive, !hasSelectionScopeSurface else {
             return nil
         }
         let scope = resolveDockScope(for: query)

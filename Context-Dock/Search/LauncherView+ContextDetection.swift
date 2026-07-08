@@ -604,6 +604,26 @@ extension LauncherView {
         {
             panel.orderOut(nil)
             quickLookDataSource = nil
+            // Spotlight-style: land focus on the result that was being previewed so Down/Up
+            // continue from THERE, not from the first result. Use the previewed URL to find
+            // its row (the peek may have arrow-navigated to a different file than where it
+            // opened), then keep the list focused (not the input field).
+            if usesVerticalListDockLayout {
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+                let pills =
+                    pillQuery.isEmpty
+                    ? selectionScopedDockPills(cachedDockPills)
+                    : contextDockViewModel.visiblePills
+                if let idx = pills.firstIndex(where: { $0.quickLookURL == url }) {
+                    l2.focusedPillIndex = idx
+                } else if l2.focusedPillIndex == nil {
+                    l2.focusedPillIndex = listViewHoveredIndex
+                }
+                l2.pillNavViaKeyboard = true
+                isSearchFieldFocused = false
+            }
             return true
         }
 
@@ -617,9 +637,76 @@ extension LauncherView {
         }
         if let window = AppDelegate.shared?.launcherWindow {
             window.makeKey()
-            isSearchFieldFocused = true
+            // List-view (finder desktop) results: keep the RESULT focused, not the input —
+            // so when the peek closes (however it closes) the user lands back on the result
+            // and can arrow to the next one (Spotlight-style), instead of in the input field.
+            if usesVerticalListDockLayout {
+                if l2.focusedPillIndex == nil { l2.focusedPillIndex = listViewHoveredIndex }
+                l2.pillNavViaKeyboard = true
+                isSearchFieldFocused = false
+            } else {
+                isSearchFieldFocused = true
+            }
         }
         return true
+    }
+
+    /// Electron/Catalyst apps (VS Code, Slack, Discord…) usually don't expose `selectedText`
+    /// via Accessibility, so the AX read returns nothing. Fallback: briefly copy the selection
+    /// (synthetic ⌘C to the still-frontmost previous app), read it off the pasteboard, then
+    /// RESTORE the previous pasteboard — so the selection chip works in any app. Non-destructive:
+    /// the user's clipboard is preserved, and an empty selection just times out to nil.
+    func peekSelectionViaClipboard(completion: @escaping (String?) -> Void) {
+        guard AXIsProcessTrusted() else { completion(nil); return }
+        // Target the app that held the selection. The dock panel is key by now, so a generic
+        // event post would go to the DOCK, not the selected app — deliver ⌘C to its PID.
+        guard let targetPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier,
+            targetPID != 0
+        else { completion(nil); return }
+        let pb = NSPasteboard.general
+
+        // Snapshot the current pasteboard so we can put it back.
+        let saved: [NSPasteboardItem] =
+            pb.pasteboardItems?.map { item in
+                let copy = NSPasteboardItem()
+                for type in item.types {
+                    if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+                }
+                return copy
+            } ?? []
+        let beforeCount = pb.changeCount
+
+        // Synthetic ⌘C posted directly to the selected app's process (postToPid), so it lands
+        // there even though the dock window currently has key focus.
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let keyC: CGKeyCode = 0x08  // 'c'
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
+        down?.flags = .maskCommand
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
+        up?.flags = .maskCommand
+        down?.postToPid(targetPID)
+        up?.postToPid(targetPID)
+
+        func restore() {
+            pb.clearContents()
+            if !saved.isEmpty { pb.writeObjects(saved) }
+        }
+
+        func poll(_ attempt: Int) {
+            if pb.changeCount != beforeCount {
+                let text = pb.string(forType: .string)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                restore()
+                completion((text?.isEmpty == false) ? text : nil)
+                return
+            }
+            if attempt >= 10 {  // ~200ms — copy never landed (no selection)
+                completion(nil)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(attempt + 1) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(1) }
     }
 
     func refreshQuickLookPreviewForCurrentFocusIfVisible() {
@@ -1131,6 +1218,17 @@ extension LauncherView {
         suppressedAutomaticFinderSelectionSignature = nil
         dismissedFinderSelectionSignature = nil
 
+        // A global-context launch is morphing into the app's Context Dock — keep the dock
+        // visible instead of hiding, regardless of dock mode.
+        if Date() < (AppDelegate.shared?.suppressResultHideUntil ?? .distantPast) {
+            searchState.query = ""
+            focusedAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+            return
+        }
+
         // Always-float (or taskbar mode): keep the dock visible after the action runs;
         // just reset it to idle and refocus the input for the next command.
         if settings.alwaysFloatDock || (settings.effectiveDockAtBottom && showContextInDock) {
@@ -1154,6 +1252,11 @@ extension LauncherView {
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
         l2.pillNavViaKeyboard = false
+        // A global-context launch is morphing into the app's Context Dock — don't hide.
+        if Date() < (AppDelegate.shared?.suppressResultHideUntil ?? .distantPast) {
+            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+            return
+        }
         isSearchFieldFocused = false
         AppDelegate.shared?.hideLauncher(force: true)
     }

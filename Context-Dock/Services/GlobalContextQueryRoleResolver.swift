@@ -279,6 +279,7 @@ final class GlobalContextQueryRoleResolver {
         var output = [name]
         let normalized = AppMenuCapabilityCache.normalize(name)
         output.append(contentsOf: normalized.split(separator: " ").map(String.init))
+        output.append(contentsOf: AppMenuCapabilityCache.shared.appAliases(bundleIdentifier: bundleId))
         switch bundleId {
         case "com.apple.MobileSMS":
             output += ["messages", "message", "imessage", "sms", "texts"]

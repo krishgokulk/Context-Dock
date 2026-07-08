@@ -25,11 +25,67 @@ final class AppleNotesMCPServer {
         guard AppSettings.shared.noteMCPAllowMetadataSearch else {
             throw AppleNotesError.permissionDenied("Metadata search is disabled.")
         }
-        // Trigger a background refresh without blocking the search response
-        Task.detached(priority: .background) {
-            try? await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+        // If index is cold (never loaded or empty), block and fill it first
+        let count = await AppleNotesMetadataIndex.shared.cachedCount
+        if count == 0 {
+            try await AppleNotesMetadataIndex.shared.forceRefresh()
+        } else {
+            Task.detached(priority: .background) {
+                try? await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+            }
         }
         let results = await AppleNotesMetadataIndex.shared.search(query: query, maxResults: maxResults)
+        AppleNotesMCPAuditLogger.shared.record(
+            toolName: "notes.search",
+            noteIDs: results.map(\.id),
+            riskLevel: .low,
+            approvalStatus: .notRequired
+        )
+        return results
+    }
+
+    /// Live count via a single Apple Event — instant, never triggers a metadata refresh.
+    /// Falls back to the cached index size if the script fails but a cache exists.
+    func noteCount() async throws -> Int {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        do {
+            let count = try await AppleNotesExecutionService.shared.noteCount()
+            AppleNotesMCPAuditLogger.shared.record(
+                toolName: "notes.count",
+                noteIDs: [],
+                riskLevel: .low,
+                approvalStatus: .notRequired
+            )
+            return count
+        } catch {
+            let cached = await AppleNotesMetadataIndex.shared.cachedCount
+            if cached > 0 { return cached }
+            throw error
+        }
+    }
+
+    func allMetadata(maxResults: Int = 10_000) async throws -> [NoteMetadata] {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        try await AppleNotesMetadataIndex.shared.refreshIfNeeded()
+        return await AppleNotesMetadataIndex.shared.search(query: "", maxResults: maxResults)
+    }
+
+    // MARK: - Deep search (full note body scan via AppleScript — slower but thorough)
+
+    func deepSearch(query: String, maxResults: Int = 20) async throws -> [NoteMetadata] {
+        try assertEnabled()
+        guard AppSettings.shared.noteMCPAllowMetadataSearch else {
+            throw AppleNotesError.permissionDenied("Metadata search is disabled.")
+        }
+        let results = try await AppleNotesExecutionService.shared.deepSearchBodies(
+            query: query, maxResults: maxResults
+        )
         AppleNotesMCPAuditLogger.shared.record(
             toolName: "notes.search",
             noteIDs: results.map(\.id),

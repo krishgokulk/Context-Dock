@@ -101,6 +101,64 @@ final class AXMenuReader {
         return items
     }
 
+    /// Some apps (notably Finder) only populate a top-level menu's children into the
+    /// Accessibility tree once that menu is OPENED. A passive scan then sees only the top
+    /// row (File, Edit, Go…) with empty children. This scan presses each top-level menu
+    /// open, reads its now-populated children, then cancels it to close — so File/Edit/Go
+    /// items (New Folder, Close Window, Save…) appear like any other app.
+    ///
+    /// The menus flash briefly on screen, so callers MUST cache the result with a long TTL
+    /// (Finder's menu structure is stable) — this should run once per session, not per key.
+    func refreshAllMenuItemsOpeningLazyMenus(for pid: pid_t, maxDepth: Int = 6) -> [AXMenuItem] {
+        activeScanPID = pid
+        defer { if activeScanPID == pid { activeScanPID = 0 } }
+        guard let bar = menuBarElement(for: pid),
+            let topItems = childElements(of: bar)
+        else { return [] }
+
+        var tree: [AXMenuItem] = []
+        for (idx, item) in topItems.enumerated() {
+            let title = strAttr(item, kAXTitleAttribute as CFString) ?? ""
+            guard !title.isEmpty, title != "-" else { continue }
+            // Skip the Apple menu (index 0) — opening it surfaces About/System Settings.
+            let isApple = idx == 0
+
+            var children = readChildren(
+                of: submenuContainer(for: item) ?? item,
+                path: [title], depth: 1, maxDepth: maxDepth)
+            if children.isEmpty && !isApple {
+                // Open (populates lazy children), read, then cancel to close.
+                AXUIElementPerformAction(item, kAXPressAction as CFString)
+                usleep(25_000)
+                children = readChildren(
+                    of: submenuContainer(for: item) ?? item,
+                    path: [title], depth: 1, maxDepth: maxDepth)
+                var menuRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(item, "AXMenu" as CFString, &menuRef) == .success,
+                    let menu = menuRef
+                {
+                    AXUIElementPerformAction(
+                        unsafeBitCast(menu, to: AXUIElement.self), kAXCancelAction as CFString)
+                } else {
+                    AXUIElementPerformAction(item, kAXPressAction as CFString)
+                }
+            }
+
+            let isEnabled = boolAttr(item, kAXEnabledAttribute as CFString) ?? true
+            tree.append(
+                AXMenuItem(
+                    title: title, path: [title], isEnabled: isEnabled, element: item,
+                    children: children, isAppleMenu: isApple, image: nil,
+                    shortcutChar: nil, shortcutModifiers: 0, isChecked: false))
+        }
+
+        let items = flatten(tree, includeGroups: true)
+        if !items.isEmpty {
+            menuCache[pid] = CacheEntry(items: items, date: Date())
+        }
+        return items
+    }
+
     /// Force-evict a pid from the cache (call on app relaunch / app switch).
     func invalidateCache(for pid: pid_t) {
         menuCache.removeValue(forKey: pid)

@@ -296,12 +296,21 @@ final class AXContextReader {
 
     private func readSelectedText(_ axApp: AXUIElement) -> String? {
         var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &ref) == .success,
-              let r = ref else { return nil }
-        let el = unsafeBitCast(r, to: AXUIElement.self)
+        if AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &ref) == .success,
+            let r = ref {
+            let el = unsafeBitCast(r, to: AXUIElement.self)
+            if let t = selectedText(of: el) { return t }
+        }
+        // Mouse-drag selections in web content often leave NO focused element
+        // (Safari reports AXFocusedUIElement = nil) — read the selection straight
+        // off the AXWebArea in the focused window instead, PopClip-style.
+        return readWebAreaSelectedText(axApp)
+    }
 
+    /// Selected text of one element: plain attribute first, then the
+    /// range-parameterized read (covers fields that only expose the range).
+    private func selectedText(of el: AXUIElement) -> String? {
         if let t = strAttr(el, kAXSelectedTextAttribute as CFString), !t.isEmpty { return t }
-
         var rangeRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
            let rng = rangeRef {
@@ -310,6 +319,47 @@ final class AXContextReader {
                 el, kAXStringForRangeParameterizedAttribute as CFString, rng, &strRef
             ) == .success, let s = strRef as? String, !s.isEmpty {
                 return s
+            }
+        }
+        return nil
+    }
+
+    private func readWebAreaSelectedText(_ axApp: AXUIElement) -> String? {
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            var winRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(axApp, attribute as CFString, &winRef) == .success,
+                let winRef
+            else { continue }
+            let window = unsafeBitCast(winRef, to: AXUIElement.self)
+            var visited = 0
+            if let text = findWebAreaSelection(in: window, depth: 0, visited: &visited) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private func findWebAreaSelection(
+        in element: AXUIElement, depth: Int, visited: inout Int
+    ) -> String? {
+        guard depth < 10, visited < 400 else { return nil }
+        visited += 1
+
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXWebArea" {
+            // Read the web area's selection; never recurse into its DOM subtree.
+            return selectedText(of: element)
+        }
+
+        var childRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childRef)
+            == .success,
+            let children = childRef as? [AXUIElement]
+        else { return nil }
+        for child in children {
+            if let found = findWebAreaSelection(in: child, depth: depth + 1, visited: &visited) {
+                return found
             }
         }
         return nil
@@ -343,7 +393,36 @@ final class AXContextReader {
         } else {
             depth = 7
         }
-        return findAddressBar(axApp, maxDepth: depth)
+        if let fromAddressBar = findAddressBar(axApp, maxDepth: depth) {
+            return fromAddressBar
+        }
+        // Safari Web Apps (and kiosk-style windows) have no address bar — read the
+        // URL straight off the AXWebArea instead.
+        return findWebAreaURL(axApp, maxDepth: depth + 3)
+    }
+
+    private func findWebAreaURL(_ elem: AXUIElement, maxDepth: Int, depth: Int = 0) -> String? {
+        guard depth < maxDepth else { return nil }
+
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+        if (roleRef as? String) == "AXWebArea" {
+            var urlRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(elem, "AXURL" as CFString, &urlRef) == .success,
+                let urlRef {
+                if let url = urlRef as? URL { return url.absoluteString }
+                if let s = urlRef as? String, looksLikeURL(s) { return s }
+            }
+            return nil
+        }
+
+        var childRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(elem, kAXChildrenAttribute as CFString, &childRef) == .success,
+              let children = childRef as? [AXUIElement] else { return nil }
+        for child in children {
+            if let found = findWebAreaURL(child, maxDepth: maxDepth, depth: depth + 1) { return found }
+        }
+        return nil
     }
 
     private func findAddressBar(_ elem: AXUIElement, maxDepth: Int, depth: Int = 0) -> String? {

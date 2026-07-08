@@ -48,6 +48,22 @@ final class AppState: ObservableObject {
 
     private init() {}
 
+    func setContextDockActiveDeferred(_ isActive: Bool) {
+        guard contextDock.isActive != isActive else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.contextDock.isActive != isActive else { return }
+            self.contextDock.isActive = isActive
+        }
+    }
+
+    func setGlobalContextActivationDeferred(_ activation: GlobalContextActivation?) {
+        guard globalContext.activation != activation else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.globalContext.activation != activation else { return }
+            self.globalContext.activation = activation
+        }
+    }
+
     func resetLauncherModes(contextDockActive: Bool = true) {
         globalContext.activation = nil
         mediaDock.isActive = false

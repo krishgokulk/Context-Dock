@@ -7,6 +7,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 // MARK: - Category
 
@@ -2881,7 +2882,6 @@ struct AutomationAdapterDetailView: View {
     @State private var apiBaseURL = ""
     @State private var apiKey = ""
     @State private var editingSkill: AdapterSkill?
-    @State private var showSkillEditor = false
     @State private var showAddActionSheet = false
     @State private var editingAction: AdapterAction? = nil
     @State private var showCLIToolPicker = false
@@ -2891,9 +2891,16 @@ struct AutomationAdapterDetailView: View {
     @State private var isScanningHelp = false
     @State private var importPreview: AdapterPackPreview?
     @State private var importError: String?
+    @State private var showSkillURLPrompt = false
+    @State private var skillURLInput = ""
+    @State private var isFetchingSkillURL = false
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
     @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
+    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = false
+    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = false
+    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = false
+    @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
     /// Plugin-style summary for the Overview tab — feels alive even with no actions.
     @ViewBuilder
@@ -2907,7 +2914,7 @@ struct AutomationAdapterDetailView: View {
                 overviewCard("Actions", "\(appOnlyActions.count)", icon: "bolt.fill", tint: .teal)
                 overviewCard("Shortcuts", "\(linkedShortcuts.count)", icon: "command", tint: .purple)
                 overviewCard("CLI Tools", "\(linkedCLITools.count)", icon: "terminal.fill", tint: .blue)
-                overviewCard("MCP Servers", "\(linkedMCPServers.count)", icon: "server.rack", tint: .orange)
+                overviewCard("MCP Servers", "\(linkedMCPServerCount)", icon: "server.rack", tint: .orange)
             }
             if !a.bundleId.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2951,6 +2958,101 @@ struct AutomationAdapterDetailView: View {
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    // Import a web SKILL.md (Claude / Osaurus style) into the current adapter. Opens the
+    // editor prefilled so the user can review/edit before saving — no silent install.
+    private func importSkillFromFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.plainText, .text, .data]
+        for ext in ["md", "markdown"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        panel.allowedContentTypes = types
+        panel.prompt = "Import Skill"
+        panel.message = "Choose a SKILL.md file"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            importError = "Couldn't read \(url.lastPathComponent)."
+            return
+        }
+        let fallback = url.deletingPathExtension().lastPathComponent
+        loadSkillMarkdownIntoEditor(text, fallbackName: fallback)
+    }
+
+    private func importSkillFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            importError = "Clipboard is empty. Copy a SKILL.md first."
+            return
+        }
+        loadSkillMarkdownIntoEditor(text, fallbackName: "Imported Skill")
+    }
+
+    /// Download a SKILL.md from a pasted link (GitHub blob URLs are auto-rewritten to raw)
+    /// and open the editor prefilled.
+    private func importSkillFromURL() {
+        let raw = skillURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = normalizedSkillURL(raw) else {
+            importError = "Enter a valid http(s) URL to a SKILL.md file."
+            return
+        }
+        showSkillURLPrompt = false
+        isFetchingSkillURL = true
+        Task {
+            defer { isFetchingSkillURL = false }
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("text/plain", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    importError = "Download failed (HTTP \(http.statusCode))."
+                    return
+                }
+                guard let text = String(data: data, encoding: .utf8),
+                    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else {
+                    importError = "The file at that URL was empty or not text."
+                    return
+                }
+                let fallback = url.deletingPathExtension().lastPathComponent
+                loadSkillMarkdownIntoEditor(text, fallbackName: fallback)
+            } catch {
+                importError = "Couldn't download: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Accept raw links as-is; rewrite `github.com/owner/repo/blob/ref/path` → the
+    /// `raw.githubusercontent.com` equivalent so a normal file URL works.
+    private func normalizedSkillURL(_ input: String) -> URL? {
+        guard let url = URL(string: input),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            let host = url.host?.lowercased()
+        else { return nil }
+        if host == "github.com", url.pathComponents.contains("blob") {
+            var parts = url.pathComponents.filter { $0 != "/" }
+            guard let blobIdx = parts.firstIndex(of: "blob"), blobIdx >= 2 else { return url }
+            let owner = parts[0], repo = parts[1]
+            parts.remove(at: blobIdx)  // drop "blob"
+            let tail = parts.dropFirst(2).joined(separator: "/")  // ref/.../SKILL.md
+            return URL(string: "https://raw.githubusercontent.com/\(owner)/\(repo)/\(tail)")
+        }
+        return url
+    }
+
+    private func loadSkillMarkdownIntoEditor(_ text: String, fallbackName: String) {
+        guard let parsed = AdapterSkill.fromSkillMarkdown(
+            text, bundleId: currentAdapter.bundleId, fallbackName: fallbackName)
+        else {
+            importError = "No skill content found. Expected a SKILL.md with a markdown body."
+            return
+        }
+        editingSkill = parsed
     }
 
     private var currentAdapter: AppAdapter {
@@ -3016,7 +3118,7 @@ struct AutomationAdapterDetailView: View {
         switch kind {
         case .shortcuts: return linkedShortcuts.count
         case .cli: return linkedCLITools.count
-        case .mcp: return linkedMCPServers.count
+        case .mcp: return linkedMCPServerCount
         case .api: return apiStore.connections(for: currentAdapter.bundleId).count
         case .skills: return skillStore.skills(for: currentAdapter.bundleId).count
         }
@@ -3073,6 +3175,21 @@ struct AutomationAdapterDetailView: View {
         mcpManager.servers(forBundleId: currentAdapter.bundleId)
     }
 
+    private var hasEnabledBuiltInIntegration: Bool {
+        switch currentAdapter.bundleId {
+        case "com.apple.Notes": return noteMCPEnabled
+        case "com.apple.iCal": return calendarMCPEnabled
+        case "com.apple.AddressBook": return contactsMCPEnabled
+        case "com.apple.reminders": return remindersMCPEnabled
+        case "com.github.GitHubClient": return githubMCPEnabled
+        default: return false
+        }
+    }
+
+    private var linkedMCPServerCount: Int {
+        linkedMCPServers.count + (hasEnabledBuiltInIntegration ? 1 : 0)
+    }
+
     @ViewBuilder
     private var notesBuiltInMCPRow: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -3106,7 +3223,71 @@ struct AutomationAdapterDetailView: View {
 
                 Spacer()
 
-                Toggle("", isOn: $noteMCPEnabled)
+                Toggle("", isOn: liveRegisteringBinding($noteMCPEnabled) {
+                    AppleNotesMCPCapabilities.register(in: CapabilityRegistry.shared)
+                })
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .onChange(of: noteMCPEnabled) { enabled in
+                        if enabled {
+                            CapabilityRegistry.shared.registerAppleNotesMCPIfNeeded()
+                        }
+                    }
+            }
+            .padding(.vertical, 6)
+
+            if !linkedMCPServers.isEmpty {
+                Divider()
+            }
+        }
+    }
+
+    /// True when this adapter has a first-party built-in integration (Notes, Calendar,
+    /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
+    private var hasBuiltInIntegration: Bool {
+        ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
+         "com.github.GitHubClient"].contains(currentAdapter.bundleId)
+    }
+
+    /// Generic built-in integration row (same look as the Notes MCP row) for
+    /// Calendar / Contacts / Reminders / GitHub adapters.
+    @ViewBuilder
+    private func builtInIntegrationRow(
+        title: String, capabilities: String, icon: String, tint: Color, isOn: Binding<Bool>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(tint.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(tint)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .medium))
+                        Text("built-in")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(tint.opacity(0.18), in: Capsule())
+                            .foregroundStyle(tint)
+                    }
+                    Text(capabilities)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: isOn)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .labelsHidden()
@@ -3116,6 +3297,66 @@ struct AutomationAdapterDetailView: View {
             if !linkedMCPServers.isEmpty {
                 Divider()
             }
+        }
+    }
+
+    /// Registers the given built-in capability set the moment the toggle flips on, so the
+    /// AI can use it without an app restart. (There is no unregister — flipping off relies
+    /// on each executor's own settings guard until next launch.)
+    private func liveRegisteringBinding(
+        _ source: Binding<Bool>, register: @escaping @MainActor () -> Void
+    ) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                if newValue { MainActor.assumeIsolated { register() } }
+            }
+        )
+    }
+
+    /// The built-in integration row for the current adapter, if it has one (non-Notes).
+    @ViewBuilder
+    private var builtInIntegrationRowForCurrentAdapter: some View {
+        switch currentAdapter.bundleId {
+        case "com.apple.iCal":
+            builtInIntegrationRow(
+                title: "DoraX Calendar",
+                capabilities: "today · list upcoming · search · create event",
+                icon: "calendar", tint: .red,
+                isOn: liveRegisteringBinding($calendarMCPEnabled) {
+                    AppleCalendarMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.AddressBook":
+            builtInIntegrationRow(
+                title: "DoraX Contacts",
+                capabilities: "search · contact details",
+                icon: "person.crop.circle", tint: .brown,
+                isOn: liveRegisteringBinding($contactsMCPEnabled) {
+                    AppleContactsMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.reminders":
+            builtInIntegrationRow(
+                title: "DoraX Reminders",
+                capabilities: "today · list · create reminder",
+                icon: "checklist", tint: .orange,
+                isOn: liveRegisteringBinding($remindersMCPEnabled) {
+                    AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.github.GitHubClient":
+            builtInIntegrationRow(
+                title: "DoraX GitHub (gh CLI)",
+                capabilities: "list issues · list PRs · repo info · create issue",
+                icon: "chevron.left.forwardslash.chevron.right", tint: .purple,
+                isOn: liveRegisteringBinding($githubMCPEnabled) {
+                    GitHubMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        default:
+            EmptyView()
         }
     }
 
@@ -3541,10 +3782,35 @@ struct AutomationAdapterDetailView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer()
+                        Menu {
+                            Button {
+                                skillURLInput = ""
+                                showSkillURLPrompt = true
+                            } label: {
+                                Label("Import from URL…", systemImage: "link")
+                            }
+                            Button {
+                                importSkillFromFile()
+                            } label: {
+                                Label("Import SKILL.md File…", systemImage: "doc.badge.plus")
+                            }
+                            Button {
+                                importSkillFromClipboard()
+                            } label: {
+                                Label("Import from Clipboard", systemImage: "doc.on.clipboard")
+                            }
+                        } label: {
+                            Label("Import Skill", systemImage: "square.and.arrow.down")
+                                .font(.system(size: 10, weight: .medium))
+                        } primaryAction: {
+                            importSkillFromFile()
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .controlSize(.mini)
                         Button {
                             editingSkill = AdapterSkill(
                                 adapterBundleId: currentAdapter.bundleId, name: "", instructions: "")
-                            showSkillEditor = true
                         } label: {
                             Label("Add Skill", systemImage: "plus")
                                 .font(.system(size: 10, weight: .medium))
@@ -3580,7 +3846,7 @@ struct AutomationAdapterDetailView: View {
                                     set: { skillStore.setEnabled($0, id: skill.id) }))
                                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
                                 Button {
-                                    editingSkill = skill; showSkillEditor = true
+                                    editingSkill = skill
                                 } label: { Image(systemName: "pencil") }.buttonStyle(.plain)
                                 Button(role: .destructive) {
                                     skillStore.remove(id: skill.id)
@@ -3779,9 +4045,11 @@ struct AutomationAdapterDetailView: View {
 
                     if currentAdapter.bundleId == "com.apple.Notes" {
                         notesBuiltInMCPRow
+                    } else {
+                        builtInIntegrationRowForCurrentAdapter
                     }
 
-                    if linkedMCPServers.isEmpty && currentAdapter.bundleId != "com.apple.Notes" {
+                    if linkedMCPServers.isEmpty && !hasBuiltInIntegration {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("No linked MCP servers")
                                 .font(.system(size: 13, weight: .medium))
@@ -3941,14 +4209,37 @@ struct AutomationAdapterDetailView: View {
             }
             .frame(width: 460)
         }
-        .sheet(isPresented: $showSkillEditor) {
-            if let skill = editingSkill {
-                SkillEditorSheet(skill: skill) { saved in
-                    if let saved { skillStore.upsert(saved) }
-                    showSkillEditor = false
-                    editingSkill = nil
+        .sheet(item: $editingSkill) { skill in
+            SkillEditorSheet(skill: skill) { saved in
+                if let saved { skillStore.upsert(saved) }
+                editingSkill = nil
+            }
+        }
+        .sheet(isPresented: $showSkillURLPrompt) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Import Skill from URL")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Paste a link to a SKILL.md. GitHub file (blob) links are converted to raw automatically.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField(
+                    "https://raw.githubusercontent.com/…/SKILL.md",
+                    text: $skillURLInput
+                )
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { importSkillFromURL() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showSkillURLPrompt = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Import") { importSkillFromURL() }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(skillURLInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .padding(20)
+            .frame(width: 440)
         }
         .sheet(isPresented: $showCLIToolPicker) {
             AppCLIToolPickerSheet(

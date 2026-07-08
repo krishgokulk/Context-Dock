@@ -22,6 +22,9 @@ Mode content changes inside same shell. Window/material/control shell should not
 - Result sheet remains stable while typing.
 - No debug badges like `Cached`.
 - Avoid technical labels unless user needs decision context.
+- Ghost text, match capsule icons, keyboard focus, Enter execution, and visible rows must all read from the same navigation state.
+- Down Arrow reveals prepared results; typing updates background rows/icons without resizing or replacing the sheet.
+- Enter with a focused row executes that row. Enter with only the render-default first row may execute only when the query is not chat/question-style and the row matches typed text.
 
 ## Context Dock
 
@@ -30,6 +33,7 @@ Mode content changes inside same shell. Window/material/control shell should not
 - Results are current app commands/actions.
 - Query changes update rows inline, not window/sheet identity.
 - Do not show unrelated global actions ahead of app actions.
+- App-switch/default rows may execute from Enter only when they are the visible row source; do not rebuild a different pill list during execution.
 
 ## Chat Modes
 
