@@ -8,6 +8,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import ApplicationServices
 
 // MARK: - Category
 
@@ -610,7 +611,13 @@ struct AutomationSettingsView: View {
     }
 
     private var menuCacheList: some View {
-        Group {
+        VStack(spacing: 0) {
+            // Menu caching is AUTOMATIC — every app is scanned as it becomes frontmost —
+            // but the scan needs Accessibility. Without it every app reads "Not cached",
+            // which looks broken. Surface the real reason + a one-click grant.
+            if !AXIsProcessTrusted() {
+                menuCacheAccessibilityBanner
+            }
             if filteredMenuCacheRows.isEmpty {
                 listEmpty(icon: "menubar.rectangle", label: "No installed apps found", action: nil)
             } else {
@@ -631,6 +638,51 @@ struct AutomationSettingsView: View {
                 .listStyle(.inset)
             }
         }
+        // Opening this page auto-warms every running app so the cache fills without the
+        // user manually opening each one.
+        .onAppear { warmRunningAppsForMenuCache() }
+    }
+
+    private var menuCacheAccessibilityBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Accessibility permission required")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Context Dock caches app menus automatically as you use each app — but only with Accessibility access. Menu caching is off until you grant it.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Open Settings") { openAccessibilitySettings() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Warm every regular running app's menus so opening the Menu Cache page fills the
+    /// cache automatically (in addition to the on-activation warming during normal use).
+    private func warmRunningAppsForMenuCache() {
+        guard AXIsProcessTrusted() else { return }
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular && !$0.isTerminated
+                && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
+        MenuWarmCacheService.shared.warmRunningAppsOnLauncherOpen(apps, maxApps: 12)
     }
 
     private var systemCommandList: some View {
