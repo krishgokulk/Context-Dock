@@ -88,10 +88,11 @@ extension LauncherView {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
-                // Resolve the focused pill from the KEYBOARD's array (raw order) and
-                // scroll to it by id — the rendered list is re-clustered, so indexing
-                // into it directly scrolls to the wrong row (or none at all).
-                let source = contextDockViewModel.visiblePills
+                // Keyboard now walks the same clustered order the list renders —
+                // resolve the focused pill from that order and scroll to it by id.
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let source = renderedOrderDockPills(for: q)
                 guard idx >= 0, idx < source.count else { return }
                 let targetID = source[idx].id
                 guard visiblePills.contains(where: { $0.id == targetID }) else { return }
@@ -621,7 +622,10 @@ extension LauncherView {
                         .lowercased()
                     return visibleGlobalGroupedListNavigationState(for: q).menuPills
                 }
-                return contextDockViewModel.visiblePills
+                // Same clustered order the list renders AND the keyboard walks.
+                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                return renderedOrderDockPills(for: q)
             }()
             let sourceIndex: Int = {
                 if shouldUsePureGlobalAppSearch {
@@ -650,10 +654,11 @@ extension LauncherView {
         Button {
             guard !isDisabled else { return }
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
             executeDockPill(pill)
             searchState.query = ""
-            l2.focusedPillIndex = nil
-            listViewHoveredIndex = nil
             // Teach intent: user picked a menu action for this query
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         } label: {
@@ -874,10 +879,11 @@ extension LauncherView {
                             let q = searchState.query.trimmingCharacters(
                                 in: .whitespacesAndNewlines
                             ).lowercased()
+                            l2.focusedPillIndex = nil
+                            l2.pillNavViaKeyboard = false
+                            listViewHoveredIndex = nil
                             executeDockPill(pill)
                             searchState.query = ""
-                            l2.focusedPillIndex = nil
-                            listViewHoveredIndex = nil
                             if !q.isEmpty {
                                 AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true)
                             }
@@ -931,10 +937,11 @@ extension LauncherView {
         .onTapGesture {
             // Tap on the row (not a chip) executes the primary pill
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            listViewHoveredIndex = nil
             executeDockPill(primary)
             searchState.query = ""
-            l2.focusedPillIndex = nil
-            listViewHoveredIndex = nil
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         }
     }
@@ -1158,6 +1165,17 @@ extension LauncherView {
         ).isExplicitAppScope
     }
 
+    /// The exact pill order the List View renders (clustered by group). Keyboard
+    /// navigation MUST walk this order — navigating the raw score-interleaved array
+    /// while the list renders a re-clustered copy makes ↑/↓ jump between sections.
+    /// Horizontal pill row renders the raw order, so it returns the raw list there.
+    func renderedOrderDockPills(for query: String) -> [DockPill] {
+        let cached = contextDockViewModel.visiblePills
+        let base = cached.isEmpty ? currentVisibleDockPills(for: query) : cached
+        guard usesVerticalListDockLayout else { return base }
+        return clusterPillsByGroup(Array(base.prefix(maxListViewDockPills)))
+    }
+
     var shouldShowL2UnifiedDockRow: Bool {
         guard showContextInDock, !aiMode.isActive else { return false }
         if isContextDockChatRoutingLocked { return false }
@@ -1180,7 +1198,16 @@ extension LauncherView {
         }
         guard !q.isEmpty else { return false }
         if !isGlobalContextActive {
-            return true
+            // Keep the row while the debounced pill build is in flight (no flicker), but
+            // once the query resolves to ZERO results collapse back to the compact input
+            // capsule — never park an empty results container under the search bar.
+            if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                return true
+            }
+            if pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
+                return true
+            }
+            return currentVisibleDockPills(for: q).contains { !$0.isSeparator }
         }
         if pendingDockPillQuery == q, pendingDockPreviewPills.contains(where: { !$0.isSeparator }) {
             return true

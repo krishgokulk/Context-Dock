@@ -537,21 +537,13 @@ extension LauncherView {
             // Use the same cached pill list the List View renders. Do not rebuild here;
             // this key monitor runs on every keyDown.
             let pillQuery = self.shouldUseFinderSearchPopover(for: q) ? "" : q
+            // renderedOrderDockPills = the exact order the list renders (clustered),
+            // with a fallback build while the debounced pipeline is mid-flight — so
+            // ↑/↓ walk the rows in visual order and Enter runs the highlighted row.
             let actionPills: [DockPill] =
                 q.isEmpty
                 ? self.selectionScopedDockPills(self.cachedDockPills)
-                : (pillQuery.isEmpty
-                    ? []
-                    : {
-                        // visiblePills lags the debounced pill pipeline — while rows render
-                        // from the pending preview it can be empty, which made Enter fall
-                        // through to the text field (scoped search) instead of executing
-                        // the highlighted row. Fall back to the same list the view shows.
-                        let cached = self.contextDockViewModel.visiblePills
-                        return cached.isEmpty
-                            ? self.currentVisibleDockPills(for: pillQuery)
-                            : cached
-                    }())
+                : (pillQuery.isEmpty ? [] : self.renderedOrderDockPills(for: pillQuery))
             let showPinnedRow =
                 q.isEmpty
                 && self.l2.targetApp == nil

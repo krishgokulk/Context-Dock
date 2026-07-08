@@ -1537,16 +1537,20 @@ struct LauncherView: View {
     /// Clears the input field afterwards so the dock is ready for the next command.
     func executeFirstOrFocusedPill() {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pills = buildDockPills(query: q)
+        // Focused index refers to the rendered (clustered) order — execute from the
+        // same order or Enter runs a different row than the highlighted one.
+        let rendered = renderedOrderDockPills(for: q)
+        let pills = rendered.isEmpty ? buildDockPills(query: q) : rendered
         guard let idx = l2.focusedPillIndex, idx < pills.count else { return }
         let pill =
             pills[idx].isSeparator
             ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
             : pills[idx]
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
         executeDockPill(pill)
         // Clear input and focus so dock returns to default state
         searchState.query = ""
-        l2.focusedPillIndex = nil
     }
 
     func executeDockPill(_ pill: DockPill) {
@@ -1665,10 +1669,10 @@ struct LauncherView: View {
     @discardableResult
     func executeFocusedOrDirectAppPillIfNeeded() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // Prefer the pill list the user is LOOKING at (same source as the rendered rows),
+        // Prefer the pill list the user is LOOKING at (rendered, clustered order),
         // so Enter executes the visibly highlighted row. Fall back to a fresh build when
         // the cached list hasn't resolved yet (debounced pipeline mid-flight).
-        let displayed = currentVisibleDockPills(for: q)
+        let displayed = renderedOrderDockPills(for: q)
         let pills = displayed.contains(where: { !$0.isSeparator })
             ? displayed
             : buildDockPills(query: q)
@@ -1679,9 +1683,10 @@ struct LauncherView: View {
                 pills[idx].isSeparator
                 ? pills.first(where: { !$0.isSeparator }) ?? pills[idx]
                 : pills[idx]
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
             executeDockPill(pill)
             searchState.query = ""
-            l2.focusedPillIndex = nil
             return true
         }
 
@@ -1716,9 +1721,10 @@ struct LauncherView: View {
             return false
         }
 
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
         executeDockPill(pill)
         searchState.query = ""
-        l2.focusedPillIndex = nil
         return true
     }
 

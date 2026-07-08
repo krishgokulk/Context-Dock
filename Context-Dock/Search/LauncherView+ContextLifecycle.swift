@@ -182,8 +182,12 @@ extension LauncherView {
                     menuLoadTask?.cancel()
                     let useCacheOnly = isGlobalContextActive
                     if let app = activeApp {
-                        let cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
+                        var cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
                             for: app, maxResults: 120)
+                        if cachedItems.isEmpty {
+                            cachedItems = ContextDockEngine.shared.cachedMenuItems(
+                                for: app, maxResults: 120)
+                        }
                         if !cachedItems.isEmpty {
                             liveMenuItems = menuItemsVisibleInActiveDockMode(cachedItems)
                             menuDebugText =
@@ -191,6 +195,8 @@ extension LauncherView {
                             lastLiveMenuSignature = menuSignature(for: liveMenuItems)
                             previousEnabledIDs = Set(liveMenuItems.filter(\.isEnabled).map(\.id))
                             syncRecentAppsFromAppleMenu(cachedItems)
+                            scheduleDockPillRebuild(
+                                query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
                         }
                     }
                     menuLoadTask = Task.detached(priority: .userInitiated) {

@@ -3499,13 +3499,34 @@ extension LauncherView {
     }
 
     func replaceCachedDockPills(_ pills: [DockPill], preserveFocus: Bool) {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let focusedRenderedPillID: String? = {
+            guard preserveFocus,
+                let focusedIndex = l2.focusedPillIndex,
+                usesVerticalListDockLayout
+            else { return nil }
+            let rendered = renderedOrderDockPills(for: q)
+            guard rendered.indices.contains(focusedIndex) else { return nil }
+            return rendered[focusedIndex].id
+        }()
+
         contextDockViewModel.replaceCachedPills(
             pills,
-            preserveFocus: preserveFocus,
+            preserveFocus: preserveFocus && focusedRenderedPillID == nil,
             focusedIndex: l2.focusedPillIndex,
             setFocusedIndex: { l2.focusedPillIndex = $0 },
             clearPillKeyboardNavigation: { l2.pillNavViaKeyboard = false }
         )
+
+        guard preserveFocus, let focusedRenderedPillID else { return }
+        let rendered = renderedOrderDockPills(for: q)
+        if let newIndex = rendered.firstIndex(where: { $0.id == focusedRenderedPillID && !$0.isSeparator }) {
+            l2.focusedPillIndex = newIndex
+            return
+        }
+
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
     }
 
     func logDockPerformance(_ label: String, started: Date, query: String) {
