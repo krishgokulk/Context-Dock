@@ -6,6 +6,7 @@ import Contacts
 import AppKit
 import CoreGraphics
 import Carbon
+import ApplicationServices
 
 /// Real Automation (Apple Events) authorization for a target app — never prompts.
 /// `noErr` means the user granted this app control of `bundleID` in System Settings →
@@ -37,9 +38,17 @@ struct SystemPermissionsSettingsView: View {
     @State private var contactsStatus: String = "Unknown"
     @State private var automationStatus: String = "Unknown"
     @State private var screenRecordingStatus: String = "Unknown"
+    @State private var accessibilityStatus: String = "Unknown"
 
     var body: some View {
         Form {
+            Section(header: Text("Accessibility"), footer: Text("Required for live menu reading and caching, frontmost-app context, and menu actions. Without it those features are silently disabled.")) {
+                HStack {
+                    statusLabel(accessibilityStatus)
+                    Spacer()
+                    Button("Open System Settings") { openAccessibilitySettings() }
+                }
+            }
             Section(header: Text("Calendars")) {
                 Toggle("Enable Calendar Search", isOn: $permissions.allowCalendars)
                 HStack {
@@ -145,6 +154,7 @@ struct SystemPermissionsSettingsView: View {
         // Automation (AppleScript) – there's no direct API, guide user to System Settings
         automationStatus = permissions.allowAutomation ? contextDockAggregateAutomationStatus() : "Disabled in App"
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        accessibilityStatus = AXIsProcessTrusted() ? "Authorized" : "Not Authorized"
 
         #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
@@ -158,11 +168,18 @@ struct SystemPermissionsSettingsView: View {
         }
     }
 
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func requestScreenRecording() {
         if !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
         }
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        accessibilityStatus = AXIsProcessTrusted() ? "Authorized" : "Not Authorized"
         openScreenRecordingSettings()
     }
 
@@ -236,9 +253,17 @@ struct SystemPermissionsSection: View {
     @State private var contactsStatus: String = "Unknown"
     @State private var automationStatus: String = "Unknown"
     @State private var screenRecordingStatus: String = "Unknown"
+    @State private var accessibilityStatus: String = "Unknown"
 
     var body: some View {
         Group {
+            Section(header: Text("Accessibility"), footer: Text("Required for live menu reading and caching, frontmost-app context, and menu actions. Without it those features are silently disabled.")) {
+                HStack {
+                    statusLabel(accessibilityStatus)
+                    Spacer()
+                    Button("Open System Settings") { openAccessibilitySettings() }
+                }
+            }
             Section(header: Text("Calendars")) {
                 Toggle("Enable Calendar Search", isOn: $permissions.allowCalendars)
                 HStack {
@@ -339,6 +364,7 @@ struct SystemPermissionsSection: View {
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         automationStatus = permissions.allowAutomation ? contextDockAggregateAutomationStatus() : "Disabled in App"
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        accessibilityStatus = AXIsProcessTrusted() ? "Authorized" : "Not Authorized"
 
         #if DEBUG
         print("🔍 Final statuses - Calendar: \(calendarStatus), Reminders: \(remindersStatus), Photos: \(photosStatus), Contacts: \(contactsStatus)")
@@ -351,11 +377,18 @@ struct SystemPermissionsSection: View {
         }
     }
 
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private func requestScreenRecording() {
         if !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
         }
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
+        accessibilityStatus = AXIsProcessTrusted() ? "Authorized" : "Not Authorized"
         openScreenRecordingSettings()
     }
 
