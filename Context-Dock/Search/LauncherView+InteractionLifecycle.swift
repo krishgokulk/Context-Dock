@@ -317,6 +317,7 @@ extension LauncherView {
         searchState.query = ""
         aiMode.currentTask?.cancel()
         aiMode.isLoading = false
+        restoreGeneralAIConversationIfNeeded()
 
         let previousMode = currentDockSurfaceMode
         chatReturnContextInDock = showContextInDock

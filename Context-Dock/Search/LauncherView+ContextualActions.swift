@@ -2882,7 +2882,16 @@ extension LauncherView {
 
     func syncL2DockSession(force: Bool = false) {
         let newKey = currentL2DockSessionKey
-        guard force || newKey != l2.activeDockSessionKey else { return }
+        let keyChanged = newKey != l2.activeDockSessionKey
+        guard force || keyChanged else { return }
+
+        // Same session re-synced (force from window open / layer toggle): keep the
+        // in-memory conversation AND the in-flight request. Cancelling here killed
+        // a loading answer every time the launcher was hidden and reopened.
+        guard keyChanged else {
+            updateL2Results([])
+            return
+        }
 
         if let previousKey = l2.activeDockSessionKey {
             AppPanelChatStore.shared.save(l2.chatMessages, for: previousKey)

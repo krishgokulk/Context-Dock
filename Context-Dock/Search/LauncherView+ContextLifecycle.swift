@@ -284,11 +284,20 @@ extension LauncherView {
                     selectionModel.stop()
                     liveDockSelectionPreviewText = nil
                     l2.extensionResults = []
-                    l2.chatMessages = []
-                    l2.isLoading = false
-                    l2.activeRequestID = nil
-                    l2.currentTask?.cancel()
-                    l2.currentTask = nil
+                    // NEVER destroy an active conversation on dock hide: an approved chat
+                    // command (`code --status`) can activate its target app, which auto-hides
+                    // the launcher — wiping messages + scope here killed the chat mid-answer.
+                    // Menus/pills below still reset; the chat + pinned scope survive so the
+                    // next open resumes exactly where the user left off.
+                    let hasActiveChat =
+                        l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty
+                    if !hasActiveChat {
+                        l2.chatMessages = []
+                        l2.isLoading = false
+                        l2.activeRequestID = nil
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
+                    }
                     liveMenuRefreshTask?.cancel()
                     liveMenuRefreshTask = nil
                     menuAvailabilityRefreshTask?.cancel()
@@ -307,7 +316,11 @@ extension LauncherView {
                     focusedAppPillIndex = nil
                     adapterContextData = [:]
                     l2.appCompletion = nil
-                    l2.targetApp = nil
+                    // Keep the pinned scope alive with an active chat (see hasActiveChat
+                    // above) so reopening the dock lands back in the same conversation.
+                    if !hasActiveChat {
+                        l2.targetApp = nil
+                    }
                     menuLoadTask?.cancel()
                     crossAppMenuTask?.cancel()
                 }
@@ -981,10 +994,19 @@ extension LauncherView {
 
     func handleLauncherWindowOpened() {
         beginMouseDrivenInteractionGrace()
-        l2.showChatPopover = false
-        l2.chatArmed = false
-        l2.chatDraftAppName = ""
-        l2.chatDraftBundleId = ""
+        // Resume an ACTIVE frontmost-app chat instead of disarming it: wiping the
+        // draft scope here re-keyed the session to the new frontmost app (Finder),
+        // which swapped a mid-flight MinkNote/Code conversation for an empty one.
+        // Only a chat the user exited (chatDismissed) or an empty idle draft resets.
+        let resumesActiveChat =
+            !l2.chatDismissed
+            && (l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty)
+        if !resumesActiveChat {
+            l2.showChatPopover = false
+            l2.chatArmed = false
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
         suppressOpenResize = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
             suppressOpenResize = false

@@ -8,16 +8,13 @@
 	</array>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 	<key>com.apple.security.personal-information.photos-library</key>
-	<true/>
-	<!-- Debuggable: lets Xcode attach LLDB. TCC (Accessibility/Keychain) re-prompts
-	     on every Debug rebuild regardless on macOS 26 (cdhash changes), so disabling
-	     this bought nothing — keep debugging enabled. Release builds never set it. -->
-	<key>com.apple.security.get-task-allow</key>
 	<true/>
 </dict>
 </plist>

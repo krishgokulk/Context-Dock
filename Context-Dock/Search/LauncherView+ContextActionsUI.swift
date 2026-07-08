@@ -93,6 +93,7 @@ extension LauncherView {
                     aiMode.selectionURL = nil
                     aiMode.pendingShare = nil
                     hasUserSentMessageInCurrentSession = false
+                    clearGeneralAIConversation()
                     AIProviderService.shared.resetOnDeviceSession()
                 }) {
                     Image(systemName: "trash")
@@ -799,6 +800,62 @@ extension LauncherView {
         )
     }
 
+    /// Reliable execution for an already-approved inline command card. Opens the terminal
+    /// panel for live output, runs through the background/terminal executor (real exit code
+    /// + captured output — no fragile PTY-marker wait), appends the result to the chat, and
+    /// feeds it back to the model for a plain answer.
+    func runApprovedScopedCommand(_ command: String, originalQuestion: String) {
+        if !livePanelVisible || livePanelMode != .terminal {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                livePanelMode = .terminal
+                livePanelVisible = true
+            }
+        }
+        Task {
+            let result = await TerminalAIBridge.shared.runPreApprovedCommand(command)
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run {
+                let body = output.isEmpty ? "(no output)" : output
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .tool,
+                        content: """
+                            \(command)
+
+                            \(body)
+                            """,
+                        isError: !result.success
+                    )
+                )
+            }
+            guard result.success, !output.isEmpty else { return }
+            do {
+                let history = await MainActor.run { l2.chatMessages }
+                let answer = try await sendToAIProviderWithContext(
+                    query: """
+                        User asked:
+                        \(originalQuestion)
+
+                        CLI command:
+                        \(command)
+
+                        CLI output:
+                        \(output)
+
+                        Answer user from this CLI output. Be concise. Do not suggest another command unless output is incomplete.
+                        """,
+                    messageHistory: history
+                )
+                await MainActor.run {
+                    l2.chatMessages.append(
+                        AIChatMessage(role: .assistant, content: answer))
+                }
+            } catch {
+                // Output is already shown in the tool message above.
+            }
+        }
+    }
+
     func l2ApprovalCardMeta(_ msg: AIChatMessage) -> (
         purpose: String, risk: String, isDockCommand: Bool
     ) {
@@ -816,7 +873,10 @@ extension LauncherView {
         let isHighRisk =
             risk.lowercased().contains("high") || risk.lowercased().contains("critical")
         let isHandled = l2.handledApprovalIds.contains(msg.id)
-        let isPending = isDockCommand ? !isHandled : (terminalBridge.pendingApproval != nil)
+        // Clickable until handled. Bridge cards used to gate on the global
+        // `pendingApproval`, which left orphaned cards (loop ended / 60s timeout) with a
+        // dead button — now the approve action runs those directly via the reliable executor.
+        let isPending = !isHandled
         let termIconColor: SwiftUI.Color =
             isHandled ? .green : (isHighRisk ? .orange : .accentColor)
 
@@ -863,75 +923,22 @@ extension LauncherView {
                     .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                     .disabled(!isPending)
                     Button {
-                        if isDockCommand {
-                            l2.handledApprovalIds.insert(msg.id)
-                            // Ensure terminal is open and visible
-                            if !livePanelVisible || livePanelMode != .terminal {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                                    livePanelMode = .terminal
-                                    livePanelVisible = true
-                                }
-                            }
-                            let consoleKey = activeConsoleKey
-                            let command = msg.content
+                        guard !l2.handledApprovalIds.contains(msg.id) else { return }
+                        l2.handledApprovalIds.insert(msg.id)
+                        let command = msg.content
+                        // Bridge card whose tool loop is still awaiting THIS command →
+                        // resume it (the loop runs it and feeds the result back to the
+                        // model). Every other case (dock_cmd, or an orphaned bridge card
+                        // whose loop already ended/timed out) → run through the reliable
+                        // pre-approved executor directly and surface the output.
+                        if !isDockCommand,
+                            terminalBridge.pendingApproval?.command == command {
+                            TerminalAIBridge.shared.approveCommand(command)
+                        } else {
                             let originalQuestion =
                                 l2.chatMessages.last(where: { $0.role == .user })?.content
                                 ?? purpose
-                            Task {
-                                try? await Task.sleep(nanoseconds: 150_000_000)
-                                let terminal = await MainActor.run { panelTerminal(for: consoleKey) }
-                                let result = await terminal.executeAndCapture(command)
-                                let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                                await MainActor.run {
-                                    let body = output.isEmpty ? "(no output)" : output
-                                    l2.chatMessages.append(
-                                        AIChatMessage(
-                                            role: .tool,
-                                            content: """
-                                                \(command)
-
-                                                \(body)
-                                                """,
-                                            isError: result.exitCode != 0
-                                        )
-                                    )
-                                }
-                                guard result.exitCode == 0, !output.isEmpty else { return }
-                                do {
-                                    let history = await MainActor.run { l2.chatMessages }
-                                    let answer = try await sendToAIProviderWithContext(
-                                        query: """
-                                            User asked:
-                                            \(originalQuestion)
-
-                                            CLI command:
-                                            \(command)
-
-                                            CLI output:
-                                            \(output)
-
-                                            Answer user from this CLI output. Be concise. Do not suggest another command unless output is incomplete.
-                                            """,
-                                        messageHistory: history
-                                    )
-                                    await MainActor.run {
-                                        l2.chatMessages.append(
-                                            AIChatMessage(role: .assistant, content: answer)
-                                        )
-                                    }
-                                } catch {
-                                    await MainActor.run {
-                                        l2.chatMessages.append(
-                                            AIChatMessage(
-                                                role: .assistant,
-                                                content: output
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            TerminalAIBridge.shared.approveCommand(msg.content)
+                            runApprovedScopedCommand(command, originalQuestion: originalQuestion)
                         }
                     } label: {
                         HStack(spacing: 4) {

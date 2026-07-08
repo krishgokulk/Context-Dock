@@ -218,6 +218,36 @@ class TerminalAIBridge: ObservableObject {
         pendingApproval = nil
     }
 
+    /// Run a command the user already approved via an inline chat card. Applies the same
+    /// placeholder resolution + critical-command block as `processAICommand`, but NEVER
+    /// re-prompts and NEVER touches the pending-approval continuation. Uses the reliable
+    /// background/terminal executor (real exit code + captured output), not a PTY marker
+    /// wait — so an inline "Approve & Run" always produces output.
+    func runPreApprovedCommand(_ command: String) async -> (success: Bool, output: String) {
+        var command = command
+        switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
+        case .clean:
+            break
+        case .resolved(let fixed):
+            command = fixed
+        case .unresolvable(let token):
+            return (
+                false,
+                "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
+                + "the current page. Open the exact page and ask again."
+            )
+        }
+        let classification = TerminalCommandClassifier.shared.classify(command)
+        if classification.riskLevel == .critical {
+            let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
+            if let alternative = classification.suggestedAlternative {
+                return (false, "\(message)\n\nAlternative: \(alternative)")
+            }
+            return (false, message)
+        }
+        return await executeCommand(command, classification: classification, wasApproved: true)
+    }
+
     // MARK: - Direct Execution
 
     /// Execute a command directly in the terminal

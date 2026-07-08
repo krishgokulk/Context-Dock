@@ -188,3 +188,39 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-07 15:28 · `3153c1bb` · `codex-context-dock-polish-fixes`
 **WIP checkpoint: global context flow**
 Swift: +4 added · ~11 modified · -0 deleted
+
+## 2026-07-07 15:29 · `673d13a0` · `codex-context-dock-polish-fixes`
+**WIP checkpoint: global context flow**
+Swift: +4 added · ~11 modified · -0 deleted
+
+## 2026-07-07 15:47 · `bda22475` · `codex-context-dock-polish-fixes`
+**Polish global context result priority**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-07 17:07 · `7c585ad4` · `codex-context-dock-polish-fixes`
+**Polish dock result sheet behavior**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-07 17:51 · `81aa0361` · `codex-context-dock-polish-fixes`
+**Align global context ghost and focus**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-07 18:12 · `da76852f` · `codex-context-dock-polish-fixes`
+**Align global match capsule icons**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-07 18:32 · `f17dd108` · `codex-context-dock-polish-fixes`
+**Guard default row execution**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-07 18:47 · `a152ac30` · `codex-context-dock-polish-fixes`
+**Tighten global match capsule**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-07 19:09 · `f3f04f6c` · `codex-context-dock-polish-fixes`
+**Align global context result previews**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-08 11:07 · `689c00ca` · `codex-context-dock-polish-fixes`
+**Stabilize context dock navigation**
+Swift: +0 added · ~5 modified · -0 deleted

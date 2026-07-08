@@ -309,6 +309,16 @@ final class GeneralAIActionExecutor {
             let success = !output.hasPrefix("❌")
             return .init(success: success, message: output)
 
+        case "automation.appleScriptModel":
+            return executeGeneratedAppleScript(candidate)
+
+        case "automation.nativeShare":
+            return await executeNativeShare(candidate)
+
+        case "automation.media.pause", "automation.media.play", "automation.media.next-track",
+             "automation.media.previous-track":
+            return executeMediaTransport(candidate)
+
         case "safari.bridge.summarize":
             return await summarizeSafariBridgePage(candidate)
 
@@ -321,6 +331,73 @@ final class GeneralAIActionExecutor {
             }
             return .init(success: false, message: "Unknown automation route \(candidate.id).")
         }
+    }
+
+    /// Run AppleScript produced by the dedicated automation model. The script text lives
+    /// in `inputValues["appleScript"]` — approval already happened before we get here.
+    private func executeGeneratedAppleScript(_ candidate: DoraXActionCandidate) -> GeneralAIActionResult {
+        let script = candidate.inputValues["appleScript"] ?? ""
+        guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .init(success: false, message: "The automation model returned no script.")
+        }
+        guard let object = NSAppleScript(source: script) else {
+            return .init(success: false, message: "Couldn't compile the generated AppleScript.")
+        }
+        var error: NSDictionary?
+        let output = object.executeAndReturnError(&error)
+        if let error {
+            let msg = error[NSAppleScript.errorMessage] as? String ?? "AppleScript failed."
+            return .init(success: false, message: "AppleScript error: \(msg)")
+        }
+        let value = output.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var message = value.isEmpty ? "Done." : value
+        if let caveat = candidate.caveat { message += " \(caveat)" }
+        return .init(success: true, message: message)
+    }
+
+    private func executeNativeShare(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+        let raw = candidate.inputValues["rawQuery"] ?? ""
+        guard let intent = ShareIntentRouter.shared.parse(raw) else {
+            return .init(success: false, message: "Couldn't understand the share destination.")
+        }
+        let axContext = AXContextReader.shared.current
+        guard !ShareIntentRouter.shared.shareItems(for: axContext).isEmpty else {
+            return .init(success: false, message: "Nothing to share right now.")
+        }
+        let resolution = await ShareIntentRouter.shared.resolve(intent)
+        let message = await ShareIntentRouter.shared.execute(resolution, axContext: axContext)
+        return .init(success: !message.hasPrefix("❌"), message: message)
+    }
+
+    private func executeMediaTransport(_ candidate: DoraXActionCandidate) -> GeneralAIActionResult {
+        let commandName = candidate.inputValues["verb"] ?? candidate.title
+        let command: MRCommand
+        switch candidate.id {
+        case "automation.media.pause": command = .pause
+        case "automation.media.play": command = .play
+        case "automation.media.next-track": command = .nextTrack
+        case "automation.media.previous-track": command = .previousTrack
+        default:
+            return .init(success: false, message: "Unknown media command.")
+        }
+
+        let sent = MediaRemoteBridge.shared.sendCommand(command)
+        if !sent {
+            let fallbackCommand: String
+            switch command {
+            case .pause: fallbackCommand = "pause"
+            case .play: fallbackCommand = "play"
+            case .nextTrack: fallbackCommand = "next"
+            case .previousTrack: fallbackCommand = "previous"
+            default: fallbackCommand = "toggle"
+            }
+            _ = MediaInfoProvider.shared.handleMediaCommand([fallbackCommand])
+        }
+
+        let target = candidate.inputValues["title"]?.isEmpty == false
+            ? candidate.inputValues["title"]!
+            : (candidate.inputValues["appName"] ?? "media")
+        return .init(success: true, message: "\(commandName) sent to \(target).")
     }
 
     /// "Summarize this page": Safari extension context (URL/title/visible text) grounded

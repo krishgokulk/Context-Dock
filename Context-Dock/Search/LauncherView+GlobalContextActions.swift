@@ -1707,6 +1707,10 @@ extension LauncherView {
     }
 
     func executeGlobalAppSearchResult(_ result: SearchResult) {
+        // Arm the launch morph BEFORE running the action: result.action() may activate a
+        // running app and force-hide the dock — this makes those hides no-op so the dock
+        // stays and morphs into the launched app's Context Dock.
+        AppDelegate.shared?.holdDockThroughAppLaunch()
         result.action()
         searchState.query = ""
         focusedAppPillIndex = nil

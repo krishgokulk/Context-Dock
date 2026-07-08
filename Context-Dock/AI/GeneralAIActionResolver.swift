@@ -129,6 +129,12 @@ final class GeneralAIActionResolver {
         let lowered = trimmed.lowercased()
 
         // Domain intents first — they are more specific than generic app actions.
+        if let media = await resolveMediaTransportIntent(lowered, original: trimmed) {
+            return media
+        }
+        if let share = await resolveNativeShareIntent(trimmed) {
+            return share
+        }
         if let reminders = resolveReminderIntent(lowered, original: trimmed) {
             return reminders
         }
@@ -243,13 +249,17 @@ final class GeneralAIActionResolver {
             "quit ", "close ", "show ", "hide ", "toggle ", "enable ", "disable ",
             "turn ", "mute ", "unmute ", "minimize ", "maximize ", "empty ",
             "run ", "activate ", "switch ", "remind ", "schedule ", "send ",
-            "compose ", "email ", "text ", "play ", "pause ",
-            "bookmark ", "download ",
+            "compose ", "email ", "text ", "play ", "pause ", "paste ",
+            "share ", "save ", "export ", "bookmark ", "download ",
         ]
         return verbs.contains(where: lowered.hasPrefix)
             // "safari new private window" — app name first, verb inside.
             || verbs.contains(where: { lowered.contains(" \($0)") })
     }
+
+    /// Public gate for callers (AppleScript-model fallback) that only want to act on
+    /// automation-shaped requests, never plain Q&A.
+    func looksExecutable(_ query: String) -> Bool { isLikelyExecutable(query) }
 
     // MARK: - App name resolution
 
@@ -365,6 +375,11 @@ final class GeneralAIActionResolver {
         if actionPhrase.isEmpty || actionPhrase == "open" {
             candidates.append(launchCandidate(appName: appName, bundleID: bundleID, confidence: 0.92))
             return .candidates(candidates)
+        }
+
+        if let paste = pasteClipboardCandidate(
+            appName: appName, bundleID: bundleID, actionPhrase: actionPhrase) {
+            return .candidates([paste])
         }
 
         // 1. App adapter actions (native registered capability).
@@ -530,6 +545,113 @@ final class GeneralAIActionResolver {
 
     // MARK: - Domain intents
 
+    private func resolveMediaTransportIntent(
+        _ lowered: String,
+        original: String
+    ) async -> GeneralAIActionResolution? {
+        let command: MRCommand
+        let verb: String
+        if ["pause", "stop music", "stop song", "pause music", "pause song"].contains(lowered) {
+            command = .pause
+            verb = "Pause"
+        } else if ["play", "resume", "resume music", "play music"].contains(lowered) {
+            command = .play
+            verb = "Play"
+        } else if ["next", "next song", "next track", "skip"].contains(lowered) {
+            command = .nextTrack
+            verb = "Next Track"
+        } else if ["previous", "prev", "previous song", "previous track"].contains(lowered) {
+            command = .previousTrack
+            verb = "Previous Track"
+        } else {
+            return nil
+        }
+
+        let info = await MediaRemoteBridge.shared.infoAsync()
+        let parsed = MediaRemoteBridge.parse(info)
+        let client = await MediaRemoteBridge.shared.clientAsync()
+        let providerFallback = MediaInfoProvider.shared.getNowPlayingSourceInfo()
+        let title = parsed.title.isEmpty ? (providerFallback.title ?? "") : parsed.title
+        let artist = parsed.artist.isEmpty ? (providerFallback.artist ?? "") : parsed.artist
+        let bundleID = client.bundleID ?? providerFallback.bundleID
+        let observerAppName = MediaPlayerObserver.shared.appName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let appName = client.displayName
+            ?? bundleID.flatMap { installedAppName(bundleId: $0) }
+            ?? (observerAppName.isEmpty ? nil : observerAppName)
+            ?? "current media app"
+        let isPlaying = parsed.isPlaying || providerFallback.playbackRate > 0
+
+        guard !title.isEmpty || bundleID != nil || !appName.isEmpty else { return nil }
+        if command == .pause && !isPlaying {
+            return .explain("Nothing is currently playing.")
+        }
+
+        let target = title.isEmpty
+            ? appName
+            : "\(title)\(artist.isEmpty ? "" : " by \(artist)") in \(appName)"
+        var candidate = DoraXActionCandidate(
+            id: "automation.media.\(stableKey(verb))",
+            title: "\(verb) \(target)",
+            appName: appName,
+            bundleID: bundleID,
+            source: .automation,
+            route: .automation,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .low,
+            confidence: 0.9,
+            permissionKey: "generalAI.execute.media.\(stableKey(verb))",
+            debugReason: "MediaRemote now-playing route from General Chat")
+        candidate.inputValues = [
+            "mediaCommand": "\(command.rawValue)",
+            "verb": verb,
+            "title": title,
+            "artist": artist,
+            "appName": appName,
+        ]
+        return .candidates([candidate])
+    }
+
+    private func resolveNativeShareIntent(_ original: String) async -> GeneralAIActionResolution? {
+        guard let intent = ShareIntentRouter.shared.parse(original) else { return nil }
+        let context = AXContextReader.shared.current
+        let items = ShareIntentRouter.shared.shareItems(for: context)
+        guard !items.isEmpty else {
+            return .explain(
+                "I can share through macOS native sharing, but there is nothing selected, "
+                + "no readable page URL, and no selected text right now.")
+        }
+        let resolution = await ShareIntentRouter.shared.resolve(intent)
+        let destination = resolution.recipientDisplayName.isEmpty
+            ? nativeShareDestinationName(intent.channelHint)
+            : resolution.recipientDisplayName
+        var candidate = DoraXActionCandidate(
+            id: "automation.nativeShare",
+            title: "Share current context to \(destination)",
+            appName: nativeShareDestinationName(intent.channelHint),
+            bundleID: nil,
+            source: .automation,
+            route: .automation,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .medium,
+            confidence: 0.88,
+            permissionKey: "generalAI.execute.nativeShare.\(stableKey(destination))",
+            debugReason: "native macOS share route from General Chat")
+        candidate.inputValues = ["rawQuery": original]
+        return .candidates([candidate])
+    }
+
+    private func nativeShareDestinationName(_ hint: ShareChannelHint) -> String {
+        switch hint {
+        case .messages: return "Messages"
+        case .mail: return "Mail"
+        case .airDrop: return "AirDrop"
+        case .picker: return "Share Sheet"
+        }
+    }
+
     private func resolveReminderIntent(
         _ lowered: String, original: String
     ) -> GeneralAIActionResolution? {
@@ -678,6 +800,31 @@ final class GeneralAIActionResolver {
     }
 
     // MARK: - Candidate builders
+
+    private func pasteClipboardCandidate(
+        appName: String,
+        bundleID: String,
+        actionPhrase: String
+    ) -> DoraXActionCandidate? {
+        let phrase = actionPhrase.lowercased()
+        guard phrase.contains("paste") && phrase.contains("clipboard") else { return nil }
+        guard (NSPasteboard.general.string(forType: .string) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else {
+            return nil
+        }
+        var candidate = keyboardShortcutCandidate(
+            title: "Paste Clipboard",
+            path: ["Edit", "Paste"],
+            char: "v",
+            modifiers: 0,
+            appName: appName,
+            bundleID: bundleID,
+            confidence: 0.86,
+            reason: "clipboard paste requested for named app")
+        candidate.caveat = "Activates \(appName), then sends Command-V to the focused field."
+        return candidate
+    }
 
     private func launchCandidate(
         appName: String, bundleID: String, confidence: Double

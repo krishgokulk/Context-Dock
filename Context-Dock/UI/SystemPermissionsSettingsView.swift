@@ -5,6 +5,29 @@ import Photos
 import Contacts
 import AppKit
 import CoreGraphics
+import Carbon
+
+/// Real Automation (Apple Events) authorization for a target app — never prompts.
+/// `noErr` means the user granted this app control of `bundleID` in System Settings →
+/// Privacy & Security → Automation. Anything else (denied, not-yet-asked, not running)
+/// is treated as not granted.
+func contextDockAutomationAuthorized(bundleID: String) -> Bool {
+    guard let desc = NSAppleEventDescriptor(bundleIdentifier: bundleID).aeDesc else { return false }
+    return AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, false) == noErr
+}
+
+/// Aggregate Automation status across the apps this feature drives via AppleScript.
+/// "Authorized" only when every target is granted; partial shows the count so the user
+/// sees progress as they flip toggles; "Not Authorized" when none are on.
+func contextDockAggregateAutomationStatus() -> String {
+    let targets = [
+        "com.apple.Notes", "com.apple.mail", "com.apple.MobileSMS", "com.apple.reminders",
+    ]
+    let granted = targets.filter(contextDockAutomationAuthorized).count
+    if granted == targets.count { return "Authorized" }
+    if granted == 0 { return "Not Authorized" }
+    return "Authorized \(granted)/\(targets.count)"
+}
 
 struct SystemPermissionsSettingsView: View {
     @ObservedObject private var permissions = ILAppPermissionCenter.shared
@@ -120,7 +143,7 @@ struct SystemPermissionsSettingsView: View {
         #endif
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
         // Automation (AppleScript) – there's no direct API, guide user to System Settings
-        automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
+        automationStatus = permissions.allowAutomation ? contextDockAggregateAutomationStatus() : "Disabled in App"
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
 
         #if DEBUG
@@ -314,7 +337,7 @@ struct SystemPermissionsSection: View {
         print("👤 Contacts auth status: \(c.rawValue) (.authorized=\(CNAuthorizationStatus.authorized.rawValue))")
         #endif
         contactsStatus = c == .authorized ? "Authorized" : "Not Authorized"
-        automationStatus = permissions.allowAutomation ? "Enabled in App" : "Disabled in App"
+        automationStatus = permissions.allowAutomation ? contextDockAggregateAutomationStatus() : "Disabled in App"
         screenRecordingStatus = CGPreflightScreenCaptureAccess() ? "Authorized" : "Not Authorized"
 
         #if DEBUG

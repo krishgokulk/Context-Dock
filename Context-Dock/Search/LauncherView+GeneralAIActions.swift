@@ -23,6 +23,12 @@ extension LauncherView {
 
         switch resolution {
         case .none:
+            // No deterministic route. If the user enabled a dedicated AppleScript model
+            // (e.g. Osaurus AppleScript-8B) and this is an automation-shaped request,
+            // let the specialist generate a script and run it with approval.
+            if let scripted = await appleScriptModelFallbackAnswer(query: query) {
+                return scripted
+            }
             await MainActor.run { aiMode.loadingStatus = nil }
             return nil
 
@@ -101,6 +107,73 @@ extension LauncherView {
         }
         return answer
     }
+
+    /// Dedicated-automation-backend fallback: when no deterministic route matched, ask the
+    /// specialist AppleScript model to generate a script, show it for approval, then run it.
+    /// Returns nil (→ normal chat) when the model is off, unconfigured, or the query isn't
+    /// an automation-shaped request.
+    private func appleScriptModelFallbackAnswer(query: String) async -> String? {
+        guard AppleScriptModelService.shared.isEnabledAndConfigured,
+            GeneralAIActionResolver.shared.looksExecutable(query)
+        else { return nil }
+
+        let appHint = GeneralAIActionResolver.shared.namedInstalledApp(in: query)?.name
+        await MainActor.run { aiMode.loadingStatus = "Generating AppleScript…" }
+        let generated: AppleScriptModelService.GeneratedScript
+        do {
+            generated = try await AppleScriptModelService.shared.generateAppleScript(
+                instruction: query, appHint: appHint)
+        } catch {
+            await MainActor.run { aiMode.loadingStatus = nil }
+            // Model enabled but failed → tell the user honestly rather than falling back
+            // silently to a chat guess.
+            return "Couldn't generate AppleScript: "
+                + (error.localizedDescription)
+        }
+
+        let preview = generated.script
+        let firstLine = preview.split(separator: "\n").first.map(String.init) ?? "AppleScript"
+        var candidate = DoraXActionCandidate(
+            id: "automation.appleScriptModel",
+            title: appHint.map { "Run AppleScript on \($0)" } ?? "Run generated AppleScript",
+            appName: appHint,
+            bundleID: nil,
+            source: .automation,
+            route: .automation,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .high,
+            confidence: 0.9,
+            permissionKey: "generalAI.execute.appleScriptModel",
+            debugReason: "AppleScript model fallback: \(firstLine)"
+        )
+        candidate.inputValues = ["appleScript": preview]
+
+        await MainActor.run { aiMode.loadingStatus = "Approval required…" }
+        if !GeneralAIActionApprovalStore.isAlwaysAllowed(candidate.permissionKey) {
+            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
+            if decision == .cancel {
+                await MainActor.run {
+                    aiMode.loadingStatus = nil
+                    aiMode.pendingToolChips = ["Cancelled: AppleScript"]
+                }
+                return "Cancelled — nothing was executed.\n\nGenerated script was:\n```applescript\n"
+                    + preview + "\n```"
+            }
+        }
+
+        await MainActor.run { aiMode.loadingStatus = "Running AppleScript…" }
+        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        await MainActor.run {
+            aiMode.loadingStatus = nil
+            aiMode.pendingToolChips = ["AppleScript · automation model"]
+        }
+        if result.success {
+            return result.message
+        }
+        return "That didn't work: \(result.message)\n\nGenerated script:\n```applescript\n"
+            + preview + "\n```"
+    }
 }
 
 // MARK: - Named-app runtime grounding
@@ -122,6 +195,7 @@ extension LauncherView {
         let statusWords = [
             "what", "doing", "going on", "status", "open", "current", "working",
             "why", "running", "which", "how many", "show", "recent", "state",
+            "explore", "inspect", "pause", "play", "song", "track", "music",
         ]
         guard statusWords.contains(where: lowered.contains) else { return "" }
 
@@ -139,6 +213,26 @@ extension LauncherView {
                 + (running.isHidden ? " (hidden)" : ""))
         } else {
             lines.append("- \(app.name) is NOT running right now")
+        }
+
+        let mediaInfo = await MediaRemoteBridge.shared.infoAsync()
+        let media = MediaRemoteBridge.parse(mediaInfo)
+        let mediaClient = await MediaRemoteBridge.shared.clientAsync()
+        let observerMediaApp = MediaPlayerObserver.shared.appName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if mediaClient.bundleID == app.bundleId
+            || mediaClient.displayName?.localizedCaseInsensitiveContains(app.name) == true
+            || (!observerMediaApp.isEmpty
+                && app.name.localizedCaseInsensitiveContains(observerMediaApp)) {
+            let title = media.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty {
+                let artist = media.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+                lines.append(
+                    "- \(app.name) now playing: \(title)"
+                    + (artist.isEmpty ? "" : " by \(artist)")
+                    + (media.isPlaying ? " (playing)" : " (paused)")
+                )
+            }
         }
 
         // Adapter context readers — the same live readers frontmost-app chat runs
@@ -222,6 +316,26 @@ struct GeneralAIActionApprovalCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                }
+                // Generated AppleScript gets a full, scrollable preview so the user sees
+                // exactly what will run before approving arbitrary automation.
+                if let script = candidate.inputValues["appleScript"],
+                    !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("This script will run:")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        Text(script)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: 160)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.primary.opacity(0.05))
+                    )
                 }
                 HStack(spacing: 8) {
                     Button("Allow Once") {

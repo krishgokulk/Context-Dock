@@ -1218,6 +1218,17 @@ extension LauncherView {
         suppressedAutomaticFinderSelectionSignature = nil
         dismissedFinderSelectionSignature = nil
 
+        // A global-context launch is morphing into the app's Context Dock — keep the dock
+        // visible instead of hiding, regardless of dock mode.
+        if Date() < (AppDelegate.shared?.suppressResultHideUntil ?? .distantPast) {
+            searchState.query = ""
+            focusedAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+            return
+        }
+
         // Always-float (or taskbar mode): keep the dock visible after the action runs;
         // just reset it to idle and refocus the input for the next command.
         if settings.alwaysFloatDock || (settings.effectiveDockAtBottom && showContextInDock) {
@@ -1241,6 +1252,11 @@ extension LauncherView {
         focusedAppPillIndex = nil
         l2.focusedPillIndex = nil
         l2.pillNavViaKeyboard = false
+        // A global-context launch is morphing into the app's Context Dock — don't hide.
+        if Date() < (AppDelegate.shared?.suppressResultHideUntil ?? .distantPast) {
+            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+            return
+        }
         isSearchFieldFocused = false
         AppDelegate.shared?.hideLauncher(force: true)
     }

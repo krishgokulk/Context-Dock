@@ -191,6 +191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
     var suppressHideOnResignUntil: Date = .distantPast
+    /// While in the future, a global-context app launch is morphing into that app's Context
+    /// Dock — result-execution hides are skipped so the dock stays instead of hide+relaunch.
+    var suppressResultHideUntil: Date = .distantPast
     private var smartScopeActivationGeneration = 0
     var doubleOptionMonitor: Any?
     var doubleOptionLocalMonitor: Any?
@@ -904,10 +907,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         launcherWindow?.level = windowLevel
-        launcherWindow?.collectionBehavior =
-            settings.effectiveDockAtBottom
-            ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-            : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
+        launcherWindow?.collectionBehavior = currentDockCollectionBehavior()
         launcherWindow?.isMovableByWindowBackground = true
         // No window shadow: on a tight transparent window it renders as a hard dark
         // edge that fights the glass rim (double outline). A soft shadow needs window
@@ -930,21 +930,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
 
-    func applyPersistentDockBehavior() {
-        guard let window = launcherWindow else { return }
-        // Bottom dock joins every Space (always present). Floating dock uses
-        // moveToActiveSpace: the hotkey brings it to WHATEVER desktop the user is
-        // on, but a passive desktop switch does NOT make it appear — manual show/
-        // hide, on the user's wish.
-        window.collectionBehavior =
-            settings.effectiveDockAtBottom
+    /// True when the dock should be present on EVERY Space at a fixed screen position
+    /// (no per-Space move, no hide on Space switch): the bottom dock always, and a
+    /// floating dock that the user made persistent via Pin or Always-Float.
+    var dockJoinsAllSpaces: Bool {
+        settings.effectiveDockAtBottom || settings.alwaysFloatDock || settings.launcherPinned
+    }
+
+    /// The collectionBehavior for the current dock mode.
+    func currentDockCollectionBehavior() -> NSWindow.CollectionBehavior {
+        // canJoinAllSpaces → visible on all Spaces at the same spot, so switching
+        // desktops keeps it put instead of leaving it on the old Space (which read as
+        // "hide + relaunch"). A transient floating dock still uses moveToActiveSpace.
+        dockJoinsAllSpaces
             ? [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
+    }
+
+    func applyPersistentDockBehavior() {
+        guard let window = launcherWindow else { return }
+        window.collectionBehavior = currentDockCollectionBehavior()
         let newLevel: NSWindow.Level = settings.effectiveDockAtBottom
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         if window.level != newLevel { window.level = newLevel }
         window.isMovableByWindowBackground = true
+    }
+
+    /// Keep the dock visible + on top through an app launch started from the dock, so a
+    /// global-context launch morphs smoothly into that app's Context Dock instead of
+    /// hiding and reappearing. Unlike reinforceFloatingDockWindow this is NOT gated to
+    /// always-float/bottom — it holds a transient floating dock too, but only one that's
+    /// already visible (never resurrects a hidden dock) and only for a short window.
+    func holdDockThroughAppLaunch(seconds: TimeInterval = 1.5) {
+        // Suppress result-execution hides for the morph window even if the window is
+        // momentarily not visible yet — set this before the visibility guard so a hide
+        // fired by the launch action itself is skipped.
+        suppressResultHideUntil = Date().addingTimeInterval(seconds)
+        guard let window = launcherWindow, window.isVisible else { return }
+        suppressHideOnResignUntil = Date().addingTimeInterval(seconds)
+        window.alphaValue = 1
+        window.orderFrontRegardless()
     }
 
     func reinforceFloatingDockWindow(reason: String, activate: Bool) {
@@ -979,9 +1005,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleActiveSpaceChanged(_ notification: Notification) {
         guard let window = launcherWindow, window.isVisible else { return }
-        // Floating dock is manual: do NOT follow the user to a new Space or grab
-        // focus there. Only the bottom dock re-asserts itself across Spaces.
-        guard settings.effectiveDockAtBottom else { return }
+        // Bottom dock AND a persistent floating dock (Pin / Always-Float) stay put across
+        // Spaces. A transient floating dock is manual — don't follow the user to a new Space.
+        guard dockJoinsAllSpaces else { return }
+        // Suppress the resign-key hide the Space switch triggers, so the dock doesn't
+        // blink out and reappear.
         suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
         applyPersistentDockBehavior()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -1000,6 +1028,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Pinned via the pin button: stays floating over every app until unpinned.
         guard !settings.launcherPinned else { return }
         guard Date() >= suppressHideOnResignUntil else { return }
+        // A chat-approved command can briefly activate its target app (`code --status`
+        // spawns VS Code's CLI and VS Code takes focus). That's not the user clicking
+        // away — hiding here would tear down the running chat request mid-flight.
+        if TerminalAIBridge.shared.isExecuting || TerminalAIBridge.shared.pendingApproval != nil {
+            return
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
             guard Date() >= self.suppressHideOnResignUntil else { return }

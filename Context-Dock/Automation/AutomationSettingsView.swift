@@ -7,6 +7,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 // MARK: - Category
 
@@ -2890,6 +2891,9 @@ struct AutomationAdapterDetailView: View {
     @State private var isScanningHelp = false
     @State private var importPreview: AdapterPackPreview?
     @State private var importError: String?
+    @State private var showSkillURLPrompt = false
+    @State private var skillURLInput = ""
+    @State private var isFetchingSkillURL = false
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
     @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
@@ -2954,6 +2958,101 @@ struct AutomationAdapterDetailView: View {
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    // Import a web SKILL.md (Claude / Osaurus style) into the current adapter. Opens the
+    // editor prefilled so the user can review/edit before saving — no silent install.
+    private func importSkillFromFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.plainText, .text, .data]
+        for ext in ["md", "markdown"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        panel.allowedContentTypes = types
+        panel.prompt = "Import Skill"
+        panel.message = "Choose a SKILL.md file"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            importError = "Couldn't read \(url.lastPathComponent)."
+            return
+        }
+        let fallback = url.deletingPathExtension().lastPathComponent
+        loadSkillMarkdownIntoEditor(text, fallbackName: fallback)
+    }
+
+    private func importSkillFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            importError = "Clipboard is empty. Copy a SKILL.md first."
+            return
+        }
+        loadSkillMarkdownIntoEditor(text, fallbackName: "Imported Skill")
+    }
+
+    /// Download a SKILL.md from a pasted link (GitHub blob URLs are auto-rewritten to raw)
+    /// and open the editor prefilled.
+    private func importSkillFromURL() {
+        let raw = skillURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = normalizedSkillURL(raw) else {
+            importError = "Enter a valid http(s) URL to a SKILL.md file."
+            return
+        }
+        showSkillURLPrompt = false
+        isFetchingSkillURL = true
+        Task {
+            defer { isFetchingSkillURL = false }
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("text/plain", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    importError = "Download failed (HTTP \(http.statusCode))."
+                    return
+                }
+                guard let text = String(data: data, encoding: .utf8),
+                    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else {
+                    importError = "The file at that URL was empty or not text."
+                    return
+                }
+                let fallback = url.deletingPathExtension().lastPathComponent
+                loadSkillMarkdownIntoEditor(text, fallbackName: fallback)
+            } catch {
+                importError = "Couldn't download: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Accept raw links as-is; rewrite `github.com/owner/repo/blob/ref/path` → the
+    /// `raw.githubusercontent.com` equivalent so a normal file URL works.
+    private func normalizedSkillURL(_ input: String) -> URL? {
+        guard let url = URL(string: input),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            let host = url.host?.lowercased()
+        else { return nil }
+        if host == "github.com", url.pathComponents.contains("blob") {
+            var parts = url.pathComponents.filter { $0 != "/" }
+            guard let blobIdx = parts.firstIndex(of: "blob"), blobIdx >= 2 else { return url }
+            let owner = parts[0], repo = parts[1]
+            parts.remove(at: blobIdx)  // drop "blob"
+            let tail = parts.dropFirst(2).joined(separator: "/")  // ref/.../SKILL.md
+            return URL(string: "https://raw.githubusercontent.com/\(owner)/\(repo)/\(tail)")
+        }
+        return url
+    }
+
+    private func loadSkillMarkdownIntoEditor(_ text: String, fallbackName: String) {
+        guard let parsed = AdapterSkill.fromSkillMarkdown(
+            text, bundleId: currentAdapter.bundleId, fallbackName: fallbackName)
+        else {
+            importError = "No skill content found. Expected a SKILL.md with a markdown body."
+            return
+        }
+        editingSkill = parsed
     }
 
     private var currentAdapter: AppAdapter {
@@ -3683,6 +3782,32 @@ struct AutomationAdapterDetailView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer()
+                        Menu {
+                            Button {
+                                skillURLInput = ""
+                                showSkillURLPrompt = true
+                            } label: {
+                                Label("Import from URL…", systemImage: "link")
+                            }
+                            Button {
+                                importSkillFromFile()
+                            } label: {
+                                Label("Import SKILL.md File…", systemImage: "doc.badge.plus")
+                            }
+                            Button {
+                                importSkillFromClipboard()
+                            } label: {
+                                Label("Import from Clipboard", systemImage: "doc.on.clipboard")
+                            }
+                        } label: {
+                            Label("Import Skill", systemImage: "square.and.arrow.down")
+                                .font(.system(size: 10, weight: .medium))
+                        } primaryAction: {
+                            importSkillFromFile()
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .controlSize(.mini)
                         Button {
                             editingSkill = AdapterSkill(
                                 adapterBundleId: currentAdapter.bundleId, name: "", instructions: "")
@@ -4089,6 +4214,32 @@ struct AutomationAdapterDetailView: View {
                 if let saved { skillStore.upsert(saved) }
                 editingSkill = nil
             }
+        }
+        .sheet(isPresented: $showSkillURLPrompt) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Import Skill from URL")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Paste a link to a SKILL.md. GitHub file (blob) links are converted to raw automatically.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField(
+                    "https://raw.githubusercontent.com/…/SKILL.md",
+                    text: $skillURLInput
+                )
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { importSkillFromURL() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showSkillURLPrompt = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Import") { importSkillFromURL() }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(skillURLInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(20)
+            .frame(width: 440)
         }
         .sheet(isPresented: $showCLIToolPicker) {
             AppCLIToolPickerSheet(

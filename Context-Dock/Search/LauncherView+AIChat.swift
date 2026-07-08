@@ -10,6 +10,98 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
+private enum GeneralAIChatConversationStore {
+    private static let key = "dorax.generalAI.currentConversation.v1"
+
+    private struct StoredAppLaunch: Codable {
+        let label: String
+        let systemIcon: String
+        let bundleId: String
+    }
+
+    private struct StoredMessage: Codable {
+        let role: String
+        let content: String
+        let isError: Bool
+        let structuredData: String?
+        let hasInstallButton: Bool
+        let attachments: [String]
+        let appLaunches: [StoredAppLaunch]
+        let mcpToolsRan: [String]
+    }
+
+    static func load() -> [AIChatMessage] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+            let stored = try? JSONDecoder().decode([StoredMessage].self, from: data)
+        else { return [] }
+
+        return stored.map { item in
+            AIChatMessage(
+                role: role(from: item.role),
+                content: item.content,
+                isError: item.isError,
+                structuredData: item.structuredData,
+                hasInstallButton: item.hasInstallButton,
+                attachments: item.attachments.map(URL.init(fileURLWithPath:)),
+                appLaunches: item.appLaunches.map {
+                    AppLaunchAction(
+                        label: $0.label,
+                        systemIcon: $0.systemIcon,
+                        bundleId: $0.bundleId
+                    )
+                },
+                mcpToolsRan: item.mcpToolsRan
+            )
+        }
+    }
+
+    static func save(_ messages: [AIChatMessage]) {
+        let stored = messages.map { message in
+            StoredMessage(
+                role: roleString(message.role),
+                content: message.content,
+                isError: message.isError,
+                structuredData: message.structuredData,
+                hasInstallButton: message.hasInstallButton,
+                attachments: message.attachments.map(\.path),
+                appLaunches: message.appLaunches.map {
+                    StoredAppLaunch(
+                        label: $0.label,
+                        systemIcon: $0.systemIcon,
+                        bundleId: $0.bundleId
+                    )
+                },
+                mcpToolsRan: message.mcpToolsRan
+            )
+        }
+        if let data = try? JSONEncoder().encode(stored) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func roleString(_ role: AIChatMessage.ChatRole) -> String {
+        switch role {
+        case .user: return "user"
+        case .assistant: return "assistant"
+        case .tool: return "tool"
+        case .approval: return "approval"
+        }
+    }
+
+    private static func role(from raw: String) -> AIChatMessage.ChatRole {
+        switch raw {
+        case "user": return .user
+        case "tool": return .tool
+        case "approval": return .approval
+        default: return .assistant
+        }
+    }
+}
+
 extension LauncherView {
     var shouldShowContextDockChatButton: Bool {
         showContextInDock
@@ -586,6 +678,14 @@ extension LauncherView {
     var l2ChatSection: some View {
         let hasConversation = !l2.chatMessages.isEmpty || l2.isLoading
         let scopedTarget = l2.targetApp
+        // Chat-style avatars: scoped app icon on answers, provider symbol on queries —
+        // scope stays readable even when the header scrolls out of view.
+        let scopedAppIcon: NSImage? = scopedTarget.flatMap { target in
+            target.icon
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: target.bundleId)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        }
+        let providerSymbol = settings.selectedAIProvider.iconName
         if hasConversation || l2.showChatPopover {
             VStack(spacing: 0) {
                 if hasConversation {
@@ -615,19 +715,13 @@ extension LauncherView {
                                     size: 18, cornerRadius: 4
                                 )
                             }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("Chat with \(contextDockChatTitle(appName: scopedTarget.name, bundleId: scopedTarget.bundleId))")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Text(contextDockChatUsingSummary(
-                                    bundleId: scopedTarget.bundleId, appName: scopedTarget.name))
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
+                            // Single-line header — per-message avatars carry the scope
+                            // identity now, so the "Using: …" subtitle is gone.
+                            Text("Chat with \(contextDockChatTitle(appName: scopedTarget.name, bundleId: scopedTarget.bundleId))")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
                         Spacer()
                         Button {
@@ -685,12 +779,18 @@ extension LauncherView {
                                             onInstallExtension: installSuggestedExtension,
                                             onInstallProposal: { json in installFromProposal(json)
                                             },
-                                            onRunOnceProposal: { json in runOnceFromProposal(json) }
+                                            onRunOnceProposal: { json in runOnceFromProposal(json) },
+                                            userAvatarSymbol: providerSymbol,
+                                            assistantAvatarImage: scopedAppIcon
                                         )
                                         .id(message.id)
                                     } else {
-                                        AIChatMessageView(message: message)
-                                            .id(message.id)
+                                        AIChatMessageView(
+                                            message: message,
+                                            userAvatarSymbol: providerSymbol,
+                                            assistantAvatarImage: scopedAppIcon
+                                        )
+                                        .id(message.id)
                                     }
                                 }
 
@@ -976,6 +1076,8 @@ extension LauncherView {
 
     // MARK: - AI Query Submission
     func submitAIQuery() {
+        restoreGeneralAIConversationIfNeeded()
+
         let query = searchState.query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
         guard !aiMode.isLoading && aiMode.streamingId == nil else { return }
@@ -992,6 +1094,7 @@ extension LauncherView {
             aiMode.messages.append(
                 AIChatMessage(role: .user, content: query, attachments: pendingAttachments))
         }
+        persistGeneralAIConversation()
         searchState.query = ""
 
         aiMode.attachments = []
@@ -1022,6 +1125,7 @@ extension LauncherView {
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
                     }
+                    self.persistGeneralAIConversation()
                     // Two-step: don't send yet — show a confirm card so the user approves the
                     // destination first.
                     if let shareDest {
@@ -1042,10 +1146,28 @@ extension LauncherView {
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
                     }
+                    self.persistGeneralAIConversation()
                     self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
             }
         }
+    }
+
+    func restoreGeneralAIConversationIfNeeded() {
+        guard aiMode.messages.isEmpty else { return }
+        let restored = GeneralAIChatConversationStore.load()
+        guard !restored.isEmpty else { return }
+        aiMode.messages = restored
+        hasUserSentMessageInCurrentSession = true
+        requestWindowSizeUpdate(reason: .chatChanged)
+    }
+
+    func persistGeneralAIConversation() {
+        GeneralAIChatConversationStore.save(aiMode.messages)
+    }
+
+    func clearGeneralAIConversation() {
+        GeneralAIChatConversationStore.clear()
     }
 
     /// Extract `SHARE_VIA: <dest>` from an AI reply (the model emits it when the user asked to
@@ -3015,7 +3137,7 @@ extension LauncherView {
             }
         }
 
-        if ["reminder", "task", "todo", "to-do", "to do", "due"].contains(where: q.contains) {
+        if ["reminder", "todo", "to-do", "to do", "due"].contains(where: q.contains) {
             let reminders = api.getReminders(limit: 30)
             if reminders.isEmpty {
                 blocks.append("## Reminders: none open.")
@@ -3256,7 +3378,7 @@ extension LauncherView {
             ["event", "calendar", "meeting", "appointment", "schedule", "agenda", "tomorrow",
              "today", "this week", "next week", "coming week", "weekend"],
             "Open Calendar", "calendar", "com.apple.iCal")
-        add(["reminder", "task", "todo", "to-do", "to do", "due"],
+        add(["reminder", "todo", "to-do", "to do", "due"],
             "Open Reminders", "checklist", "com.apple.reminders")
         add(["contact", "phone number", "email of", "number of", "call ", "phone of"],
             "Open Contacts", "person.crop.circle", "com.apple.AddressBook")
@@ -3283,9 +3405,19 @@ extension LauncherView {
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead
         var sysContent = """
-            You are a helpful AI assistant. Provide concise, accurate answers.
+            You are DoraX General Chat, a helpful AI assistant inside the user's Mac launcher.
+            Provide concise, accurate answers.
             Keep responses brief and to the point.
-            This is General Chat mode. Do not use frontmost app, browser page, Finder selection, menu commands, or Context Dock scope unless the user explicitly attached that item in this chat. However, when the user asks about one of their apps and an App Tools section is provided below, use those tools to answer.
+            This is General Chat mode. It is not Global Context and not Context Dock chat.
+            Use explicit chat attachments/selection normally. For frontmost app, browser page,
+            Finder selection, menu commands, Accessibility, or Vision context that was not
+            explicitly attached, ask before inspecting it.
+            When the user names or implies an app, ground the answer in DoraX's installed-app
+            inventory, app adapters, cached menus, MCP tools, skills, CLI routes, and native
+            share routes when those sections are provided. Prefer actionable approval-backed
+            routes over generic instructions.
+            If execution is needed, do not claim completion until the DoraX approval/executor
+            path succeeds.
             \(currentDateTimeContextBlock())
             """
         if !attachments.isEmpty {

@@ -18,18 +18,27 @@ Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specifi
 
 Architecture truth files live in `docs/architecture/`.
 
-## Build
+## Build & run (canonical — use the script)
 
 This is a pure Xcode project — no Makefile, no SPM package at the root.
 
+**After every code edit, build + relaunch with the shared script — never raw `xcodebuild` + `open`:**
+
 ```bash
-# Build from CLI (run from repo root)
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Debug build
+./scripts/dev-run.sh     # builds Debug into .build/XcodeDerivedData and relaunches THAT app
+```
 
-# Clean + build
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock clean build
+Why this rule exists: both Claude and Codex work in this repo (VS Code + desktop apps). Raw
+`xcodebuild` writes to Xcode's hashed DerivedData while `.build/XcodeDerivedData` holds the
+agents' build — launching by `find ~/Library/Developer/Xcode/DerivedData …` has shipped a
+**stale app** before. `dev-run.sh` is the single source of truth for which binary runs;
+Codex follows the same rule via AGENTS.md.
 
-# Build for release
+```bash
+# Build only, no launch (same DerivedData as dev-run.sh)
+./scripts/build-debug.sh
+
+# Build for release (only via ship.sh in practice)
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 

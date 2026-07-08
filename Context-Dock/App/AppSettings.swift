@@ -739,7 +739,9 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
 
     var description: String {
         switch self {
-        case .onDevice: return "Uses Apple's on-device AI. Private and requires no API key."
+        case .onDevice:
+            return
+                "Uses Apple's Foundation Models through the native Swift API for local Apple Intelligence. Requires no API key."
         case .googleGemini: return "Google's Gemini AI models. Requires API key."
         case .openAI: return "OpenAI's GPT models. Requires API key."
         case .anthropic: return "Anthropic's Claude models. Requires API key."
@@ -976,6 +978,13 @@ class AppSettings: ObservableObject {
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =
         "http://localhost:1234/v1"
     @AppStorage("openAICompatibleModelID") var openAICompatibleModelID: String = ""
+    // Dedicated AppleScript-automation model (e.g. Osaurus AppleScript-8B/16B on
+    // 127.0.0.1:1337/v1). Optional + independent of the main chat provider: used ONLY
+    // to turn NL automation intents into AppleScript in the action/execution layer.
+    @AppStorage("appleScriptModelEnabled") var appleScriptModelEnabled: Bool = false
+    @AppStorage("appleScriptModelEndpoint") var appleScriptModelEndpoint: String =
+        "http://127.0.0.1:1337/v1"
+    @AppStorage("appleScriptModelID") var appleScriptModelID: String = ""
     // Subscription bridge endpoints (VibeProxy default: localhost:8317)
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"

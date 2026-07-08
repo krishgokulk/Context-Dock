@@ -35,12 +35,20 @@ final class GeneralChatCapabilityHub {
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         let builtinLines = builtInCapabilityLines()
+        let inventoryLines = appInventoryLines()
         if let cachedBlock, Date().timeIntervalSince(cachedAt) < cacheTTL {
-            let block = joinedBlock(cachedBlock, builtinLines: builtinLines)
+            let block = withInventory(
+                joinedBlock(cachedBlock, builtinLines: builtinLines),
+                inventoryLines: inventoryLines
+            )
             return compact ? compacted(block) : block
         }
 
         var mcpLines: [String] = []
+        // Apps exposing a query-style tool (search/find/list/get/query/read). These are the
+        // fan-out / "which app?" targets for broad discovery questions that name no app.
+        var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
+        let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
         let adapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
         for adapter in adapters {
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
@@ -54,12 +62,24 @@ final class GeneralChatCapabilityHub {
                     ? "" : " — \(String(entry.tool.description.prefix(140)))"
                 mcpLines.append("- server \"\(entry.server)\", tool \"\(entry.tool.name)\"\(desc)")
             }
+            let queryTools = tools
+                .map(\.tool.name)
+                .filter { name in
+                    let lower = name.lowercased()
+                    return searchVerbs.contains { lower.contains($0) }
+                }
+            if !queryTools.isEmpty {
+                searchableApps.append(
+                    (adapter.appName, adapter.bundleId, Array(queryTools.prefix(4))))
+            }
         }
 
         let historyApps = savedChatApps()
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 
-        guard !mcpLines.isEmpty || !historyLines.isEmpty || !builtinLines.isEmpty else {
+        guard !mcpLines.isEmpty || !historyLines.isEmpty || !builtinLines.isEmpty
+            || !inventoryLines.isEmpty
+        else {
             cachedBlock = ""
             cachedAt = Date()
             return ""
@@ -80,7 +100,23 @@ final class GeneralChatCapabilityHub {
             "",
             "After the tool result returns, answer the user's actual question in plain language.",
             "If the user asks \"how many\", count the items in the result.",
+            "",
+            "Planning rules:",
+            "- Prefer real DoraX routes over generic advice: app adapter actions, built-in capabilities, MCP tools, native share, cached app menus, CLI, then launch/activate.",
+            "- If a request names or implies an app, check the installed/running/app-adapter/menu inventory below before answering.",
+            "- If execution is needed, explain the route and let DoraX approval run it; do not pretend the task is complete before approval/executor success.",
+            "- If the user asks about selected files, selected text, the current page, or the frontmost app, say DoraX can inspect local Accessibility/Vision context and ask before using it unless explicit chat attachments/context are already provided.",
+            "- If the user asks to share/send to an app, use native macOS sharing or the app adapter route; do not invent a manual copy/paste workflow.",
+            "- DISCOVERY queries that name NO app (\"do any of my apps have X\", \"where did I save Y\", \"any links stored anywhere\"): NEVER answer that you lack access, and NEVER suggest grep / the current working directory / shell — you are DoraX, not a coding agent. Instead call the query tool of each relevant app under \"Searchable apps\" below and combine the results. If several apps could match and fanning out is too broad, first ask the user which of those specific apps to search (name them).",
         ]
+        if !searchableApps.isEmpty {
+            lines.append("")
+            lines.append("Searchable apps (call these query tools to answer discovery questions):")
+            for app in searchableApps.prefix(20) {
+                lines.append(
+                    "- \(app.name) (\(app.bundleId)): \(app.tools.joined(separator: ", "))")
+            }
+        }
         if !mcpLines.isEmpty {
             lines.append("")
             lines.append("Apps with live MCP tools:")
@@ -95,7 +131,10 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
-        let full = joinedBlock(block, builtinLines: builtinLines)
+        let full = withInventory(
+            joinedBlock(block, builtinLines: builtinLines),
+            inventoryLines: inventoryLines
+        )
         return compact ? compacted(full) : full
     }
 
@@ -143,6 +182,110 @@ final class GeneralChatCapabilityHub {
         return lines
     }
 
+    private func appInventoryLines() -> [String] {
+        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+        let runningBundleIds = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let frontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let adapters = AppAdapterManager.shared.adapters.filter(\.isEnabled)
+        let adapterByBundle = Dictionary(uniqueKeysWithValues: adapters.map { ($0.bundleId, $0) })
+        let menuSummaries = AppMenuCapabilityCache.shared.summaries()
+        let menuSummaryByBundle = Dictionary(uniqueKeysWithValues: menuSummaries.map {
+            ($0.bundleIdentifier, $0)
+        })
+        let skills = SkillStore.shared.skills.filter(\.isEnabled)
+        let skillCounts = Dictionary(grouping: skills, by: \.adapterBundleId).mapValues(\.count)
+        let mcpCounts = Dictionary(grouping: MCPServerManager.shared.servers.flatMap { server in
+            server.bundleIds.map { (bundleId: $0, server: server) }
+        }, by: \.bundleId).mapValues(\.count)
+
+        var importantBundleIds = Set<String>()
+        importantBundleIds.formUnion(runningBundleIds)
+        importantBundleIds.formUnion(adapterByBundle.keys)
+        importantBundleIds.formUnion(menuSummaryByBundle.keys)
+        importantBundleIds.formUnion(skillCounts.keys)
+        if let frontmostBundleId { importantBundleIds.insert(frontmostBundleId) }
+
+        let installedByBundle = Dictionary(uniqueKeysWithValues: installed.map { ($0.bundleId, $0) })
+        let ordered = importantBundleIds.compactMap { bundleId -> (name: String, bundleId: String)? in
+            if let entry = installedByBundle[bundleId] { return (entry.name, bundleId) }
+            if let adapter = adapterByBundle[bundleId] { return (adapter.appName, bundleId) }
+            if let summary = menuSummaryByBundle[bundleId] { return (summary.appName, bundleId) }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                return (FileManager.default.displayName(atPath: url.path)
+                    .replacingOccurrences(of: ".app", with: ""), bundleId)
+            }
+            return nil
+        }
+        .sorted {
+            if $0.bundleId == frontmostBundleId { return true }
+            if $1.bundleId == frontmostBundleId { return false }
+            let lhsRunning = runningBundleIds.contains($0.bundleId)
+            let rhsRunning = runningBundleIds.contains($1.bundleId)
+            if lhsRunning != rhsRunning { return lhsRunning }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+
+        let mediaInfo = MediaInfoProvider.shared.getNowPlayingSourceInfo()
+        let mediaBundleId = mediaInfo.bundleID
+        let mediaDisplayName = MediaPlayerObserver.shared.appName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let observerMediaApp = MediaPlayerObserver.shared.appName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var lines: [String] = [
+            "- Installed apps indexed: \(installed.count). Running apps indexed: \(runningBundleIds.count).",
+            "- Native share routes available for selected files/text/current URL: Messages, Mail, AirDrop, and system share sheet.",
+            "- AX/Vision deeper inspection is available only after user approval; ask before reading screen, frontmost UI, selected files, selected text, or page contents unless already attached.",
+        ]
+        if let frontmostBundleId,
+           let frontmost = ordered.first(where: { $0.bundleId == frontmostBundleId }) {
+            lines.append("- Frontmost app now: \(frontmost.name) (\(frontmost.bundleId)).")
+        }
+
+        lines.append("Running app status snapshot:")
+        for app in ordered.prefix(28) {
+            var bits: [String] = []
+            if app.bundleId == frontmostBundleId { bits.append("frontmost") }
+            if runningBundleIds.contains(app.bundleId) { bits.append("running") }
+            if let adapter = adapterByBundle[app.bundleId] {
+                let actions = adapter.visibleActions.count
+                bits.append("\(actions) adapter action\(actions == 1 ? "" : "s")")
+                let readers = adapter.contextReaders.count
+                if readers > 0 {
+                    bits.append("\(readers) adapter reader\(readers == 1 ? "" : "s")")
+                }
+            }
+            if let count = mcpCounts[app.bundleId], count > 0 {
+                bits.append("\(count) MCP server\(count == 1 ? "" : "s")")
+            }
+            if let count = skillCounts[app.bundleId], count > 0 {
+                bits.append("\(count) skill\(count == 1 ? "" : "s")")
+            }
+            if let summary = menuSummaryByBundle[app.bundleId] {
+                bits.append("\(summary.recordCount) cached menu command\(summary.recordCount == 1 ? "" : "s")")
+            }
+            if app.bundleId == mediaBundleId
+                || (!mediaDisplayName.isEmpty
+                    && mediaDisplayName.localizedCaseInsensitiveContains(app.name))
+                || (!observerMediaApp.isEmpty
+                    && app.name.localizedCaseInsensitiveContains(observerMediaApp)) {
+                let title = (mediaInfo.title ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty {
+                    bits.append("media \(mediaInfo.playbackRate > 0 ? "playing" : "paused"): \(title)")
+                } else {
+                    bits.append("media source")
+                }
+            }
+            if runningBundleIds.contains(app.bundleId) {
+                bits.append("AX/Vision available with approval")
+            }
+            guard !bits.isEmpty else { continue }
+            lines.append("- \(app.name) (\(app.bundleId)): \(bits.joined(separator: "; ")).")
+        }
+        return lines
+    }
+
     private func joinedBlock(_ base: String, builtinLines: [String]) -> String {
         if builtinLines.isEmpty { return base }
         if base.isEmpty {
@@ -151,10 +294,22 @@ final class GeneralChatCapabilityHub {
                 "To call a tool, reply with ONLY one line of JSON and nothing else:",
                 "{\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"<tool>\", \"arguments\": { … }}}",
                 "After the tool result returns, answer the user's question in plain language.",
+                "Use DoraX app/menu/share/adapter capabilities when the user names or implies an app.",
             ]
             return (header + builtinLines).joined(separator: "\n")
         }
         return base + "\n" + builtinLines.joined(separator: "\n")
+    }
+
+    private func withInventory(_ base: String, inventoryLines: [String]) -> String {
+        guard !inventoryLines.isEmpty else { return base }
+        let inventoryBlock = ([
+            "## Running App Status Snapshot",
+        ] + inventoryLines).joined(separator: "\n")
+        guard !base.isEmpty else {
+            return inventoryBlock
+        }
+        return inventoryBlock + "\n\n" + base
     }
 
     private func compacted(_ block: String) -> String {

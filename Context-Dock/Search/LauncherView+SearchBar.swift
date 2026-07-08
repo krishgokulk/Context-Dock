@@ -654,8 +654,28 @@ extension LauncherView {
                                             .frame(width: 24, height: 24)
                                     }
                                 } else if isGlobalContextActive {
-                                    LiquidGlassArrow(size: 24)
-                                        .id("global-context-input-logo")
+                                    if let topMatch = leadingGlobalContextMatchIcon(
+                                        for: searchState.query)
+                                    {
+                                        Image(nsImage: topMatch.icon)
+                                            .resizable()
+                                            .interpolation(.high)
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 26, height: 26)
+                                            .clipShape(
+                                                RoundedRectangle(
+                                                    cornerRadius: 6, style: .continuous))
+                                            .opacity(isHoveringSearchIcon ? 1.0 : 0.92)
+                                            .transition(
+                                                .scale(scale: 0.8).combined(with: .opacity))
+                                            .id("global-top-\(topMatch.bundleID ?? topMatch.id)")
+                                            .animation(
+                                                .spring(response: 0.22, dampingFraction: 0.78),
+                                                value: topMatch.id)
+                                    } else {
+                                        LiquidGlassArrow(size: 24)
+                                            .id("global-context-input-logo")
+                                    }
                                 } else if showContextInDock && settings.enableFrontmostDetection {
                                     // l2.targetApp overrides frontmost icon after Tab completion
                                     let focusedGlobalAppResult =
@@ -754,6 +774,36 @@ extension LauncherView {
                                                 .animation(
                                                     .spring(response: 0.22, dampingFraction: 0.75),
                                                     value: selIcon)
+                                        } else if let topMatch = leadingGlobalContextMatchIcon(
+                                            for: searchState.query)
+                                        {
+                                            // Global Context typing preview: the left icon becomes the
+                                            // top-scored match (same source as the right capsule, whose
+                                            // first icon is dropped). So "ter" → Terminal icon here,
+                                            // Warp/Pinterest/… in the capsule, Enter launches Terminal.
+                                            Image(nsImage: topMatch.icon)
+                                                .resizable()
+                                                .interpolation(.high)
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 26, height: 26)
+                                                .clipShape(
+                                                    RoundedRectangle(
+                                                        cornerRadius: 6, style: .continuous))
+                                                // Colored glow keyed to the app's dominant color —
+                                                // same treatment as the Context Dock frontmost chip.
+                                                .shadow(
+                                                    color: topMatch.icon.dominantSwiftUIColor
+                                                        .opacity(
+                                                            systemColorScheme == .dark ? 0.55 : 0.40),
+                                                    radius: 8, x: 0, y: 1
+                                                )
+                                                .opacity(isHoveringSearchIcon ? 1.0 : 0.92)
+                                                .transition(
+                                                    .scale(scale: 0.8).combined(with: .opacity))
+                                                .id("global-top-\(topMatch.bundleID ?? topMatch.id)")
+                                                .animation(
+                                                    .spring(response: 0.22, dampingFraction: 0.78),
+                                                    value: topMatch.id)
                                         } else {
                                             LiquidGlassArrow(size: 24)
                                                 .id("context-dock-input-logo")
@@ -2767,23 +2817,36 @@ extension LauncherView {
     }
 
     // MARK: - Separator (for smart positioning)
+    /// Top-scored match while typing in Global Context — promoted to the left input
+    /// icon. Same ordered source as the capsule, whose first icon is then dropped.
+    func leadingGlobalContextMatchIcon(for query: String) -> MatchDockIcon? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        return orderedGlobalContextMatchDockIcons(for: q, limit: 1).first
+    }
+
     @ViewBuilder
     var globalContextMatchDockView: some View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let phase: ContextMatchDock.Phase = q.isEmpty ? .idle : .matching
-        let orderedIcons = orderedGlobalContextMatchDockIcons(for: q, limit: 3)
+        // Fetch 4 so that after dropping the first (now the left input icon) the capsule
+        // still shows up to 3 remaining matches.
+        let orderedIcons = orderedGlobalContextMatchDockIcons(for: q, limit: 4)
+        // First icon is promoted to the header — capsule shows the remainder.
+        let capsuleIcons = Array(orderedIcons.dropFirst())
         let icons =
             q.isEmpty
             ? idleContextMatchDockIcons
             : (orderedIcons.isEmpty
                 ? Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
-                : orderedIcons)
+                : capsuleIcons)
         let overflow =
             q.isEmpty
             ? 0
             : (orderedIcons.isEmpty
                 ? globalContextViewModel.typingSnapshot.matchDockOverflowCount
-                : max(0, visibleGlobalGroupedListNavigationState(for: q).totalCount - icons.count))
+                : max(0, visibleGlobalGroupedListNavigationState(for: q).totalCount
+                        - orderedIcons.count))
         ContextMatchDock(phase: phase, icons: icons, overflowCount: overflow)
     }
 

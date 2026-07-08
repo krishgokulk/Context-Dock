@@ -272,6 +272,13 @@ extension LauncherView {
                         return nil
                     }
                 case 36:  // Enter
+                    // Execute the top grouped row directly — the SAME row the leading input
+                    // icon previews (top app OR top menu command, e.g. "quit music" → Quit
+                    // Music ⌘Q). Enter runs it instead of expanding the sheet; ↓ still expands
+                    // to browse the other rows.
+                    if self.executeFocusedGlobalGroupedListRow() {
+                        return nil
+                    }
                     let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
                     let exactLaunchIcons = matchIcons.filter {
                         $0.isExactAppPrefix && !$0.isExpandable

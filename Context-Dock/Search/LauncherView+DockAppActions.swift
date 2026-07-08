@@ -169,7 +169,9 @@ extension LauncherView {
     /// Called when an app is launched/activated from global context.
     /// Hides launcher immediately, then updates Context Dock state after activation.
     func scheduleContextDockTransition(bundleId: String?, appName: String) {
-        hideLauncherAfterResultExecution()
+        // Don't hide the dock while the app launches — keep it visible and let it morph
+        // into the launched app's Context Dock (premium launch, no hide+relaunch flicker).
+        AppDelegate.shared?.holdDockThroughAppLaunch()
         let normalizedAppName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedBundleId = bundleId?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackBundleId = NSWorkspace.shared.runningApplications.first { app in
@@ -248,7 +250,10 @@ extension LauncherView {
         setFrontmostAppContextOnly(reason: "global launch became frontmost")
         syncL2DockSession(force: true)
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
-        hideLauncherAfterResultExecution()
+        // Stay visible on the launched app's Context Dock instead of hiding. The app keeps
+        // focus (we don't steal it); the dock floats above showing its context actions.
+        suppressAutomaticGlobalContextUntil = Date().addingTimeInterval(1.6)
+        AppDelegate.shared?.holdDockThroughAppLaunch()
     }
 
     func terminateRunningAppFromDock(_ app: NSRunningApplication) {

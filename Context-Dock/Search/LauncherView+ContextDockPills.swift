@@ -2054,6 +2054,7 @@ extension LauncherView {
                     role: .assistant,
                     content:
                         "What would you like to do with this? I can summarize or explain it, send it to Notes, Reminders, Mail or Messages, or anything else — just ask."))
+            persistGeneralAIConversation()
             requestWindowSizeUpdate(reason: .chatChanged)
         } else {
             // Submit synchronously: the Enter caller clears searchState.query right after this

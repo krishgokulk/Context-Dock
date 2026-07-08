@@ -55,6 +55,9 @@ final class SafariCapabilityRouter: AppCapabilityRouting {
         if phrase.contains("bookmark") {
             return bookmarkPageResolution()
         }
+        if wantsSaveAsPDF(phrase) {
+            return saveCurrentPageAsPDFResolution(phrase: phrase)
+        }
         if phrase.contains("download")
             && (phrase.contains("audio") || phrase.contains("video")
                 || phrase.contains("youtube") || phrase.contains("music")) {
@@ -63,6 +66,12 @@ final class SafariCapabilityRouter: AppCapabilityRouting {
         // Everything else ("new private window", "new tab", …) uses the generic
         // adapter → shortcut → verified-menu ranking in the resolver.
         return nil
+    }
+
+    private func wantsSaveAsPDF(_ phrase: String) -> Bool {
+        (phrase.contains("pdf") && (phrase.contains("save") || phrase.contains("export")))
+            || phrase.contains("export page as pdf")
+            || phrase.contains("save page as pdf")
     }
 
     // MARK: "summarize this page" — extension/bridge context + provider, never a menu
@@ -209,6 +218,67 @@ final class SafariCapabilityRouter: AppCapabilityRouting {
         }
         candidates.append(shortcut)
 
+        return .candidates(candidates)
+    }
+
+    // MARK: "save/export this page as PDF" — prefer Safari native menu
+
+    private func saveCurrentPageAsPDFResolution(phrase: String) -> GeneralAIActionResolution {
+        var candidates: [DoraXActionCandidate] = []
+
+        let menuMatches = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: bundleID,
+            appName: "Safari",
+            query: "export as pdf",
+            maxResults: 4
+        )
+        if let match = menuMatches.first(where: {
+            let haystack = ($0.path + [$0.title]).joined(separator: " ").lowercased()
+            return haystack.contains("export") && haystack.contains("pdf")
+        }) {
+            var candidate = DoraXActionCandidate(
+                id: "menu.\(bundleID).export-as-pdf",
+                title: "Safari: \(match.path.joined(separator: " → "))",
+                appName: "Safari",
+                bundleID: bundleID,
+                source: .cachedMenu,
+                route: .verifiedMenu,
+                capabilityID: nil,
+                requiredInputs: [],
+                riskLevel: .medium,
+                confidence: 0.84,
+                permissionKey: "generalAI.execute.com.apple.Safari.exportAsPDF",
+                debugReason: "Safari cached Export as PDF menu, live-verified before execution")
+            candidate.menuPath = match.path
+            candidate.shortcutChar = match.shortcutChar
+            candidate.shortcutModifiers = match.shortcutModifiers
+            candidate.caveat = phrase.contains("download")
+                ? "Safari opens the native save panel; choose Downloads if it is not preselected."
+                : "Safari opens the native save panel."
+            candidates.append(candidate)
+        }
+
+        if CapabilityRegistry.shared.capability(id: "safari.exportPDF") != nil {
+            candidates.append(DoraXActionCandidate(
+                id: "capability.safari.exportPDF",
+                title: "Export Current Safari Page as PDF",
+                appName: "Safari",
+                bundleID: bundleID,
+                source: .system,
+                route: .adapter,
+                capabilityID: "safari.exportPDF",
+                requiredInputs: [],
+                riskLevel: .medium,
+                confidence: 0.78,
+                permissionKey: "generalAI.execute.com.apple.Safari.exportPDFCapability",
+                debugReason: "registered Safari PDF export capability"))
+        }
+
+        guard !candidates.isEmpty else {
+            return .explain(
+                "I can save Safari pages as PDF, but Safari's Export as PDF route is not in "
+                + "the menu cache yet. Open Safari once so DoraX can warm its menu cache, then try again.")
+        }
         return .candidates(candidates)
     }
 
