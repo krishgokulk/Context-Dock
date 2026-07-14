@@ -126,10 +126,10 @@ final class GeneralAIActionExecutor {
             result = await executeAutomation(candidate)
         case .cli:
             result = await executeCLI(candidate)
-        case .mcp, .api:
-            result = GeneralAIActionResult(
-                success: false,
-                message: "No \(candidate.route.rawValue.uppercased()) executor is wired for this route yet.")
+        case .mcp:
+            result = await executeMCP(candidate)
+        case .api:
+            result = executeAPI(candidate)
         }
         AIAuditHistory.shared.record(
             capabilityID: candidate.permissionKey,
@@ -139,6 +139,88 @@ final class GeneralAIActionExecutor {
             summary: result.message
         )
         return result
+    }
+
+    // MARK: - Verification (Stage 7)
+
+    /// Outcome of a single lightweight read-back after a successful write action.
+    enum VerificationOutcome {
+        /// Confirmed. Optional refined success message ("I've added reminder …").
+        case verified(String?)
+        /// Executor succeeded but the result couldn't be confirmed — never report success.
+        case unverified(fallback: String)
+        /// No verifier for this route — keep the executor's own honest message.
+        case skipped
+    }
+
+    /// Read the result back exactly once (no polling, no retries, background reads) to
+    /// confirm a write actually landed before General Chat claims success. Only verifiers
+    /// that are cheap and reliable are implemented; everything else returns `.skipped` so
+    /// the honest executor message stands (we never emit a false "couldn't verify").
+    func verify(_ candidate: DoraXActionCandidate) async -> VerificationOutcome {
+        switch candidate.capabilityID {
+        case "reminders.create":
+            let title = candidate.inputValues["title"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty else { return .skipped }
+            let items = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.getReminders(limit: 30)
+            }.value
+            let found = items.contains {
+                ($0["title"] as? String)?.localizedCaseInsensitiveContains(title) ?? false
+            }
+            return found
+                ? .verified("I've added reminder “\(title)”.")
+                : .unverified(fallback: "I couldn't find it in Reminders just now.")
+
+        case "calendar.create":
+            let title = (candidate.inputValues["title"] ?? candidate.title)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return .skipped }
+            let events = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.getCalendarEvents(limit: 30)
+            }.value
+            if let match = events.first(where: {
+                ($0["title"] as? String)?.localizedCaseInsensitiveContains(title) ?? false
+            }) {
+                let when = (match["startDate"] as? String).flatMap(Self.friendlyEventDate) ?? ""
+                return .verified(
+                    "Calendar event “\(title)”\(when.isEmpty ? "" : " for \(when)") was created.")
+            }
+            return .unverified(fallback: "I couldn't find the event in Calendar just now.")
+
+        default:
+            break
+        }
+
+        switch candidate.route {
+        case .appLaunch:
+            guard let bundleID = candidate.bundleID else { return .skipped }
+            let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .contains { !$0.isTerminated }
+            return running
+                ? .verified(nil)
+                : .unverified(fallback: "\(candidate.appName ?? "The app") isn't running.")
+        default:
+            return .skipped
+        }
+    }
+
+    private static func friendlyEventDate(_ iso: String) -> String? {
+        guard let date = ISO8601DateFormatter().date(from: iso) else { return nil }
+        let cal = Calendar.current
+        let dayWord: String
+        if cal.isDateInToday(date) { dayWord = "today" }
+        else if cal.isDateInTomorrow(date) { dayWord = "tomorrow" }
+        else {
+            let df = DateFormatter()
+            df.dateFormat = "EEE MMM d"
+            dayWord = df.string(from: date)
+        }
+        let tf = DateFormatter()
+        tf.timeStyle = .short
+        return "\(dayWord) at \(tf.string(from: date))"
     }
 
     // MARK: - App launch
@@ -293,6 +375,48 @@ final class GeneralAIActionExecutor {
         } catch {
             return .init(success: false, message: "Shortcut “\(name)” failed: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - MCP tool route
+
+    /// Execute a registered MCP tool through the SAME ranked-candidate/executor path as
+    /// every other route (not only the provider tool-loop). The resolver puts the target
+    /// in `inputValues`: mcpServer, mcpTool, mcpArguments (JSON object).
+    private func executeMCP(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+        guard let bundleID = candidate.bundleID,
+            let tool = candidate.inputValues["mcpTool"], !tool.isEmpty
+        else {
+            return .init(success: false, message: "MCP route is missing its server/tool payload.")
+        }
+        let server = candidate.inputValues["mcpServer"] ?? ""
+        var arguments: [String: Any] = [:]
+        if let json = candidate.inputValues["mcpArguments"],
+            let data = json.data(using: .utf8),
+            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            arguments = parsed
+        }
+        do {
+            let output = try await MCPRuntime.shared.callTool(
+                bundleId: bundleID, server: server, tool: tool, arguments: arguments)
+            return .init(success: true, message: output)
+        } catch {
+            return .init(success: false, message: "MCP tool \(tool) failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - API route
+
+    /// Execute a DoraX API command through APICommandHandler. Args live in
+    /// `inputValues["apiArgs"]` as a whitespace-separated command line.
+    private func executeAPI(_ candidate: DoraXActionCandidate) -> GeneralAIActionResult {
+        let raw = candidate.inputValues["apiArgs"] ?? ""
+        let args = raw.split(separator: " ").map(String.init)
+        guard !args.isEmpty else {
+            return .init(success: false, message: "API route is missing its command payload.")
+        }
+        let output = APICommandHandler.shared.handleCommand(args)
+        let failed = output.lowercased().hasPrefix("error") || output.lowercased().contains("unknown")
+        return .init(success: !failed, message: output)
     }
 
     // MARK: - App automation services

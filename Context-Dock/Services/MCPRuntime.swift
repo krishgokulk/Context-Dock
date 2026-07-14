@@ -28,6 +28,21 @@ actor MCPRuntime {
         return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
     }
 
+    /// Tools from ALREADY-CONNECTED servers only — never opens a new connection. Safe to
+    /// call on the hot resolve path (no network/latency): returns empty until a server has
+    /// been warmed (e.g. by scoped chat), so the deterministic resolver stays fast.
+    func cachedTools(forBundleId bundleId: String) async
+        -> [(server: String, serverId: UUID, tool: MCPTool)]
+    {
+        let configs = await MainActor.run { MCPServerManager.shared.servers(forBundleId: bundleId) }
+        var out: [(String, UUID, MCPTool)] = []
+        for config in configs {
+            guard let client = clients[config.id], await client.isConnected else { continue }
+            for t in await client.tools { out.append((config.name, config.id, t)) }
+        }
+        return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
+    }
+
     /// AI-prompt block describing available MCP tools and how to call one. Empty when none.
     func toolPromptBlock(forBundleId bundleId: String) async -> String {
         let all = await tools(forBundleId: bundleId)

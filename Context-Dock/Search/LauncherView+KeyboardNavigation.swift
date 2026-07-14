@@ -19,6 +19,17 @@ extension LauncherView {
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
+        if showContextInDock,
+            !isGlobalContextActive,
+            mode == .contextDock,
+            reason.isTypingOrContentRefresh,
+            !presetChanged,
+            !modeChanged,
+            !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return
+        }
+
         if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged
             && !modeChanged
         {
@@ -220,6 +231,18 @@ extension LauncherView {
                     self.exitContextDockChatBackToContext()
                 }
                 self.isSearchFieldFocused = true
+                return nil
+            }
+
+            if event.keyCode == 51, self.dismissSelectionScopeFromEmptyBackspaceIfNeeded() {
+                return nil
+            }
+
+            if event.keyCode == 51, self.isGlobalContextActive,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.l2.targetApp != nil
+            {
+                self.exitGlobalAppScopeToGlobalContext()
                 return nil
             }
 
@@ -433,15 +456,20 @@ extension LauncherView {
             let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
 
+            if event.keyCode == 36, self.aiMode.isActive {
+                self.submitAIQuery()
+                return nil
+            }
+
+            if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
+                return nil
+            }
+
             if event.keyCode == 36,
                 self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed,
                 q.isEmpty
             {
                 self.exitContextDockChatAndScope()
-                return nil
-            }
-
-            if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
                 return nil
             }
 
@@ -869,6 +897,14 @@ extension LauncherView {
                     return nil
                 }
 
+                // Finder desktop scope is FILE SEARCH — Enter opens the highlighted file/folder
+                // result (Spotlight-like), never launches a typed app match. Falling through to
+                // launchTypedAppMatchIfNeeded here would fuzzy-launch e.g. "applica" → App Store.
+                if self.isFinderDesktopOnlyMode {
+                    if self.executeFirstVisibleFinderDesktopPillIfNeeded() { return nil }
+                    return event
+                }
+
                 if self.executeFirstMatchingFinderFolderPillIfNeeded() {
                     return nil
                 }
@@ -1059,6 +1095,13 @@ extension LauncherView {
                 return
             }
             guard window.isVisible else { return }
+            // Bottom dock mode is removed. A stale KeyableWindow.anchorAtBottom flag
+            // rewrites setFrame(_:) to keep the bottom edge fixed, which makes the
+            // input pill slide down when a short result sheet shrinks. Force top
+            // anchoring here so only the result area changes height.
+            if let keyableWindow = window as? KeyableWindow {
+                keyableWindow.anchorAtBottom = false
+            }
 
             let heightSignpost = SearchPerformanceLog.shared.beginInterval(
                 "window.heightUpdate",
@@ -1123,15 +1166,24 @@ extension LauncherView {
                 newY = currentFrame.minY
             } else {
                 // Spotlight model for every top-anchored mode: keep the TOP edge fixed and grow
-                // downward, clamped to the screen. Anchoring the bottom (the old global/context
-                // branch) made the window jump upward while typing as results/inline-scope pills
-                // changed the height. One rule → no jump, consistent with the chat surfaces.
-                newY = max(visibleFrame.minY, currentFrame.maxY - newHeight)
+                // downward, clamped to the screen. Anchor to the window's PINNED top (set once on
+                // open/drag), not currentFrame.maxY — deriving the anchor from the live frame lets
+                // any single bad resize (or a clamp against the screen edge) permanently shift the
+                // "fixed" point for every resize after it, which is what made the input bar visibly
+                // slide down when a tall result list collapsed to a short one. Reading a stable,
+                // externally-owned anchor makes this resize idempotent no matter how many times it
+                // runs in a row.
+                let keyableWindow = window as? KeyableWindow
+                let topAnchor = keyableWindow?.pinnedTopY ?? currentFrame.maxY
+                newY = max(visibleFrame.minY, topAnchor - newHeight)
+                keyableWindow?.pinnedTopY = topAnchor
             }
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
 
-            let shouldAnimateFrame = animated || heightDelta > 80 || widthChanged
+            let shouldAnimateFrame =
+                animated
+                && (presetChanged || modeChanged || heightDelta > 80 || widthChanged)
             if shouldAnimateFrame {
                 // Animate visible sheet expand/collapse. Small result churn is filtered before
                 // this path, so typing stays steady while meaningful shape changes glide.
@@ -1419,6 +1471,11 @@ extension LauncherView {
                     if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
                         return .handled
                     }
+                    // Finder desktop scope never launches a typed app — file search only.
+                    if isFinderDesktopOnlyMode {
+                        if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
+                        return .handled
+                    }
                     if launchTypedAppMatchIfNeeded() {
                         return .handled
                     }
@@ -1447,6 +1504,12 @@ extension LauncherView {
                         let trimmed = searchState.query.trimmingCharacters(
                             in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return .handled }
+                        if shouldShowSelectionCompactAIAction
+                            || shouldShowContextDockAIQueryFallback
+                        {
+                            runCompactAIActionFromInput()
+                            return .handled
+                        }
                         // Send when arming the chat (first message, before the sheet opens) AND when a
                         // conversation is already open — otherwise once showChatPopover is true every
                         // follow-up Enter fell through to `.handled` below and was silently dropped.
@@ -1701,15 +1764,16 @@ extension LauncherView {
                 }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
-            // Right Arrow: focus visible Global app result, otherwise accept ghost text.
+            // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
+            // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
+                if acceptTopGlobalAppGhostCompletionIfPossible() {
+                    return .handled
+                }
                 if activateSelectedApplicationScopeFromRightArrowIfPossible() {
                     return .handled
                 }
                 if activateFocusedGlobalAppScopeIfPossible() {
-                    return .handled
-                }
-                if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

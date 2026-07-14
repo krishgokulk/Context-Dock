@@ -260,14 +260,21 @@ extension LauncherView {
     func toggleGlobalContextPreservingQuery() {
         guard !isExplicitAppScopeLocked else { return }
         guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
+        let wasGlobalContextActive = isGlobalContextActive
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) {
             showMediaLayer = false
             showContextInDock = true
             globalContextActivation =
-                globalContextActivation == nil
-                ? GlobalContextActivation(autoActivated: false)
-                : nil
+                wasGlobalContextActive ? nil : GlobalContextActivation(autoActivated: false)
+            l2.targetApp = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil
             l2.pillNavViaKeyboard = false
@@ -283,12 +290,23 @@ extension LauncherView {
     func handleCommandKeyContextScopeToggle() {
         guard settings.singleCommandTogglesContextScope else { return }
         guard !isCompactSmartScope else { return }
-        guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
-        // Cmd only switches Global Context ↔ Context Dock. Inside an explicit app scope it is
-        // inert — leave the scope with Backspace/Escape, not Cmd. (Previously Cmd here cleared
-        // globalContextActivation and was the accidental "fix" for the old hybrid scope.)
-        guard l2.targetApp == nil else { return }
+        guard showContextInDock else { return }
         guard Date() >= suppressCommandScopeToggleUntil else { return }
+
+        // In an app scope ENTERED FROM Global Context with an empty field, Cmd steps back to
+        // Global Context (same as Backspace/Escape) — the "global key" the user expects.
+        let emptyQuery = searchState.query
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if emptyQuery, l2.targetApp != nil || globalInlineAppScope != nil {
+            exitGlobalAppScopeToGlobalContext()
+            return
+        }
+
+        guard currentDockSurfaceMode != .generalChat else { return }
+
+        // Otherwise Cmd only switches Global Context ↔ Context Dock. Inside an explicit
+        // (non-global) app scope it stays inert — leave that scope with Backspace/Escape.
+        guard l2.targetApp == nil else { return }
 
         if !isSearchBarExpanded {
             beginMouseDrivenInteractionGrace(0.55)
@@ -297,6 +315,28 @@ extension LauncherView {
         }
 
         toggleGlobalContextPreservingQuery()
+    }
+
+    /// Step out of an app scope entered from Global Context, back to plain Global Context
+    /// (keep globalContextActivation; just drop the app scope). Triggered by Cmd on an empty
+    /// field, matching Backspace/Escape.
+    func exitGlobalAppScopeToGlobalContext() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            l2.targetApp = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
+        focusedAppPillIndex = nil
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        syncL2DockSession(force: true)
+        scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
+        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
     }
 
     func toggleAIModePreservingLayer() {

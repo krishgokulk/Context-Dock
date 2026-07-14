@@ -85,51 +85,65 @@ struct ContextMatchDock: View {
     let phase: Phase
     let icons: [MatchDockIcon]
     let overflowCount: Int
+    let isSearching: Bool
 
     var body: some View {
         HStack(spacing: 7) {
-            ForEach(icons) { item in
-                ZStack(alignment: .bottomTrailing) {
-                    Image(nsImage: item.icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        .accessibilityLabel(accessibilityLabel(for: item))
+            if isSearching {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.72))
+                Text("Searching...")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.72))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel("Searching")
+            } else {
+                ForEach(icons) { item in
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(nsImage: item.icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 18, height: 18)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .accessibilityLabel(accessibilityLabel(for: item))
 
-                    if item.isRunning && phase == .idle {
-                        Circle()
-                            .fill(Color.green.opacity(0.72))
-                            .frame(width: 4.5, height: 4.5)
-                            .offset(x: 2, y: 2)
+                        if item.isRunning && phase == .idle {
+                            Circle()
+                                .fill(Color.green.opacity(0.72))
+                                .frame(width: 4.5, height: 4.5)
+                                .offset(x: 2, y: 2)
+                        }
                     }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    if item.isExpandable && phase == .idle {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 6.5, weight: .bold))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .offset(x: 3, y: 3)
+                    .overlay(alignment: .bottomTrailing) {
+                        if item.isExpandable && phase == .idle {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 6.5, weight: .bold))
+                                .foregroundStyle(.secondary.opacity(0.7))
+                                .offset(x: 3, y: 3)
+                        }
                     }
-                }
-                .id(item.id)
-                .transition(.opacity)
-                .help(accessibilityLabel(for: item))
-            }
-
-            if overflowCount > 0 {
-                Text("+\(overflowCount)")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.65))
-                    .monospacedDigit()
-                    .frame(width: 24, alignment: .center)
-                    .accessibilityLabel("\(overflowCount) more matches")
+                    .id(item.id)
                     .transition(.opacity)
+                    .help(accessibilityLabel(for: item))
+                }
+
+                if overflowCount > 0 {
+                    Text("+\(overflowCount)")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.65))
+                        .monospacedDigit()
+                        .frame(width: 24, alignment: .center)
+                        .accessibilityLabel("\(overflowCount) more matches")
+                        .transition(.opacity)
+                }
             }
         }
-        .padding(.horizontal, icons.isEmpty && overflowCount == 0 ? 0 : 8)
+        .padding(.horizontal, (icons.isEmpty && overflowCount == 0 && !isSearching) ? 0 : 8)
         .padding(.vertical, 4)
         .frame(height: 30, alignment: .center)
+        .frame(minWidth: isSearching ? 92 : nil)
         .fixedSize(horizontal: true, vertical: false)
         .opacity(phase == .matching ? 0.74 : 1.0)
         .background(.regularMaterial, in: Capsule(style: .continuous))
@@ -139,6 +153,7 @@ struct ContextMatchDock: View {
         )
         .animation(.easeOut(duration: 0.08), value: icons.map(\.id))
         .animation(.easeOut(duration: 0.08), value: overflowCount > 0)
+        .animation(.easeOut(duration: 0.08), value: isSearching)
     }
 
     private func accessibilityLabel(for item: MatchDockIcon) -> String {

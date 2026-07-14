@@ -166,6 +166,16 @@ extension LauncherView {
         // Don't steal focus back — the activated app should remain frontmost
     }
 
+    func activateRunningAppFromGlobalContext(
+        _ app: NSRunningApplication,
+        forceHideLauncher: Bool = false
+    ) {
+        let appName = app.localizedName ?? "App"
+        AppDelegate.shared?.holdDockThroughAppLaunch()
+        activateRunningAppFromDock(app, forceHideLauncher: forceHideLauncher)
+        scheduleContextDockTransition(bundleId: app.bundleIdentifier, appName: appName)
+    }
+
     /// Called when an app is launched/activated from global context.
     /// Hides launcher immediately, then updates Context Dock state after activation.
     func scheduleContextDockTransition(bundleId: String?, appName: String) {
@@ -822,19 +832,15 @@ extension LauncherView {
         if bundleID == "com.apple.finder" {
             detachFinderFolderSearch()
         }
-        // FINDER stays in Global Context → Global Context Finder desktop file search (the
-        // universal "search files & folders" mode). EVERY OTHER app EXITS Global Context into
-        // a clean Context Dock app scope (preserveGlobalContext = false → activateInlineDockAppScope
-        // clears globalContextActivation) so its menus build through the Context Dock surface
-        // and Cmd is inert. The running-app strip + right-arrow cycling stay alive in both via
-        // their l2.targetApp / isGlobalContextActive-aware gates.
-        let keepGlobalForFinder = bundleID == "com.apple.finder"
+        // Running-app scopes entered from Global Context stay in Global Context. The left
+        // scoped chip shows the active app, while the right capsule keeps the remaining
+        // running apps for fast cycling. Context Dock stays a separate frontmost-app surface.
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
             queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "" : nil,
-            preserveGlobalContext: keepGlobalForFinder
+            preserveGlobalContext: true
         )
         if activated {
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)

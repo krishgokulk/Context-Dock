@@ -177,8 +177,8 @@ extension LauncherView {
             if case .textSelected(let text) = currentContext {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { context.selectedText = trimmed }
-            } else if let frozenSelectionText {
-                let trimmed = frozenSelectionText.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let frozenSelection = frozenSelectionFullText ?? frozenSelectionText {
+                let trimmed = frozenSelection.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { context.selectedText = trimmed }
             }
         }

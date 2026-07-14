@@ -342,10 +342,17 @@ final class FileIndexManager: ObservableObject {
         let showDocs = settings.enableL1DocumentSearch
         let showFiles = settings.enableL1FileSearch
 
+        // HARD CAP the ingest. Without it, adding a large scope (the home folder, iCloud
+        // Drive) makes NSMetadataQuery return hundreds of thousands of items that we'd build
+        // into IndexedFile structs synchronously on the main thread — a UI freeze + memory
+        // spike the watchdog kills (looks like a crash on "Add Directory"). 60k names is
+        // plenty for prefix/fuzzy search.
+        let maxIngest = 60_000
+        let total = min(q.resultCount, maxIngest)
         var files: [IndexedFile] = []
-        files.reserveCapacity(q.resultCount)
+        files.reserveCapacity(total)
 
-        for i in 0 ..< q.resultCount {
+        for i in 0 ..< total {
             guard let item = q.result(at: i) as? NSMetadataItem else { continue }
             guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
             let url = URL(fileURLWithPath: path)

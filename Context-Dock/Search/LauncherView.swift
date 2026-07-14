@@ -207,6 +207,7 @@ struct LauncherView: View {
     // Clipboard/global-selection state lives in GlobalContextViewModel.
     var isGlobalContextAutoActivated: Bool { globalContextActivation?.autoActivated ?? false }
     var frozenSelectionText: String? { globalContextActivation?.frozenText }
+    var frozenSelectionFullText: String? { globalContextActivation?.frozenFullText }
     var frozenSelectionIcon: String? { globalContextActivation?.frozenIcon }
     var frozenSelectionSourceBundleId: String? { globalContextActivation?.sourceBundleId }
     var frozenSelectionFileURLs: [URL] {
@@ -379,7 +380,10 @@ struct LauncherView: View {
         if showMediaLayer || searchState.activeSmartQueryKey != nil { return true }
         if showContextInDock {
             if isGlobalContextActive {
-                return !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                // Global Context, including scoped running-app mode, owns a vertical
+                // result sheet below the input. Never route it into the beside-input
+                // HStack; that is what makes rows appear on the right while typing.
+                return false
             }
             return hasAIExtensionsToShow || !searchState.query.isEmpty
         }
@@ -440,8 +444,7 @@ struct LauncherView: View {
     }
 
     var hasActiveDockContextSelection: Bool {
-        // frozenSelectionText covers the "chip visible after focus moved to dock" case
-        activeSelection != nil || frozenSelectionText != nil
+        activeSelection != nil || globalContextActivationHasFrozenPayload
     }
 
     /// Launch-time Selection Scope freezes its payload into the activation
@@ -452,7 +455,10 @@ struct LauncherView: View {
     }
 
     var hasSelectionScopeSurface: Bool {
-        hasActiveDockContextSelection || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
+        // Selection availability is not Selection Scope. A live Finder/text selection only
+        // shows the trailing selection button; it must not replace frontmost app menus until
+        // the user explicitly opens Selection Scope from that button.
+        globalContextActivationHasFrozenPayload
     }
 
     var shouldUsePureGlobalAppSearch: Bool {
@@ -471,7 +477,7 @@ struct LauncherView: View {
             showGlobalClipboardPill && !globalClipboardText.isEmpty
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return isGlobalContextActive
-            && !hasActiveDockContextSelection
+            && !hasSelectionScopeSurface
             && !clipboardClaimsSurface
             && l2.targetApp == nil
             && !explicitFinderScope
@@ -502,10 +508,46 @@ struct LauncherView: View {
         }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
+        if isGlobalContextActive && currentGlobalScopedBundleID != nil {
+            guard !q.isEmpty, !shouldShowGlobalScopedChatPin else { return false }
+            if pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery) {
+                return true
+            }
+            return stableVisibleDockPills(for: pillQuery).contains { !$0.isSeparator }
+        }
+        // Context Dock uses the SAME separate vertical list as Global Context (input on top,
+        // results full-width below). The earlier `return false` here routed Context Dock to
+        // the inline in-dockBaseView layout, which is what actually detached the results to
+        // the RIGHT of the input — the separate list renders correctly beneath it.
         // Scoped app shows menus on empty query (see l2DockRowPresentation).
         let pills =
-            (pillQuery.isEmpty && l2.targetApp == nil) ? [] : contextDockViewModel.visiblePills
+            (pillQuery.isEmpty && l2.targetApp == nil) ? [] : stableVisibleDockPills(for: pillQuery)
         let hasActiveContextSelection = hasSelectionScopeSurface
+        let contextDockBuildInFlight =
+            !isGlobalContextActive
+            && !pillQuery.isEmpty
+            && (pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery))
+        let visibleActionPills = pills.filter { !$0.isSeparator }
+        let hasRealContextDockActionPills = visibleActionPills.contains { pill in
+            if isSearchOnlyDockPill(pill) { return false }
+            let kind = pill.rankingKind.lowercased()
+            let badge = (pill.badge ?? "").lowercased()
+            if kind == "applaunch" || kind == "application" || badge == "switch" {
+                return false
+            }
+            return true
+        }
+        let searchOnlyContextDockPills =
+            !isGlobalContextActive
+            && !q.isEmpty
+            && !visibleActionPills.isEmpty
+            && !hasRealContextDockActionPills
+        if searchOnlyContextDockPills {
+            return false
+        }
+        if contextDockBuildInFlight {
+            return true
+        }
 
         let showPinnedRow =
             q.isEmpty
@@ -515,8 +557,11 @@ struct LauncherView: View {
         let hasListContent =
             pills.contains(where: { !$0.isSeparator })
             || showGlobalAppSearch
-            || (!isGlobalContextActive && !q.isEmpty)
-        return hasListContent && !showPinnedRow
+            || (!isGlobalContextActive && hasRealContextDockActionPills)
+        return hasListContent
+            && !showPinnedRow
+            && (!shouldShowContextDockAIQueryFallback || hasRealContextDockActionPills)
+            && (!l2.chatAutoArmedForNoMenuMatch || hasRealContextDockActionPills)
     }
 
     func currentCachedDockPills(for query: String) -> [DockPill] {
@@ -573,6 +618,9 @@ struct LauncherView: View {
         else {
             return current
         }
+        if isGlobalContextActive && hasSelectionScopeSurface {
+            return current
+        }
         let preview = selectionScopedDockPills(contextDockPreviewPills(for: query))
         if preview.contains(where: { !$0.isSeparator }) {
             return preview
@@ -581,14 +629,26 @@ struct LauncherView: View {
         guard q.count >= 3 else { return current }
 
         // Do not flash the AI fallback while a keystroke-triggered pill rebuild is still
-        // resolving. Holding prior rows is closer to Spotlight/Raycast than repainting a
-        // transient "Ask <app>" row and replacing it milliseconds later.
+        // resolving. Holding prior matching rows is closer to Spotlight/Raycast than repainting a
+        // transient "Ask <app>" row and replacing it milliseconds later. Never hold unrelated
+        // previous rows (e.g. StoreKit rows for "stop") because that desyncs the ghost from the
+        // visible result sheet.
         if isResolvingDockPills(for: q) {
-            let previous = selectionScopedDockPills(cachedDockPills)
+            let scope = resolveDockScope(for: q)
+            let previous = selectionScopedDockPills(cachedDockPills).filter { pill in
+                guard !pill.isSeparator else { return false }
+                return dockPillHasQuerySignal(
+                    pill,
+                    query: scope.scopedSearchQuery.isEmpty ? q : scope.scopedSearchQuery,
+                    rawQuery: q,
+                    scopedBundleId: scope.scopedBundleId,
+                    scopedAppName: scope.scopedAppName
+                )
+            }
             return previous.contains(where: { !$0.isSeparator }) ? previous : current
         }
 
-        return [contextDockNoResultFallbackPill(for: q)]
+        return current
     }
 
     func contextDockNoResultFallbackPill(for query: String) -> DockPill {
@@ -644,11 +704,10 @@ struct LauncherView: View {
                 scopedAppName: scope.scopedAppName
             )
         }
-        let preview: [DockPill]
-        if filtered.isEmpty {
-            preview = cachedDockPills
-        } else {
-            preview = rankDockPills(
+        let preview: [DockPill] =
+            filtered.isEmpty
+            ? []
+            : rankDockPills(
                 filtered,
                 rawQuery: q,
                 rankingQuery: scope.scopedSearchQuery.isEmpty ? q : scope.scopedSearchQuery,
@@ -656,7 +715,6 @@ struct LauncherView: View {
                 scopedAppName: scope.scopedAppName,
                 isExplicitAppScope: scope.isExplicitAppScope
             )
-        }
         contextDockViewModel.storePreviewPills(
             preview,
             query: q,
@@ -1097,7 +1155,15 @@ struct LauncherView: View {
 
     var body: some View {
         ZStack {
+            // contentWithModifiers fixes its own box to `calculatedHeight` (computed synchronously
+            // in SwiftUI on every keystroke) with alignment: .top INSIDE that box — but this ZStack
+            // defaults to center alignment, so whenever the box is smaller than the space actually
+            // available (e.g. the debounced NSWindow resize hasn't caught up to a just-shrunk result
+            // list yet), the whole pill gets vertically re-centered in the leftover space instead of
+            // staying pinned to the top. Forcing .top here means a stale/oversized window can never
+            // visually drop the input bar — only .top can ever be true.
             contentKeyHandlersView
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             // Contact Preview Overlay
             if showContactPreview, let contact = contactPreviewData {
@@ -1572,6 +1638,11 @@ struct LauncherView: View {
         if let url = pill.resolvedURL,
             FileManager.default.fileExists(atPath: url.path)
         {
+            if shouldExecuteMenuPillBeforeOpeningResolvedFile(pill) {
+                pill.execute()
+                hideLauncherAfterResultExecution()
+                return
+            }
             NSWorkspace.shared.open(url)
             searchState.query = ""
             l2.focusedPillIndex = nil
@@ -1585,6 +1656,23 @@ struct LauncherView: View {
         // "Share Selection" reveals the destination pills inline — keep the dock open for them.
         if inlineShareActive { return }
         hideLauncherAfterResultExecution()
+    }
+
+    func shouldExecuteMenuPillBeforeOpeningResolvedFile(_ pill: DockPill) -> Bool {
+        guard pill.rankingKind == "menu" || pill.rankingKind == "submenuChild" else {
+            return false
+        }
+        guard pill.resolvedURL?.isFileURL == true else { return false }
+        guard !pill.sourceBundleId.isEmpty, pill.sourceBundleId != "com.apple.finder" else {
+            return false
+        }
+        let context = normalizedDockPillText(pill.menuContext ?? "")
+        let tracking = normalizedDockPillText(pill.trackingIdentifier)
+        return context.contains("recent")
+            || tracking.contains("open recent")
+            || tracking.contains("recent items")
+            || tracking.contains("recent documents")
+            || tracking.contains("recent files")
     }
 
     func isStaleAvailabilityMenuPill(_ pill: DockPill) -> Bool {
@@ -1728,6 +1816,29 @@ struct LauncherView: View {
         return true
     }
 
+    /// Finder desktop-scope Enter: open the keyboard-focused row, else the first visible
+    /// file/folder result. Pure file search — no app-launch fallback, no menu routing.
+    @discardableResult
+    func executeFirstVisibleFinderDesktopPillIfNeeded() -> Bool {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let displayed = renderedOrderDockPills(for: q)
+        let pills = displayed.contains(where: { !$0.isSeparator })
+            ? displayed
+            : buildDockPills(query: q)
+        let pill: DockPill?
+        if let idx = l2.focusedPillIndex, idx < pills.count, !pills[idx].isSeparator {
+            pill = pills[idx]
+        } else {
+            pill = pills.first(where: { !$0.isSeparator })
+        }
+        guard let target = pill else { return false }
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        executeDockPill(target)
+        searchState.query = ""
+        return true
+    }
+
     func shouldExecuteDefaultDockPillOnSubmit(
         query: String,
         pill: DockPill,
@@ -1834,7 +1945,9 @@ struct LauncherView: View {
         }) {
             Group {
                 if isGlobalContextActive {
-                    if let selIcon = frozenSelectionIcon ?? activeSelectionIcon {
+                    if hasSelectionScopeSurface,
+                        let selIcon = frozenSelectionIcon ?? activeSelectionIcon
+                    {
                         Image(systemName: selIcon)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color.purple.opacity(0.90))
@@ -1902,10 +2015,6 @@ struct LauncherView: View {
         {
             return String(t.prefix(50))
         }
-        if showGlobalClipboardPill, !globalClipboardText.isEmpty {
-            let entry = clipboardHistory.first
-            return entry?.preview ?? String(globalClipboardText.prefix(50))
-        }
         switch currentContext {
         case .filesSelected(let urls) where !urls.isEmpty && !isDismissedFinderSelection(urls):
             return urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
@@ -1931,9 +2040,6 @@ struct LauncherView: View {
             !t.isEmpty
         {
             return "text.cursor"
-        }
-        if showGlobalClipboardPill, !globalClipboardText.isEmpty {
-            return clipboardHistory.first?.icon ?? "doc.on.clipboard"
         }
         switch currentContext {
         case .filesSelected(let urls) where !urls.isEmpty && !isDismissedFinderSelection(urls):
@@ -2421,7 +2527,6 @@ struct LauncherView: View {
     var hasExpandedGlobalContextResults: Bool {
         guard isGlobalContextActive,
             shouldUsePureGlobalAppSearch,
-            globalInlineAppScope == nil,
             globalContextViewModel.typingSnapshot.phase == .expanded
         else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2435,11 +2540,41 @@ struct LauncherView: View {
         guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
         if hasExpandedGlobalContextResults { return true }
+        if showContextInDock && currentDockSurfaceMode == .contextDock {
+            return shouldShowSeparateActionList
+                || shouldShowContextDockUnifiedSearchContent
+                || (showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
+        }
         return !searchState.results.isEmpty
             || (showContextInDock && showFindTokenMenu && (lockedFindToken?.hasChildMenu == true))
             || (shouldShowContextDockAppPanel
                 && !(showContextInDock && l2.chatArmed && !l2.showChatPopover))
             || shouldShowFinderSearchResultsPanel(for: searchState.query)
+    }
+
+    var shouldShowContextDockUnifiedSearchContent: Bool {
+        guard showContextInDock, currentDockSurfaceMode == .contextDock, !showMediaLayer else {
+            return false
+        }
+        // Context Dock menu/action results are owned by `currentListDockSurface`.
+        // Never also render `searchResultsContent` for the same query, or the
+        // input pill and result rows appear as two separate sheets and flicker on
+        // every keystroke.
+        if shouldShowSeparateActionList {
+            return false
+        }
+        if isCompactSmartScope {
+            return true
+        }
+        if shouldShowContextDockAppPanel
+            && !(l2.chatArmed && !l2.showChatPopover)
+        {
+            return true
+        }
+        if shouldShowFinderSearchResultsPanel(for: searchState.query) {
+            return true
+        }
+        return false
     }
 
     var shouldSuppressIdleBottomResultsPanel: Bool {

@@ -76,6 +76,7 @@ extension LauncherView {
                     }
                 }
                 .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Measure the real rendered content (section headers vary per app) so the
                 // panel hugs it instead of relying on a row-count estimate that undercounts
                 // multiple headers and clips the last row at the rounded corner.
@@ -83,8 +84,21 @@ extension LauncherView {
                     updateMeasuredGlobalListHeight(height)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-            .frame(maxHeight: listViewVisibleHeight)
+            .frame(maxWidth: .infinity, maxHeight: listViewVisibleHeight, alignment: .leading)
+            .background {
+                if settings.effectiveDockAtBottom {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 18, isDark: isEffectiveDark))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(isEffectiveDark ? 0.12 : 0.20), lineWidth: 0.8)
+                        )
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
@@ -1189,6 +1203,12 @@ extension LauncherView {
             }
             if shouldUsePureGlobalAppSearch {
                 return true
+            }
+            if currentGlobalScopedBundleID != nil {
+                if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                    return true
+                }
+                return stableVisibleDockPills(for: q).contains { !$0.isSeparator }
             }
             let visiblePills = currentVisibleDockPills(for: q)
             if pendingDockPillQuery == q || isResolvingDockPills(for: q) {

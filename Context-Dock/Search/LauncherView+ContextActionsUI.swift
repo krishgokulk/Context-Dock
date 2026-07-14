@@ -553,7 +553,9 @@ extension LauncherView {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: addedCount)
-        .help(addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Tabs — add current page (→)")
+        .help(
+            addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Tabs — add current page (→)"
+        )
         .popover(isPresented: showSafariTabPickerBinding, arrowEdge: .top) {
             safariTabPickerPopover
         }
@@ -932,7 +934,8 @@ extension LauncherView {
                         // whose loop already ended/timed out) → run through the reliable
                         // pre-approved executor directly and surface the output.
                         if !isDockCommand,
-                            terminalBridge.pendingApproval?.command == command {
+                            terminalBridge.pendingApproval?.command == command
+                        {
                             TerminalAIBridge.shared.approveCommand(command)
                         } else {
                             let originalQuestion =
@@ -1013,8 +1016,7 @@ extension LauncherView {
         return (builtIns + custom).filter { seen.insert($0.name).inserted }
     }
 
-    func sortedAppScopeShortcuts(_ shortcuts: [AppShortcut], query: String) -> [AppShortcut]
-    {
+    func sortedAppScopeShortcuts(_ shortcuts: [AppShortcut], query: String) -> [AppShortcut] {
         let normalizedQuery = normalizedScopeIntentText(query)
         guard !normalizedQuery.isEmpty else { return shortcuts }
         let ranked = shortcuts.map { shortcut -> (AppShortcut, Double) in

@@ -466,9 +466,17 @@ extension LauncherView {
         let limitedMatches = Array(
             dedupeGlobalApplicationResults(rawMatches).prefix(appLimit))
         let runningLookup = runningApplicationLookup()
-        let matches =
-            limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) != nil }
-            + limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) == nil }
+        // For a TYPED query, preserve score-based relevance order. Floating running apps to
+        // the top desyncs the highlighted first row from the leading icon + ghost completion
+        // (both use score order) — e.g. "cod" highlighted ChatGPT (running) while the icon
+        // showed VS Code (exact match). Only float running-first when the query is empty (idle).
+        let matches: [SearchResult] = {
+            guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return limitedMatches
+            }
+            return limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) != nil }
+                + limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) == nil }
+        }()
         let indexedMatches = Array(matches.enumerated())
         // In global context, isEnabled reflects AX state of whatever app was frontmost at
         // snapshot time — meaningless here. Force enabled so no "Unavailable" badge shows.
@@ -492,6 +500,31 @@ extension LauncherView {
             "global-app-\(result.trackingIdentifier)"
         }
         let appRowIDs: [String] = matches.map(appRowID)
+        @ViewBuilder
+        func crossAppMenuGroupsView() -> some View {
+            let crossBase = matches.count + menuGroups.count
+            let groupStartIndices: [String: Int] = {
+                var d: [String: Int] = [:]
+                var offset = 0
+                for g in providedAppMenuGroups {
+                    d[g.id] = crossBase + offset
+                    offset += g.pills.count
+                }
+                return d
+            }()
+            ForEach(providedAppMenuGroups) { group in
+                let groupBase = groupStartIndices[group.id] ?? crossBase
+                resultGroupHeader(group.appName, icon: group.icon)
+                    .transition(.opacity)
+                    .contextDockBottomListFlip(settings.effectiveDockAtBottom)
+                ForEach(Array(group.pills.enumerated()), id: \.element.id) {
+                    pillIdx, pill in
+                    pillListRow(pill: pill, index: groupBase + pillIdx)
+                        .id("xapp-pill-\(group.id)-\(pill.id)")
+                        .contextDockBottomListFlip(settings.effectiveDockAtBottom)
+                }
+            }
+        }
         let showLaunchHint = launchHint != nil
             && visibleMenuPills.isEmpty
             && !(launchHint?.bundleId.hasPrefix("syscmd://") ?? false)
@@ -567,6 +600,10 @@ extension LauncherView {
                         }
                     }
 
+                    if menuFirst {
+                        crossAppMenuGroupsView()
+                    }
+
                     if !indexedMatches.isEmpty {
                         resultGroupHeader(
                             indexedMatches.contains(where: { $0.element.type != .application })
@@ -623,29 +660,8 @@ extension LauncherView {
 
                     // Cross-app menus grouped by source app.
                     // Each group shows app icon + name header, then matching menu pills below.
-                    if !providedAppMenuGroups.isEmpty {
-                        let crossBase = matches.count + menuGroups.count
-                        let groupStartIndices: [String: Int] = {
-                            var d: [String: Int] = [:]
-                            var offset = 0
-                            for g in providedAppMenuGroups {
-                                d[g.id] = crossBase + offset
-                                offset += g.pills.count
-                            }
-                            return d
-                        }()
-                        ForEach(providedAppMenuGroups) { group in
-                            let groupBase = groupStartIndices[group.id] ?? crossBase
-                            resultGroupHeader(group.appName, icon: group.icon)
-                                .transition(.opacity)
-                                .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-                            ForEach(Array(group.pills.enumerated()), id: \.element.id) {
-                                pillIdx, pill in
-                                pillListRow(pill: pill, index: groupBase + pillIdx)
-                                    .id("xapp-pill-\(group.id)-\(pill.id)")
-                                    .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-                            }
-                        }
+                    if !menuFirst {
+                        crossAppMenuGroupsView()
                     }
 
                     // No cached menus + app not running: invite user to open it once so menus get snapshotted.
@@ -886,7 +902,7 @@ extension LauncherView {
                     title: name,
                     subtitle: path ?? "Running",
                     icon: resolvedRunningAppIcon(for: app),
-                    action: { activateRunningAppFromDock(app) },
+                    action: { activateRunningAppFromGlobalContext(app) },
                     type: .application,
                     filePath: path,
                     contactData: nil
@@ -1052,7 +1068,7 @@ extension LauncherView {
                     title: name,
                     subtitle: path ?? "Running",
                     icon: resolvedRunningAppIcon(for: app),
-                    action: { activateRunningAppFromDock(app) },
+                    action: { activateRunningAppFromGlobalContext(app) },
                     type: .application,
                     filePath: path,
                     contactData: nil

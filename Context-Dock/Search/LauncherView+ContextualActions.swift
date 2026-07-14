@@ -3454,16 +3454,21 @@ extension LauncherView {
             return
         }
 
-        // Pure Global Context uses the global app-search path, not this dock-pill build.
-        // (Scoping a running app exits Global Context, so this never fires for an app scope.)
+        // Pure, unscoped Global Context uses the global app-search path. Scoped running
+        // apps stay inside Global Context now, and must still build dock/menu pills.
         if isGlobalContextActive,
             !hasSelectionScopeSurface,
+            currentGlobalScopedBundleID == nil,
             !showGlobalClipboardPill,
             !isContextDockChatConnected
         {
             contextDockViewModel.resetPillRenderingState(cancelBuild: true)
             return
         }
+
+        let scheduledQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let scheduledTargetPID = contextTargetApp()?.processIdentifier ?? -1
+        let scheduledTargetBundleID = contextTargetApp()?.bundleIdentifier ?? ""
 
         dockPillBuildTask = ContextDockPillCoordinator.schedule(
             input: ContextDockPillCoordinator.Input(
@@ -3480,7 +3485,22 @@ extension LauncherView {
                 commitPreview: { commitPendingDockPreviewPills($0) },
                 clearCachedPills: { cachedDockPills = [] },
                 refreshContext: { refreshFinderSelectionContextFromFinder() },
-                buildPills: { buildDockPills(query: $0) },
+                buildPills: { buildQuery in
+                    return buildDockPills(query: buildQuery)
+                },
+                canCommit: {
+                    let currentQuery = searchState.query
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    if !scheduledQuery.isEmpty, currentQuery != scheduledQuery {
+                        return false
+                    }
+                    let currentApp = contextTargetApp()
+                    let currentPID = currentApp?.processIdentifier ?? -1
+                    let currentBundleID = currentApp?.bundleIdentifier ?? ""
+                    return currentPID == scheduledTargetPID
+                        && currentBundleID == scheduledTargetBundleID
+                },
                 replaceCachedPills: { pills, preserveFocus in
                     replaceCachedDockPills(pills, preserveFocus: preserveFocus)
                 },
@@ -3577,7 +3597,9 @@ extension LauncherView {
                 allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             )
             var sel: [DockPill] = finderFilePills + macOSExtensionPills + finderMenuPills
-            sel.append(selectionScopeAskAIPill(query: q))
+            if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sel.append(selectionScopeAskAIPill(query: q))
+            }
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
@@ -3747,6 +3769,21 @@ extension LauncherView {
                 return browserContentSearchDockPill(intent)
             }
             return appContentSearchDockPill(intent)
+        }()
+        // Explicit "Chat with <App>" action so the user can jump into the frontmost-app chat
+        // even when menu commands match (auto-arm only fires when NO menu matches).
+        let chatWithAppPill: DockPill? = {
+            guard !isGlobalContextActive, !isGlobalScope, !isFinderDesktopOnlyMode else {
+                return nil
+            }
+            let bundleId = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            let appName = scopedAppName.isEmpty ? frontmost.name : scopedAppName
+            guard !bundleId.isEmpty, !appName.isEmpty,
+                bundleId != Bundle.main.bundleIdentifier
+            else { return nil }
+            return chatWithFrontmostAppDockPill(
+                appName: appName, bundleId: bundleId,
+                query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
         }()
         let isFinderScopedDock =
             !isGlobalScope
@@ -4176,8 +4213,8 @@ extension LauncherView {
             pills.append(scopedAppLaunchPill)
         }
 
-        if let appContentSearchPill {
-            pills.append(appContentSearchPill)
+        if let chatWithAppPill {
+            pills.append(chatWithAppPill)
         }
 
         if let messagesSemanticIntentPill {
@@ -4559,6 +4596,10 @@ extension LauncherView {
             if shouldSuppressMenuForContext { return [] }
             return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
         }()
+
+        if visibleMenuMatches.isEmpty, let appContentSearchPill {
+            pills.append(appContentSearchPill)
+        }
 
         if !isFinderDesktopOnlyMode {
         for pill in scopedSystemCommandPills(

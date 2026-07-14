@@ -582,6 +582,11 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.lastCheckedPasteboardCount = newValue }
     }
 
+    var suppressClipboardImportUntilChangeCount: Int? {
+        get { globalContextViewModel.suppressClipboardImportUntilChangeCount }
+        nonmutating set { globalContextViewModel.suppressClipboardImportUntilChangeCount = newValue }
+    }
+
     var clipboardHistory: [ClipboardEntry] {
         get { globalContextViewModel.clipboardHistory }
         nonmutating set { globalContextViewModel.clipboardHistory = newValue }

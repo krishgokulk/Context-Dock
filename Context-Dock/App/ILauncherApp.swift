@@ -37,6 +37,11 @@ class KeyableWindow: NSPanel {
     // Flag to anchor window at bottom when expanding
     var anchorAtBottom: Bool = false
     var horizontalResizeAnchorX: CGFloat?
+    // The screen-space Y of the window's top edge, fixed the moment the window is opened
+    // or the user drags it. updateWindowSize() reads from THIS instead of the live frame's
+    // maxY, so the input bar's vertical position can never drift across a chain of
+    // result-count-driven resizes — only an explicit open/drag ever moves it.
+    var pinnedTopY: CGFloat?
     private var bottomAnchorY: CGFloat = 10  // Distance from bottom of screen
 
     // Track initial mouse location for smooth dragging
@@ -86,24 +91,37 @@ class KeyableWindow: NSPanel {
         initialMouseLocation = nil
         initialWindowOrigin = nil
         horizontalResizeAnchorX = frame.midX
+        pinnedTopY = frame.maxY
         super.mouseUp(with: event)
     }
 
-    // Override setFrame to anchor at bottom when flag is enabled
-    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        var adjustedFrame = frameRect
-
+    // Single chokepoint for the resize-anchor. EVERY frame change funnels through here, so the
+    // input-bar position is enforced regardless of which code path resized the window — the exact
+    // reason context dock kept jumping while global context (which happened to hit updateWindowSize)
+    // stayed stable. Bottom-anchored keeps the bottom fixed; otherwise the TOP edge is pinned to the
+    // cached anchor so only the results panel below grows/shrinks. `pinnedTopY` is re-seated only
+    // on deliberate moves (open/drag/center), so it never drifts during typing.
+    private func anchorAdjusted(_ frameRect: NSRect) -> NSRect {
+        var adjusted = frameRect
         if anchorAtBottom, let screen = self.screen ?? NSScreen.main {
-            // When anchored at bottom, calculate the Y position to keep bottom fixed
-            let screenFrame = screen.visibleFrame
-            let desiredBottomY = screenFrame.minY + bottomAnchorY
-
-            // Set Y so that window bottom stays at desired position
-            adjustedFrame.origin.y = desiredBottomY
-
+            adjusted.origin.y = screen.visibleFrame.minY + bottomAnchorY
+        } else if let top = pinnedTopY {
+            adjusted.origin.y = top - adjusted.height
         }
+        return adjusted
+    }
 
-        super.setFrame(adjustedFrame, display: flag)
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(anchorAdjusted(frameRect), display: flag)
+    }
+
+    // Deliberate re-center (e.g. first open) must re-seat the top anchor, not be pinned to the old
+    // one — bypass the pin for the center itself, then adopt the new top.
+    override func center() {
+        let saved = pinnedTopY
+        pinnedTopY = nil
+        super.center()
+        pinnedTopY = anchorAtBottom ? saved : frame.maxY
     }
 
     // Ensure standard text-editing keyboard shortcuts (Cmd+A/V/C/X/Z) always reach the
@@ -137,23 +155,11 @@ class KeyableWindow: NSPanel {
     override func selectKeyView(following aView: NSView) {}
     override func selectKeyView(preceding aView: NSView) {}
 
-    // Also override the animated version
+    // Also override the animated version — same chokepoint pin.
     override func setFrame(
         _ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool
     ) {
-        var adjustedFrame = frameRect
-
-        if anchorAtBottom, let screen = self.screen ?? NSScreen.main {
-            // When anchored at bottom, calculate the Y position to keep bottom fixed
-            let screenFrame = screen.visibleFrame
-            let desiredBottomY = screenFrame.minY + bottomAnchorY
-
-            // Set Y so that window bottom stays at desired position
-            adjustedFrame.origin.y = desiredBottomY
-
-        }
-
-        super.setFrame(adjustedFrame, display: displayFlag, animate: animateFlag)
+        super.setFrame(anchorAdjusted(frameRect), display: displayFlag, animate: animateFlag)
     }
 }
 
@@ -957,6 +963,73 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isMovableByWindowBackground = true
     }
 
+    func launcherScreenIdentifier(_ screen: NSScreen?) -> String {
+        guard let screen else { return "" }
+        if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] {
+            return "\(number)"
+        }
+        return "\(Int(screen.frame.minX)):\(Int(screen.frame.minY)):\(Int(screen.frame.width)):\(Int(screen.frame.height))"
+    }
+
+    func preferredLauncherScreen(fallback window: NSWindow?) -> NSScreen? {
+        if !settings.launcherWindowScreenID.isEmpty,
+            let screen = NSScreen.screens.first(where: {
+                launcherScreenIdentifier($0) == settings.launcherWindowScreenID
+            })
+        {
+            return screen
+        }
+        return NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? window?.screen
+            ?? NSScreen.main
+    }
+
+    func clampLauncherFrame(_ frame: NSRect, to visibleFrame: NSRect) -> NSRect {
+        let margin: CGFloat = 12
+        let minX = visibleFrame.minX + margin
+        let maxX = visibleFrame.maxX - frame.width - margin
+        let minY = visibleFrame.minY + margin
+        let maxY = visibleFrame.maxY - frame.height - margin
+        return NSRect(
+            x: min(max(frame.minX, minX), max(minX, maxX)),
+            y: min(max(frame.minY, minY), max(minY, maxY)),
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    func saveLauncherFloatingPosition() {
+        guard !settings.effectiveDockAtBottom,
+            let window = launcherWindow,
+            window.isVisible
+        else { return }
+        let frame = window.frame
+        guard frame.width >= 200, frame.height >= 40 else { return }
+        settings.launcherWindowHasSavedPosition = true
+        settings.launcherWindowAnchorX = Double(frame.midX)
+        settings.launcherWindowTopY = Double(frame.maxY)
+        settings.launcherWindowScreenID = launcherScreenIdentifier(window.screen ?? NSScreen.main)
+    }
+
+    func restoredLauncherFrame(
+        screen: NSScreen,
+        width: CGFloat,
+        height: CGFloat
+    ) -> NSRect? {
+        guard settings.launcherWindowHasSavedPosition,
+            !settings.effectiveDockAtBottom,
+            settings.launcherWindowAnchorX >= 0,
+            settings.launcherWindowTopY >= 0
+        else { return nil }
+        let frame = NSRect(
+            x: CGFloat(settings.launcherWindowAnchorX) - (width / 2),
+            y: CGFloat(settings.launcherWindowTopY) - height,
+            width: width,
+            height: height
+        )
+        return clampLauncherFrame(frame, to: screen.visibleFrame)
+    }
+
     /// Keep the dock visible + on top through an app launch started from the dock, so a
     /// global-context launch morphs smoothly into that app's Context Dock instead of
     /// hiding and reappearing. Unlike reinforceFloatingDockWindow this is NOT gated to
@@ -1044,6 +1117,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Cmd+Tab, silently eating all keyboard input (space, arrows) in the user's app.
             self.hideLauncher()
         }
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard notification.object as? NSWindow === launcherWindow else { return }
+        saveLauncherFloatingPosition()
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard notification.object as? NSWindow === launcherWindow else { return }
+        saveLauncherFloatingPosition()
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -1454,16 +1537,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func focusAndCenterPersistentDock() {
         guard let window = launcherWindow, window.isVisible else { return }
-        let screen = window.screen ?? NSScreen.main
-        if let visibleFrame = screen?.visibleFrame {
+        let screen = preferredLauncherScreen(fallback: window)
+        if let screen {
+            let visibleFrame = screen.visibleFrame
             var frame = window.frame
-            frame.origin.x = visibleFrame.midX - frame.width / 2
-            if settings.alwaysFloatDock && !settings.effectiveDockAtBottom {
-                frame.origin.y = visibleFrame.midY - frame.height / 2
-                (window as? KeyableWindow)?.anchorAtBottom = false
+            if !settings.effectiveDockAtBottom,
+                let restored = restoredLauncherFrame(
+                    screen: screen,
+                    width: frame.width,
+                    height: frame.height
+                )
+            {
+                frame.origin = restored.origin
+            } else {
+                frame.origin.x = visibleFrame.midX - frame.width / 2
+                if settings.alwaysFloatDock && !settings.effectiveDockAtBottom {
+                    frame.origin.y = visibleFrame.midY - frame.height / 2
+                    (window as? KeyableWindow)?.anchorAtBottom = false
+                }
             }
             window.setFrame(frame, display: false)
-            (window as? KeyableWindow)?.horizontalResizeAnchorX = visibleFrame.midX
+            (window as? KeyableWindow)?.horizontalResizeAnchorX = frame.midX
+            (window as? KeyableWindow)?.pinnedTopY = frame.maxY
         }
         window.alphaValue = 1
         window.orderFrontRegardless()
@@ -1717,11 +1812,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         scheduleUserContextDetection()
 
-        // Center the window horizontally and position it based on user preference
-        let activeScreen =
-            NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? window.screen
-            ?? NSScreen.main
+        // Restore last floating position first. If no saved position exists, use the
+        // current screen's default placement.
+        let activeScreen = preferredLauncherScreen(fallback: window)
         guard let activeScreen else { return }
         let screenFrame = activeScreen.visibleFrame
         let windowWidth: CGFloat = 700  // Increased from 600 to 700
@@ -1731,10 +1824,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let statusBarHeight: CGFloat = settings.enableStatusBar ? 45 : 0
         let initialHeight: CGFloat = statusBarHeight + 70  // statusBar + searchBar (matches calculatedHeight base case)
 
-        let x = screenFrame.midX - (windowWidth / 2)
+        var x = screenFrame.midX - (windowWidth / 2)
 
         // Position window based on "Always Dock at Bottom" setting
-        let y: CGFloat
+        var y: CGFloat
         if settings.effectiveDockAtBottom {
             // When "Always Dock at Bottom" is enabled, ALWAYS stay at bottom
             // Results will expand upward, dock stays fixed
@@ -1747,6 +1840,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print(
                 "📍 [AppDelegate] Positioning window at BOTTOM (y: \(y)) - Anchor: BOTTOM (stays fixed, results expand upward)"
             )
+        } else if let restoredFrame = restoredLauncherFrame(
+            screen: activeScreen,
+            width: windowWidth,
+            height: initialHeight
+        ) {
+            x = restoredFrame.minX
+            y = restoredFrame.minY
+            if let keyableWindow = window as? KeyableWindow {
+                keyableWindow.anchorAtBottom = false
+            }
+            #if DEBUG
+            print("📍 [AppDelegate] Restoring floating window position: \(restoredFrame)")
+            #endif
         } else if settings.alwaysFloatDock {
             // Always Float Dock should remain persistent, but launch centered like a
             // floating command surface instead of inheriting a bottom/corner dock pose.
@@ -1772,6 +1878,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let initialFrame = NSRect(x: x, y: y, width: windowWidth, height: initialHeight)
         if let keyableWindow = window as? KeyableWindow {
             keyableWindow.horizontalResizeAnchorX = initialFrame.midX
+            keyableWindow.pinnedTopY = initialFrame.maxY
         }
         #if DEBUG
         print("📐 [AppDelegate] Setting initial frame: \(initialFrame)")

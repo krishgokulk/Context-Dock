@@ -6947,6 +6947,24 @@ struct AddMCPServerSheet: View {
                 Spacer()
             }
 
+            if isSafariBundle, let safariDriver = safariMCPDriverPath {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        mode = .manual
+                        name = "safari"
+                        command = safariDriver
+                        argsText = "--mcp"
+                    } label: {
+                        Label("Use Safari Technology Preview MCP", systemImage: "safari")
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Requires Safari Technology Preview 247+. Enable Safari → Settings → Developer → “Enable remote automation and external agents”, then Add.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -6998,6 +7016,17 @@ struct AddMCPServerSheet: View {
             ? !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !name.trimmingCharacters(in: .whitespaces).isEmpty
                 && !command.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var isSafariBundle: Bool {
+        bundleId == "com.apple.Safari" || bundleId == "com.apple.SafariTechnologyPreview"
+    }
+
+    /// Path to Safari Technology Preview's bundled safaridriver (which serves the MCP), or
+    /// nil when STP isn't installed.
+    private var safariMCPDriverPath: String? {
+        let stp = "/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver"
+        return FileManager.default.isExecutableFile(atPath: stp) ? stp : nil
     }
 
     private func addServer() {

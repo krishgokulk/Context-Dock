@@ -1107,14 +1107,20 @@ extension LauncherView {
         // PDFs, documents, and OCR'd images) so desktop search behaves like Spotlight.
         // Recursion is implicit — inDirectories scopes the query to the user folders
         // and their subfolders.
+        // Match filename (FSName + DisplayName) OR indexed text content (Spotlight extracts
+        // text from PDFs/docs and OCRs images), scoped to the user's folders + subfolders —
+        // so "albo" finds the "Albo Careers" folder AND documents whose text mentions it,
+        // exactly like Spotlight. kMDItemFSName is the reliable name field (`mdfind -name`).
+        let wildcard = "*\(query)*"
         let fileSearchPaths = roots.isEmpty ? [] : await Self.spotlightSearchPaths(
             predicate: NSPredicate(
-                format: "kMDItemDisplayName LIKE[cd] %@ OR kMDItemTextContent LIKE[cd] %@",
-                "*\(query)*", "*\(query)*"
+                format:
+                    "kMDItemFSName LIKE[cd] %@ OR kMDItemDisplayName LIKE[cd] %@ OR kMDItemTextContent LIKE[cd] %@",
+                wildcard, wildcard, wildcard
             ),
             inDirectories: roots,
             sortByLastUsed: true,
-            limit: 12
+            limit: 40
         )
 
         var seen = Set<String>()
@@ -1835,7 +1841,7 @@ extension LauncherView {
     func buildGlobalSelectionSharePills(query q: String) -> [DockPill] {
         // Selection-gated, no AppleScript/enumeration here — keep typing instant.
         // Browser-page sharing is reached via the app's "Share…" menu item instead.
-        guard hasActiveDockContextSelection else { return [] }
+        guard hasSelectionScopeSurface else { return [] }
         let normalizedQuery = normalizedDockPillText(q)
         if !normalizedQuery.isEmpty {
             let shareTerms = ["share", "send", "airdrop", "export", "message", "mail"]
@@ -1961,7 +1967,7 @@ extension LauncherView {
         let nq = normalizedDockPillText(q)
         guard nq.count >= 2 else { return [] }
         // Only when the app truly has a Share menu, or there's a selection to share.
-        guard hasActiveDockContextSelection || frontmostAppHasShareMenu() else { return [] }
+        guard hasSelectionScopeSurface || frontmostAppHasShareMenu() else { return [] }
         // Share is ALWAYS sourced from NSSharingService.sharingServices(forItems:) — every
         // installed Share Extension (LocalSend, Downie, Bridges, Photomator, …), exactly like
         // the system Share Sheet. We never AX-click an app's Share children (avoids the
@@ -2166,7 +2172,7 @@ extension LauncherView {
         let normalizedQuery = normalizedDockPillText(q)
         let shareIntentQuery =
             isGlobalContextActive
-            && hasActiveDockContextSelection
+            && hasSelectionScopeSurface
             && ["share", "send", "airdrop", "export"].contains { term in
                 normalizedQuery.isEmpty || term.hasPrefix(normalizedQuery)
                     || normalizedQuery.contains(term)
@@ -2183,7 +2189,7 @@ extension LauncherView {
                 name: pill.label,
                 icon: pill.icon,
                 accentColorName: pill.badgeColor,
-                badge: isGlobalContextActive && hasActiveDockContextSelection ? pill.appName : nil,
+                badge: isGlobalContextActive && hasSelectionScopeSurface ? pill.appName : nil,
                 execute: pill.action
             )
             dockPill.sourceBundleId = pill.bundleId

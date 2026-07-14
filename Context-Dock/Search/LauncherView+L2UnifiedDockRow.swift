@@ -67,10 +67,16 @@ extension LauncherView {
         // A scoped app (running-app scope in Global Context) must show its menus on an
         // empty query, just like Context Dock — otherwise the scoped dock stays empty
         // until a keypress. Only the unscoped global/empty state collapses to no pills.
+        let scopedGlobalAppMode =
+            isGlobalContextActive && !pureGlobalAppSearch && currentGlobalScopedBundleID != nil
+        let visibleDockPills =
+            scopedGlobalAppMode
+            ? stableVisibleDockPills(for: pillQuery)
+            : contextDockViewModel.visiblePills
         let pills =
             (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil
             ? []
-            : contextDockViewModel.visiblePills
+            : visibleDockPills
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
         let hasActiveContextSelection = hasSelectionScopeSurface
@@ -232,7 +238,7 @@ extension LauncherView {
         // rebuilt the view identity on ↓, so the expansion could never animate
         // continuously from the first key press.
         let expanded =
-            isGlobalContextActive && shouldUsePureGlobalAppSearch && globalInlineAppScope == nil
+            isGlobalContextActive && shouldUsePureGlobalAppSearch
             ? hasExpandedGlobalContextResults
             : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                 && !isDeferredMenuOnlyPresentation(presentation))

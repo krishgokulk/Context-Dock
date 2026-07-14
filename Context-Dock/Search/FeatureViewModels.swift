@@ -114,6 +114,7 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var clipboardText = ""
     @Published var showClipboardPill = false
     @Published var lastCheckedPasteboardCount = -1
+    @Published var suppressClipboardImportUntilChangeCount: Int?
     @Published var clipboardHistory: [LauncherView.ClipboardEntry] = []
     @Published var showClipboardHistory = false
     @Published var clipboardHistoryExpanded = false
@@ -174,7 +175,7 @@ final class ContextDockViewModel: ObservableObject {
     @Published var showFindTokenMenu = false
     var crossAppMenuTargetPID: pid_t = 0
     var crossAppMenuNeedsLiveLoad = false
-    var warmingMenuBundleIds: Set<String> = []
+    @Published var warmingMenuBundleIds: Set<String> = []
     @Published var hoveredDockPillIndex: Int?
     @Published var isHoveringPillRow = false
     @Published var listViewHoveredIndex: Int?

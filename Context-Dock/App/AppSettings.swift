@@ -1013,6 +1013,10 @@ class AppSettings: ObservableObject {
     @AppStorage("glassBlurRadius") var glassBlurRadius: Double = 1.0  // 0.0 = no blur (opaque), 1.0 = full system blur
     @AppStorage("launcherWindowOpacity") var launcherWindowOpacity: Double = 0.95  // Launcher window transparency (0.0 = fully transparent, 1.0 = opaque)
     @AppStorage("dockLogoStyle") var dockLogoStyle: String = "d_logo"  // "d_logo", "apple"
+    @AppStorage("launcherWindowHasSavedPosition") var launcherWindowHasSavedPosition: Bool = false
+    @AppStorage("launcherWindowAnchorX") var launcherWindowAnchorX: Double = -1  // Floating launcher center X
+    @AppStorage("launcherWindowTopY") var launcherWindowTopY: Double = -1  // Floating launcher top edge
+    @AppStorage("launcherWindowScreenID") var launcherWindowScreenID: String = ""  // Last display
     @AppStorage("folderPreviewOpacity") var folderPreviewOpacity: Double = 0.98  // Folder preview window transparency
     @AppStorage("webSearchWindowOpacity") var webSearchWindowOpacity: Double = 0.98  // Web search window transparency
     @AppStorage("folderPreviewWidth") var folderPreviewWidth: Double = 800  // Folder preview window width
