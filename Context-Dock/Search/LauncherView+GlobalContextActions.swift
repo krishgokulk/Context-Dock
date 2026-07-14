@@ -252,9 +252,6 @@ extension LauncherView {
         }
 
         let commandRows = globalSystemCommandScopeMatches(for: q, limit: min(limit, 8))
-        if !commandRows.isEmpty {
-            return commandRows
-        }
 
         // Hot index path: O(N) scan with precomputed strings, no alias-building per item.
         // Falls through to the full scan below only if the index is empty (first launch).

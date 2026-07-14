@@ -228,3 +228,7 @@ Swift: +0 added · ~5 modified · -0 deleted
 ## 2026-07-14 12:57 · `17f573b8` · `codex-context-dock-polish-fixes`
 **Polish global context and AI routing**
 Swift: +3 added · ~30 modified · -0 deleted
+
+## 2026-07-14 14:45 · `826a0f89` · `codex-context-dock-polish-fixes`
+**stable command input bar**
+Swift: +0 added · ~4 modified · -0 deleted
