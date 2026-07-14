@@ -420,7 +420,7 @@ extension LauncherView {
         // instant via .animation(nil, value: idle) so the card and the input-glow never cross-fade
         // (that overlap was the "two sheets"). Matches the compact pill look of chat/media.
         let idle = isIdleDockBar
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             Color.clear
                 .frame(width: resultsPanelLeadingInset)
             VStack(spacing: 0) {

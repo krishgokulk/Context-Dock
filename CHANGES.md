@@ -224,3 +224,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-08 11:07 · `689c00ca` · `codex-context-dock-polish-fixes`
 **Stabilize context dock navigation**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-14 12:57 · `17f573b8` · `codex-context-dock-polish-fixes`
+**Polish global context and AI routing**
+Swift: +3 added · ~30 modified · -0 deleted

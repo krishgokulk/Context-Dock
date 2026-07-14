@@ -1160,26 +1160,27 @@ extension LauncherView {
 
             _ = spaceBelow
             _ = spaceAbove
+            var effectiveHeight = newHeight
             let newY: CGFloat
             if settings.effectiveDockAtBottom {
                 // Bottom-anchored: grow upward, keep bottom edge fixed
                 newY = currentFrame.minY
             } else {
-                // Spotlight model for every top-anchored mode: keep the TOP edge fixed and grow
-                // downward, clamped to the screen. Anchor to the window's PINNED top (set once on
-                // open/drag), not currentFrame.maxY — deriving the anchor from the live frame lets
-                // any single bad resize (or a clamp against the screen edge) permanently shift the
-                // "fixed" point for every resize after it, which is what made the input bar visibly
-                // slide down when a tall result list collapsed to a short one. Reading a stable,
-                // externally-owned anchor makes this resize idempotent no matter how many times it
-                // runs in a row.
+                // Spotlight model: keep the TOP edge fixed at the window's PINNED top (set once on
+                // open/drag), never derived from the live frame. CRUCIAL: cap the height to the
+                // space below that top so the window never extends past the screen bottom —
+                // otherwise the setFrame chokepoint pins the top off-screen, macOS constrains the
+                // panel back onto the screen, and THAT repositioning is the input-bar jump. A
+                // longer result list scrolls inside its own panel instead of growing the window.
                 let keyableWindow = window as? KeyableWindow
                 let topAnchor = keyableWindow?.pinnedTopY ?? currentFrame.maxY
-                newY = max(visibleFrame.minY, topAnchor - newHeight)
                 keyableWindow?.pinnedTopY = topAnchor
+                let available = topAnchor - visibleFrame.minY - 8
+                effectiveHeight = min(newHeight, max(heightPreset.minimumHeight, available))
+                newY = topAnchor - effectiveHeight
             }
 
-            let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
+            let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: effectiveHeight)
 
             let shouldAnimateFrame =
                 animated

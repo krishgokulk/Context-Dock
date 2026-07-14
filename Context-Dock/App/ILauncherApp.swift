@@ -115,6 +115,13 @@ class KeyableWindow: NSPanel {
         super.setFrame(anchorAdjusted(frameRect), display: flag)
     }
 
+    // We own our own vertical placement (pinned top). Stop AppKit from re-constraining the
+    // panel back inside the visible frame — that automatic repositioning, triggered whenever a
+    // resize briefly pushed the window past the screen edge, was the residual input-bar jump.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     // Deliberate re-center (e.g. first open) must re-seat the top anchor, not be pinned to the old
     // one — bypass the pin for the center itself, then adopt the new top.
     override func center() {

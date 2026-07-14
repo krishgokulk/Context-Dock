@@ -53,6 +53,15 @@ extension LauncherView {
                     .animation(
                         .spring(response: 0.35, dampingFraction: 0.8), value: shouldShowBackground)
             )
+            // Fill the window and pin the card to the top edge. The window height lags the
+            // content (the resize stabilizer intentionally holds it steady while typing), so
+            // without this the shorter card gets centered by the hosting view in a stale-tall
+            // window — the input visibly sinks for "fewer results". Any leftover height now
+            // falls BELOW the card instead. (Bottom-anchored dock mode keeps its bottom pin.)
+            .frame(
+                maxWidth: .infinity, maxHeight: .infinity,
+                alignment: settings.effectiveDockAtBottom ? .bottom : .top
+            )
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
             .onChange(of: searchState.results.isEmpty) { _, isEmpty in
