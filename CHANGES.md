@@ -232,3 +232,15 @@ Swift: +3 added · ~30 modified · -0 deleted
 ## 2026-07-14 14:45 · `826a0f89` · `codex-context-dock-polish-fixes`
 **stable command input bar**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-14 14:56 · `9fd4db72` · `codex-context-dock-polish-fixes`
+**Restore global mixed results**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-15 18:08 · `0e6901f3` · `codex-context-dock-polish-fixes`
+**Polish global context search flow**
+Swift: +0 added · ~12 modified · -0 deleted
+
+## 2026-07-15 18:14 · `0770e90a` · `codex-context-dock-polish-fixes`
+**Polish global context search flow**
+Swift: +0 added · ~12 modified · -0 deleted

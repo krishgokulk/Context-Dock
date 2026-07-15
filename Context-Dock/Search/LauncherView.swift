@@ -2602,7 +2602,6 @@ struct LauncherView: View {
     var shouldShowFrontmostContextChip: Bool {
         showContextInDock
             && !isGlobalContextActive
-            && isSearchBarExpanded
             && settings.enableFrontmostDetection
             && !isCompactSmartScope
             && l2.targetApp == nil

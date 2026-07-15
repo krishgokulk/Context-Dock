@@ -86,6 +86,21 @@ struct ContextMatchDock: View {
     let icons: [MatchDockIcon]
     let overflowCount: Int
     let isSearching: Bool
+    let onSelect: ((MatchDockIcon) -> Void)?
+
+    init(
+        phase: Phase,
+        icons: [MatchDockIcon],
+        overflowCount: Int,
+        isSearching: Bool,
+        onSelect: ((MatchDockIcon) -> Void)? = nil
+    ) {
+        self.phase = phase
+        self.icons = icons
+        self.overflowCount = overflowCount
+        self.isSearching = isSearching
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         HStack(spacing: 7) {
@@ -101,32 +116,10 @@ struct ContextMatchDock: View {
                     .accessibilityLabel("Searching")
             } else {
                 ForEach(icons) { item in
-                    ZStack(alignment: .bottomTrailing) {
-                        Image(nsImage: item.icon)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 18, height: 18)
-                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            .accessibilityLabel(accessibilityLabel(for: item))
-
-                        if item.isRunning && phase == .idle {
-                            Circle()
-                                .fill(Color.green.opacity(0.72))
-                                .frame(width: 4.5, height: 4.5)
-                                .offset(x: 2, y: 2)
-                        }
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if item.isExpandable && phase == .idle {
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 6.5, weight: .bold))
-                                .foregroundStyle(.secondary.opacity(0.7))
-                                .offset(x: 3, y: 3)
-                        }
-                    }
-                    .id(item.id)
-                    .transition(.opacity)
-                    .help(accessibilityLabel(for: item))
+                    matchDockIconButton(item)
+                        .id(item.id)
+                        .transition(.opacity)
+                        .help(accessibilityLabel(for: item))
                 }
 
                 if overflowCount > 0 {
@@ -165,6 +158,47 @@ struct ContextMatchDock: View {
             parts.append("expandable")
         }
         return parts.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private func matchDockIconButton(_ item: MatchDockIcon) -> some View {
+        if let onSelect {
+            Button {
+                onSelect(item)
+            } label: {
+                matchDockIconCell(item)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel(for: item))
+        } else {
+            matchDockIconCell(item)
+        }
+    }
+
+    private func matchDockIconCell(_ item: MatchDockIcon) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(nsImage: item.icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .accessibilityLabel(accessibilityLabel(for: item))
+
+            if item.isRunning && phase == .idle {
+                Circle()
+                    .fill(Color.green.opacity(0.72))
+                    .frame(width: 4.5, height: 4.5)
+                    .offset(x: 2, y: 2)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if item.isExpandable && phase == .idle {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .offset(x: 3, y: 3)
+            }
+        }
     }
 }
 

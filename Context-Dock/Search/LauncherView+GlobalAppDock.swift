@@ -801,11 +801,23 @@ extension LauncherView {
             return groupedGlobalApplicationList(limit: limit)
         }
 
+        if GlobalSearchService.shared.documentCount > 0 {
+            let snapshot = GlobalContextSearchCoordinator.shared.snapshot(
+                query: q,
+                limit: min(max(limit, 20), 80),
+                includeCachedMenus: false,
+                includeRunningCachedMenus: false
+            )
+            let indexedRows = searchResults(from: snapshot.appDocuments, query: q)
+            if !indexedRows.isEmpty {
+                return Array(indexedRows.prefix(limit))
+            }
+        }
+
         let exactSystemCommandRows = globalSystemCommandPresetRows(
             for: normalizedDockPillText(q),
             limit: max(limit, 12)
         )
-        if !exactSystemCommandRows.isEmpty { return exactSystemCommandRows }
 
         var candidates: [(result: SearchResult, score: Double, order: Int)] = []
         var seen = Set<String>()
@@ -988,6 +1000,17 @@ extension LauncherView {
                 candidates.append((result, result.score, order))
                 order += 1
             }
+        }
+
+        for result in exactSystemCommandRows + globalSystemCommandScopeMatches(for: q, limit: limit)
+        {
+            let key = globalApplicationIdentityKey(
+                for: result,
+                explicitBundleIdentifier: result.subtitle
+            )
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
         }
 
         return Array(

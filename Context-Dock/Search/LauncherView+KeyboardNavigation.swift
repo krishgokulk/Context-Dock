@@ -57,7 +57,12 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Global context app search
         if shouldUsePureGlobalAppSearch && !q.isEmpty {
-            return currentGlobalAppMatches(for: q)
+            let state = visibleGlobalGroupedListNavigationState(for: q)
+            let visibleRows =
+                state.appResults.isEmpty
+                ? currentGlobalAppMatches(for: q)
+                : state.appResults
+            return visibleRows
                 .map {
                     result -> (execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?) in
                     let runningApp = runningApplication(forGlobalResult: result)

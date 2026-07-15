@@ -184,7 +184,8 @@ extension LauncherView {
                 launchHint: scopedAppLaunchHint,
                 scopedMenuAppName: scopedMenuListContext?.appName,
                 scopedMenuActionQuery: scopedMenuListContext?.actionQuery ?? "",
-                isLoading: globalSearchLoading
+                isLoading: globalSearchLoading,
+                menuFirst: globalNavState?.menuFirst ?? false
             )
         )
     }
@@ -251,7 +252,7 @@ extension LauncherView {
             scopedMenuAppName: presentation.scopedMenuAppName,
             scopedMenuActionQuery: presentation.scopedMenuActionQuery,
             isLoading: presentation.isLoading,
-            menuFirst: false
+            menuFirst: presentation.menuFirst
         )
         .frame(maxHeight: expanded ? nil : 0, alignment: .top)
         .opacity(expanded ? 1 : 0)

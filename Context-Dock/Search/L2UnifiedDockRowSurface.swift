@@ -9,6 +9,7 @@ struct L2GlobalSearchPresentation {
     let scopedMenuAppName: String?
     let scopedMenuActionQuery: String
     let isLoading: Bool
+    let menuFirst: Bool
 }
 
 struct L2DockRowPresentation {

@@ -3,6 +3,7 @@ import Foundation
 
 struct GlobalContextSearchSnapshot {
     let query: String
+    let documents: [GlobalSearchService.SearchDocument]
     let appDocuments: [GlobalSearchService.SearchDocument]
     let menuDocuments: [GlobalSearchService.SearchDocument]
 
@@ -27,7 +28,7 @@ final class GlobalContextSearchCoordinator {
     ) -> GlobalContextSearchSnapshot {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty, limit > 0 else {
-            return GlobalContextSearchSnapshot(query: query, appDocuments: [], menuDocuments: [])
+            return GlobalContextSearchSnapshot(query: query, documents: [], appDocuments: [], menuDocuments: [])
         }
 
         let revision = GlobalSearchService.shared.indexRevision
@@ -45,9 +46,10 @@ final class GlobalContextSearchCoordinator {
         }
         lock.unlock()
 
-        let docs = GlobalSearchService.shared.query(
-            query,
-            limit: max(limit * 8, 80),
+        let rankedLimit = max(limit * 3, 48)
+        let docs = rankedDocuments(
+            for: query,
+            limit: rankedLimit,
             includeCachedMenus: includeCachedMenus,
             includeRunningCachedMenus: includeRunningCachedMenus
         )
@@ -72,6 +74,7 @@ final class GlobalContextSearchCoordinator {
 
         let snapshot = GlobalContextSearchSnapshot(
             query: query,
+            documents: docs,
             appDocuments: appDocuments,
             menuDocuments: menuDocuments
         )
@@ -80,6 +83,77 @@ final class GlobalContextSearchCoordinator {
         cachedSnapshot = snapshot
         lock.unlock()
         return snapshot
+    }
+
+    nonisolated private func rankedDocuments(
+        for query: String,
+        limit: Int,
+        includeCachedMenus: Bool,
+        includeRunningCachedMenus: Bool
+    ) -> [GlobalSearchService.SearchDocument] {
+        var output: [GlobalSearchService.SearchDocument] = []
+        var seen = Set<String>()
+        for variant in queryVariants(for: query).prefix(4) {
+            let remainingLimit = max(8, limit - output.count)
+            let docs = GlobalSearchService.shared.query(
+                variant,
+                limit: remainingLimit,
+                includeCachedMenus: includeCachedMenus,
+                includeRunningCachedMenus: includeRunningCachedMenus
+            )
+            for doc in docs where seen.insert(doc.id).inserted {
+                output.append(doc)
+                if output.count >= limit { return output }
+            }
+        }
+        return output
+    }
+
+    nonisolated private func queryVariants(for query: String) -> [String] {
+        let normalized = AppMenuCapabilityCache.normalize(query)
+        guard !normalized.isEmpty else { return [] }
+        var variants: [String] = []
+        func add(_ value: String) {
+            let v = AppMenuCapabilityCache.normalize(value)
+            guard !v.isEmpty, !variants.contains(v) else { return }
+            variants.append(v)
+        }
+
+        add(normalized)
+        let words = normalized.split(separator: " ").map(String.init)
+        guard words.count >= 2 else { return variants }
+
+        let objectWords: Set<String> = [
+            "file", "files", "message", "messages", "window", "tab", "note", "notes",
+            "task", "tasks", "reminder", "reminders", "document", "documents"
+        ]
+        let actionWords: Set<String> = [
+            "new", "open", "quit", "close", "search", "find", "send", "create",
+            "make", "start", "stop", "pause", "play"
+        ]
+
+        if let first = words.first, actionWords.contains(first), words.count >= 2 {
+            let tail = Array(words.dropFirst())
+            add((tail + [first]).joined(separator: " "))
+            let withoutObjects = tail.filter { !objectWords.contains($0) }
+            if !withoutObjects.isEmpty {
+                add(([first] + withoutObjects).joined(separator: " "))
+                add((withoutObjects + [first]).joined(separator: " "))
+            }
+        }
+
+        if let inIndex = words.firstIndex(of: "in"), inIndex > 0, inIndex + 1 < words.count {
+            let before = words[..<inIndex].joined(separator: " ")
+            let app = words[(inIndex + 1)...].joined(separator: " ")
+            add("\(app) \(before)")
+        }
+
+        if let app = words.last, words.count >= 2 {
+            let head = words.dropLast().filter { !objectWords.contains($0) }.joined(separator: " ")
+            if !head.isEmpty { add("\(app) \(head)") }
+        }
+
+        return variants
     }
 
     nonisolated func resolveFastTopMatch(query rawQuery: String) -> GlobalContextTopMatch? {

@@ -533,6 +533,14 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .launcherWindowOpened)) { _ in
                 handleLauncherWindowOpened()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .globalSearchIndexRebuildRequested)) { _ in
+                rebuildGlobalSearchIndex()
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    updateGlobalContextTypingSnapshot(query: q)
+                    scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+                }
+            }
 
             .onChange(of: searchState.results.count) { oldValue, newValue in
                 handleSearchResultsCountChanged(newValue)
