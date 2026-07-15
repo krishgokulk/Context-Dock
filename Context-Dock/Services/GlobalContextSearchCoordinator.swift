@@ -60,7 +60,7 @@ final class GlobalContextSearchCoordinator {
 
         for doc in docs {
             switch doc.action {
-            case .cachedMenu:
+            case .cachedMenu, .browserURL:
                 if menuDocuments.count < limit {
                     menuDocuments.append(doc)
                 }
@@ -193,6 +193,10 @@ final class GlobalContextSearchCoordinator {
                 guard !bundleId.isEmpty else { continue }
                 let current = cachedMenuCounts[bundleId]
                 cachedMenuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
+            case .browserURL(_, let bundleId, _, _, _):
+                guard !bundleId.isEmpty else { continue }
+                let current = cachedMenuCounts[bundleId]
+                cachedMenuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
             case .systemCommandScope:
                 if isPrefixMatch(doc) {
                     if commandExactPrefix == nil { commandExactPrefix = doc }
@@ -257,6 +261,9 @@ final class GlobalContextSearchCoordinator {
                     title: {
                         if case .cachedMenu(_, let appName, _, _, _) = doc.action {
                             return appName
+                        }
+                        if case .browserURL(_, _, let browserName, _, _) = doc.action {
+                            return browserName
                         }
                         return doc.title
                     }(),
@@ -340,6 +347,10 @@ final class GlobalContextSearchCoordinator {
         for doc in docs {
             switch doc.action {
             case .cachedMenu(let bundleId, _, _, _, _):
+                guard !bundleId.isEmpty else { continue }
+                let current = menuCounts[bundleId]
+                menuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
+            case .browserURL(_, let bundleId, _, _, _):
                 guard !bundleId.isEmpty else { continue }
                 let current = menuCounts[bundleId]
                 menuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
@@ -431,6 +442,8 @@ final class GlobalContextSearchCoordinator {
             let doc = entry.doc
             let appName: String
             if case .cachedMenu(_, let name, _, _, _) = doc.action {
+                appName = name
+            } else if case .browserURL(_, _, let name, _, _) = doc.action {
                 appName = name
             } else {
                 appName = doc.title

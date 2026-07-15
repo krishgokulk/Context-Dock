@@ -1620,7 +1620,15 @@ struct LauncherView: View {
     }
 
     func executeDockPill(_ pill: DockPill) {
-        UsageTracker.shared.recordAccess(for: defaultDockPillTrackingIdentifier(pill))
+        let trackingIdentifier = defaultDockPillTrackingIdentifier(pill)
+        let sourceBundleId = pill.sourceBundleId.isEmpty ? nil : pill.sourceBundleId
+        let visibleAction =
+            pill.menuItemName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? pill.name
+            : pill.menuItemName
+        UsageTracker.shared.recordAccess(for: trackingIdentifier)
+        AppUsageLearner.shared.recordAction(trackingIdentifier, inBundleID: sourceBundleId)
+        AppUsageLearner.shared.recordAction(visibleAction, inBundleID: sourceBundleId)
         if let url = pill.resolvedURL,
             let scheme = url.scheme?.lowercased(),
             scheme == "http" || scheme == "https"

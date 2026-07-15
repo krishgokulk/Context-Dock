@@ -1013,20 +1013,14 @@ extension LauncherView {
                             )
                             // Hide standalone icon when a context/scope chip owns the left slot.
                             .opacity(
-                                (isSearchBarExpanded
-                                    && (compactScopeKey != nil || l2.targetApp != nil
-                                        || globalInlineAppScope != nil
-                                        || shouldShowFrontmostContextChip)
-                                    || (shouldShowFrontmostContextChip && showContextInDock))
-                                    ? 0 : 1
+                                shouldHideStandaloneLeadingIcon(
+                                    compactScopeKey: compactScopeKey
+                                ) ? 0 : 1
                             )
                             .frame(
-                                width: (isSearchBarExpanded
-                                    && (compactScopeKey != nil || l2.targetApp != nil
-                                        || globalInlineAppScope != nil
-                                        || shouldShowFrontmostContextChip)
-                                    || (shouldShowFrontmostContextChip && showContextInDock))
-                                    ? 0 : nil)
+                                width: shouldHideStandaloneLeadingIcon(
+                                    compactScopeKey: compactScopeKey
+                                ) ? 0 : nil)
                         }
 
                         // Spotlight-style app context chip — shown after Tab/→ on app result
@@ -3114,7 +3108,51 @@ extension LauncherView {
                 isExactAppPrefix: true
             )
         }
+        if let scoped = globalScopedAppIcon(for: q) {
+            let title = globalScopedAppTitle(bundleID: scoped.bundleId) ?? "App"
+            return MatchDockIcon(
+                id: "leading-token-scope:\(scoped.bundleId)",
+                bundleID: scoped.bundleId,
+                title: title,
+                icon: scoped.icon,
+                isRunning: NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == scoped.bundleId && !$0.isTerminated
+                },
+                isExpandable: true,
+                score: 94_500,
+                isExactAppPrefix: true
+            )
+        }
         return orderedGlobalContextMatchDockIcons(for: q, limit: 1).first
+    }
+
+    func globalScopedAppTitle(bundleID: String) -> String? {
+        if let runningName = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        })?.localizedName {
+            return runningName
+        }
+        if let scope = globalInlineAppScope, scope.bundleId == bundleID {
+            return scope.appName
+        }
+        if let target = transientGlobalInlineAppScopeTarget(for: searchState.query),
+            target.bundleId == bundleID {
+            return target.appName
+        }
+        return allApplications.first {
+            bundleIdentifier(forApplicationResult: $0) == bundleID
+        }?.title
+    }
+
+    func shouldHideStandaloneLeadingIcon(compactScopeKey: String?) -> Bool {
+        let inlineScopeOwnsText = globalInlineAppScope != nil && !isGlobalContextActive
+        let expandedScopeOwnsLeadingSlot =
+            isSearchBarExpanded
+            && (compactScopeKey != nil
+                || l2.targetApp != nil
+                || inlineScopeOwnsText
+                || shouldShowFrontmostContextChip)
+        return expandedScopeOwnsLeadingSlot || (shouldShowFrontmostContextChip && showContextInDock)
     }
 
     @ViewBuilder
@@ -3193,6 +3231,9 @@ extension LauncherView {
         for query: String
     ) -> GlobalGroupedListNavigationState? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if currentGlobalScopedBundleID != nil {
+            return visibleGlobalScopedMenuNavigationState(for: query)
+        }
         guard !q.isEmpty || globalInlineAppScope != nil else { return nil }
         let key = globalGroupedStateCacheKey(for: q)
         guard cachedGlobalGroupedQuery == key, let state = cachedGlobalGroupedState else {

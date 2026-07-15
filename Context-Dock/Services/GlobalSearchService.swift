@@ -88,6 +88,7 @@ final class GlobalSearchService {
         let aliasWords: [[String]]       // aliases split once; query path must not allocate
         let sourceKind: SourceKind
         let rankingBoost: Double
+        var learnedBoost: Double = 0
         let icon: NSImage?
         let usageTrackingKey: String
         let action: ActionSpec
@@ -119,9 +120,14 @@ final class GlobalSearchService {
     // MARK: - Build
 
     func rebuild(with docs: [SearchDocument]) {
+        var preparedDocs = docs
+        for index in preparedDocs.indices {
+            preparedDocs[index].learnedBoost = learnedUsageBoost(for: preparedDocs[index])
+        }
+
         var grams: [String: [Int]] = [:]
         var bundle: [String: [Int]] = [:]
-        for (i, doc) in docs.enumerated() {
+        for (i, doc) in preparedDocs.enumerated() {
             var keys = Set<String>()
             keys.formUnion(Self.grams(doc.normalizedTitle))
             if !doc.acronym.isEmpty { keys.formUnion(Self.grams(doc.acronym)) }
@@ -131,7 +137,7 @@ final class GlobalSearchService {
         }
 
         lock.lock()
-        documents = docs
+        documents = preparedDocs
         gramIndex = grams
         bundleIndex = bundle
         revision &+= 1
@@ -164,8 +170,15 @@ final class GlobalSearchService {
         for index in candidates {
             guard index < docs.count else { continue }
             let doc = docs[index]
-            if !includeCachedMenus, case .cachedMenu = doc.action {
-                guard includeRunningCachedMenus, doc.sourceKind == .runningMenu else { continue }
+            if !includeCachedMenus {
+                switch doc.action {
+                case .cachedMenu:
+                    guard includeRunningCachedMenus, doc.sourceKind == .runningMenu else { continue }
+                case .browserURL:
+                    continue
+                default:
+                    break
+                }
             }
             guard let score = matchScore(query: q, doc: doc) else { continue }
             insertRanked((doc, score), into: &results, limit: limit)
@@ -310,7 +323,7 @@ final class GlobalSearchService {
     // MARK: - Scoring (pure string ops, no MainActor access)
 
     nonisolated private func matchScore(query q: String, doc: SearchDocument) -> Double? {
-        let base = doc.sourceKind.rawValue + doc.rankingBoost
+        let base = doc.sourceKind.rawValue + doc.rankingBoost + doc.learnedBoost
         var best: Double?
 
         func keep(_ s: Double) {
@@ -388,6 +401,55 @@ final class GlobalSearchService {
         }
 
         return best
+    }
+
+    private func learnedUsageBoost(for doc: SearchDocument) -> Double {
+        let bundleId = doc.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appBundleId =
+            bundleId.isEmpty || bundleId.hasPrefix("cli://") || bundleId.hasPrefix("syscmd://")
+            ? nil
+            : bundleId
+
+        var boost = min(UsageTracker.shared.getScore(for: doc.usageTrackingKey) * 7.0, 420)
+
+        switch doc.action {
+        case .cachedMenu(let bundleId, _, let path, _, _):
+            let visible = path.last ?? doc.title
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: visible,
+                    inBundleID: bundleId.isEmpty ? appBundleId : bundleId
+                ) * 95.0,
+                760
+            )
+        case .systemCommandScope:
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: nil
+                ) * 85.0,
+                680
+            )
+        case .activatePID, .launchPath, .launchBundleId:
+            if let bid = appBundleId {
+                boost += min(AppUsageLearner.shared.score(forBundleID: bid) * 75.0, 520)
+            }
+        case .cliScope:
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: bundleId
+                ) * 70.0,
+                520
+            )
+        case .browserURL:
+            boost += min(UsageTracker.shared.getScore(for: doc.usageTrackingKey) * 4.0, 220)
+        }
+
+        return min(boost, 1_050)
     }
 
     nonisolated private func insertRanked(

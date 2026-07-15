@@ -58,17 +58,49 @@ extension LauncherView {
         visibleGlobalScopedMenuNavigationState(for: query)?.totalCount ?? 0
     }
 
+    func activeVisibleGlobalScopedMenuScope(for query: String) -> DockScopeResolution? {
+        guard isGlobalContextActive, !hasSelectionScopeSurface else { return nil }
+
+        let rawActionQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let target = l2.targetApp,
+            !target.bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return DockScopeResolution(
+                scopedBundleId: target.bundleId,
+                scopedAppName: target.name,
+                scopedSearchQuery: rawActionQuery,
+                isExplicitAppScope: true,
+                isGlobalScope: false
+            )
+        }
+
+        if let inlineScope = globalInlineAppScope,
+            !inlineScope.bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return DockScopeResolution(
+                scopedBundleId: inlineScope.bundleId,
+                scopedAppName: inlineScope.appName,
+                scopedSearchQuery: effectiveGlobalInlineActionQuery(query).lowercased(),
+                isExplicitAppScope: true,
+                isGlobalScope: false
+            )
+        }
+
+        return activeGlobalInlineDockScope(for: query)
+    }
+
     func visibleGlobalScopedMenuNavigationState(
         for query: String
     ) -> GlobalGroupedListNavigationState? {
-        guard let scope = activeGlobalInlineDockScope(for: query),
-            scope.isExplicitAppScope,
-            globalInlineAppScope == nil
+        guard let scope = activeVisibleGlobalScopedMenuScope(for: query),
+            scope.isExplicitAppScope
         else { return nil }
         let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let pills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
             .filter { !$0.isSeparator }
-        guard !pills.isEmpty else { return nil }
+        guard !pills.isEmpty else {
+            return emptyGlobalGroupedListNavigationState()
+        }
         let icon = resolvedApplicationIcon(
             bundleIdentifier: scope.scopedBundleId,
             appName: scope.scopedAppName
@@ -92,7 +124,11 @@ extension LauncherView {
     func visibleGlobalGroupedListNavigationState(
         for query: String
     ) -> GlobalGroupedListNavigationState {
-        visibleGlobalScopedMenuNavigationState(for: query)
+        if currentGlobalScopedBundleID != nil {
+            return visibleGlobalScopedMenuNavigationState(for: query)
+                ?? emptyGlobalGroupedListNavigationState()
+        }
+        return visibleGlobalScopedMenuNavigationState(for: query)
             ?? globalGroupedListNavigationState(for: query)
     }
 
@@ -1317,12 +1353,12 @@ extension LauncherView {
             }
             if !indexedRows.isEmpty {
                 return mergeGlobalRowsPreservingPriority(
-                    [indexedRows, appRows, runningRows, commandRows],
+                    [appRows, commandRows, runningRows, indexedRows],
                     limit: appRowLimit
                 )
             }
             return mergeGlobalRowsPreservingPriority(
-                [appRows, runningRows, commandRows],
+                [appRows, commandRows, runningRows],
                 limit: appRowLimit
             )
         }()
@@ -1401,11 +1437,31 @@ extension LauncherView {
                 appMenuGroups: resolvedMenuGroups,
                 menuFirst: isMenuActionQuery && !isTerminationQuery
                     && !globalAppRowsBeginWithSystemCommand(appResults)
+                    && !globalAppRowsContainStrongApplicationMatch(appResults, query: q)
             ))
     }
 
     func globalAppRowsBeginWithSystemCommand(_ rows: [SearchResult]) -> Bool {
         rows.first?.id.hasPrefix("syscmd://") == true
+    }
+
+    func globalAppRowsContainStrongApplicationMatch(
+        _ rows: [SearchResult],
+        query: String
+    ) -> Bool {
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty else { return false }
+        let qTokens = q.split(separator: " ").map(String.init)
+        return rows.prefix(4).contains { result in
+            guard result.type == .application else { return false }
+            let title = normalizedDockPillText(result.title)
+            guard !title.isEmpty else { return false }
+            if title == q || title.hasPrefix(q) || q.hasPrefix(title) { return true }
+            let titleTokens = Set(title.split(separator: " ").map(String.init))
+            return !qTokens.isEmpty && qTokens.allSatisfy { token in
+                titleTokens.contains(token) || title.hasPrefix(token)
+            }
+        }
     }
 
     func setCachedGlobalGroupedState(
@@ -1635,7 +1691,7 @@ extension LauncherView {
             let visibleOrder = globalGroupedVisibleOrder(state: state)
             let current =
                 currentGlobalGroupedFocusIndex(state: state)
-                .flatMap { visibleOrder.firstIndex(of: $0) } ?? (q.isEmpty ? -1 : 0)
+                .flatMap { visibleOrder.firstIndex(of: $0) } ?? -1
             setGlobalGroupedFocus(
                 visibleOrder[min(current + 1, visibleOrder.count - 1)], state: state)
             return true
@@ -2253,11 +2309,13 @@ extension LauncherView {
                 let capturedApp = app
                 let capturedBundleId = bundleId
                 let capturedPath = path
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: doc.title,
                     subtitle: "Running",
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         if let a = capturedApp {
                             activateRunningAppFromGlobalContext(a, forceHideLauncher: true)
                         } else if let url = capturedPath.map(URL.init(fileURLWithPath:)) {
@@ -2284,11 +2342,13 @@ extension LauncherView {
                         bundleIdentifier: doc.bundleId.isEmpty ? nil : doc.bundleId,
                         appName: doc.title)
                 let capturedPath = path
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: doc.title,
                     subtitle: path,
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         forceHideLauncherAfterResultExecution()
                         NSWorkspace.shared.open(URL(fileURLWithPath: capturedPath))
                     },
@@ -2307,11 +2367,13 @@ extension LauncherView {
                     ?? resolvedApplicationIcon(bundleIdentifier: bundleId, appName: doc.title)
                 let capturedBundleId = bundleId
                 let capturedPath = path
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: doc.title,
                     subtitle: path,
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         forceHideLauncherAfterResultExecution()
                         if let url = applicationURLForBundleIdentifier(capturedBundleId) {
                             NSWorkspace.shared.openApplication(at: url, configuration: .init())
@@ -2332,11 +2394,13 @@ extension LauncherView {
                 icon = doc.icon ?? NSWorkspace.shared.icon(forFileType: "public.unix-executable")
                 let capturedCommand = command
                 let capturedDisplayName = displayName
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: command,
                     subtitle: "cli://\(command)",
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         _ = activateInlineDockAppScope(
                             bundleIdentifier: "cli://\(capturedCommand)",
                             appName: capturedDisplayName,
@@ -2358,11 +2422,13 @@ extension LauncherView {
                 let capturedCommand = UUID(uuidString: commandKey).flatMap { commandID in
                     SystemCommandsRegistry.shared.commands.first { $0.id == commandID }
                 }
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: doc.title,
                     subtitle: doc.subtitle,
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         if let command = capturedCommand {
                             runSystemCommand(command, originalQuery: query)
                         }
@@ -2391,11 +2457,13 @@ extension LauncherView {
                     )
                 let capturedURL = url
                 let capturedBundleId = browserBundleId
+                let capturedDoc = doc
                 var result = SearchResult(
                     title: doc.title,
                     subtitle: domain,
                     icon: icon,
                     action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         forceHideLauncherAfterResultExecution()
                         if let appURL = NSWorkspace.shared.urlForApplication(
                             withBundleIdentifier: capturedBundleId)
@@ -2431,6 +2499,42 @@ extension LauncherView {
                 r.score += usageBoost
                 return r
             })
+    }
+
+    func recordGlobalSearchDocumentUse(
+        _ doc: GlobalSearchService.SearchDocument,
+        query: String
+    ) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleId = doc.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usableBundleId =
+            bundleId.isEmpty || bundleId.hasPrefix("cli://") || bundleId.hasPrefix("syscmd://")
+            ? nil
+            : bundleId
+        UsageTracker.shared.recordAccess(for: doc.usageTrackingKey)
+        if !trimmedQuery.isEmpty {
+            AppUsageLearner.shared.recordQuery(trimmedQuery, inBundleID: usableBundleId)
+        }
+        switch doc.action {
+        case .activatePID, .launchPath, .launchBundleId:
+            if let bid = usableBundleId {
+                AppUsageLearner.shared.recordApp(bundleID: bid, appName: doc.title)
+            }
+            if !trimmedQuery.isEmpty {
+                AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
+            }
+        case .systemCommandScope, .cliScope:
+            AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
+            AppUsageLearner.shared.recordAction(doc.title, inBundleID: usableBundleId)
+        case .cachedMenu(_, _, let path, _, _):
+            AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
+            AppUsageLearner.shared.recordAction(path.last ?? doc.title, inBundleID: usableBundleId)
+            if !trimmedQuery.isEmpty {
+                AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: true)
+            }
+        case .browserURL:
+            AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
+        }
     }
 
     // Rebuild GlobalSearchService index from current @State sources.
@@ -4467,6 +4571,14 @@ extension LauncherView {
                 UsageTracker.shared.getScore(for: menuNameId)
             ),
             240
+        )
+        score += min(
+            AppUsageLearner.shared.blendedActionScore(
+                trackingKey: id,
+                visibleAction: menuName,
+                inBundleID: pill.sourceBundleId.isEmpty ? nil : pill.sourceBundleId
+            ) * 85,
+            720
         )
 
         if !query.isEmpty {

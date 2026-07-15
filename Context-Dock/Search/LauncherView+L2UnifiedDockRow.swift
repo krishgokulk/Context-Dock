@@ -114,21 +114,25 @@ extension LauncherView {
             isGlobalContextActive && !hasActiveContextSelection && l2.targetApp == nil
             ? activeGlobalInlineDockScope(for: q)
             : nil
-        let effectiveAppScope = inlineGlobalScope?.isExplicitAppScope == true
+        let scopedGlobalMenuState =
+            isGlobalContextActive && currentGlobalScopedBundleID != nil
+            ? visibleGlobalScopedMenuNavigationState(for: q)
+            : nil
+        let effectiveAppScope =
+            scopedGlobalMenuState != nil || inlineGlobalScope?.isExplicitAppScope == true
         let transientScopedMenuState =
-            effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil
+            scopedGlobalMenuState ?? (effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil)
         let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
         let scopedMenuListContext: (appName: String, actionQuery: String)? = {
+            if let target = l2.targetApp {
+                return (target.name, q)
+            }
             guard let scope = inlineGlobalScope, scope.isExplicitAppScope else { return nil }
             return (scope.scopedAppName, scope.scopedSearchQuery)
         }()
         let globalNavState: GlobalGroupedListNavigationState? =
             effectiveAppScope
-            ? (
-                transientScopedMenuState == nil
-                ? globalGroupedListNavigationState(for: q)
-                : transientScopedMenuState
-            )
+            ? (transientScopedMenuState ?? emptyGlobalGroupedListNavigationState())
             : preliminaryGlobalNavState
         let globalNavIsScopedAppMenus: Bool = {
             guard let s = globalNavState else { return false }
