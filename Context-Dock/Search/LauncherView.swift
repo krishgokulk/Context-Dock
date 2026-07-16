@@ -1685,7 +1685,34 @@ struct LauncherView: View {
         if pill.rankingKind == "selectionAI" { return }
         // "Share Selection" reveals the destination pills inline — keep the dock open for them.
         if inlineShareActive { return }
+        // Running an app's menu command from Global Context brings that app frontmost — morph
+        // into its Context Dock (same premium launch as picking the app), instead of hiding or
+        // sitting in Global Context. e.g. "scientific" → Calculator's Scientific view, then the
+        // dock becomes Calculator's Context Dock.
+        if isGlobalContextActive, shouldTransitionToContextDockAfterGlobalMenu(pill) {
+            scheduleContextDockTransition(
+                bundleId: pill.sourceBundleId, appName: pill.sourceAppName)
+            return
+        }
         hideLauncherAfterResultExecution()
+    }
+
+    /// A Global Context menu command that drives a specific app should hand off to that app's
+    /// Context Dock after it runs. Scoped to real app-menu commands — never system commands,
+    /// CLI tools, scope pseudo-bundles, or Finder desktop file rows.
+    func shouldTransitionToContextDockAfterGlobalMenu(_ pill: DockPill) -> Bool {
+        let menuKinds: Set<String> = ["menu", "submenuParent", "submenuChild", "finderMenu"]
+        guard menuKinds.contains(pill.rankingKind) else { return false }
+        let bid = pill.sourceBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bid.isEmpty,
+            !bid.hasPrefix("syscmd://"),
+            !bid.hasPrefix("cli://"),
+            !bid.hasPrefix("scope://")
+        else { return false }
+        // A plain Quit terminates the app — there's no Context Dock to morph into.
+        let lowerName = pill.name.lowercased()
+        if lowerName.hasPrefix("quit") { return false }
+        return true
     }
 
     func shouldExecuteMenuPillBeforeOpeningResolvedFile(_ pill: DockPill) -> Bool {
