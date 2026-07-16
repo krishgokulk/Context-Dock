@@ -565,6 +565,22 @@ struct LauncherView: View {
     }
 
     func currentCachedDockPills(for query: String) -> [DockPill] {
+        if isFinderDesktopOnlyMode {
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            var ranked = rankDockPills(
+                buildFinderDesktopModePills(query: q),
+                rawQuery: q,
+                rankingQuery: q,
+                scopedBundleId: "com.apple.finder",
+                scopedAppName: "Finder",
+                isExplicitAppScope: false,
+                includeNonMatching: q.isEmpty
+            )
+            if finderDesktopHasNoSearchScope {
+                ranked.append(finderAddSearchDirectorySuggestionPill())
+            }
+            return ranked
+        }
         if lastPillQuery == query { return cachedDockPills }
         if searchState.activeSmartQueryKey == "clipboard" {
             return buildClipboardHistoryPills(query: query)

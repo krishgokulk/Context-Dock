@@ -622,17 +622,6 @@ extension LauncherView {
     }
 
     func buildFinderDesktopModePills(query: String) -> [DockPill] {
-        let selectedURLs = effectiveFinderSelectionURLsForPills()
-        if !selectedURLs.isEmpty {
-            let combinedSelectionPills = buildMacOSExtensionActionPills(query: query)
-            if !combinedSelectionPills.isEmpty {
-                return combinedSelectionPills
-            }
-            if !query.isEmpty {
-                return []
-            }
-        }
-
         let syncBase: [DockPill]
         if query.isEmpty {
             // finderDesktopRecentPills already contains running apps + recent files

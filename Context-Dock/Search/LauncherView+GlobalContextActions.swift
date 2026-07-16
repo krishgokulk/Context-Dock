@@ -92,6 +92,9 @@ extension LauncherView {
     func visibleGlobalScopedMenuNavigationState(
         for query: String
     ) -> GlobalGroupedListNavigationState? {
+        if currentGlobalScopedBundleID == "com.apple.finder", isFinderDesktopOnlyMode {
+            return nil
+        }
         guard let scope = activeVisibleGlobalScopedMenuScope(for: query),
             scope.isExplicitAppScope
         else { return nil }
@@ -124,6 +127,9 @@ extension LauncherView {
     func visibleGlobalGroupedListNavigationState(
         for query: String
     ) -> GlobalGroupedListNavigationState {
+        if currentGlobalScopedBundleID == "com.apple.finder", isFinderDesktopOnlyMode {
+            return emptyGlobalGroupedListNavigationState()
+        }
         if currentGlobalScopedBundleID != nil {
             return visibleGlobalScopedMenuNavigationState(for: query)
                 ?? emptyGlobalGroupedListNavigationState()

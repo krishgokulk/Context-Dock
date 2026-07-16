@@ -67,16 +67,25 @@ extension LauncherView {
         // A scoped app (running-app scope in Global Context) must show its menus on an
         // empty query, just like Context Dock — otherwise the scoped dock stays empty
         // until a keypress. Only the unscoped global/empty state collapses to no pills.
+        let globalFinderFileScope =
+            isGlobalContextActive
+            && currentGlobalScopedBundleID == "com.apple.finder"
+            && isFinderDesktopOnlyMode
         let scopedGlobalAppMode =
             isGlobalContextActive && !pureGlobalAppSearch && currentGlobalScopedBundleID != nil
         let visibleDockPills =
             scopedGlobalAppMode
             ? stableVisibleDockPills(for: pillQuery)
             : contextDockViewModel.visiblePills
-        let pills =
-            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil
-            ? []
-            : visibleDockPills
+        let pills: [DockPill] = {
+            if globalFinderFileScope {
+                return visibleDockPills
+            }
+            if (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil {
+                return []
+            }
+            return visibleDockPills
+        }()
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
         let hasActiveContextSelection = hasSelectionScopeSurface
@@ -115,11 +124,12 @@ extension LauncherView {
             ? activeGlobalInlineDockScope(for: q)
             : nil
         let scopedGlobalMenuState =
-            isGlobalContextActive && currentGlobalScopedBundleID != nil
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !globalFinderFileScope
             ? visibleGlobalScopedMenuNavigationState(for: q)
             : nil
         let effectiveAppScope =
-            scopedGlobalMenuState != nil || inlineGlobalScope?.isExplicitAppScope == true
+            !globalFinderFileScope
+            && (scopedGlobalMenuState != nil || inlineGlobalScope?.isExplicitAppScope == true)
         let transientScopedMenuState =
             scopedGlobalMenuState ?? (effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil)
         let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
@@ -142,8 +152,10 @@ extension LauncherView {
             globalNavIsScopedAppMenus ? [] : (globalNavState?.menuGroups.flatMap(\.allPills) ?? [])
         let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
         let showGlobalAppSearch =
-            (pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
+            !globalFinderFileScope
+            && ((pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
             || effectiveAppScope
+            )
         let scopedAppLaunchHint: (bundleId: String, appName: String, appPath: String?)? = {
             let (bundleId, appName): (String, String) = {
                 if let scope = inlineGlobalScope, scope.isExplicitAppScope {
