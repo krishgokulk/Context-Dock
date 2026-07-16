@@ -2011,6 +2011,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+        // Quitting the scoped app hands the empty desktop to Finder on macOS (menu bar always
+        // has an owner). But our floating panel often holds key focus, so macOS may not post a
+        // didActivate for Finder — the dock would otherwise sit on a stale/blank scope. Observe
+        // termination and re-resolve the owner (next real app, or Finder when none).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(appDidTerminate),
+            name: NSWorkspace.didTerminateApplicationNotification,
+            object: nil
+        )
 
         // Initialize with current frontmost app
         if let currentApp = resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
@@ -2058,6 +2068,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AXWebReader.shared.invalidate(pid: pid)
         }
 
+    }
+
+    @objc func appDidTerminate(_ notification: Notification) {
+        guard
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication
+        else { return }
+        let ownBundleID = Bundle.main.bundleIdentifier ?? ""
+        // Only react when the app we're tracking/scoped to went away — other apps quitting in
+        // the background don't change the dock's scope.
+        let wasTracked =
+            app.processIdentifier == previousFrontmostApp?.processIdentifier
+            || (app.bundleIdentifier != nil
+                && app.bundleIdentifier == previousFrontmostApp?.bundleIdentifier)
+        guard wasTracked else { return }
+
+        // Let macOS settle activation, then re-resolve the desktop owner: the next real
+        // user-facing app, or Finder when none — exactly what the menu bar shows.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let next = self.resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
+            let target =
+                next
+                ?? NSWorkspace.shared.runningApplications.first {
+                    $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
+                }
+            guard let target, target.bundleIdentifier != ownBundleID else { return }
+            self.recordFrontmostApp(target)
+            ContextDockEnvironment.shared.frontmostAppDidChange(
+                name: target.localizedName ?? "Finder",
+                bundleID: target.bundleIdentifier ?? "com.apple.finder"
+            )
+            Task { @MainActor in
+                MenuWarmCacheService.shared.frontmostAppDidChange(target)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

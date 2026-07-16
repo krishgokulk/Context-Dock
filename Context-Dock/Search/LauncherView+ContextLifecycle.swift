@@ -795,7 +795,13 @@ extension LauncherView {
                 }
                 currentContext = context
             }
-            .onReceive(contextEnv.frontmostAppUpdates) { appInfo in
+            .onReceive(
+                // Coalesce rapid frontmost changes (e.g. a quit cascade: App → Finder → Finder)
+                // into one settle, so the dock rebuilds once instead of flashing through 2–3
+                // teardown/rebuild passes.
+                contextEnv.frontmostAppUpdates
+                    .debounce(for: .milliseconds(130), scheduler: RunLoop.main)
+            ) { appInfo in
                 let appName = appInfo.name
                 let bundleID = appInfo.bundleID
 
