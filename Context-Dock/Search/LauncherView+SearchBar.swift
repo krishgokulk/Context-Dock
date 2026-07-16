@@ -14,6 +14,15 @@ extension LauncherView {
                 || currentSelectionActivationSnapshot(refresh: false) != nil)
     }
 
+    /// Selection icon for a single selected item. A selected FOLDER must read as a folder —
+    /// fileIcon(for:) sees an empty extension and returns the generic "doc".
+    func selectionSymbol(for url: URL) -> String {
+        let isDirectory =
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        if isDirectory { return "folder.fill" }
+        return fileIcon(for: url.pathExtension.lowercased())
+    }
+
     func currentSelectionActivationSnapshot(refresh: Bool = false) -> GlobalContextActivation? {
         let refreshTarget = AppDelegate.shared?.previousFrontmostApp ?? contextTargetApp()
         let ownBundleId = Bundle.main.bundleIdentifier ?? ""
@@ -36,7 +45,7 @@ extension LauncherView {
                 : "\(axFiles.count) files selected"
             let icon =
                 axFiles.count == 1
-                ? fileIcon(for: axFiles[0].pathExtension.lowercased())
+                ? selectionSymbol(for: axFiles[0])
                 : "doc.on.doc.fill"
             return GlobalContextActivation(
                 autoActivated: false,
@@ -65,7 +74,7 @@ extension LauncherView {
                 urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files selected"
             let icon =
                 urls.count == 1
-                ? fileIcon(for: urls[0].pathExtension.lowercased())
+                ? selectionSymbol(for: urls[0])
                 : "doc.on.doc.fill"
             return GlobalContextActivation(
                 autoActivated: false,
@@ -105,7 +114,7 @@ extension LauncherView {
                     urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files selected"
                 let icon =
                     urls.count == 1
-                    ? fileIcon(for: urls[0].pathExtension.lowercased())
+                    ? selectionSymbol(for: urls[0])
                     : "doc.on.doc.fill"
                 currentContext = .filesSelected(urls)
                 return GlobalContextActivation(

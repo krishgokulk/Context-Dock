@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import OSLog
 import SwiftUI
 import Vision
 
@@ -1082,9 +1083,9 @@ extension LauncherView {
         globalContextActivation = nil
         // The hotkey open posts .activateContextDock twice (immediately, then +0.05s), and each
         // nils the activation. Selection Scope is established asynchronously once the AX read
-        // lands, so without this grace those posts race it away. Inside the window, a frozen
-        // selection payload wins; after it, .activateContextDock behaves normally.
-        launchSelectionScopeGraceUntil = Date().addingTimeInterval(0.6)
+        // lands (which can take ~1s), so without this grace those posts race it away. Inside the
+        // window a frozen selection payload wins; after it, .activateContextDock behaves normally.
+        launchSelectionScopeGraceUntil = Date().addingTimeInterval(2.5)
 
         // Reset transient UI state unconditionally on every open
         aiMode.isActive = false
@@ -1109,22 +1110,32 @@ extension LauncherView {
         }
 
         if let app = AppDelegate.shared?.previousFrontmostApp {
-            Task.detached(priority: .utility) {
-                await AXContextReader.shared.refreshLightweight(from: app)
-                // Also read the live selection so Context Dock shows a clickable selection
-                // chip/button (lightweight skips it for first-paint speed).
+            Task.detached(priority: .userInitiated) {
+                // SELECTION FIRST, at userInitiated. refreshLightweight used to run ahead of it
+                // and cost ~1s, so launch-time Selection Scope landed a second late — after the
+                // user had already started typing. Read the selection, enter the scope, then do
+                // the heavier lightweight pass.
                 await AXContextReader.shared.refreshSelectionOnly(from: app)
+                let selectionCtx = await AXContextReader.shared.current
+                await MainActor.run {
+                    self.axContext = selectionCtx
+                    // Launching WITH files/text already selected opens directly in Selection
+                    // Scope: freeze the payload into the activation (that's what turns the scope
+                    // on). Selecting something while the dock is already visible — or a selection
+                    // the user dismissed — only offers the trailing button and must never hijack
+                    // the surface; neither path runs through this open handler.
+                    self.activateLaunchTimeSelectionScopeIfNeeded()
+                }
+
+                await AXContextReader.shared.refreshLightweight(from: app)
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
                     self.axContext = newCtx
                     if !self.contextDockIsFrontmostApplication {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
-                    // Launching WITH files/text already selected opens directly in Selection
-                    // Scope: freeze the payload into the activation (that's what turns the scope
-                    // on). Selecting something while the dock is already visible — or a selection
-                    // the user dismissed — only offers the trailing button and must never hijack
-                    // the surface; neither path runs through this open handler.
+                    // The lightweight pass can land after the user began typing; re-assert the
+                    // scope in case the selection read hadn't completed on the first attempt.
                     self.activateLaunchTimeSelectionScopeIfNeeded()
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)
@@ -1144,7 +1155,10 @@ extension LauncherView {
     /// visible keeps the trailing-button behaviour instead. Dismissed selections are filtered
     /// out by currentSelectionActivationSnapshot, so exiting the scope doesn't re-enter it.
     func activateLaunchTimeSelectionScopeIfNeeded() {
-        // Don't fight a scope the user already established this session.
+        // Deliberately NOT gated on an empty query: the AX selection read can land after the
+        // user has already begun typing, and bailing there dropped Selection Scope for anyone
+        // who types fast. The typed query is preserved and simply filters the selection actions
+        // ("comp" → Compress).
         guard !globalContextActivationHasFrozenPayload,
             l2.targetApp == nil,
             globalInlineAppScope == nil,
@@ -1153,7 +1167,6 @@ extension LauncherView {
             searchState.contextApp == nil,
             !showMediaLayer,
             !aiMode.isActive,
-            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             let snapshot = currentSelectionActivationSnapshot(refresh: false)
         else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {

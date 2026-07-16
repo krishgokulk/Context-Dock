@@ -2094,7 +2094,7 @@ struct LauncherView: View {
             : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
         if !axFiles.isEmpty {
             return axFiles.count == 1
-                ? fileIcon(for: axFiles[0].pathExtension.lowercased()) : "doc.on.doc.fill"
+                ? selectionSymbol(for: axFiles[0]) : "doc.on.doc.fill"
         }
         if let t = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
             !t.isEmpty
@@ -2299,6 +2299,20 @@ struct LauncherView: View {
             let menus = visibleGlobalGroupedListNavigationState(for: lower)
                 .menuPills.filter { !$0.isSeparator }
             if let first = menus.first,
+                first.name.lowercased().hasPrefix(lower),
+                first.name.count > searchState.query.count
+            {
+                return first
+            }
+            return nil
+        }
+
+        // Selection Scope: ghost completes the first visible selection action ("comp" →
+        // "Compress"). The Global Context branch below only allows pills scoped to an explicit
+        // l2.targetApp, which Selection Scope never has — so without this the ghost is always nil.
+        if isGlobalContextActive, hasSelectionScopeSurface {
+            let pills = currentVisibleDockPills(for: lower).filter { !$0.isSeparator }
+            if let first = pills.first,
                 first.name.lowercased().hasPrefix(lower),
                 first.name.count > searchState.query.count
             {
