@@ -1369,7 +1369,11 @@ extension LauncherView {
                                                 .foregroundStyle(.primary)
                                                 .lineLimit(1)
                                         }
-                                        if let badge = pill.badge, !badge.isEmpty {
+                                        // Finder desktop pills carry the folder PATH as their badge —
+                                        // the input bar shows the file name only, never the path.
+                                        if let badge = pill.badge, !badge.isEmpty,
+                                            !isFinderDesktopOnlyMode
+                                        {
                                             Text("  \(badge)")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.25))

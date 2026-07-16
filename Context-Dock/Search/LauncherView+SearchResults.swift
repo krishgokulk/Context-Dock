@@ -189,7 +189,9 @@ extension LauncherView {
             return "Applications"
         }
         if kind == "finderrecent" || kind == "spotlightsearch" {
-            return "Files & Folders"
+            // Group by type (Folders / Images / Documents / Media / Files) — the ranker clusters
+            // the pills so each header appears once, best-matching group first.
+            return finderDesktopTypeGroup(pill)
         }
         if kind.contains("finder") || badge.contains("finder") {
             return "Finder"

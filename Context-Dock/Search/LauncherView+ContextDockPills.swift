@@ -656,15 +656,11 @@ extension LauncherView {
         dockPillBuildGeneration &+= 1
         contextDockViewModel.clearPendingPillBuild(cancelBuild: true)
 
-        var ranked = rankDockPills(
-            buildFinderDesktopModePills(query: q),
-            rawQuery: q,
-            rankingQuery: q,
-            scopedBundleId: "com.apple.finder",
-            scopedAppName: "Finder",
-            isExplicitAppScope: false,
-            includeNonMatching: q.isEmpty
-        )
+        // Finder desktop has its own ranker: match-quality first (exact/prefix name > contains >
+        // content-only), then clustered into type groups. rankDockPills would re-score by the
+        // generic menu heuristics and lose that, so bypass it here.
+        var ranked = rankedFinderDesktopPills(
+            buildFinderDesktopModePills(query: q), query: q)
         // No user folders configured and nothing selected in Finder → there is
         // nothing to search. Surface a one-tap hint (appended after ranking so it
         // survives even when the query matches nothing) that opens Settings →
@@ -674,6 +670,72 @@ extension LauncherView {
         }
         replaceCachedDockPills(ranked, preserveFocus: preserveFocus)
         lastPillQuery = q
+    }
+
+    /// Match-quality score for a Finder desktop file/folder against the query. Higher = better.
+    /// Exact/prefix NAME beats a mid-name contains, which beats a content-only hit — so the top
+    /// row is always the best name match, Spotlight/Raycast style (not just most-recent).
+    func finderDesktopMatchScore(name: String, searchTerms: [String], query: String) -> Int {
+        let n = name.lowercased()
+        let q = query.lowercased()
+        guard !q.isEmpty else { return 0 }
+        if n == q { return 600 }
+        let base = (n as NSString).deletingPathExtension
+        if base == q { return 550 }
+        if n.hasPrefix(q) { return 500 }
+        // Word-boundary prefix: "career" matches "Albo Careers".
+        let words = n.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        if words.contains(where: { $0.hasPrefix(q) }) { return 400 }
+        if n.contains(q) { return 300 }
+        // Name doesn't match at all → this is a content-only hit (Spotlight text index).
+        if searchTerms.contains(where: { $0.lowercased().contains(q) }) { return 150 }
+        return 100
+    }
+
+    /// Type bucket for grouping Finder desktop results (Folders / Images / Documents / Media / Files).
+    func finderDesktopTypeGroup(_ pill: DockPill) -> String {
+        if pill.icon.localizedCaseInsensitiveContains("folder") { return "Folders" }
+        let ext = (pill.name as NSString).pathExtension.lowercased()
+        let images: Set<String> = [
+            "png", "jpg", "jpeg", "heic", "heif", "gif", "tiff", "tif", "webp", "bmp", "svg", "raw",
+        ]
+        let docs: Set<String> = [
+            "pdf", "doc", "docx", "txt", "md", "rtf", "pages", "key", "numbers", "xls", "xlsx",
+            "ppt", "pptx", "csv",
+        ]
+        let media: Set<String> = [
+            "mp4", "mov", "m4v", "mp3", "wav", "aac", "flac", "mkv", "avi", "m4a",
+        ]
+        if images.contains(ext) { return "Images" }
+        if docs.contains(ext) { return "Documents" }
+        if media.contains(ext) { return "Media" }
+        return "Files"
+    }
+
+    /// Rank Finder desktop file pills by match quality, then cluster into type groups ordered by
+    /// their best member — so the group holding the top match leads and each type appears once.
+    func rankedFinderDesktopPills(_ pills: [DockPill], query: String) -> [DockPill] {
+        guard !query.isEmpty else { return pills }
+        struct Scored { var pill: DockPill; var score: Int; var order: Int }
+        let scored = pills.enumerated().map { idx, pill -> Scored in
+            var p = pill
+            let s = finderDesktopMatchScore(
+                name: p.name, searchTerms: p.searchTerms, query: query)
+            p.rankingScore = Double(s)
+            return Scored(pill: p, score: s, order: idx)
+        }
+        let groups = Dictionary(grouping: scored) { finderDesktopTypeGroup($0.pill) }
+        let groupOrder = groups.keys.sorted { a, b in
+            let ma = groups[a]?.map(\.score).max() ?? 0
+            let mb = groups[b]?.map(\.score).max() ?? 0
+            if ma != mb { return ma > mb }
+            return a < b
+        }
+        return groupOrder.flatMap { key -> [DockPill] in
+            (groups[key] ?? [])
+                .sorted { $0.score != $1.score ? $0.score > $1.score : $0.order < $1.order }
+                .map(\.pill)
+        }
     }
 
     /// True when the Finder desktop scope has no folders to search: the user has
@@ -1091,30 +1153,38 @@ extension LauncherView {
             return
         }
         let roots = finderDesktopSearchRootPaths()
-
-        // Match the filename OR the indexed text content (Spotlight extracts text from
-        // PDFs, documents, and OCR'd images) so desktop search behaves like Spotlight.
-        // Recursion is implicit — inDirectories scopes the query to the user folders
-        // and their subfolders.
-        // Match filename (FSName + DisplayName) OR indexed text content (Spotlight extracts
-        // text from PDFs/docs and OCRs images), scoped to the user's folders + subfolders —
-        // so "albo" finds the "Albo Careers" folder AND documents whose text mentions it,
-        // exactly like Spotlight. kMDItemFSName is the reliable name field (`mdfind -name`).
+        guard !roots.isEmpty else { return }
         let wildcard = "*\(query)*"
-        let fileSearchPaths = roots.isEmpty ? [] : await Self.spotlightSearchPaths(
-            predicate: NSPredicate(
-                format:
-                    "kMDItemFSName LIKE[cd] %@ OR kMDItemDisplayName LIKE[cd] %@ OR kMDItemTextContent LIKE[cd] %@",
-                wildcard, wildcard, wildcard
-            ),
-            inDirectories: roots,
-            sortByLastUsed: true,
-            limit: 40
-        )
 
+        // FAST pass — NAMES only (FSName + DisplayName). The name index returns near-instantly,
+        // so file/folder name matches appear without waiting on the slow content scan. Scoped to
+        // the user's folders + subfolders (recursion implicit via inDirectories).
+        let namePaths = await Self.spotlightSearchPaths(
+            predicate: NSPredicate(
+                format: "kMDItemFSName LIKE[cd] %@ OR kMDItemDisplayName LIKE[cd] %@",
+                wildcard, wildcard),
+            inDirectories: roots, sortByLastUsed: true, limit: 40)
+        await mergeFinderDesktopSearchResults(
+            paths: namePaths, query: query, generation: generation)
+
+        // SLOW pass — CONTENT only (kMDItemTextContent: PDFs/docs/OCR'd images). A leading+
+        // trailing wildcard can't use the prefix index, so this is the expensive part; run it
+        // AFTER names are on screen so typing never blocks on it ("albo" still finds documents
+        // whose text mentions it). The ranker keeps these content-only hits below name matches.
+        let contentPaths = await Self.spotlightSearchPaths(
+            predicate: NSPredicate(format: "kMDItemTextContent LIKE[cd] %@", wildcard),
+            inDirectories: roots, sortByLastUsed: true, limit: 20)
+        await mergeFinderDesktopSearchResults(
+            paths: contentPaths, query: query, generation: generation)
+    }
+
+    /// Merge one Spotlight result batch into the Finder desktop pills and re-commit. Generation-
+    /// and query-guarded so a stale batch (older keystroke) is dropped.
+    func mergeFinderDesktopSearchResults(paths: [String], query: String, generation: Int?) async {
+        guard !paths.isEmpty else { return }
         var seen = Set<String>()
         var enriched: [DockPill] = []
-        for path in fileSearchPaths {
+        for path in paths {
             let url = URL(fileURLWithPath: path)
             let name = url.lastPathComponent
             guard !name.hasPrefix("."), seen.insert(path.lowercased()).inserted else { continue }
@@ -1122,9 +1192,8 @@ extension LauncherView {
                 badge: finderDisplayPath(url.deletingLastPathComponent().path),
                 rankingKind: "spotlightSearch", query: nil, loadIcon: true, isDirectoryHint: nil))
         }
-        guard generation == nil || contextDockViewModel.finderDesktopSearchGeneration == generation else {
-            return
-        }
+        guard generation == nil || contextDockViewModel.finderDesktopSearchGeneration == generation
+        else { return }
         guard isFinderDesktopOnlyMode,
             searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query
         else { return }
