@@ -2007,7 +2007,7 @@ extension LauncherView {
                                     .transition(
                                         .scale(scale: 0.88, anchor: .trailing)
                                             .combined(with: .opacity))
-                            } else if let pill = focusedDockPill {
+                            } else if let pill = focusedDockPill ?? focusedScopedMenuPill {
                                 HStack(spacing: 8) {
                                     if let image = pill.menuItemImage {
                                         Image(nsImage: image)
@@ -2015,10 +2015,18 @@ extension LauncherView {
                                             .aspectRatio(contentMode: .fit)
                                             .frame(width: 24, height: 24)
                                     } else {
+                                        // Destructive rows (Quit/Close) mirror the row's red ✕.
+                                        let lowerName = pill.name.lowercased()
+                                        let isDestructive =
+                                            pill.icon.hasPrefix("xmark") || pill.icon == "power"
+                                            || lowerName.hasPrefix("quit")
+                                            || lowerName.hasPrefix("close")
                                         Image(systemName: pill.icon)
                                             .font(.system(size: 17, weight: .semibold))
                                             .foregroundStyle(
-                                                accentColor(for: pill.accentColorName))
+                                                isDestructive
+                                                    ? SwiftUI.Color.red.opacity(0.9)
+                                                    : accentColor(for: pill.accentColorName))
                                             .frame(width: 24, height: 24)
                                     }
                                     if !searchState.query.isEmpty {
@@ -2809,6 +2817,34 @@ extension LauncherView {
             }
     }
 
+    /// The scoped-menu row the user is looking at while a running-app menu scope is active:
+    /// the keyboard-focused row, else the auto-selected FIRST row (the one the ghost text and
+    /// default highlight point at). Nil in every other surface. Drives the input's trailing
+    /// action icon so it mirrors the row without needing a down-arrow first.
+    var focusedScopedMenuPill: DockPill? {
+        guard isActiveGlobalRunningAppMenuScope() else { return nil }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let state = visibleGlobalGroupedListNavigationState(for: q)
+        let menus = state.menuPills.filter { !$0.isSeparator }
+        guard !menus.isEmpty else { return nil }
+        if let idx = l2.focusedPillIndex {
+            let sourceIndex = idx - state.appResults.count
+            if sourceIndex >= 0, sourceIndex < menus.count { return menus[sourceIndex] }
+        }
+        // No keyboard focus → the ghost/default-first row. Only claim it while the user is
+        // TYPING (non-empty query). With an empty field the trailing area belongs to the
+        // running-app cycle strip (remaining app icons), not a menu action icon.
+        guard !q.isEmpty, listViewHoveredIndex == nil else { return nil }
+        return menus.first
+    }
+
+    /// True while the ghost/default-first scoped-menu row owns the selection (no keyboard
+    /// focus). The +1 app-cycle strip yields to the row's action icon in this state, exactly
+    /// as it already does once the user presses down-arrow.
+    var hasDefaultFirstScopedMenuSelection: Bool {
+        l2.focusedPillIndex == nil && focusedScopedMenuPill != nil
+    }
+
     func scheduleDeferredQueryChange(from _: String, to newValue: String) {
         queryChangeGeneration &+= 1
         let generation = queryChangeGeneration
@@ -3353,6 +3389,8 @@ extension LauncherView {
             && searchState.selectedIndex == nil
             && !showMediaLayer
             && !aiMode.isActive
+            // Yield to the focused scoped-menu row's action icon (mirrors down-arrow behaviour).
+            && !hasDefaultFirstScopedMenuSelection
     }
 
 	    var shouldSuppressContextMatchDockForScopedChat: Bool {

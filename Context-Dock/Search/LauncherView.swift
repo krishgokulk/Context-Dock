@@ -2261,6 +2261,22 @@ struct LauncherView: View {
             return nil
         }
 
+        // Running-app menu scope: the ghost MUST complete the same first row the list renders
+        // and highlights, otherwise it drifts to an unrelated cached pill (e.g. "t" selecting
+        // "Text Replacement" but ghosting "top"). Use the scoped-menu nav state's first pill and
+        // only ghost when it actually prefix-matches — no cross-app cachedDockPills fallback.
+        if isActiveGlobalRunningAppMenuScope() {
+            let menus = visibleGlobalGroupedListNavigationState(for: lower)
+                .menuPills.filter { !$0.isSeparator }
+            if let first = menus.first,
+                first.name.lowercased().hasPrefix(lower),
+                first.name.count > searchState.query.count
+            {
+                return first
+            }
+            return nil
+        }
+
         // Frontmost-scoped sources: cached pills + frontmost menu cache.
         // Skip in pure global app search — not frontmost-scoped there.
         if !shouldUsePureGlobalAppSearch {
