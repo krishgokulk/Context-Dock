@@ -497,7 +497,9 @@ extension LauncherView {
             // That view is shown when: app matches exist, OR frontmost has no matching menus
             // (cross-app or empty). When frontmost HAS menus (preferFrontmostMenuResults=true),
             // view shows dockPillListView instead — Block 3 handles it with full-pills indices.
-            if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
+            if (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope())
+                && !q.isEmpty
+            {
                 let state = self.visibleGlobalGroupedListNavigationState(for: q)
                 if state.totalCount == 0 {
                     // Nothing matched apps/commands/menus — ↓ still goes through the
@@ -588,17 +590,26 @@ extension LauncherView {
                 q.isEmpty
                 && self.l2.targetApp == nil
                 && (actionPills.isEmpty || (self.isGlobalContextActive && !hasActiveContextSel))
+            let globalGroupedRowCount =
+                (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope())
+                ? self.visibleGlobalGroupedListNavigationState(for: q).totalCount
+                : 0
             let hasGlobalAppMatches =
-                self.isGlobalContextActive && !q.isEmpty
-                && (!self.currentGlobalAppMatches(for: q).isEmpty
-                    || self.pendingGlobalAppQuery == q)
+                self.isGlobalContextActive
+                && (!q.isEmpty || self.currentGlobalScopedBundleID != nil)
+                && (globalGroupedRowCount > 0
+                    || (!self.isActiveGlobalRunningAppMenuScope()
+                        && (!self.currentGlobalAppMatches(for: q).isEmpty
+                            || self.pendingGlobalAppQuery == q)))
             let showGlobalAppSearch =
-                self.shouldUsePureGlobalAppSearch && !q.isEmpty && hasGlobalAppMatches
+                self.shouldUsePureGlobalAppSearch
+                && (!q.isEmpty || self.currentGlobalScopedBundleID != nil)
+                && hasGlobalAppMatches
             let isAppPillRowActive = showPinnedRow || showGlobalAppSearch
 
             if isAppPillRowActive {
                 let appPills = self.currentAppPillActions()
-                guard !appPills.isEmpty else { return event }
+                guard !appPills.isEmpty || globalGroupedRowCount > 0 else { return event }
 
                 switch event.keyCode {
                 case 48:  // Tab — enter/exit app pill navigation; never let macOS Full Keyboard Navigation take over
@@ -629,6 +640,7 @@ extension LauncherView {
                 case 124:  // Right — vertical list: scope the focused app into a pill.
                     //          Horizontal pill row: move focus right / wrap to input.
                     if self.usesVerticalListDockLayout {
+                        guard self.currentGlobalScopedBundleID == nil else { return event }
                         if self.searchInputHasHighlightedText() { return event }
                         let qq = self.searchState.query
                             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -699,6 +711,13 @@ extension LauncherView {
                     self.switchDockLayer(.up)
                     return nil
                 case 36:  // Enter — launch/activate
+                    if (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope()),
+                        globalGroupedRowCount > 0,
+                        self.executeFocusedGlobalGroupedListRow()
+                    {
+                        self.hideLauncherAfterResultExecution()
+                        return nil
+                    }
                     if let idx = self.focusedAppPillIndex, idx < appPills.count {
                         appPills[idx].execute()
                         self.searchState.query = ""

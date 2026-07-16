@@ -2978,6 +2978,17 @@ extension LauncherView {
             }
         }
 
+        if let queryOverride, queryOverride.isEmpty {
+            // NSTextField owns a separate field editor while focused. Updating only the
+            // SwiftUI binding during a scope transition can leave its old app-name string
+            // alive; later sheet rebuilds then push that stale text back onscreen.
+            queryChangeGeneration &+= 1
+            queryChangeTask?.cancel()
+            queryChangeTask = nil
+            l2.appCompletion = nil
+            clearSearchFieldEditorText()
+        }
+
         if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
@@ -3546,6 +3557,18 @@ extension LauncherView {
             setFocusedIndex: { l2.focusedPillIndex = $0 },
             clearPillKeyboardNavigation: { l2.pillNavViaKeyboard = false }
         )
+
+        // Menu-first contract: cache/live AX results may arrive after no-menu chat was
+        // auto-armed. If a real scoped menu now matches, return routing to menu mode.
+        if isGlobalScopedNoMenuChatComposerArmed,
+            pills.contains(where: { !$0.isSeparator && !isSearchOnlyDockPill($0) })
+        {
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
 
         guard preserveFocus, let focusedRenderedPillID else { return }
         let rendered = renderedOrderDockPills(for: q)

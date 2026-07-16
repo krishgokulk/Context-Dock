@@ -100,7 +100,13 @@ extension LauncherView {
         else { return nil }
         let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let pills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
-            .filter { !$0.isSeparator }
+            .filter { pill in
+                guard !pill.isSeparator else { return false }
+                // Running-app capsules are isolated cached-menu scopes. Generic
+                // content search, web search, app launch, window management, tools,
+                // and Global Context actions belong to other surfaces.
+                return ["menu", "submenuChild", "finderMenu"].contains(pill.rankingKind)
+            }
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
@@ -136,6 +142,11 @@ extension LauncherView {
         }
         return visibleGlobalScopedMenuNavigationState(for: query)
             ?? globalGroupedListNavigationState(for: query)
+    }
+
+    func isActiveGlobalRunningAppMenuScope() -> Bool {
+        guard isGlobalContextActive, currentGlobalScopedBundleID != nil else { return false }
+        return !(currentGlobalScopedBundleID == "com.apple.finder" && isFinderDesktopOnlyMode)
     }
 
     func globalApplicationIdentityKey(
@@ -1112,6 +1123,9 @@ extension LauncherView {
     func moveGlobalAppResultFocus(direction: Int) -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let state = visibleGlobalGroupedListNavigationState(for: q)
+        if state.totalCount > 0 || isActiveGlobalRunningAppMenuScope() {
+            return moveGlobalGroupedListFocus(direction: direction)
+        }
         let matches =
             state.appResults.isEmpty
             ? currentGlobalAppMatches(for: q)
@@ -1889,12 +1903,18 @@ extension LauncherView {
         guard isGlobalContextActive,
             shouldUsePureGlobalAppSearch,
             globalContextViewModel.typingSnapshot.phase == .expanded,
-            searchInputCursorIsAtEnd(),
-            !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            searchInputCursorIsAtEnd()
         else { return false }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty || isActiveGlobalRunningAppMenuScope() else { return false }
         let state = visibleGlobalGroupedListNavigationState(for: q)
+        if state.totalCount > 0 {
+            let first = globalGroupedVisibleOrder(state: state).first ?? 0
+            let current = currentGlobalGroupedFocusIndex(state: state) ?? first
+            setGlobalGroupedFocus(min(current, state.totalCount - 1), state: state)
+            return true
+        }
         let matches =
             state.appResults.isEmpty
             ? currentOrImmediateGlobalAppMatches(for: q)
@@ -1909,6 +1929,7 @@ extension LauncherView {
     @discardableResult
     func activateFocusedGlobalAppScopeIfPossible() -> Bool {
         guard isGlobalContextActive,
+            currentGlobalScopedBundleID == nil,
             searchInputCursorIsAtEnd(),
             let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
         else { return false }
@@ -2814,11 +2835,26 @@ extension LauncherView {
     func activeGlobalInlineDockScope(for query: String) -> DockScopeResolution? {
         guard shouldUsePureGlobalAppSearch,
             isGlobalContextActive,
-            !hasSelectionScopeSurface,
-            l2.targetApp == nil
+            !hasSelectionScopeSurface
         else { return nil }
 
         let actionQuery = effectiveGlobalInlineActionQuery(query).lowercased()
+
+        if let target = l2.targetApp,
+            !target.bundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !(target.bundleId == "com.apple.finder" && isFinderDesktopOnlyMode)
+        {
+            return DockScopeResolution(
+                scopedBundleId: target.bundleId,
+                scopedAppName: target.name,
+                scopedSearchQuery: actionQuery,
+                isExplicitAppScope: true,
+                isGlobalScope: false
+            )
+        }
+
+        guard l2.targetApp == nil else { return nil }
+
         if let inlineScope = globalInlineAppScope {
             return DockScopeResolution(
                 scopedBundleId: inlineScope.bundleId,
@@ -2875,6 +2911,10 @@ extension LauncherView {
     }
 
     var allGlobalInlineAppScopes: [GlobalInlineAppScope] {
+        // Inline token scopes belong only to typed Global Context queries.
+        // A running-app capsule lives in l2.targetApp and already has its own visible
+        // chip. Mixing it into token parsing duplicates app identity inside input and
+        // corrupts text (for example `atGPTChatGPT`).
         [globalInlineAppScope].compactMap { $0 } + additionalGlobalInlineAppScopes
     }
 
@@ -5017,14 +5057,24 @@ extension LauncherView {
         else { return 0 }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if isActiveGlobalRunningAppMenuScope() {
+            return min(
+                maxListViewDockPills,
+                visibleGlobalScopedMenuNavigationState(for: q)?.totalCount ?? 0
+            )
+        }
         if shouldUsePureGlobalAppSearch {
-            guard !q.isEmpty || globalInlineAppScope != nil else { return 0 }
+            guard !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
+            else { return 0 }
             guard globalContextViewModel.typingSnapshot.phase == .expanded else { return 0 }
-            let transientMenuCount = transientGlobalScopedMenuRowCount(for: q)
+            let transientMenuCount =
+                currentGlobalScopedBundleID == nil
+                ? transientGlobalScopedMenuRowCount(for: q)
+                : 0
             if transientMenuCount > 0 {
                 return min(maxListViewDockPills, transientMenuCount)
             }
-            let state = globalGroupedListNavigationState(for: q)
+            let state = visibleGlobalGroupedListNavigationState(for: q)
             if state.totalCount > 0 {
                 return min(maxListViewDockPills, state.totalCount)
             }
@@ -5071,10 +5121,30 @@ extension LauncherView {
         let rowCount = currentListViewDockRowCount
         guard rowCount > 0 else { return 0 }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if shouldUsePureGlobalAppSearch, !q.isEmpty {
+        // A running-app capsule is an isolated menu sheet, not the fixed-height Global
+        // Context results surface. Hug its actual rows so the NSPanel ends at the same
+        // place as the visible glass; otherwise the old 372pt reservation leaves a clear
+        // window tail that intercepts clicks below a short scoped result list.
+        if isActiveGlobalRunningAppMenuScope() {
+            let measured = measuredGlobalListContentHeight
+            if measured > 1 {
+                return min(max(measured, 86), listViewVisibleHeight)
+            }
+            let rowHeight: CGFloat = 52
+            let headerReserve: CGFloat = 24
+            let contentPadding: CGFloat = 12
+            return min(
+                max(CGFloat(rowCount) * rowHeight + headerReserve + contentPadding, 86),
+                listViewVisibleHeight
+            )
+        }
+        if shouldUsePureGlobalAppSearch,
+            !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
+        {
             let groupedKey = globalGroupedStateCacheKey(for: q)
-            let state = globalGroupedListNavigationState(for: q)
-            let hasTransientMenus = transientGlobalScopedMenuRowCount(for: q) > 0
+            let state = visibleGlobalGroupedListNavigationState(for: q)
+            let hasTransientMenus =
+                currentGlobalScopedBundleID == nil && transientGlobalScopedMenuRowCount(for: q) > 0
             let hasImmediateApps = !currentOrImmediateGlobalAppMatches(for: q).isEmpty
             let hasIconRows = !matchDockIconRowsForExpandedSheet(query: q).isEmpty
             let isPending = pendingGlobalGroupedQuery == groupedKey || pendingGlobalAppQuery == q
@@ -5174,6 +5244,9 @@ extension LauncherView {
 
     var listViewResizeToken: String {
         guard usesVerticalListDockLayout else { return "off" }
+        if isActiveGlobalRunningAppMenuScope() {
+            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
+        }
         // Pure Global Context must feel like Spotlight/Raycast: once results are visible,
         // the window frame stays fixed and only row content changes inside the scroll area.
         // Encoding row/measured height here caused visible jumps while typing.

@@ -72,7 +72,7 @@ extension LauncherView {
             && currentGlobalScopedBundleID == "com.apple.finder"
             && isFinderDesktopOnlyMode
         let scopedGlobalAppMode =
-            isGlobalContextActive && !pureGlobalAppSearch && currentGlobalScopedBundleID != nil
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !globalFinderFileScope
         let visibleDockPills =
             scopedGlobalAppMode
             ? stableVisibleDockPills(for: pillQuery)
@@ -94,7 +94,7 @@ extension LauncherView {
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
         let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
             (pureGlobalAppSearch && !q.isEmpty)
-            ? globalGroupedListNavigationState(for: q) : nil
+            ? visibleGlobalGroupedListNavigationState(for: q) : nil
         let globalAppMatches =
             pureGlobalAppSearch
             ? (
@@ -254,8 +254,10 @@ extension LauncherView {
         // reveals by clipped height. Conditional creation (`if expanded { list }`)
         // rebuilt the view identity on ↓, so the expansion could never animate
         // continuously from the first key press.
+        let scopedGlobalMenuActive =
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !isFinderDesktopOnlyMode
         let expanded =
-            isGlobalContextActive && shouldUsePureGlobalAppSearch
+            isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive
             ? hasExpandedGlobalContextResults
             : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                 && !isDeferredMenuOnlyPresentation(presentation))
@@ -299,10 +301,10 @@ extension LauncherView {
         if shouldUsePureGlobalAppSearch {
             l2.appCompletion = nil
             l2.showResultsPopover = false
-            if globalInlineAppScope == nil {
-                updateGlobalContextTypingSnapshot(query: newQuery)
-            } else {
+            if currentGlobalScopedBundleID != nil || globalInlineAppScope != nil {
                 scheduleGlobalGroupedListRebuild(query: newQuery)
+            } else {
+                updateGlobalContextTypingSnapshot(query: newQuery)
             }
             return
         }

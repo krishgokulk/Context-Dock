@@ -631,7 +631,7 @@ extension LauncherView {
         // diverges the moment clustering reorders, breaking highlight + autoscroll.
         let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
             let source: [DockPill] = {
-                if shouldUsePureGlobalAppSearch {
+                if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                     let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased()
                     return visibleGlobalGroupedListNavigationState(for: q).menuPills
@@ -642,7 +642,7 @@ extension LauncherView {
                 return renderedOrderDockPills(for: q)
             }()
             let sourceIndex: Int = {
-                if shouldUsePureGlobalAppSearch {
+                if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                     let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased()
                     let state = visibleGlobalGroupedListNavigationState(for: q)
@@ -826,7 +826,7 @@ extension LauncherView {
         let primary = group.primaryPill
         let accent = accentColor(for: primary.accentColorName)
         let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
-            if shouldUsePureGlobalAppSearch {
+            if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased()
                 let state = visibleGlobalGroupedListNavigationState(for: q)

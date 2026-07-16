@@ -762,15 +762,19 @@ extension LauncherView {
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
         let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
-        let others =
-            source
-            .filter { app in
+        let frontmostApp = source.first { app in
+            !frontmostBundle.isEmpty
+                && frontmostBundle != "com.apple.finder"
+                && frontmostBundle != scopedBundle
+                && app.bundleIdentifier == frontmostBundle
+        }
+        let others = source.filter { app in
                 guard !app.isTerminated else { return false }
                 guard app.bundleURL != nil || app.executableURL != nil else { return false }
                 guard let bundleID = app.bundleIdentifier else { return true }
                 return bundleID != "com.apple.finder"
-                    && bundleID != frontmostBundle
                     && bundleID != scopedBundle
+                    && bundleID != frontmostBundle
             }
         // Finder leads the strip in Global Context as the entry into desktop file-search —
         // but once Finder IS the active scope it owns the chip, so drop it from the strip
@@ -781,7 +785,11 @@ extension LauncherView {
             : NSWorkspace.shared.runningApplications.first {
                 $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
             }
-        return (Array([finder].compactMap { $0 }) + others)
+        // Keep Finder as universal file scope, then show app that owned focus before
+        // Context-Dock opened. Filtering frontmost here caused exactly this stale UI:
+        // ChatGPT vanished while frontmost, then appeared after switching Spaces when
+        // Finder became frontmost. Dedupe it from `others`, but never hide it.
+        return (Array([finder, frontmostApp].compactMap { $0 }) + others)
             .prefix(5)
             .map { $0 }
     }
@@ -801,7 +809,14 @@ extension LauncherView {
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
         var seen = Set<String>()
-        let others = (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
+        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
+        let frontmostApp = source.first { app in
+            !frontmostBundle.isEmpty
+                && frontmostBundle != "com.apple.finder"
+                && frontmostBundle != scopedBundle
+                && app.bundleIdentifier == frontmostBundle
+        }
+        let others = source
             .filter { app in
                 guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return false }
@@ -816,7 +831,7 @@ extension LauncherView {
         let finder = NSWorkspace.shared.runningApplications.first {
             $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
         }
-        return Array([finder].compactMap { $0 }) + others
+        return Array([finder, frontmostApp].compactMap { $0 }) + others
     }
 
     @discardableResult
@@ -838,8 +853,11 @@ extension LauncherView {
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
-            queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "" : nil,
+            // Choosing a running-app capsule consumes app identity into the scope chip.
+            // Keeping the app-name query here leaves two owners for the same text
+            // (SwiftUI binding + AppKit field editor), so async menu refresh can restore
+            // deleted text forever. Scoped action input always starts clean.
+            queryOverride: "",
             preserveGlobalContext: true
         )
         if activated {

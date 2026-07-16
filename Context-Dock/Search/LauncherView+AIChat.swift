@@ -140,6 +140,20 @@ extension LauncherView {
             && !showMediaLayer
             && !aiMode.isActive
             && (l2.chatArmed || l2.showChatPopover)
+            // No-menu fallback inside a Global running-app scope is still an input
+            // routing state, not a surface transition. Keep Global Context mounted
+            // until Enter submits; remounting the TextField here resurrects stale text.
+            && !isGlobalScopedNoMenuChatComposerArmed
+    }
+
+    var isGlobalScopedNoMenuChatComposerArmed: Bool {
+        isGlobalContextActive
+            && currentGlobalScopedChatTarget != nil
+            && l2.chatArmed
+            && l2.chatAutoArmedForNoMenuMatch
+            && !l2.showChatPopover
+            && !l2.isLoading
+            && l2.chatMessages.isEmpty
     }
 
     var shouldShowContextDockChatSheet: Bool {
@@ -555,6 +569,7 @@ extension LauncherView {
             let target = currentGlobalScopedChatTarget
         else { return }
         armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+        l2.chatAutoArmedForNoMenuMatch = true
     }
 
     func armGlobalInlineScopeChat(_ scope: GlobalInlineAppScope) {

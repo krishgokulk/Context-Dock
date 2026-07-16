@@ -732,34 +732,7 @@ extension LauncherView {
                                             .frame(width: 24, height: 24)
                                     }
                                 } else if isGlobalContextActive {
-                                    let transientScopeBundleID =
-                                        transientGlobalInlineAppScopeTarget(for: searchState.query)?
-                                        .bundleId
-                                    if let scopedBundleID =
-                                        currentGlobalScopedBundleID ?? transientScopeBundleID,
-                                        let scopeIcon = leadingScopedAppIcon(
-                                            bundleID: scopedBundleID)
-                                    {
-                                        // Scoped Global Context keeps the scoped app as the
-                                        // stable leading identity. Result-match icons belong in
-                                        // the right capsule, otherwise the left icon can flicker
-                                        // or disappear while rows refresh.
-                                        Image(nsImage: scopeIcon)
-                                            .resizable()
-                                            .interpolation(.high)
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 26, height: 26)
-                                            .clipShape(
-                                                RoundedRectangle(
-                                                    cornerRadius: 6, style: .continuous))
-                                            .shadow(
-                                                color: scopeIcon.dominantSwiftUIColor
-                                                    .opacity(
-                                                        systemColorScheme == .dark ? 0.55 : 0.40),
-                                                radius: 8, x: 0, y: 1)
-                                            .opacity(isHoveringSearchIcon ? 1.0 : 0.92)
-                                            .id("global-scope-\(scopedBundleID)")
-                                    } else if let topMatch = leadingGlobalContextMatchIcon(
+                                    if let topMatch = leadingGlobalContextMatchIcon(
                                         for: searchState.query)
                                     {
                                         Image(nsImage: topMatch.icon)
@@ -1211,6 +1184,8 @@ extension LauncherView {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .layoutPriority(2)
                                 Button {
                                     exitL2DockScope()
                                 } label: {
@@ -1230,6 +1205,8 @@ extension LauncherView {
                             .padding(.leading, 8)
                             .padding(.trailing, isHoveringL2ScopeChip ? 8 : 6)
                             .padding(.vertical, 4)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(2)
                             .background(.regularMaterial, in: Capsule(style: .continuous))
                             .background(
                                 accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
@@ -1333,13 +1310,12 @@ extension LauncherView {
                             let aiFallbackActive =
                                 (showContextInDock && l2.chatArmed)
                                 || shouldShowContextDockAIQueryFallback
-                            let suppressScopedEmptyPreview =
+                            let suppressScopedResultPreview =
                                 showContextInDock
-                                && l2.targetApp != nil
-                                && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                && currentGlobalScopedBundleID != nil
                             let focusedDockPill =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? focusedDockPillForInputPreview() : nil
                             let rawQueryAllowsGhost =
                                 searchState.query
@@ -1351,19 +1327,19 @@ extension LauncherView {
                             let focusedGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? focusedGlobalAppResultForInputPreview() : nil
                             let topGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? topGlobalAppResultForInputPreview() : nil
                             let topGlobalContextTitle =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? topContextMatchDockTitleForInputPreview() : nil
                             ZStack(alignment: .leading) {
                                 if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {

@@ -509,7 +509,13 @@ struct LauncherView: View {
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
         let pillQuery = finderSearchPopoverActive ? "" : q
         if isGlobalContextActive && currentGlobalScopedBundleID != nil {
-            guard !q.isEmpty, !shouldShowGlobalScopedChatPin else { return false }
+            guard !shouldShowGlobalScopedChatPin else { return false }
+            // Running-app scope always owns the below-input result sheet, including
+            // empty-query cached menus. Do not let async cache availability switch the
+            // shared shell back to beside-input layout. Finder remains query-driven file
+            // search, so an empty Finder scope stays compact.
+            if isActiveGlobalRunningAppMenuScope() { return true }
+            guard !q.isEmpty else { return false }
             if pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery) {
                 return true
             }
