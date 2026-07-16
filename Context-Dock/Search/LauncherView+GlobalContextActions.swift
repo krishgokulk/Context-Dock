@@ -2081,6 +2081,44 @@ extension LauncherView {
         }
     }
 
+    /// Robust focus claim for scope switches. The single delayed reclaim used to race the
+    /// async scoped-menu load + spring animation: when that re-render stole first responder
+    /// AFTER the one attempt — and isSearchFieldFocused was already true, so re-setting it did
+    /// nothing — the caret silently vanished ("sometimes ready, sometimes not"). This force-
+    /// toggles the FocusState (false→true always re-applies) and retries across a few runloop
+    /// turns, stopping as soon as the field genuinely holds first responder.
+    func ensureSearchInputFocusReady(attempt: Int = 0) {
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        // The window must be KEY and the app ACTIVE before @FocusState will stick — the proven
+        // .focusSearchField path does exactly this. A right-arrow scope switch can leave the
+        // launcher non-key (the frontmost app behind it is still active), which silently drops
+        // the focus assignment and the caret never appears.
+        if let window = AppDelegate.shared?.launcherWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        // Toggle across runloop turns so SwiftUI re-applies focus even when the binding is
+        // already true (a plain re-set of true is a no-op and won't reclaim first responder).
+        isSearchFieldFocused = false
+        DispatchQueue.main.async {
+            self.isSearchFieldFocused = true
+            if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+                self.moveSearchInsertionPointToEnd(in: tv)
+            }
+            guard attempt < 4 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(attempt + 1)) {
+                // Retry only while the field still lacks focus — the launcher has a single text
+                // field, so any first-responder NSTextView is ours.
+                let hasFocus = NSApp.keyWindow?.firstResponder is NSTextView
+                if !hasFocus {
+                    self.ensureSearchInputFocusReady(attempt: attempt + 1)
+                }
+            }
+        }
+    }
+
     func moveSearchInsertionPointToEnd(in textView: NSTextView) {
         let end = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: end, length: 0))

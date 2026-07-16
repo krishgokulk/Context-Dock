@@ -871,12 +871,10 @@ extension LauncherView {
                 scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
             }
             requestWindowSizeUpdate(reason: .panelChanged)
-            // Run AFTER activateInlineDockAppScope's own focus toggle settles, so this is
-            // the authoritative last focus claim — otherwise the racing toggles leave the
-            // field unfocused (no caret, can't type) after a right-arrow scope.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                self.reclaimSearchInputFocus()
-            }
+            // Authoritative, self-retrying focus claim after activateInlineDockAppScope's own
+            // toggle — survives the async scoped-menu load / spring animation that could
+            // otherwise leave the field unfocused (no caret) after a right-arrow scope.
+            ensureSearchInputFocusReady()
         }
         return activated
     }
