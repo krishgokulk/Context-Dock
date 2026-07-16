@@ -371,17 +371,27 @@ final class GlobalSearchService {
 
         let queryWords = q.split(separator: " ").map(String.init)
         if queryWords.count >= 2 {
-            let ignorable: Set<String> = [
-                "file", "files", "message", "messages", "window", "tab", "note", "notes",
-                "task", "tasks", "reminder", "reminders", "document", "documents"
-            ]
-            let requiredWords = queryWords.filter { !ignorable.contains($0) }
-            if requiredWords.count >= 2 {
-                let searchableWords = Set(doc.titleWords + doc.aliasWords.flatMap { $0 })
-                if requiredWords.allSatisfy({ word in
-                    searchableWords.contains(word) || searchableWords.contains(where: { $0.hasPrefix(word) || word.hasPrefix($0) })
-                }) {
-                    keep(9_250 + base + Double(requiredWords.count * 120) - min(Double(t.count), 48))
+            let searchableWords = Set(doc.titleWords + doc.aliasWords.flatMap { $0 })
+            func wordMatches(_ word: String) -> Bool {
+                searchableWords.contains(word)
+                    || searchableWords.contains { candidate in
+                        candidate.hasPrefix(word) || word.hasPrefix(candidate)
+                    }
+            }
+
+            if queryWords.allSatisfy(wordMatches) {
+                keep(11_250 + base + Double(queryWords.count * 180) - min(Double(t.count), 48))
+            } else {
+                let ignorable: Set<String> = [
+                    "file", "files", "message", "messages", "window", "tab", "note", "notes",
+                    "task", "tasks", "reminder", "reminders", "document", "documents"
+                ]
+                let requiredWords = queryWords.filter { !ignorable.contains($0) }
+                if !requiredWords.isEmpty, requiredWords.allSatisfy(wordMatches) {
+                    keep(
+                        9_250 + base + Double(requiredWords.count * 120)
+                            - min(Double(t.count), 48)
+                    )
                 }
             }
         }

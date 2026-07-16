@@ -2546,6 +2546,7 @@ extension LauncherView {
 
         var docs: [GlobalSearchService.SearchDocument] = []
         var seenIds = Set<String>()
+        let indexedMenuSnapshotLimit = 360
 
         func addIfNew(_ doc: GlobalSearchService.SearchDocument) {
             guard seenIds.insert(doc.id).inserted else { return }
@@ -2606,7 +2607,7 @@ extension LauncherView {
                 appName: name,
                 processIdentifier: app.processIdentifier,
                 icon: icon,
-                maxResults: 24,
+                maxResults: indexedMenuSnapshotLimit,
                 sourceKind: .runningMenu
             )
         }
@@ -2703,7 +2704,7 @@ extension LauncherView {
                 bundleId: bundleId,
                 appName: summary.appName,
                 icon: icon,
-                maxResults: 24,
+                maxResults: indexedMenuSnapshotLimit,
                 sourceKind: .cachedMenu
             )
         }
