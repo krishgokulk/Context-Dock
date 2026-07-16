@@ -15,11 +15,19 @@ extension LauncherView {
     }
 
     /// Selection icon for a single selected item. A selected FOLDER must read as a folder —
-    /// fileIcon(for:) sees an empty extension and returns the generic "doc".
+    /// fileIcon(for:) sees an empty extension and returns the generic "doc". Two independent
+    /// directory checks: resourceValues can fail (sandbox / unresolved path) and silently fall
+    /// back to "doc", which shows up as a folder↔doc flicker.
     func selectionSymbol(for url: URL) -> String {
-        let isDirectory =
-            (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-        if isDirectory { return "folder.fill" }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            return "folder.fill"
+        }
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            return "folder.fill"
+        }
+        // Extension-less items that still resolve as containers (e.g. .app-less bundles).
+        if url.hasDirectoryPath { return "folder.fill" }
         return fileIcon(for: url.pathExtension.lowercased())
     }
 
@@ -230,9 +238,9 @@ extension LauncherView {
         guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        guard hasActiveDockContextSelection || globalContextActivationHasFrozenPayload else {
-            return false
-        }
+        // Only exit when actually IN Selection Scope. The live selection survives the exit now,
+        // so keying off hasActiveDockContextSelection would swallow every later backspace.
+        guard globalContextActivationHasFrozenPayload else { return false }
         dismissSelectionAndStayInGlobalContext()
         isSearchFieldFocused = true
         return true

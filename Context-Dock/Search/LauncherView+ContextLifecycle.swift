@@ -1128,6 +1128,12 @@ extension LauncherView {
                 }
 
                 await AXContextReader.shared.refreshLightweight(from: app)
+                // refreshLightweight SKIPS the selection for first-paint speed, so the shared
+                // context it leaves behind has no selected files/text. Re-read the selection
+                // before publishing, otherwise this assign wipes what the fast pass just found
+                // and the selection icon flickers folder → doc → folder as the live refresh
+                // restores it.
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
                     self.axContext = newCtx
@@ -1159,7 +1165,10 @@ extension LauncherView {
         // user has already begun typing, and bailing there dropped Selection Scope for anyone
         // who types fast. The typed query is preserved and simply filters the selection actions
         // ("comp" → Compress).
-        guard !globalContextActivationHasFrozenPayload,
+        // Grace-gated: the window is opened at launch and zeroed the moment the user exits the
+        // scope, so the second (post-lightweight) re-assert can't drag them back in.
+        guard Date() < launchSelectionScopeGraceUntil,
+            !globalContextActivationHasFrozenPayload,
             l2.targetApp == nil,
             globalInlineAppScope == nil,
             !l2.chatArmed, !l2.showChatPopover,
@@ -1592,6 +1601,16 @@ extension LauncherView {
                 let preview = newText.isEmpty ? nil : newText
                 if self.liveDockSelectionPreviewText != preview {
                     self.liveDockSelectionPreviewText = preview
+                }
+                // Keep the live selection fields current so the selection icon tracks what the
+                // user selects in the background while the dock is open (file/folder changes
+                // never updated before — only the text preview did). Patch just the selection
+                // fields; replacing the whole context would drop menu/window data.
+                if self.axContext.selectedFilePaths != newCtx.selectedFilePaths {
+                    self.axContext.selectedFilePaths = newCtx.selectedFilePaths
+                }
+                if self.axContext.selectedText != newCtx.selectedText {
+                    self.axContext.selectedText = newCtx.selectedText
                 }
             }
         }

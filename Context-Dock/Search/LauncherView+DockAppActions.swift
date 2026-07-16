@@ -737,10 +737,12 @@ extension LauncherView {
             && searchState.contextApp == nil
             && searchState.selectedIndex == nil
             && !isContextDockChatConnected
-            // Show in Global Context (no active selection), AND in an explicit app scope
-            // (l2.targetApp set) so the strip stays after scoping from the strip and the user
-            // can right-arrow to the next app. Hidden only for the plain frontmost Context Dock.
-            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp != nil)
+            // A live selection is ADDITIVE: it adds an icon NEXT TO this strip, it must never
+            // replace it. Hiding the strip on any selection made the running-app capsule vanish
+            // the moment the user selected a file. Shown in Global Context, and in an explicit
+            // app scope (l2.targetApp) so the strip survives scoping and right-arrow cycling.
+            // Hidden only for the plain frontmost Context Dock.
+            && (isGlobalContextActive || l2.targetApp != nil)
     }
 
     var currentGlobalScopedBundleID: String? {

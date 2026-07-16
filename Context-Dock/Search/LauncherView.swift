@@ -2541,23 +2541,16 @@ struct LauncherView: View {
         setFrontmostAppContextOnly(reason: "dismiss context chip")
     }
 
-    /// Clears selected file/text payload but stays in Global Context.
+    /// Leaves Selection Scope but stays in Global Context. Exiting is NOT "throw the selection
+    /// away": the live selection stays readable, so its icon returns beside the running-app
+    /// capsule and one click re-enters the scope. Only the frozen payload (what makes this a
+    /// scope) is dropped. Previously this also stamped a dismissed signature and wiped
+    /// axContext/currentContext, which erased the icon entirely and made the same selection
+    /// un-selectable for the rest of the session.
     func dismissSelectionAndStayInGlobalContext() {
-        let dismissedFinderPaths: [String] = {
-            if !axContext.selectedFilePaths.isEmpty {
-                return axContext.selectedFilePaths
-            }
-            if case .filesSelected(let urls) = currentContext {
-                return urls.map(\.path)
-            }
-            return frozenSelectionFileURLs.map(\.path)
-        }()
-        if !dismissedFinderPaths.isEmpty {
-            dismissedFinderSelectionSignature = finderSelectionSignature(dismissedFinderPaths)
-        }
+        // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
+        launchSelectionScopeGraceUntil = .distantPast
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-            currentContext = .none
-            axContext = .empty
             globalContextActivation = GlobalContextActivation(autoActivated: false)
             showContextInDock = true
             showMediaLayer = false
