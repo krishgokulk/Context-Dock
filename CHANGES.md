@@ -248,3 +248,11 @@ Swift: +0 added · ~12 modified · -0 deleted
 ## 2026-07-16 00:16 · `5dbab38e` · `codex-context-dock-polish-fixes`
 **fix reult panel in global context**
 Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-16 01:26 · `0f794ec0` · `codex-context-dock-polish-fixes`
+**Stabilize AI and global icon state**
+Swift: +2 added · ~6 modified · -0 deleted
+
+## 2026-07-16 01:55 · `cc1b17dc` · `codex-context-dock-polish-fixes`
+**Improve global indexed menu ranking**
+Swift: +0 added · ~2 modified · -0 deleted
