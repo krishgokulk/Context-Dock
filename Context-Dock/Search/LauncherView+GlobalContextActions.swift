@@ -1266,6 +1266,43 @@ extension LauncherView {
             )
         }
         if let inlineScope = globalInlineAppScope {
+            if isFinderDesktopOnlyMode, inlineScope.bundleId == "com.apple.finder" {
+                let scopedQuery = effectiveGlobalInlineActionQuery(q)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let finderPills =
+                    !scopedQuery.isEmpty && finderSemanticQuery == scopedQuery
+                    ? finderSemanticPills
+                    : []
+                let icon =
+                    FileManager.default.fileExists(atPath: inlineScope.appPath)
+                    ? NSWorkspace.shared.icon(forFile: inlineScope.appPath)
+                    : resolvedApplicationIcon(
+                        bundleIdentifier: inlineScope.bundleId,
+                        appName: inlineScope.appName
+                    )
+                let groups =
+                    finderPills.isEmpty
+                    ? []
+                    : [
+                        AppMenuGroup(
+                            id: "finder-desktop-files-\(inlineScope.bundleId)",
+                            appName: inlineScope.appName,
+                            icon: icon,
+                            pills: finderPills
+                        )
+                    ]
+                return finish(
+                    GlobalGroupedListNavigationState(
+                        appResults: [],
+                        menuPills: finderPills,
+                        menuGroups: [],
+                        appMenuGroups: groups,
+                        menuFirst: false
+                    ),
+                    label: "instantGlobalGroupedListNavigationState.finderDesktopOnly"
+                )
+            }
             let groups = cachedGlobalInlineAppScopeGroups(query: q)
             var resolvedGroups = groups
             if isBrowserMenuSource(inlineScope.bundleId) {
