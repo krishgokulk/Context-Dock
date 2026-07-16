@@ -55,6 +55,7 @@ struct AIRequest {
     var mode: AIRequestMode = .answer
     var source: AIRequestSource = .aiChat
     var liveContext: AIContextSnapshot? = nil
+    var includesWorkflowCapabilities = false
     var additionalContextPrompt = ""
 }
 

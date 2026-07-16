@@ -25,8 +25,7 @@ final class AIChatEngine: ObservableObject {
                 text: message,
                 context: context,
                 history: messages,
-                source: .aiChat,
-                liveContext: ContextCollector.shared.snapshot()
+                source: .aiChat
             )
         )
         messages.append(ChatMessage(role: .assistant, content: response))

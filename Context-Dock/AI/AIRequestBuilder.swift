@@ -4,7 +4,9 @@ struct AIRequestBuilder {
     static func aiChat(
         text: String,
         history: [ChatMessage] = [],
-        attachments: [URL] = []
+        attachments: [URL] = [],
+        liveContext: AIContextSnapshot? = nil,
+        includesWorkflowCapabilities: Bool = false
     ) -> AIRequest {
         AIRequest(
             text: text,
@@ -13,7 +15,8 @@ struct AIRequestBuilder {
             attachments: attachments.map(AIAttachment.inferred(from:)),
             mode: .answer,
             source: .aiChat,
-            liveContext: ContextCollector.shared.snapshot()
+            liveContext: liveContext,
+            includesWorkflowCapabilities: includesWorkflowCapabilities
         )
     }
 

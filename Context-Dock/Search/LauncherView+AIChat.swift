@@ -3796,6 +3796,18 @@ extension LauncherView {
                 content: msg.content
             )
         }
+        let generalChatPolicy = AIOrchestrationPolicy.generalChat
+        let hasExplicitContext = !attachments.isEmpty
+            || aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || !aiMode.selectionFiles.isEmpty
+            || aiMode.selectionURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let intentResolution = AIRequestClassifier.shared.classify(
+            query: query,
+            hasExplicitContext: hasExplicitContext
+        )
+        let requestLiveContext = generalChatPolicy.includesLiveContext(
+            explicitlyRequested: false
+        ) ? ContextCollector.shared.snapshot() : nil
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead
         var sysContent = """
@@ -3923,7 +3935,10 @@ extension LauncherView {
         let toolProvider = settings.selectedAIProvider
         let hasSelectionText = aiMode.selectionText?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        if attachments.isEmpty, !hasSelectionText, toolProvider != .shortcuts {
+        let shouldDiscoverAppTools = intentResolution.kind != .conversation
+        if attachments.isEmpty, !hasSelectionText, shouldDiscoverAppTools,
+            toolProvider != .shortcuts
+        {
             await MainActor.run { aiMode.loadingStatus = "Checking app tools…" }
             let appToolsBlock = await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: toolProvider == .onDevice)
@@ -3937,7 +3952,12 @@ extension LauncherView {
                         aiMode.loadingStatus = toolChips.isEmpty
                             ? "Thinking…" : "Reading tool result…"
                     }
-                    let loopRequest = AIRequestBuilder.aiChat(text: loopQuery, history: loopHistory)
+                    let loopRequest = AIRequestBuilder.aiChat(
+                        text: loopQuery,
+                        history: loopHistory,
+                        liveContext: requestLiveContext,
+                        includesWorkflowCapabilities: true
+                    )
                     let response = try await AIProviderRouter.shared.sendPrepared(
                         request: loopRequest,
                         provider: toolProvider,
@@ -3978,7 +3998,9 @@ extension LauncherView {
                 await MainActor.run { aiMode.loadingStatus = "Writing answer…" }
                 let finalRequest = AIRequestBuilder.aiChat(
                     text: loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
-                    history: loopHistory
+                    history: loopHistory,
+                    liveContext: requestLiveContext,
+                    includesWorkflowCapabilities: true
                 )
                 let finalAnswer = try await AIProviderRouter.shared.sendPrepared(
                     request: finalRequest,
@@ -3997,7 +4019,8 @@ extension LauncherView {
         let request = AIRequestBuilder.aiChat(
             text: providerQuery,
             history: history,
-            attachments: attachments
+            attachments: attachments,
+            liveContext: requestLiveContext
         )
         return try await AIProviderRouter.shared.sendPrepared(
             request: request,

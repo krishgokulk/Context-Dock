@@ -15,7 +15,7 @@ final class AIContextBuilder {
         if let live = request.liveContext {
             prompt += "\n\n" + liveContextBlock(live, query: request.text)
         }
-        if request.source == .globalContext || request.source == .aiChat {
+        if request.source == .globalContext || request.includesWorkflowCapabilities {
             prompt += "\n\n" + AppWorkflowToolCatalog.shared.generalChatPromptBlock(
                 query: request.text,
                 liveBundleID: request.liveContext?.bundleID

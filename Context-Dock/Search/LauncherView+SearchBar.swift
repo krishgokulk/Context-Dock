@@ -3064,6 +3064,9 @@ extension LauncherView {
 
     func leadingGlobalContextMatchIcon(for query: String) -> MatchDockIcon? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let focused = focusedGlobalGroupedMatchDockIcon(for: q) {
+            return focused
+        }
         if let scopedBundleID = currentGlobalScopedBundleID,
             let icon = leadingScopedAppIcon(bundleID: scopedBundleID)
         {
@@ -3124,6 +3127,15 @@ extension LauncherView {
             )
         }
         return orderedGlobalContextMatchDockIcons(for: q, limit: 1).first
+    }
+
+    func focusedGlobalGroupedMatchDockIcon(for query: String) -> MatchDockIcon? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty,
+            let state = cachedVisibleGlobalGroupedListNavigationState(for: q),
+            let focused = currentGlobalGroupedFocusIndex(state: state)
+        else { return nil }
+        return matchDockIconForGlobalGroupedRow(focused, state: state)
     }
 
     func globalScopedAppTitle(bundleID: String) -> String? {
