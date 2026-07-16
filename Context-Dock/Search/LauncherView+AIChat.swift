@@ -457,7 +457,10 @@ extension LauncherView {
             !l2.chatArmed,
             !l2.showChatPopover,
             !l2.isLoading,
-            lockedFindToken == nil
+            lockedFindToken == nil,
+            // Finder desktop scope is file search: no matches means "no files found", never
+            // an AI escalation.
+            !isFinderDesktopOnlyMode
         else { return false }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -577,6 +580,10 @@ extension LauncherView {
     }
 
     var currentGlobalScopedChatTarget: (appName: String, bundleId: String)? {
+        // Finder desktop scope is pure FILE SEARCH — never a chat surface. With no chat target
+        // there's no pin, no auto-arm, and no "send to AI" on a no-match, in BOTH Global Context
+        // and Context Dock. A query that matches nothing means "no files found", full stop.
+        if isFinderDesktopOnlyMode { return nil }
         if let scope = globalInlineAppScope {
             let name = scope.appName.trimmingCharacters(in: .whitespacesAndNewlines)
             let bundleId = scope.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)

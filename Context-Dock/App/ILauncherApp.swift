@@ -265,6 +265,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // (keeps the cache warm for apps that stay alive between dock opens)
     }
 
+    /// The app macOS shows in the MENU BAR — the true frontmost owner, and the signal to trust.
+    /// Our dock runs as an .accessory app (no menu bar of its own), so this stays correct even
+    /// while our floating panel holds key focus, where frontmostApplication instead reports US.
+    /// That mismatch is what made the dock scope to a stale app and mis-detect quits.
+    func menuBarOwningUserFacingApplication() -> NSRunningApplication? {
+        resolvedUserFacingApplication(NSWorkspace.shared.menuBarOwningApplication)
+            ?? resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
+    }
+
     private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
@@ -1482,7 +1491,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.setupLauncherWindow()
                 }
                 guard let window = self.launcherWindow else { return }
-                if let currentApp = self.resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
+                if let currentApp = self.menuBarOwningUserFacingApplication() {
                     self.recordFrontmostApp(currentApp)
                 }
                 if !window.isVisible {
@@ -1796,9 +1805,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         isDockContextMode = true
 
-        // Capture the CURRENT frontmost app RIGHT NOW before we show the window
-        // This is the app the user was using when they pressed the hotkey
-        if let currentApp = resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
+        // Capture the CURRENT frontmost app RIGHT NOW before we show the window — read it from
+        // the MENU BAR owner, the same thing the user sees, so the dock never scopes to a stale
+        // app when our panel already holds focus.
+        if let currentApp = menuBarOwningUserFacingApplication() {
             recordFrontmostApp(currentApp)
             print(
                 "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
@@ -2022,8 +2032,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
-        // Initialize with current frontmost app
-        if let currentApp = resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication) {
+        // Initialize with the current MENU BAR owner (what macOS actually shows).
+        if let currentApp = menuBarOwningUserFacingApplication() {
             recordFrontmostApp(currentApp)
             Task { @MainActor in
                 MenuWarmCacheService.shared.frontmostAppDidChange(currentApp)
@@ -2084,16 +2094,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 && app.bundleIdentifier == previousFrontmostApp?.bundleIdentifier)
         guard wasTracked else { return }
 
-        // Let macOS settle activation, then re-resolve the desktop owner: the next real
-        // user-facing app, or Finder when none — exactly what the menu bar shows.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let next = self.resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
-            let target =
-                next
-                ?? NSWorkspace.shared.runningApplications.first {
-                    $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
-                }
-            guard let target, target.bundleIdentifier != ownBundleID else { return }
+        let terminatedPID = app.processIdentifier
+
+        // Let macOS settle, then just READ THE MENU BAR — it already names the new owner (the
+        // next real app, or Finder on an empty desktop). No guessing at "who's next": macOS has
+        // decided, and the menu bar is what the user sees.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard let target = self.menuBarOwningUserFacingApplication(),
+                target.bundleIdentifier != ownBundleID,
+                target.processIdentifier != terminatedPID,
+                !target.isTerminated
+            else { return }
             self.recordFrontmostApp(target)
             ContextDockEnvironment.shared.frontmostAppDidChange(
                 name: target.localizedName ?? "Finder",

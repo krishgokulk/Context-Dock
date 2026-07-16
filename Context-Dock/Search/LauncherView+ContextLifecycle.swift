@@ -795,13 +795,11 @@ extension LauncherView {
                 }
                 currentContext = context
             }
-            .onReceive(
-                // Coalesce rapid frontmost changes (e.g. a quit cascade: App → Finder → Finder)
-                // into one settle, so the dock rebuilds once instead of flashing through 2–3
-                // teardown/rebuild passes.
-                contextEnv.frontmostAppUpdates
-                    .debounce(for: .milliseconds(130), scheduler: RunLoop.main)
-            ) { appInfo in
+            // NOT debounced: this handler clears axContext/currentContext on an app change, and
+            // delaying it made that clear land AFTER a freshly-detected selection was delivered,
+            // wiping it — launching with text/files selected stopped entering Selection Scope.
+            // Ordering here is load-bearing; fix quit-cascade flicker elsewhere.
+            .onReceive(contextEnv.frontmostAppUpdates) { appInfo in
                 let appName = appInfo.name
                 let bundleID = appInfo.bundleID
 
@@ -979,7 +977,13 @@ extension LauncherView {
                 showMediaLayer = false
                 aiMode.isActive = false
                 showContextInDock = true
-                globalContextActivation = nil
+                // Never tear down a launch-time Selection Scope: the open sequence fires this
+                // notification twice while the AX selection read is still in flight.
+                if !(globalContextActivationHasFrozenPayload
+                    && Date() < launchSelectionScopeGraceUntil)
+                {
+                    globalContextActivation = nil
+                }
                 setFrontmostAppContextOnly(reason: "activate context dock")
                 refreshLiveSelectionIntoDockContext()
             }
@@ -1076,6 +1080,11 @@ extension LauncherView {
 
         let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
         globalContextActivation = nil
+        // The hotkey open posts .activateContextDock twice (immediately, then +0.05s), and each
+        // nils the activation. Selection Scope is established asynchronously once the AX read
+        // lands, so without this grace those posts race it away. Inside the window, a frozen
+        // selection payload wins; after it, .activateContextDock behaves normally.
+        launchSelectionScopeGraceUntil = Date().addingTimeInterval(0.6)
 
         // Reset transient UI state unconditionally on every open
         aiMode.isActive = false
@@ -1111,6 +1120,12 @@ extension LauncherView {
                     if !self.contextDockIsFrontmostApplication {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
+                    // Launching WITH files/text already selected opens directly in Selection
+                    // Scope: freeze the payload into the activation (that's what turns the scope
+                    // on). Selecting something while the dock is already visible — or a selection
+                    // the user dismissed — only offers the trailing button and must never hijack
+                    // the surface; neither path runs through this open handler.
+                    self.activateLaunchTimeSelectionScopeIfNeeded()
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)
 
@@ -1121,6 +1136,32 @@ extension LauncherView {
         syncL2DockSession(force: true)
         scheduleBackgroundScanRunningAppMenusAfterOpen()
 
+    }
+
+    /// Launch-time Selection Scope: if the user had files/text selected when they opened the
+    /// dock, enter Selection Scope directly by freezing that payload into the activation.
+    /// Called only from the window-open handler — a selection made while the dock is already
+    /// visible keeps the trailing-button behaviour instead. Dismissed selections are filtered
+    /// out by currentSelectionActivationSnapshot, so exiting the scope doesn't re-enter it.
+    func activateLaunchTimeSelectionScopeIfNeeded() {
+        // Don't fight a scope the user already established this session.
+        guard !globalContextActivationHasFrozenPayload,
+            l2.targetApp == nil,
+            globalInlineAppScope == nil,
+            !l2.chatArmed, !l2.showChatPopover,
+            searchState.activeSmartQueryKey == nil,
+            searchState.contextApp == nil,
+            !showMediaLayer,
+            !aiMode.isActive,
+            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let snapshot = currentSelectionActivationSnapshot(refresh: false)
+        else { return }
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            globalContextActivation = snapshot
+            showContextInDock = true
+            isSearchBarExpanded = true
+        }
+        requestWindowSizeUpdate(reason: .modeChanged)
     }
 
     func scheduleBackgroundScanRunningAppMenusAfterOpen() {

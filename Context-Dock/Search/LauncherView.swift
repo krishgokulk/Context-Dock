@@ -122,6 +122,9 @@ struct LauncherView: View {
     @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""
+    /// Grace window right after a hotkey open during which a launch-time Selection Scope
+    /// (frozen payload) survives the `.activateContextDock` posts the open sequence fires.
+    @State var launchSelectionScopeGraceUntil: Date = .distantPast
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     @StateObject var launcherViewModel = LauncherViewModel()
