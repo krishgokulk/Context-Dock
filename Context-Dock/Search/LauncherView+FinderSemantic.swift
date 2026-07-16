@@ -674,9 +674,17 @@ extension LauncherView {
         if isGlobalContextActive {
             return explicitFinderScope
         }
-        let isFinderContext = frontmost.bundleID == finderBundleId
-            || axContext.bundleId == finderBundleId
-            || explicitFinderScope
+        // A stale axContext left over from a prior Finder session must NOT force desktop
+        // file mode once the frontmost app has clearly moved to a different app — that showed
+        // Finder "Files & Folders" under a Calendar chip. When the current frontmost is a known
+        // non-Finder app, only an EXPLICIT Finder scope counts as Finder context.
+        let frontmostIsOtherApp =
+            !frontmost.bundleID.isEmpty && frontmost.bundleID != finderBundleId
+        let isFinderContext =
+            explicitFinderScope
+            || (!frontmostIsOtherApp
+                && (frontmost.bundleID == finderBundleId
+                    || axContext.bundleId == finderBundleId))
         // In Context Dock, desktop file-search is ONLY for the no-window state (desktop
         // showing). When a Finder window is frontmost — even with an explicit Finder scope —
         // show that window's menus + the "+" current-folder affordance instead of desktop
