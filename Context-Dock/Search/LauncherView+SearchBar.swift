@@ -2974,7 +2974,14 @@ extension LauncherView {
                     for: trimmed, runningOnly: dockOnlyMode
                 )
             }
-            if allowMenuOrCrossAppMatching, let target = l2.targetApp, !trimmed.isEmpty {
+            // Auto-eject an app scope when the user types a DIFFERENT app's name (so they can
+            // re-scope it). Must NOT apply to the Finder scope: that scope is desktop FILE
+            // search, where a filename that happens to alias an app ("screenshot" → Screenshot.app)
+            // is a file query, not a request to leave for that app. Ejecting there leaked Finder
+            // scope into pure global app search.
+            if allowMenuOrCrossAppMatching, let target = l2.targetApp, !trimmed.isEmpty,
+                target.bundleId != "com.apple.finder"
+            {
                 if let otherTarget = L2AppActionRouter.shared.appScopeTarget(for: trimmed.lowercased()),
                     otherTarget.bundleId != target.bundleId
                 {

@@ -272,3 +272,7 @@ Swift: +0 added · ~0 modified · -0 deleted
 ## 2026-07-16 08:52 · `7993d976` · `codex-context-dock-polish-fixes`
 **Fixed the Finder Global Context scope leak. What changed: Finder scoped from Global Context now uses the Finder desktop files/folders path instead of Finder menu commands. Scoped Finder menu navigation is blocked when isFinderDesktopOnlyMode is active. The unified dock row now treats Finder scope as file/folder mode, so it should behave like the working desktop Context Dock flow. Touched: [LauncherView+L2UnifiedDockRow.swift](/Users/gokulakannan/Developer/Context-Dock/Context-Dock/Search/LauncherView+L2UnifiedDockRow.swift) [LauncherView+GlobalContextActions.swift](/Users/gokulakannan/Developer/Context-Dock/Context-Dock/Search/LauncherView+GlobalContextActions.swift) Verified with ./scripts/dev-run.sh; build succeeded and relaunched the debug app. Still dirty from existing work: LauncherView+ContextDockPills.swift LauncherView.swift plus the two files I changed above.**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-16 15:27 · `cc7004c7` · `codex-context-dock-polish-fixes`
+**running app capsule fixing. partial**
+Swift: +0 added · ~9 modified · -0 deleted

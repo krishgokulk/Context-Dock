@@ -617,15 +617,30 @@ extension LauncherView {
         // Spotlight-style default: highlight the first action pill while typing when nothing is
         // explicitly focused/hovered. Render-only — l2.focusedPillIndex stays nil so Enter keeps
         // its context-dock semantics and the input never collapses to pill-nav mode.
+        // Running-app menu scope renders through the grouped list, so its row `index`
+        // (groupBase + pillIdx) never equals firstSelectableDockPillIndex, which is computed
+        // from contextDockViewModel.visiblePills (empty in scoped-menu mode). Match the first
+        // scoped-menu pill by IDENTITY instead — otherwise the auto-selected first row loses
+        // isActive and its trailing shortcut/⏎ execute chip never renders.
+        let isRunningAppMenuScopeDefaultFirstRow: Bool = {
+            guard isActiveGlobalRunningAppMenuScope(),
+                l2.focusedPillIndex == nil,
+                listViewHoveredIndex == nil
+            else { return false }
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let menus = visibleGlobalGroupedListNavigationState(for: q).menuPills
+            return menus.first(where: { !$0.isSeparator })?.id == pill.id
+        }()
         let isDefaultFirstRow =
-            l2.focusedPillIndex == nil
-            && listViewHoveredIndex == nil
-            && index == firstSelectableDockPillIndex
-            && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            // When the global app list already shows a default-first row (apps render
-            // above these menu rows), it owns the selection — don't ALSO highlight the
-            // first menu row, or two rows show the focus ring at once.
-            && !globalAppListOwnsDefaultFirstSelection
+            (l2.focusedPillIndex == nil
+                && listViewHoveredIndex == nil
+                && index == firstSelectableDockPillIndex
+                && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                // When the global app list already shows a default-first row (apps render
+                // above these menu rows), it owns the selection — don't ALSO highlight the
+                // first menu row, or two rows show the focus ring at once.
+                && !globalAppListOwnsDefaultFirstSelection)
+            || isRunningAppMenuScopeDefaultFirstRow
         // Keyboard focus by IDENTITY, not row index: the keyboard navigates the raw
         // pill array while this list renders a re-clustered copy — index equality
         // diverges the moment clustering reorders, breaking highlight + autoscroll.

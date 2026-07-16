@@ -2240,7 +2240,14 @@ struct LauncherView: View {
         // global-context filter. Restrict to the pre-indexed Finder desktop pills and
         // stop — no menu fallback in pure file search.
         if isFinderDesktopOnlyMode {
-            let pools = [cachedDockPills, finderDesktopIndexedPills, finderDesktopRecentPills]
+            // finderDesktopSearchPills first — those are the LIVE Spotlight results the user
+            // is looking at while typing. Omitting them meant a prefix-matching file
+            // ("Context" → "Context-Dock.xcodeproj") never produced a ghost, since the match
+            // lived only in the live-search pool, not the pre-indexed one.
+            let pools = [
+                finderDesktopSearchPills, cachedDockPills,
+                finderDesktopIndexedPills, finderDesktopRecentPills,
+            ]
             for pool in pools {
                 if let match = pool.first(where: {
                     !$0.isSeparator
