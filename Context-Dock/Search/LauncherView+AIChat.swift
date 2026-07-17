@@ -1416,6 +1416,7 @@ extension LauncherView {
 
         aiMode.isLoading = true
         aiMode.currentTask?.cancel()
+        let providerSelection = AIProviderSelectionResolver.current(settings: settings)
 
         // Every provider, including on-device, uses the same context-aware router pipeline.
         aiMode.currentTask = Task {
@@ -1423,7 +1424,8 @@ extension LauncherView {
                 let response: String
                 response = try await sendToAIProvider(
                     query: query,
-                    attachments: pendingAttachments
+                    attachments: pendingAttachments,
+                    providerSelection: providerSelection
                 )
                 let launches = self.referencedAppLaunches(for: query)
                 // SHARE_VIA directive → send the AI result (+ any selected files) through the
@@ -3810,7 +3812,13 @@ extension LauncherView {
         return launches
     }
 
-    func sendToAIProvider(query: String, attachments: [URL] = []) async throws -> String {
+    func sendToAIProvider(
+        query: String,
+        attachments: [URL] = [],
+        providerSelection capturedSelection: AIProviderSelection? = nil
+    ) async throws -> String {
+        let providerSelection = capturedSelection
+            ?? AIProviderSelectionResolver.current(settings: settings)
         // Build context from previous messages (uses aiMode.messages for global AI mode)
         let history = aiMode.messages.map { msg in
             ChatMessage(
@@ -3905,7 +3913,8 @@ extension LauncherView {
         if let mcpAnswer = try await directGeneralAppMCPAnswer(
             query: query,
             history: history,
-            baseSystemPrompt: sysContent
+            baseSystemPrompt: sysContent,
+            providerSelection: providerSelection
         ) {
             return mcpAnswer
         }
@@ -3954,7 +3963,7 @@ extension LauncherView {
         // histories. Uses the JSON tool-call protocol via plain sendPrepared, so it works for
         // EVERY provider including on-device Apple Intelligence (which has no native function
         // calling). Attachments stay on the plain path so vision payloads keep flowing.
-        let toolProvider = settings.selectedAIProvider
+        let toolProvider = providerSelection.effectiveProvider
         let hasSelectionText = aiMode.selectionText?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let shouldDiscoverAppTools = intentResolution.kind != .conversation
@@ -4046,7 +4055,7 @@ extension LauncherView {
         )
         return try await AIProviderRouter.shared.sendPrepared(
             request: request,
-            provider: settings.selectedAIProvider,
+            provider: providerSelection.effectiveProvider,
             contextPrompt: sysContent
         )
     }
@@ -4054,7 +4063,8 @@ extension LauncherView {
     func directGeneralAppMCPAnswer(
         query: String,
         history: [ChatMessage],
-        baseSystemPrompt: String
+        baseSystemPrompt: String,
+        providerSelection: AIProviderSelection
     ) async throws -> String? {
         if let notesAnswer = try await directGeneralNotesMCPAnswer(query: query) {
             await MainActor.run { aiMode.pendingToolChips = ["DoraX Notes MCP"] }
@@ -4104,7 +4114,7 @@ extension LauncherView {
         )
         return try await AIProviderRouter.shared.sendPrepared(
             request: request,
-            provider: settings.selectedAIProvider,
+            provider: providerSelection.effectiveProvider,
             contextPrompt: prompt
         )
     }
@@ -4350,6 +4360,7 @@ extension LauncherView {
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
         async throws -> String
     {
+        let providerSelection = AIProviderSelectionResolver.current(settings: settings)
         // Build context from provided message history (for L2, uses l2.chatMessages)
         var context = messageHistory.map { msg in
             ["role": msg.role == .user ? "user" : "assistant", "content": msg.content]
@@ -4421,7 +4432,7 @@ extension LauncherView {
         let safariCommandsAvailable =
             frontmost.bundleID == "com.apple.Safari"
             || l2.targetApp?.bundleId == "com.apple.Safari"
-        let isCloudProvider = settings.selectedAIProvider != .onDevice
+        let isCloudProvider = providerSelection.effectiveProvider != .onDevice
         if safariCommandsAvailable && isCloudProvider {
             sysL2 += "\n\n" + SafariCommandBridge.compactSystemPromptBlock
         }
@@ -4439,17 +4450,32 @@ extension LauncherView {
             }
         }
 
-        return try await sendToProvider(query: query, context: context, imageFiles: imageFiles)
+        return try await sendToProvider(
+            query: query,
+            context: context,
+            imageFiles: imageFiles,
+            providerSelection: providerSelection
+        )
     }
 
     // Direct provider sender that accepts pre-built context (used by L2 for custom prompts)
     // Common provider router
     func sendToProvider(query: String, context: [[String: String]]) async throws -> String {
-        return try await sendToProvider(query: query, context: context, imageFiles: [])
+        return try await sendToProvider(
+            query: query,
+            context: context,
+            imageFiles: [],
+            providerSelection: AIProviderSelectionResolver.current(settings: settings)
+        )
     }
 
     // Common provider router with image support
-    func sendToProvider(query: String, context: [[String: String]], imageFiles: [URL])
+    func sendToProvider(
+        query: String,
+        context: [[String: String]],
+        imageFiles: [URL],
+        providerSelection: AIProviderSelection
+    )
         async throws -> String
     {
         var systemPrompt = context
@@ -4512,7 +4538,7 @@ extension LauncherView {
             )
         let response = try await AIProviderRouter.shared.sendPrepared(
             request: request,
-            provider: settings.selectedAIProvider,
+            provider: providerSelection.effectiveProvider,
             contextPrompt: systemPrompt
         )
         guard capabilityPlanningRequested else { return response }
@@ -4530,7 +4556,7 @@ extension LauncherView {
                 context: isGlobalQueryModeActive
                     ? effectiveConversationUserContext
                     : currentScopedConversationContext(),
-                provider: settings.selectedAIProvider
+                provider: providerSelection.effectiveProvider
             )
         } catch AICapabilityError.invalidPlan {
             return response

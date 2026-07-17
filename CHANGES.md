@@ -316,3 +316,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-16 23:00 · `8ae80708` · `codex-context-dock-polish-fixes`
 **Keep running-app capsule with a selection; exiting Selection Scope returns to its icon**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-17 13:08 · `98e909f8` · `codex-context-dock-polish-fixes`
+**fix(context): stabilize selection scope**
+Swift: +0 added · ~9 modified · -0 deleted

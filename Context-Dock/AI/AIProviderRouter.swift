@@ -57,6 +57,7 @@ struct AIRequest {
     var liveContext: AIContextSnapshot? = nil
     var includesWorkflowCapabilities = false
     var additionalContextPrompt = ""
+    var providerSelection: AIProviderSelection? = nil
 }
 
 typealias AIContextSnapshot = ContextSnapshot
@@ -459,22 +460,19 @@ final class AIProviderRouter {
 
     func send(_ request: AIRequest, provider providerOverride: AIProvider? = nil) async throws -> String {
         let profile = AIProfileStore.shared.profile(for: request)
-        let provider = providerOverride ?? AIProfileRouter.provider(for: profile, settings: settings)
+        // The provider visible in the UI is authoritative. Profiles decorate prompts and
+        // constrain tools, but must not silently replace the user's selected model.
+        let selection = providerOverride.map(AIProviderSelection.explicit)
+            ?? request.providerSelection
+            ?? AIProviderSelectionResolver.current(settings: settings)
+        let provider = selection.effectiveProvider
         var contextPrompt = contextBuilder.build(request: request)
         contextPrompt = AIProfileRouter.decoratedContextPrompt(contextPrompt, profile: profile, request: request)
-        do {
-            return try await sendPrepared(request: request, provider: provider, contextPrompt: contextPrompt)
-        } catch {
-            if provider == .onDevice,
-               providerOverride == nil,
-               AIProfileRouter.shouldCloudFallback(error: error, profile: profile, settings: settings)
-            {
-                let fallback = settings.selectedAIProvider
-                guard fallback != .onDevice else { throw error }
-                return try await sendPrepared(request: request, provider: fallback, contextPrompt: contextPrompt)
-            }
-            throw error
-        }
+        return try await sendPrepared(
+            request: request,
+            provider: provider,
+            contextPrompt: contextPrompt
+        )
     }
 
     func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt: String) async throws -> String {
