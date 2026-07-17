@@ -13,7 +13,10 @@ import Foundation
 
 enum AdapterStarterActions {
 
-    private static let seededKey = "adapterStarterActionsSeededBundles"
+    /// Bump when bundled packs gain actions. Existing adapters then receive the
+    /// new pack once, while later user deletions remain respected.
+    private static let catalogVersion = 3
+    private static var seededKey: String { "adapterStarterActionsSeededBundles.v\(catalogVersion)" }
 
     /// Bundle ids that have already been seeded once — never re-seed these,
     /// so a user deleting the starter action doesn't get it back on relaunch.
@@ -34,6 +37,12 @@ enum AdapterStarterActions {
     static func starters(for bundleId: String, appName: String) -> [AdapterAction] {
         let curated = curatedActions(for: bundleId)
         return curated.isEmpty ? [genericAssistAction(appName: appName)] : curated
+    }
+
+    static func missingStarters(for adapter: AppAdapter) -> [AdapterAction] {
+        let existingIDs = Set(adapter.actions.map(\.id))
+        return starters(for: adapter.bundleId, appName: adapter.appName)
+            .filter { !existingIDs.contains($0.id) }
     }
 
     // MARK: - Generic fallback
@@ -119,6 +128,93 @@ enum AdapterStarterActions {
                     accentColor: "yellow"
                 )
             ]
+        case "com.apple.mail":
+            return [
+                AdapterAction(
+                    id: "starter.mail.newMessage", name: "New Message",
+                    icon: "square.and.pencil", description: "Compose a new email",
+                    triggers: ["new", "compose", "email", "mail"], type: .menubar,
+                    menuPath: ["File", "New Message"], accentColor: "blue"
+                ),
+                AdapterAction(
+                    id: "starter.mail.check", name: "Get New Mail",
+                    icon: "arrow.clockwise", description: "Check all accounts for new mail",
+                    triggers: ["check", "refresh", "new mail"], type: .menubar,
+                    menuPath: ["Mailbox", "Get All New Mail"], accentColor: "blue"
+                ),
+            ]
+        case "com.apple.MobileSMS":
+            return [
+                AdapterAction(
+                    id: "starter.messages.new", name: "New Message",
+                    icon: "square.and.pencil", description: "Start a new conversation",
+                    triggers: ["new", "message", "compose"], type: .menubar,
+                    menuPath: ["File", "New Message"], accentColor: "green"
+                )
+            ]
+        case "com.apple.Maps":
+            return [
+                AdapterAction(
+                    id: "starter.maps.search", name: "Search Maps",
+                    icon: "map", description: "Search Apple Maps",
+                    triggers: ["map", "search", "place", "directions"], type: .urlScheme,
+                    urlScheme: "https://maps.apple.com/?q={{query}}", accentColor: "green"
+                )
+            ]
+        case "com.apple.Safari":
+            return [
+                AdapterAction(
+                    id: "starter.safari.newTab", name: "New Tab",
+                    icon: "plus.square", description: "Open a new Safari tab",
+                    triggers: ["new", "tab"], type: .menubar,
+                    menuPath: ["File", "New Tab"], accentColor: "blue"
+                ),
+                AdapterAction(
+                    id: "starter.safari.reader", name: "Show Reader",
+                    icon: "doc.plaintext", description: "Show Reader for the current page",
+                    triggers: ["reader", "read", "article"], type: .menubar,
+                    menuPath: ["View", "Show Reader"], accentColor: "blue"
+                ),
+            ]
+        case "com.apple.Preview":
+            return [
+                AdapterAction(
+                    id: "starter.preview.inspector", name: "Show Inspector",
+                    icon: "info.circle", description: "Show information for the open document",
+                    triggers: ["info", "inspector", "metadata"], type: .menubar,
+                    menuPath: ["Tools", "Show Inspector"], accentColor: "blue"
+                )
+            ]
+        case "com.apple.TextEdit":
+            return [
+                AdapterAction(
+                    id: "starter.textedit.new", name: "New Document",
+                    icon: "doc.badge.plus", description: "Create a new text document",
+                    triggers: ["new", "document", "text"], type: .menubar,
+                    menuPath: ["File", "New"], accentColor: "gray"
+                )
+            ]
+        case "com.apple.dt.Xcode":
+            return [
+                AdapterAction(
+                    id: "starter.xcode.build", name: "Build",
+                    icon: "hammer", description: "Build the active Xcode scheme",
+                    triggers: ["build", "compile"], type: .menubar,
+                    menuPath: ["Product", "Build"], accentColor: "blue"
+                ),
+                AdapterAction(
+                    id: "starter.xcode.test", name: "Test",
+                    icon: "checkmark.diamond", description: "Test the active Xcode scheme",
+                    triggers: ["test", "tests"], type: .menubar,
+                    menuPath: ["Product", "Test"], accentColor: "blue"
+                ),
+                AdapterAction(
+                    id: "starter.xcode.run", name: "Run",
+                    icon: "play", description: "Run the active Xcode scheme",
+                    triggers: ["run", "launch"], type: .menubar,
+                    menuPath: ["Product", "Run"], accentColor: "green"
+                ),
+            ]
         case "com.apple.Automator":
             return [
                 AdapterAction(
@@ -156,7 +252,41 @@ enum AdapterStarterActions {
                     type: .menubar,
                     menuPath: ["File", "New Window"],
                     accentColor: "blue"
+                ),
+                AdapterAction(
+                    id: "starter.vscode.mcpDocs", name: "VS Code MCP Setup",
+                    icon: "server.rack", description: "Open the official VS Code MCP guide",
+                    triggers: ["mcp", "tools", "setup", "docs"], type: .urlScheme,
+                    urlScheme: "https://code.visualstudio.com/docs/agent-customization/mcp-servers",
+                    accentColor: "blue"
                 )
+            ]
+        case "com.openai.codex":
+            return [
+                AdapterAction(
+                    id: "starter.codex.docs", name: "Codex Documentation",
+                    icon: "book", description: "Open the official Codex documentation",
+                    triggers: ["codex", "docs", "help", "cli"], type: .urlScheme,
+                    urlScheme: "https://developers.openai.com/codex/",
+                    accentColor: "green"
+                )
+            ]
+        case "com.anthropic.claudefordesktop":
+            return [
+                AdapterAction(
+                    id: "starter.claude.codeDocs", name: "Claude Code CLI Reference",
+                    icon: "book", description: "Open Anthropic's official Claude Code CLI reference",
+                    triggers: ["claude", "code", "cli", "docs"], type: .urlScheme,
+                    urlScheme: "https://docs.anthropic.com/en/docs/claude-code/cli-usage",
+                    accentColor: "orange"
+                ),
+                AdapterAction(
+                    id: "starter.claude.mcpDocs", name: "Claude MCP Setup",
+                    icon: "server.rack", description: "Open Anthropic's official MCP guide",
+                    triggers: ["claude", "mcp", "tools", "setup"], type: .urlScheme,
+                    urlScheme: "https://docs.anthropic.com/en/docs/mcp",
+                    accentColor: "orange"
+                ),
             ]
         case "com.charliemonroe.Downie-4":
             return [

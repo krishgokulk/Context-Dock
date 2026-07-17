@@ -124,32 +124,78 @@ enum AdapterIntegrationSeeder {
         Spec(
             appName: "Visual Studio Code", icon: "chevron.left.forwardslash.chevron.right",
             bundleIds: ["com.microsoft.VSCode"],
-            clis: [CLISpec(
-                name: "VS Code CLI",
-                candidates: [
-                    "code",
-                    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-                ],
-                description: "Open files, folders and diffs in VS Code",
-                keywords: ["vscode", "code", "editor"],
-                installHint: nil
-            )]
+            clis: [
+                CLISpec(
+                    name: "VS Code CLI",
+                    candidates: [
+                        "code",
+                        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+                    ],
+                    description: "Open files, folders and diffs in VS Code",
+                    keywords: ["vscode", "code", "editor"],
+                    installHint: nil
+                ),
+                gitCLI,
+            ]
+        ),
+        Spec(
+            appName: "Xcode", icon: "hammer", bundleIds: ["com.apple.dt.Xcode"],
+            clis: [
+                CLISpec(
+                    name: "Xcode Build", candidates: ["xcodebuild"],
+                    description: "Build, test, archive and inspect Xcode projects and workspaces",
+                    keywords: ["xcode", "build", "test", "archive", "scheme"],
+                    installHint: nil
+                ),
+                CLISpec(
+                    name: "Xcode Tool Runner", candidates: ["xcrun"],
+                    description: "Locate and run Xcode developer tools such as simctl and devicectl",
+                    keywords: ["xcode", "simulator", "device", "developer tools"],
+                    installHint: nil
+                ),
+                CLISpec(
+                    name: "Xcode Editor", candidates: ["xed"],
+                    description: "Open files and projects in Xcode",
+                    keywords: ["xcode", "open", "editor", "file", "project"],
+                    installHint: nil
+                ),
+                gitCLI,
+            ]
+        ),
+        Spec(
+            appName: "GitHub Copilot for Xcode", icon: "sparkles",
+            bundleIds: ["com.github.CopilotForXcode"],
+            clis: [gitCLI]
+        ),
+        Spec(
+            appName: "Terminal", icon: "terminal", bundleIds: ["com.apple.Terminal"],
+            clis: [gitCLI]
         ),
         Spec(
             appName: "GitHub Desktop", icon: "arrow.triangle.branch",
             bundleIds: ["com.github.GitHubClient"],
-            clis: [CLISpec(
-                name: "GitHub CLI", candidates: ["gh"],
-                description: "Issues, PRs, repos and workflows from the terminal",
-                keywords: ["github", "gh", "git"],
-                installHint: "brew install gh"
-            )]
+            clis: [
+                CLISpec(
+                    name: "GitHub CLI", candidates: ["gh"],
+                    description: "Issues, PRs, repos and workflows from the terminal",
+                    keywords: ["github", "gh", "git"],
+                    installHint: "brew install gh"
+                ),
+                gitCLI,
+            ]
         ),
     ]
 
+    private static let gitCLI = CLISpec(
+        name: "Git", candidates: ["git"],
+        description: "Inspect repository status, history, branches and changes",
+        keywords: ["git", "repository", "status", "diff", "branch", "commit"],
+        installHint: nil
+    )
+
     // MARK: - Entry point
 
-    private static let seededKey = "adapterIntegrationSeededBundles"
+    private static let seededKey = "adapterIntegrationSeededBundles.v2"
     private static var didRunThisLaunch = false
 
     /// Seed integrations for all catalog apps that are installed. Creates missing
@@ -162,10 +208,16 @@ enum AdapterIntegrationSeeder {
         var changed = false
 
         for spec in catalog {
+            // Enrich adapters the user already added even when the application is not
+            // discoverable through Launch Services (web apps and renamed apps commonly
+            // behave this way). Otherwise create a pack only for an installed app.
+            let existingIds = spec.bundleIds.filter { bundleId in
+                AppAdapterManager.shared.adapters.contains { $0.bundleId == bundleId }
+            }
             let installedIds = spec.bundleIds.filter {
                 NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil
             }
-            guard let primaryId = installedIds.first else { continue }
+            guard let primaryId = (existingIds + installedIds).first else { continue }
             guard !seeded.contains(primaryId) else { continue }
 
             if AppAdapterManager.shared.adapters.first(where: { $0.bundleId == primaryId }) == nil {

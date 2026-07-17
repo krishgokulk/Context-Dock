@@ -320,3 +320,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-17 13:08 · `98e909f8` · `codex-context-dock-polish-fixes`
 **fix(context): stabilize selection scope**
 Swift: +0 added · ~9 modified · -0 deleted
+
+## 2026-07-17 14:10 · `e6fd3535` · `codex-context-dock-polish-fixes`
+**refactor(ai): unify chat orchestration**
+Swift: +2 added · ~7 modified · -1 deleted

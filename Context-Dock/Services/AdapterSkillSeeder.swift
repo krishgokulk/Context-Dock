@@ -16,7 +16,7 @@ import Foundation
 @MainActor
 enum AdapterSkillSeeder {
 
-    private static let seededKey = "adapterSkillsSeededBundles"
+    private static let seededKey = "adapterSkillsSeededBundles.v2"
     private static var didRunThisLaunch = false
 
     static func seedIfNeeded() {
@@ -30,11 +30,11 @@ enum AdapterSkillSeeder {
             let bundleId = adapter.bundleId
             guard !bundleId.isEmpty,
                 !bundleId.hasPrefix("scope://"),
-                !seeded.contains(bundleId),
-                SkillStore.shared.skills(for: bundleId).isEmpty
+                !seeded.contains(bundleId)
             else { continue }
 
-            for skill in starterSkills(for: adapter) {
+            let existingIDs = Set(SkillStore.shared.skills(for: bundleId).map(\.id))
+            for skill in starterSkills(for: adapter) where !existingIDs.contains(skill.id) {
                 SkillStore.shared.upsert(skill)
             }
             seeded.insert(bundleId)
@@ -136,6 +136,53 @@ enum AdapterSkillSeeder {
             )
         }
         switch adapter.bundleId {
+        case "com.openai.codex":
+            return make(
+                "Codex Workspace Workflow",
+                "Use Codex CLI only for workspace and coding tasks",
+                """
+                Use the linked codex CLI for repository or coding work, not to infer the visible \
+                ChatGPT conversation. Before running it, require a workspace path from live context \
+                or the user. For questions about the current ChatGPT window, use Accessibility context \
+                and state honestly when the conversation contents are unavailable. Never treat the app \
+                window title as proof of the user's current task.
+                """
+            )
+        case "com.anthropic.claudefordesktop":
+            return make(
+                "Claude Desktop and Code Workflow",
+                "Separate desktop context from Claude Code execution",
+                """
+                Use Claude Desktop live Accessibility context for questions about the visible chat. \
+                Use the linked claude CLI only for explicit code, repository, session, or prompt tasks. \
+                Prefer non-interactive `claude -p` for a bounded query and preserve Claude Code's own \
+                permission checks. A linked CLI does not grant access to Claude Desktop chat history.
+                """
+            )
+        case "com.apple.dt.Xcode":
+            return make(
+                "Xcode Build and Test Workflow",
+                "Inspect the project before invoking Xcode tools",
+                """
+                Use live Xcode context for the selected file, editor and issue text. Use xed only to \
+                open or reveal files. Use xcodebuild for build/test/archive requests after identifying \
+                the project or workspace and scheme; never guess them. Use xcrun for simulator/device \
+                tools. Read-only git status, log and diff are safe; commits, pushes and destructive \
+                repository operations require explicit approval.
+                """
+            )
+        case "com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders":
+            return make(
+                "Apple App Native Workflow",
+                "Prefer Context Dock's built-in Apple data tools",
+                """
+                This Apple app ships with native Context Dock capabilities. Prefer the built-in \
+                app reader and typed Apple data actions over shell commands or third-party MCP \
+                servers. Reads may run directly. Creating, editing, sending or deleting data must \
+                show a clear approval proposal first. Use linked Shortcuts only when the user has \
+                explicitly configured one for a workflow the native tools do not cover.
+                """
+            )
         case "io.tailscale.ipn.macsys", "io.tailscale.ipn.macos":
             return make(
                 "Tailnet Diagnosis Flow",
