@@ -324,3 +324,7 @@ Swift: +0 added · ~9 modified · -0 deleted
 ## 2026-07-17 14:10 · `e6fd3535` · `codex-context-dock-polish-fixes`
 **refactor(ai): unify chat orchestration**
 Swift: +2 added · ~7 modified · -1 deleted
+
+## 2026-07-17 14:17 · `0d67dcd2` · `codex-context-dock-polish-fixes`
+**feat(adapters): add versioned app packs**
+Swift: +0 added · ~4 modified · -0 deleted

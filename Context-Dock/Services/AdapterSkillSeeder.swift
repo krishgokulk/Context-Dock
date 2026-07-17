@@ -16,7 +16,7 @@ import Foundation
 @MainActor
 enum AdapterSkillSeeder {
 
-    private static let seededKey = "adapterSkillsSeededBundles.v2"
+    private static let seededKey = "adapterSkillsSeededBundles.v3"
     private static var didRunThisLaunch = false
 
     static func seedIfNeeded() {
@@ -48,17 +48,20 @@ enum AdapterSkillSeeder {
         migrateSeededBasicsSkills()
     }
 
-    /// v1.0 → v1.1: seeded "Assistant Basics" skills gain the app-awareness rule
-    /// (never claim you can't see which app is open). Only touches untouched
-    /// seeded skills — user-edited versions keep their edits.
+    /// Upgrade only the known generated text. A user-edited seeded skill is left alone.
     private static func migrateSeededBasicsSkills() {
         for skill in SkillStore.shared.skills
-        where skill.id.hasPrefix("seed.") && skill.id.hasSuffix(".basics") && skill.version == "1.0" {
+        where skill.id.hasPrefix("seed.") && skill.id.hasSuffix(".basics") {
             guard let adapter = AppAdapterManager.shared.adapters.first(where: {
                 $0.bundleId == skill.adapterBundleId
             }) else { continue }
+            let isGeneratedV10 = skill.version == "1.0"
+            let isGeneratedV11 = skill.version == "1.1"
+                && (skill.instructions == basicsInstructionsV11(appName: adapter.appName)
+                    || isLegacyGeneratedBasics(skill.instructions))
+            guard isGeneratedV10 || isGeneratedV11 else { continue }
             var updated = skill
-            updated.version = "1.1"
+            updated.version = "1.2"
             updated.instructions = basicsInstructions(appName: adapter.appName)
             SkillStore.shared.upsert(updated)
         }
@@ -68,12 +71,39 @@ enum AdapterSkillSeeder {
         """
         You are assisting inside \(appName) — you always know this is the app in use; \
         never say you cannot see which app is open. Ground every answer in the live \
+        app context (window title, selection, current document/page) and never claim more \
+        than that evidence proves. Inspect this adapter's complete capability pack for every \
+        request: built-in readers, MCP, linked CLI, actions, Shortcuts, APIs, and browser \
+        extensions. Choose the single best capability instead of giving generic instructions. \
+        When a linked, installed CLI can directly retrieve or perform what the user requested, \
+        request one exact executable terminal_call with a concrete command and purpose; never \
+        invent paths, URLs, arguments, or placeholder values. Read-only status/list/show/help \
+        commands may be proposed immediately. Any command that writes, deletes, installs, sends, \
+        publishes, changes accounts, or affects remote state must wait for explicit approval. \
+        Skills guide tool selection but never grant permission by themselves. If no linked tool \
+        fits, say what is knowable now and identify the missing capability in Settings → App \
+        Adapters → \(appName).
+        """
+    }
+
+    private static func basicsInstructionsV11(appName: String) -> String {
+        """
+        You are assisting inside \(appName) — you always know this is the app in use; \
+        never say you cannot see which app is open. Ground every answer in the live \
         app context (window title, selection, current document/page) before answering. \
         Prefer this adapter's linked CLI tools, MCP tools and actions over generic advice — \
         choose the single best tool for the request. When you run a command, state what \
         it does in one short sentence first. If no linked tool fits, say what you CAN do \
         and suggest linking one in Settings → App Adapters → \(appName).
         """
+    }
+
+    private static func isLegacyGeneratedBasics(_ instructions: String) -> Bool {
+        instructions.hasPrefix("You are assisting inside ")
+            && instructions.contains("you always know this is the app in use")
+            && instructions.contains("Ground every answer in the live app context")
+            && instructions.contains("Prefer this adapter's linked CLI tools, MCP tools and actions")
+            && instructions.contains("If no linked tool fits, say what you CAN do")
     }
 
     // MARK: - Skill content
@@ -120,7 +150,7 @@ enum AdapterSkillSeeder {
                 name: "\(adapter.appName) Assistant Basics",
                 summary: "Starter skill — edit me to teach the AI your workflow",
                 instructions: basicsInstructions(appName: adapter.appName),
-                version: "1.1"
+                version: "1.2"
             ))
         }
 

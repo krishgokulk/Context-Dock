@@ -2897,7 +2897,7 @@ struct SkillEditorSheet: View {
                             .frame(minHeight: 200)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     }
-                    Label("Skills add reusable context to scoped AI chat for this app. They never run commands or grant permissions.",
+                    Label("Skills guide scoped chat to the right linked tool. They can request a CLI command, but never grant execution permission.",
                         systemImage: "info.circle")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
@@ -2954,6 +2954,105 @@ struct AutomationAdapterDetailView: View {
     @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = false
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
+    private var packActionItems: [String] {
+        currentAdapter.visibleActions.map { action in
+            let kind = action.type == .pageJS ? "Browser extension" : action.type.displayName
+            return "\(action.name) · \(kind)"
+        }
+    }
+
+    private var packToolItems: [String] {
+        var items = linkedCLITools.map {
+            "\($0.name) · \($0.command) · \($0.isInstalled ? "installed" : "not installed")"
+        }
+        items += skillStore.skills(for: currentAdapter.bundleId).map {
+            "\($0.name) · Skill v\($0.version)\($0.isEnabled ? "" : " · disabled")"
+        }
+        items += linkedShortcuts.map { "\($0.name) · Shortcut" }
+        items += apiStore.connections(for: currentAdapter.bundleId).map { "\($0.name) · API" }
+        items += linkedMCPServers.map { "\($0.name) · MCP (\($0.transport))" }
+        if hasBuiltInIntegration {
+            items.append("Context Dock native data tools · built in\(hasEnabledBuiltInIntegration ? " · enabled" : " · available")")
+        }
+        items += currentAdapter.contextReaders.map { "\($0.name) · Context reader (\($0.type))" }
+        return items
+    }
+
+    @ViewBuilder
+    private func packInventorySection(
+        _ title: String, icon: String, items: [String], emptyText: String
+    ) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 7) {
+                if items.isEmpty {
+                    Text(emptyText).foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                        Label(item, systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .font(.system(size: 10))
+            .padding(.top, 8)
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Text("\(items.count)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+            }
+        }
+    }
+
+    private var adapterPackInventory: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("COMPLETE ADAPTER PACK")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Everything scoped chat can inspect, select, or request for this app.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Text(currentAdapter.isBuiltIn ? "Built in" : "Installed")
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.teal.opacity(0.12), in: Capsule())
+                    .foregroundStyle(.teal)
+            }
+            packInventorySection(
+                "Actions and extensions", icon: "bolt.fill", items: packActionItems,
+                emptyText: "No actions or browser extensions in this pack."
+            )
+            Divider()
+            packInventorySection(
+                "Tools, skills and readers", icon: "shippingbox.fill", items: packToolItems,
+                emptyText: "No executable tools are linked; the app-aware skill still uses live context."
+            )
+            Divider()
+            Label(
+                "Read-only tools can be requested directly. Commands that write, delete, install, send, publish, or change remote state require approval.",
+                systemImage: "checkmark.shield"
+            )
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("View Actions") { detailTab = .actions }
+                Button("View Tools & Skills") { detailTab = .tools }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     /// Plugin-style summary for the Overview tab — feels alive even with no actions.
     @ViewBuilder
     private var adapterOverview: some View {
@@ -2974,6 +3073,7 @@ struct AutomationAdapterDetailView: View {
                     Text(a.bundleId).font(.system(size: 12, design: .monospaced))
                 }
             }
+            adapterPackInventory
             HStack(spacing: 8) {
                 Button(action: importAdapterPack) {
                     Label("Import Adapter…", systemImage: "square.and.arrow.down")
@@ -3872,7 +3972,7 @@ struct AutomationAdapterDetailView: View {
                     }
                     let skills = skillStore.skills(for: currentAdapter.bundleId)
                     if skills.isEmpty {
-                        Text("Skills are reusable instructions (prompts, workflows) that scoped chat uses for this app. They add context — they never run commands.")
+                        Text("Skills guide scoped chat toward linked actions, CLI, MCP, APIs, Shortcuts and extensions. They may request a command, but execution still follows approval policy.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .padding(12)
