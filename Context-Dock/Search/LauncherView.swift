@@ -125,6 +125,13 @@ struct LauncherView: View {
     /// Grace window right after a hotkey open during which a launch-time Selection Scope
     /// (frozen payload) survives the `.activateContextDock` posts the open sequence fires.
     @State var launchSelectionScopeGraceUntil: Date = .distantPast
+    /// The frozen selection that makes Selection Scope active. Deliberately INDEPENDENT of
+    /// globalContextActivation: selections come from the frontmost app, so the scope belongs to
+    /// whichever surface the user is on (Context Dock or Global Context). Storing it inside the
+    /// activation meant entering the scope forced Global Context — launching with a frontmost
+    /// selection jumped surfaces, and clicking the selection icon in Context Dock threw the user
+    /// out of it.
+    @State var selectionScopePayload: GlobalContextActivation?
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     @StateObject var launcherViewModel = LauncherViewModel()
@@ -209,13 +216,13 @@ struct LauncherView: View {
     // Clipboard monitoring for Global Context
     // Clipboard/global-selection state lives in GlobalContextViewModel.
     var isGlobalContextAutoActivated: Bool { globalContextActivation?.autoActivated ?? false }
-    var frozenSelectionText: String? { globalContextActivation?.frozenText }
-    var frozenSelectionFullText: String? { globalContextActivation?.frozenFullText }
-    var frozenSelectionIcon: String? { globalContextActivation?.frozenIcon }
-    var frozenSelectionSourceBundleId: String? { globalContextActivation?.sourceBundleId }
+    var frozenSelectionText: String? { selectionScopePayload?.frozenText }
+    var frozenSelectionFullText: String? { selectionScopePayload?.frozenFullText }
+    var frozenSelectionIcon: String? { selectionScopePayload?.frozenIcon }
+    var frozenSelectionSourceBundleId: String? { selectionScopePayload?.sourceBundleId }
     var frozenSelectionFileURLs: [URL] {
         canonicalExistingURLs(
-            (globalContextActivation?.frozenFilePaths ?? []).map { URL(fileURLWithPath: $0) }
+            (selectionScopePayload?.frozenFilePaths ?? []).map { URL(fileURLWithPath: $0) }
         )
     }
     // Automatic Finder selection suppression lives in GlobalContextViewModel.
@@ -450,11 +457,11 @@ struct LauncherView: View {
         activeSelection != nil || globalContextActivationHasFrozenPayload
     }
 
-    /// Launch-time Selection Scope freezes its payload into the activation
-    /// (not into activeSelection) — backspace-exit must recognize that too.
+    /// True while Selection Scope is active — i.e. a selection has been frozen into
+    /// selectionScopePayload. Surface-independent by design (see selectionScopePayload).
     var globalContextActivationHasFrozenPayload: Bool {
-        guard let activation = globalContextActivation else { return false }
-        return activation.frozenText?.isEmpty == false || !activation.frozenFilePaths.isEmpty
+        guard let payload = selectionScopePayload else { return false }
+        return payload.frozenText?.isEmpty == false || !payload.frozenFilePaths.isEmpty
     }
 
     var hasSelectionScopeSurface: Bool {
@@ -502,7 +509,7 @@ struct LauncherView: View {
 
         // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
         // an empty query — so it's visible the moment the launcher opens with a selection.
-        if isGlobalContextActive && hasSelectionScopeSurface { return true }
+        if hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
@@ -601,7 +608,7 @@ struct LauncherView: View {
     }
 
     func selectionScopedDockPills(_ pills: [DockPill]) -> [DockPill] {
-        guard isGlobalContextActive, hasSelectionScopeSurface else { return pills }
+        guard hasSelectionScopeSurface else { return pills }
         return pills.filter { pill in
             guard !pill.isSeparator else { return false }
             let badge = (pill.badge ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -643,7 +650,7 @@ struct LauncherView: View {
         else {
             return current
         }
-        if isGlobalContextActive && hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             return current
         }
         let preview = selectionScopedDockPills(contextDockPreviewPills(for: query))
@@ -1766,7 +1773,7 @@ struct LauncherView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
         guard isGlobalContextActive || l2.targetApp != nil else { return nil }
-        guard !(isGlobalContextActive && hasSelectionScopeSurface) else { return nil }
+        guard !hasSelectionScopeSurface else { return nil }
         if let target = L2AppActionRouter.shared.explicitAppTarget(for: q) {
             return target.actionQuery
         }
@@ -2310,7 +2317,7 @@ struct LauncherView: View {
         // Selection Scope: ghost completes the first visible selection action ("comp" →
         // "Compress"). The Global Context branch below only allows pills scoped to an explicit
         // l2.targetApp, which Selection Scope never has — so without this the ghost is always nil.
-        if isGlobalContextActive, hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             let pills = currentVisibleDockPills(for: lower).filter { !$0.isSeparator }
             if let first = pills.first,
                 first.name.lowercased().hasPrefix(lower),
@@ -2551,7 +2558,10 @@ struct LauncherView: View {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-            globalContextActivation = GlobalContextActivation(autoActivated: false)
+            // Drop ONLY the frozen selection. The surface (Context Dock or Global Context) is
+            // left exactly as it was — exiting the scope is not a surface change — and the live
+            // selection survives, so its icon parks back beside the capsule / "+".
+            selectionScopePayload = nil
             showContextInDock = true
             showMediaLayer = false
             aiMode.isActive = false
@@ -2560,7 +2570,6 @@ struct LauncherView: View {
             searchState.query = ""
             searchState.results = []
             searchState.selectedIndex = nil
-            l2.targetApp = nil
             l2.focusedPillIndex = nil
             focusedAppPillIndex = nil
         }

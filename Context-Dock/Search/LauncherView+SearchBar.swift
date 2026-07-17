@@ -9,7 +9,7 @@ extension LauncherView {
             && !isCompactSmartScope
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
-            && !(isGlobalContextActive && hasSelectionScopeSurface)
+            && !hasSelectionScopeSurface
             && (liveDockSelectionPreviewText != nil
                 || currentSelectionActivationSnapshot(refresh: false) != nil)
     }
@@ -209,11 +209,12 @@ extension LauncherView {
     }
 
     func openSelectionContextFromTrailingButton() {
-        let activation =
-            currentSelectionActivationSnapshot(refresh: true)
-            ?? GlobalContextActivation(autoActivated: false)
+        guard let payload = currentSelectionActivationSnapshot(refresh: true) else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-            globalContextActivation = activation
+            // Enter Selection Scope IN PLACE — assigning globalContextActivation here used to
+            // yank the user out of Context Dock into Global Context. The selection came from the
+            // frontmost app, so the scope stays on whichever surface they're already on.
+            selectionScopePayload = payload
             aiMode.isActive = false
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
@@ -234,7 +235,8 @@ extension LauncherView {
 
     @discardableResult
     func dismissSelectionScopeFromEmptyBackspaceIfNeeded() -> Bool {
-        guard isGlobalContextActive else { return false }
+        // No isGlobalContextActive gate: Selection Scope now lives on either surface, so
+        // backspace must exit it from Context Dock too.
         guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
@@ -836,11 +838,32 @@ extension LauncherView {
                                             || previewGlobalAppResult != nil || l2.targetApp != nil
                                             || typedAppIcon != nil
                                     )
+                                    // Selection Scope owns the left icon on EITHER surface — it
+                                    // lives in Context Dock too now, and this check used to sit
+                                    // inside the Global-Context-only branch below, so the icon
+                                    // never appeared there.
+                                    if hasSelectionScopeSurface,
+                                        feedbackAppIcon == nil,
+                                        let selIcon = frozenSelectionIcon ?? activeSelectionIcon
+                                    {
+                                        Image(systemName: selIcon)
+                                            .foregroundStyle(
+                                                Color.purple.opacity(
+                                                    isHoveringSearchIcon ? 1.0 : 0.88)
+                                            )
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .frame(width: 24, height: 24)
+                                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                                            .id(selIcon)
+                                            .animation(
+                                                .spring(response: 0.22, dampingFraction: 0.75),
+                                                value: selIcon)
+                                    }
                                     // Pure Global Context: the left icon is ALWAYS the
                                     // DoraX glyph — matching-app icons belong to the
                                     // match dock on the right and the result rows, never
                                     // the header. (Explicit app scopes keep their icon.)
-                                    if isGlobalContextActive
+                                    else if isGlobalContextActive
                                         && l2.targetApp == nil
                                         && globalInlineAppScope == nil
                                     {

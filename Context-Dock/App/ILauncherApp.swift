@@ -1813,6 +1813,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print(
                 "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
             )
+            // Capture the SELECTION synchronously, right now, while that app is still frontmost
+            // and BEFORE our panel steals focus. Many apps (TextEdit, plenty of native text
+            // views) report a nil AXFocusedUIElement once they're inactive, so reading after we
+            // activate silently returns nothing — that's why Selection Scope worked in some apps
+            // and not others. This is the cheap AX read only (focused element + selected text);
+            // the heavy detector (AppleScript/PDF/OCR) stays deferred below so open never blocks.
+            AXContextReader.shared.refreshSelectionOnly(from: currentApp)
             // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
             DispatchQueue.main.async {
                 ContextDockEnvironment.shared.frontmostAppDidChange(

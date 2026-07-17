@@ -3,6 +3,7 @@ import AppIntents
 import AppKit
 import Combine
 import Contacts
+import OSLog
 import Darwin
 import FoundationModels
 import PDFKit

@@ -276,3 +276,43 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-16 15:27 · `cc7004c7` · `codex-context-dock-polish-fixes`
 **running app capsule fixing. partial**
 Swift: +0 added · ~9 modified · -0 deleted
+
+## 2026-07-16 16:33 · `466a7b51` · `codex-context-dock-polish-fixes`
+**Fix global-context scope leak, Finder ghost, scoped-menu execute chip**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 17:02 · `7742f0aa` · `codex-context-dock-polish-fixes`
+**Show scoped-menu action icon + matching ghost while typing in running-app scope**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 17:19 · `dea1a479` · `codex-context-dock-polish-fixes`
+**Make input focus robust on running-app scope switch**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 17:29 · `98e32df3` · `codex-context-dock-polish-fixes`
+**Stop stale AX context forcing Finder desktop file mode in Context Dock**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-16 17:55 · `424b12c1` · `codex-context-dock-polish-fixes`
+**Morph to Context Dock after running a Global Context app-menu command**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-16 18:29 · `e8f60003` · `codex-context-dock-polish-fixes`
+**Fall to Finder on empty desktop + debounce frontmost churn**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 19:49 · `36f220e4` · `codex-context-dock-polish-fixes`
+**Spotlight-fast Finder desktop search: split query, rank by match, group by type**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 21:37 · `b6672501` · `codex-context-dock-polish-fixes`
+**Follow menu bar for frontmost, launch into Selection Scope, drop AI from Finder mode**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-16 22:44 · `e0350e3f` · `codex-context-dock-polish-fixes`
+**Enter Selection Scope on launch: read selection first, keep typed query**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 23:00 · `8ae80708` · `codex-context-dock-polish-fixes`
+**Keep running-app capsule with a selection; exiting Selection Scope returns to its icon**
+Swift: +0 added · ~4 modified · -0 deleted

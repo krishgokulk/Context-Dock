@@ -2247,7 +2247,7 @@ extension LauncherView {
                 name: pill.label,
                 icon: pill.icon,
                 accentColorName: pill.badgeColor,
-                badge: isGlobalContextActive && hasSelectionScopeSurface ? pill.appName : nil,
+                badge: hasSelectionScopeSurface ? pill.appName : nil,
                 execute: pill.action
             )
             dockPill.sourceBundleId = pill.bundleId

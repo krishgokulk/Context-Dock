@@ -63,7 +63,7 @@ extension LauncherView {
         let pillQuery = finderSearchPopoverActive ? "" : q
         // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
         // query — so the result sheet is visible the moment the launcher opens with a selection.
-        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
+        let inSelectionScope = hasSelectionScopeSurface
         // A scoped app (running-app scope in Global Context) must show its menus on an
         // empty query, just like Context Dock — otherwise the scoped dock stays empty
         // until a keypress. Only the unscoped global/empty state collapses to no pills.

@@ -1179,7 +1179,10 @@ extension LauncherView {
             let snapshot = currentSelectionActivationSnapshot(refresh: false)
         else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-            globalContextActivation = snapshot
+            // Freeze the selection only — do NOT touch globalContextActivation. The selection
+            // came from the frontmost app, so the scope opens on the surface the user launched
+            // into (Context Dock), instead of jumping them to Global Context.
+            selectionScopePayload = snapshot
             showContextInDock = true
             isSearchBarExpanded = true
         }
@@ -1578,6 +1581,12 @@ extension LauncherView {
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
     func refreshLiveSelectionIntoDockContext() {
         guard showContextInDock else { return }
+        // While OUR dock holds focus the frontmost app's selection cannot change — the user is
+        // typing here, not there. Re-reading it then only yields flaky AX results (reads of a
+        // background app intermittently come back empty, and AXContextReader.current is shared
+        // with other refresh paths), which toggled the selection icon beside the capsule. Freeze
+        // the last known selection; it resumes updating as soon as focus returns to the app.
+        guard !contextDockIsFrontmostApplication else { return }
         let ownBundleId = Bundle.main.bundleIdentifier ?? ""
         let previous = AppDelegate.shared?.previousFrontmostApp
         let app =
@@ -1606,10 +1615,20 @@ extension LauncherView {
                 // user selects in the background while the dock is open (file/folder changes
                 // never updated before — only the text preview did). Patch just the selection
                 // fields; replacing the whole context would drop menu/window data.
-                if self.axContext.selectedFilePaths != newCtx.selectedFilePaths {
+                //
+                // Adopt a NON-EMPTY read only. Reading a background app's selection while our
+                // panel holds key focus intermittently comes back empty; treating that as
+                // "selection cleared" toggled the icon on and off beside the capsule. An empty
+                // result means "couldn't read it", not "nothing is selected" — the user clears a
+                // selection through the dock (backspace / "−"), not by us guessing from AX.
+                if !newCtx.selectedFilePaths.isEmpty,
+                    self.axContext.selectedFilePaths != newCtx.selectedFilePaths
+                {
                     self.axContext.selectedFilePaths = newCtx.selectedFilePaths
                 }
-                if self.axContext.selectedText != newCtx.selectedText {
+                let liveText = newCtx.selectedText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !liveText.isEmpty, self.axContext.selectedText != newCtx.selectedText {
                     self.axContext.selectedText = newCtx.selectedText
                 }
             }

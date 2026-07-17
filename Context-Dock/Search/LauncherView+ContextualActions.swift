@@ -3604,7 +3604,7 @@ extension LauncherView {
         // Selection Scope FIRST — dedicated to the selection. Runs before the question-style
         // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
         // point is to ask the AI about the selection). Never empty → stable result sheet.
-        if isGlobalContextActive && hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             let finderFilePills = buildFinderFilePills(query: q)
             let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
             let macOSExtensionPills = buildMacOSExtensionActionPills(
@@ -4087,12 +4087,12 @@ extension LauncherView {
             isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmost.bundleID
         // Selection Scope (Global Context + active selection) is dedicated to the selection —
         // share + AI actions only. Don't surface the frontmost app's menus there.
-        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
+        let inSelectionScope = hasSelectionScopeSurface
         let useSeededMenuPills =
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
             && !isScopedToOtherApp && !inSelectionScope
 
-        if isGlobalContextActive && hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             pills.append(contentsOf: crossAppPills)
         }
 
@@ -4975,7 +4975,7 @@ extension LauncherView {
             }
         }
         if !isExplicitAppScope {
-            if !(isGlobalContextActive && hasSelectionScopeSurface) {
+            if !hasSelectionScopeSurface {
                 pills += crossAppPills
             }
         }
@@ -5036,7 +5036,7 @@ extension LauncherView {
         // keep the Finder/menu surface broad. The selection state should feel like the native
         // menu bar after selecting a file: File/Edit/View/Go/Window/Help commands stay available,
         // while app launch/recent-app rows are still removed by the selection-scoped filter.
-        guard isGlobalContextActive && hasSelectionScopeSurface && !isExplicitAppScope else {
+        guard hasSelectionScopeSurface && !isExplicitAppScope else {
             return enabled
         }
         return selectionScopedDockPills(enabled)

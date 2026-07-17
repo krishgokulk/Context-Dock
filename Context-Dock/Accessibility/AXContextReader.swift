@@ -148,9 +148,22 @@ final class AXContextReader {
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
         var ctx = current
-        ctx.selectedText = readSelectedText(axApp)
+        // An app that is no longer frontmost often reports a nil AXFocusedUIElement, so an empty
+        // read here means "couldn't read it", NOT "the user deselected". Never let that erase a
+        // selection we already captured (e.g. the one taken at hotkey time while the app was
+        // still active) — that wiped Selection Scope for apps like TextEdit.
+        if let text = readSelectedText(axApp), !text.isEmpty {
+            ctx.selectedText = text
+        } else if !app.isActive, (ctx.selectedText?.isEmpty == false) {
+            // keep the previously captured selection
+        } else {
+            ctx.selectedText = nil
+        }
         if app.bundleIdentifier == "com.apple.finder" {
-            ctx.selectedFilePaths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
+            let paths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
+            if !paths.isEmpty || app.isActive {
+                ctx.selectedFilePaths = paths
+            }
         }
         ctx.timestamp = Date()
         updateIfChanged(ctx)
