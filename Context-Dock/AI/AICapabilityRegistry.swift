@@ -467,6 +467,32 @@ final class AIExecutionEngine {
             explanation: classification.explanation
         )
     }
+
+    func executeUnifiedWithApproval(
+        _ plan: AIActionPlan,
+        context: UserContext
+    ) async -> AIUnifiedExecutionResult {
+        do {
+            let result = try await executeWithApproval(plan, context: context)
+            return AIUnifiedExecutionResult(
+                capabilityID: plan.capability,
+                success: result.success,
+                output: result.output,
+                sideEffects: result.success ? [plan.explanation] : [],
+                verification: .notAvailable,
+                error: result.success ? nil : result.output
+            )
+        } catch {
+            return AIUnifiedExecutionResult(
+                capabilityID: plan.capability,
+                success: false,
+                output: "",
+                sideEffects: [],
+                verification: .unverified,
+                error: error.localizedDescription
+            )
+        }
+    }
 }
 
 @MainActor

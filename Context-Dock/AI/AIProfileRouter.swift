@@ -2,12 +2,6 @@ import Foundation
 
 @MainActor
 enum AIProfileRouter {
-    static func provider(for profile: AIProfile, settings: AppSettings) -> AIProvider {
-        // Profiles customize instructions and tool scope. They must not silently replace the
-        // provider the user selected in the shared picker.
-        settings.selectedAIProvider
-    }
-
     static func decoratedContextPrompt(
         _ contextPrompt: String,
         profile: AIProfile,
@@ -27,12 +21,4 @@ enum AIProfileRouter {
         return parts.joined(separator: "\n")
     }
 
-    static func shouldCloudFallback(
-        error: Error,
-        profile: AIProfile,
-        settings: AppSettings
-    ) -> Bool {
-        // Provider changes require an explicit, user-visible fallback decision.
-        false
-    }
 }

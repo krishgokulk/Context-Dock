@@ -10,7 +10,6 @@ final class DependencyContainer {
     let globalContextEngine = GlobalContextEngine.shared
     let contextDockEngine = ContextDockEngine.shared
     let mediaDockEngine = MediaDockEngine.shared
-    let aiChatEngine = AIChatEngine.shared
     let automationEngine = AutomationEngine.shared
     let aiProviderRouter = AIProviderRouter.shared
     let capabilityRegistry = CapabilityRegistry.shared

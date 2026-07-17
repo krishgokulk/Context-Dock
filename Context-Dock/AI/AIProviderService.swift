@@ -1075,62 +1075,6 @@ class AIProviderService: ObservableObject {
         )
     }
 
-    // MARK: - Pure Chat Session (AI chat mode — no instructions, no context overhead)
-
-    /// Sends a message to Apple Foundation Models — no system prompt, no context injection.
-    /// Creates a fresh LanguageModelSession per call so the model never receives accumulated
-    /// transcript history. This is the standard pattern for stable Foundation Models usage.
-    func sendPureChat(
-        message: String,
-        onComplete: @escaping @Sendable (String) -> Void,
-        onError: @escaping @Sendable (String) -> Void
-    ) {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            Task {
-                #if DEBUG
-                print("🤖 [FoundationModels] Checking availability...")
-                #endif
-                let model = SystemLanguageModel.default
-                #if DEBUG
-                print("🤖 [FoundationModels] Availability: \(model.availability)")
-                #endif
-                guard case .available = model.availability else {
-                    #if DEBUG
-                    print("🤖 [FoundationModels] Not available — aborting")
-                    #endif
-                    onError("Apple Intelligence is not available. Enable it in System Settings > Apple Intelligence.")
-                    return
-                }
-                #if DEBUG
-                print("🤖 [FoundationModels] Creating fresh session...")
-                #endif
-                let session = LanguageModelSession()
-                #if DEBUG
-                print("🤖 [FoundationModels] Calling respond(to:)...")
-                #endif
-                do {
-                    let response = try await session.respond(to: message)
-                    let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                    #if DEBUG
-                    print("🤖 [FoundationModels] Got response (\(text.count) chars)")
-                    #endif
-                    onComplete(text.isEmpty ? "…" : text)
-                } catch {
-                    #if DEBUG
-                    print("🤖 [FoundationModels] ERROR: \(error)")
-                    #endif
-                    onError("Apple Intelligence error: \(error.localizedDescription)")
-                }
-            }
-            return
-        }
-        onError("Apple Intelligence requires macOS 26.0 or later with Apple Intelligence enabled.")
-        #else
-        onError("Apple Intelligence requires macOS 26.0 or later with Apple Intelligence enabled.")
-        #endif
-    }
-
     // MARK: - Executed Command Record
 
     struct ExecutedCommand {

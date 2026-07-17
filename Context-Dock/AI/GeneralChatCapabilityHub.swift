@@ -31,7 +31,7 @@ final class GeneralChatCapabilityHub {
     /// System-prompt section listing all app tools General Chat may call.
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
-    func capabilityPromptBlock(compact: Bool = false) async -> String {
+    func capabilityPromptBlock(compact: Bool = false, query: String = "") async -> String {
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         let builtinLines = builtInCapabilityLines()
@@ -49,7 +49,13 @@ final class GeneralChatCapabilityHub {
         // fan-out / "which app?" targets for broad discovery questions that name no app.
         var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
         let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
-        let adapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
+        let enabledAdapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
+        let normalizedQuery = query.lowercased()
+        let explicitlyNamed = enabledAdapters.filter {
+            normalizedQuery.contains($0.appName.lowercased())
+                || normalizedQuery.contains($0.bundleId.lowercased())
+        }
+        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
         for adapter in adapters {
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
                 continue
@@ -346,18 +352,14 @@ final class GeneralChatCapabilityHub {
                 }
                 let plan = AIActionPlan(
                     capability: tool, input: input, explanation: "Requested from AI chat")
-                do {
-                    let result = try await AIExecutionEngine.shared.executeWithApproval(
-                        plan, context: .none)
-                    return ToolCallResult(
-                        handled: true, success: true, output: result.output,
-                        label: "\(tool) via built-in")
-                } catch {
-                    return ToolCallResult(
-                        handled: true, success: false,
-                        output: "Tool \(tool) failed: \(error.localizedDescription)",
-                        label: "\(tool) via built-in")
-                }
+                let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(
+                    plan, context: .none)
+                return ToolCallResult(
+                    handled: true,
+                    success: result.success,
+                    output: result.success
+                        ? result.output : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
+                    label: "\(tool) via built-in")
             }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {
                 return ToolCallResult(
