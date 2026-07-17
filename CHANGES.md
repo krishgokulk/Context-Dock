@@ -328,3 +328,7 @@ Swift: +2 added · ~7 modified · -1 deleted
 ## 2026-07-17 14:17 · `0d67dcd2` · `codex-context-dock-polish-fixes`
 **feat(adapters): add versioned app packs**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-17 14:33 · `da59b9ce` · `codex-context-dock-polish-fixes`
+**feat(adapters): expose complete pack inventory**
+Swift: +0 added · ~2 modified · -0 deleted
