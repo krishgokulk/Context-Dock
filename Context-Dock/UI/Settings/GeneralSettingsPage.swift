@@ -12,7 +12,7 @@ struct GeneralSettingsPage: View {
                         icon: "testtube.2",
                         iconColor: .purple,
                         title: "Context-Dock Beta",
-                        subtitle: "Open-source beta for testing Global Context, Context Dock, media, AI chat, and selection actions."
+                        subtitle: "Open-source beta for testing Global Context, Context Dock, media, AI Assistant, and selection actions."
                     ) {
                         Text("1.1 beta")
                             .font(.system(size: 12, weight: .semibold))
@@ -101,8 +101,8 @@ struct GeneralSettingsPage: View {
                         SettingsPageRow(
                             icon: "brain.head.profile",
                             iconColor: .cyan,
-                            title: "AI Chat Mode",
-                            subtitle: "Allow AI chat from dock layers."
+                            title: "AI Assistant Mode",
+                            subtitle: "Allow system-wide AI workflows from dock layers."
                         ) {
                             Toggle("", isOn: $settings.enableAIMode)
                                 .labelsHidden()

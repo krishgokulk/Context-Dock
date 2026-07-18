@@ -45,18 +45,18 @@ class MiniPlayerController: ObservableObject {
     func togglePlayPause() {
         guard let info = playerInfo else { return }
         let cmd = info.isPlaying ? "\(info.toolName) pause" : "\(info.toolName) play"
-        Task { await TerminalAIBridge.shared.processAICommand(cmd, purpose: info.isPlaying ? "Pause" : "Resume") }
+        Task { await TerminalCommandExecutor.shared.run(cmd, purpose: info.isPlaying ? "Pause" : "Resume") }
         playerInfo?.isPlaying.toggle()
     }
 
     func next() {
         guard let info = playerInfo else { return }
-        Task { await TerminalAIBridge.shared.processAICommand("\(info.toolName) next", purpose: "Skip to next") }
+        Task { await TerminalCommandExecutor.shared.run("\(info.toolName) next", purpose: "Skip to next") }
     }
 
     func previous() {
         guard let info = playerInfo else { return }
-        Task { await TerminalAIBridge.shared.processAICommand("\(info.toolName) prev", purpose: "Previous track") }
+        Task { await TerminalCommandExecutor.shared.run("\(info.toolName) prev", purpose: "Previous track") }
     }
 
     func stop() {
@@ -64,7 +64,7 @@ class MiniPlayerController: ObservableObject {
         // Terminate background worker
         BackgroundWorkerPool.shared.terminate(info.workerID)
         // Send stop command (best-effort)
-        Task { await TerminalAIBridge.shared.processAICommand("\(info.toolName) stop", purpose: "Stop playback") }
+        Task { await TerminalCommandExecutor.shared.run("\(info.toolName) stop", purpose: "Stop playback") }
         hide()
     }
 

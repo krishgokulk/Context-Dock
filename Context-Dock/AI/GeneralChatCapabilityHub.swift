@@ -31,14 +31,22 @@ final class GeneralChatCapabilityHub {
     /// System-prompt section listing all app tools General Chat may call.
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
-    func capabilityPromptBlock(compact: Bool = false, query: String = "") async -> String {
+    func capabilityPromptBlock(
+        compact: Bool = false,
+        query: String = "",
+        scope: AIConversationScope = .general
+    ) async -> String {
+        let discovery = await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         let builtinLines = builtInCapabilityLines()
         let inventoryLines = appInventoryLines()
+            + discoveryLines
+            + targetedSkillLines(query: query, scope: scope)
         if let cachedBlock, Date().timeIntervalSince(cachedAt) < cacheTTL {
             let block = withInventory(
-                joinedBlock(cachedBlock, builtinLines: builtinLines),
+                cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
                 inventoryLines: inventoryLines
             )
             return compact ? compacted(block) : block
@@ -138,7 +146,7 @@ final class GeneralChatCapabilityHub {
         cachedBlock = block
         cachedAt = Date()
         let full = withInventory(
-            joinedBlock(block, builtinLines: builtinLines),
+            cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
             inventoryLines: inventoryLines
         )
         return compact ? compacted(full) : full
@@ -292,6 +300,43 @@ final class GeneralChatCapabilityHub {
         return lines
     }
 
+    /// Skills are executable guidance only for the app explicitly named by the user. Never
+    /// dump every imported skill into the system-wide prompt: that creates cross-app prompt
+    /// bleed and lets an unrelated adapter steer a selection-only conversation.
+    private func targetedSkillLines(query: String, scope: AIConversationScope) -> [String] {
+        let normalized = query.lowercased()
+        let targets = AppAdapterManager.shared.adapters.filter {
+            $0.isEnabled && (normalized.contains($0.appName.lowercased())
+                || normalized.contains($0.bundleId.lowercased()))
+        }
+        guard !targets.isEmpty else { return [] }
+        let heading: String
+        if case .selection = scope {
+            heading = "Selection-safe targeted app skills (instructions only; transform only explicit selected payload; never read app state or grant tool permission):"
+        } else {
+            heading = "Targeted app skills (instructions only; never grant tool permission):"
+        }
+        var lines = [heading]
+        for adapter in targets.prefix(3) {
+            let block = SkillStore.shared.instructionsBlock(for: adapter.bundleId)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !block.isEmpty else { continue }
+            lines.append("<app-skill bundle=\"\(adapter.bundleId)\">")
+            lines.append(String(block.prefix(4_000)))
+            lines.append("</app-skill>")
+        }
+        return lines.count == 1 ? [] : lines
+    }
+
+    private func cacheFreshnessLine() -> String {
+        let age = max(0, Date().timeIntervalSince(cachedAt))
+        if cachedAt == .distantPast || age < 1 {
+            return "Capability cache freshness: fresh now; live toggles and built-ins are read every message."
+        }
+        let remaining = max(0, cacheTTL - age)
+        return "Capability cache freshness: \(Int(age))s old; refreshes in \(Int(remaining))s; live toggles and built-ins are read every message."
+    }
+
     private func joinedBlock(_ base: String, builtinLines: [String]) -> String {
         if builtinLines.isEmpty { return base }
         if base.isEmpty {
@@ -336,29 +381,39 @@ final class GeneralChatCapabilityHub {
     /// Dispatch a tool command the model emitted through the tool loop.
     /// Returns handled=false when the command is not an app tool call (caller falls back
     /// to the terminal bridge or treats the text as the final answer).
-    func execute(_ command: String) async -> ToolCallResult {
-        if let call = extractJSONObject(containing: "\"mcp_call\"", in: command),
-           let mcp = call["mcp_call"] as? [String: Any],
-           let tool = mcp["tool"] as? String {
-            let server = (mcp["server"] as? String) ?? ""
-            let arguments = (mcp["arguments"] as? [String: Any]) ?? [:]
-            let appRef = (mcp["app"] as? String) ?? (mcp["bundleId"] as? String) ?? ""
+    func execute(_ command: String, scope: AIConversationScope) async -> ToolCallResult {
+        guard let invocation = AITypedInvocationResolver.invocation(from: command) else {
+            return ToolCallResult(handled: false, success: false, output: "", label: "")
+        }
+
+        switch invocation.kind {
+        case .mcp:
+            let tool = invocation.capabilityID
+            let server = invocation.arguments["server"] ?? ""
+            let arguments = decodeInvocationArguments(invocation)
+            let appRef = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
             // Built-in capability ids (notes.search, calendar.today, …) win over MCP
             // server tools — there is no overlap in practice.
             if CapabilityRegistry.shared.capability(id: tool) != nil {
-                let input = arguments.mapValues { value -> String in
-                    if let s = value as? String { return s }
-                    return "\(value)"
-                }
+                let input = arguments.mapValues { value in String(describing: value) }
                 let plan = AIActionPlan(
                     capability: tool, input: input, explanation: "Requested from AI chat")
+                do {
+                    try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+                } catch {
+                    return ToolCallResult(
+                        handled: true, success: false,
+                        output: error.localizedDescription,
+                        label: "\(tool) blocked")
+                }
                 let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(
                     plan, context: .none)
                 return ToolCallResult(
                     handled: true,
                     success: result.success,
                     output: result.success
-                        ? result.output : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
+                        ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                        : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
                     label: "\(tool) via built-in")
             }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {
@@ -367,9 +422,31 @@ final class GeneralChatCapabilityHub {
                     output: "No app adapter matches \"\(appRef)\" / server \"\(server)\".",
                     label: tool)
             }
+            var resolvedArguments = invocation.arguments
+            resolvedArguments["bundleId"] = bundleId
+            let resolvedInvocation = AITypedInvocation(
+                kind: invocation.kind,
+                capabilityID: invocation.capabilityID,
+                arguments: resolvedArguments,
+                requiresApproval: invocation.requiresApproval
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(resolvedInvocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "\(tool) blocked")
+            }
+            guard MCPToolSafety.isClearlyReadOnly(name: tool) else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "MCP tool \(tool) is classified as write/unknown risk. Provider-authored MCP mutations require a deterministic app capability with user approval.",
+                    label: "\(tool) blocked")
+            }
             let label = "\(tool) via \(displayName(forBundleId: bundleId))"
             do {
-                let result = try await MCPRuntime.shared.callTool(
+                let result = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleId, server: server, tool: tool, arguments: arguments)
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
@@ -378,18 +455,91 @@ final class GeneralChatCapabilityHub {
                     output: "MCP tool \(tool) failed: \(error.localizedDescription)",
                     label: label)
             }
-        }
 
-        if let call = extractJSONObject(containing: "\"app_chat_history\"", in: command),
-           let historyCall = call["app_chat_history"] as? [String: Any],
-           let appRef = (historyCall["app"] as? String) ?? (historyCall["bundleId"] as? String) {
+        case .capability where invocation.capabilityID == "app.chatHistory.read":
+            let appRef = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
+            let bundleId = resolveChatHistoryBundleId(appRef: appRef) ?? appRef
+            var resolvedArguments = invocation.arguments
+            resolvedArguments["bundleId"] = bundleId
+            let resolvedInvocation = AITypedInvocation(
+                kind: invocation.kind,
+                capabilityID: invocation.capabilityID,
+                arguments: resolvedArguments,
+                requiresApproval: invocation.requiresApproval
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(resolvedInvocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "chat history blocked")
+            }
             return ToolCallResult(
                 handled: true, success: true,
-                output: chatHistoryText(for: appRef),
-                label: "chat history: \(appRef)")
-        }
+                output: chatHistoryText(for: bundleId),
+                label: "chat history: \(displayName(forBundleId: bundleId))")
 
-        return ToolCallResult(handled: false, success: false, output: "", label: "")
+        case .capability:
+            let plan = AIActionPlan(
+                capability: invocation.capabilityID,
+                input: invocation.arguments,
+                explanation: "Requested from AI chat"
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+                try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "\(invocation.capabilityID) blocked")
+            }
+            let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(plan, context: .none)
+            return ToolCallResult(
+                handled: true,
+                success: result.success,
+                output: result.success
+                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
+                label: invocation.capabilityID)
+
+        case .terminal:
+            let plan = AIActionPlan(
+                capability: "terminal.runCommand",
+                input: invocation.arguments,
+                explanation: "Requested from AI chat"
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+                try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "terminal blocked")
+            }
+            let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(plan, context: .none)
+            return ToolCallResult(
+                handled: true,
+                success: result.success,
+                output: result.success
+                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    : "Terminal command failed: \(result.error ?? "Unknown error")",
+                label: "Terminal")
+
+        case .share:
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "share blocked")
+            }
+            return ToolCallResult(
+                handled: false, success: false, output: "", label: "")
+        }
     }
 
     // MARK: - Chat history
@@ -489,32 +639,11 @@ final class GeneralChatCapabilityHub {
         return bundleId.components(separatedBy: ".").last ?? bundleId
     }
 
-    // MARK: - JSON extraction
-
-    /// Balance-matched extraction of the JSON object that contains `key`, tolerant of the
-    /// model wrapping it in prose or code fences (same approach as parseMCPCall).
-    private func extractJSONObject(containing key: String, in text: String) -> [String: Any]? {
-        guard let keyRange = text.range(of: key) else { return nil }
-        guard let open = text[..<keyRange.lowerBound].lastIndex(of: "{") else { return nil }
-        var depth = 0
-        var end: String.Index?
-        var i = open
-        while i < text.endIndex {
-            switch text[i] {
-            case "{": depth += 1
-            case "}":
-                depth -= 1
-                if depth == 0 { end = text.index(after: i) }
-            default: break
-            }
-            if end != nil { break }
-            i = text.index(after: i)
-        }
-        guard let endIdx = end else { return nil }
-        let slice = String(text[open..<endIdx])
-        guard let data = slice.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return root
+    private func decodeInvocationArguments(_ invocation: AITypedInvocation) -> [String: Any] {
+        guard let json = invocation.arguments["argumentsJSON"],
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return object
     }
 }

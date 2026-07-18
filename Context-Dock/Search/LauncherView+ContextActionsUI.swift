@@ -814,7 +814,7 @@ extension LauncherView {
             }
         }
         Task {
-            let result = await TerminalAIBridge.shared.runPreApprovedCommand(command)
+            let result = await TerminalCommandExecutor.shared.runPreApproved(command)
             let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             await MainActor.run {
                 let body = output.isEmpty ? "(no output)" : output

@@ -62,11 +62,11 @@ struct HotkeysSettingsPage: View {
 }
 
 /// Compact map of how the dock surfaces relate: ↑/↓ cycles Global ↔ Context Dock ↔ Media,
-/// and ←/→ switches into General AI Chat.
+/// and ←/→ switches into AI Assistant.
 private struct DockNavigationDiagram: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            modeChip("sparkles", "General AI Chat", "Ask anything…", .purple)
+            modeChip("sparkles", "AI Assistant", "Ask or do anything…", .purple)
 
             VStack(spacing: 2) {
                 Image(systemName: "arrow.left.arrow.right")

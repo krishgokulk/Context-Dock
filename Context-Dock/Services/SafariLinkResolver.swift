@@ -19,7 +19,7 @@ final class SafariLinkResolver {
     nonisolated static let shared = SafariLinkResolver()
     nonisolated private init() {}
 
-    nonisolated(unsafe) private let lock = NSLock()
+    nonisolated private let lock = NSLock()
     nonisolated(unsafe) private var titleToURL: [String: URL] = [:]
     nonisolated(unsafe) private var loadStartedAt: Date = .distantPast
     nonisolated(unsafe) private var isLoading = false

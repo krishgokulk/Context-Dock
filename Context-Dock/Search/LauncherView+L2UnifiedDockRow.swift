@@ -276,7 +276,11 @@ extension LauncherView {
         .opacity(expanded ? 1 : 0)
         .clipped()
         .allowsHitTesting(expanded)
-        .animation(.easeInOut(duration: 0.18), value: expanded)
+        // The NSPanel frame is the single owner of sheet expansion animation. Animating this
+        // clipped subtree at the same time made the glass list fade/reveal inside a second,
+        // independently changing viewport, which presented as a flash/flicker in every mode.
+        // Keeping the hierarchy persistent still preserves row identity; the window animation
+        // now reveals the already-laid-out content continuously.
     }
 
     @ViewBuilder

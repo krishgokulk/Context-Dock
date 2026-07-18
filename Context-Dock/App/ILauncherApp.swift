@@ -47,6 +47,8 @@ class KeyableWindow: NSPanel {
     // Track initial mouse location for smooth dragging
     private var initialMouseLocation: NSPoint?
     private var initialWindowOrigin: NSPoint?
+    private var applyingDeferredFrame = false
+    private var pendingDeferredFrame: (rect: NSRect, display: Bool, animate: Bool)?
 
     override var canBecomeKey: Bool {
         return true
@@ -111,8 +113,43 @@ class KeyableWindow: NSPanel {
         return adjusted
     }
 
+    private var isInsideSwiftUIDisplayCycle: Bool {
+        Thread.callStackSymbols.contains { symbol in
+            symbol.contains("NSHostingView.windowDidLayout")
+                || symbol.contains("NSHostingView.updateAnimatedWindowSize")
+                || symbol.contains("NSWindowGetDisplayCycleObserverForLayout")
+        }
+    }
+
+    private func applyAnchoredFrame(_ frameRect: NSRect, display flag: Bool, animate: Bool) {
+        let adjusted = anchorAdjusted(frameRect)
+        if animate {
+            super.setFrame(adjusted, display: flag, animate: true)
+        } else {
+            super.setFrame(adjusted, display: flag)
+        }
+    }
+
+    private func deferAnchoredFrame(_ frameRect: NSRect, display flag: Bool, animate: Bool) {
+        pendingDeferredFrame = (frameRect, flag, animate)
+        guard !applyingDeferredFrame else { return }
+        applyingDeferredFrame = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let pending = self.pendingDeferredFrame
+            self.pendingDeferredFrame = nil
+            self.applyingDeferredFrame = false
+            guard let pending else { return }
+            self.applyAnchoredFrame(pending.rect, display: pending.display, animate: pending.animate)
+        }
+    }
+
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        super.setFrame(anchorAdjusted(frameRect), display: flag)
+        if isInsideSwiftUIDisplayCycle {
+            deferAnchoredFrame(frameRect, display: flag, animate: false)
+            return
+        }
+        applyAnchoredFrame(frameRect, display: flag, animate: false)
     }
 
     // We own our own vertical placement (pinned top). Stop AppKit from re-constraining the
@@ -166,7 +203,11 @@ class KeyableWindow: NSPanel {
     override func setFrame(
         _ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool
     ) {
-        super.setFrame(anchorAdjusted(frameRect), display: displayFlag, animate: animateFlag)
+        if isInsideSwiftUIDisplayCycle {
+            deferAnchoredFrame(frameRect, display: displayFlag, animate: animateFlag)
+            return
+        }
+        applyAnchoredFrame(frameRect, display: displayFlag, animate: animateFlag)
     }
 }
 

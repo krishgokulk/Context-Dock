@@ -15,7 +15,7 @@ private final class InstalledApplicationsCatalogCache: @unchecked Sendable {
     nonisolated(unsafe) var apps: [InstalledApplicationEntry]?
 }
 
-nonisolated(unsafe) private let installedApplicationsCatalogCache = InstalledApplicationsCatalogCache()
+private let installedApplicationsCatalogCache = InstalledApplicationsCatalogCache()
 
 enum InstalledApplicationsCatalog {
     nonisolated static func warmUp() {

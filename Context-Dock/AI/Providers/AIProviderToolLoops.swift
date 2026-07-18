@@ -264,14 +264,14 @@ extension AIProviderService {
                     } else if tc.function.name == "spawn_worker",
                               let command = args["command"] as? String,
                               let purpose = args["purpose"] as? String {
-                        let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
+                        let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
                         output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\", \"message\": \"'\(command)' started in background.\"}"
                         success = true
                         executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
                     } else if tc.function.name == "send_keys",
                               let keys = args["keys"] as? String {
                         let purpose = args["purpose"] as? String ?? ""
-                        output = await TerminalAIBridge.shared.sendKeys(keys)
+                        output = await TerminalCommandExecutor.shared.sendKeys(keys)
                         success = true
                         executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
                         // Small delay after key injection so TUI can react before next tool call
@@ -383,13 +383,13 @@ extension AIProviderService {
                 } else if toolName == "spawn_worker",
                           let command = args["command"] as? String,
                           let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
+                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
                     output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
                     success = true
                     executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
                 } else if toolName == "send_keys",
                           let keys = args["keys"] as? String {
-                    output = await TerminalAIBridge.shared.sendKeys(keys)
+                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
                     success = true
                     executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
                     try? await Task.sleep(nanoseconds: 300_000_000)
@@ -478,13 +478,13 @@ extension AIProviderService {
                 } else if fc.name == "spawn_worker",
                           let command = args["command"] as? String,
                           let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalAIBridge.shared.spawnWorker(command: command, purpose: purpose)
+                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
                     output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
                     success = true
                     executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
                 } else if fc.name == "send_keys",
                           let keys = args["keys"] as? String {
-                    output = await TerminalAIBridge.shared.sendKeys(keys)
+                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
                     success = true
                     executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
                     try? await Task.sleep(nanoseconds: 300_000_000)

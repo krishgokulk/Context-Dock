@@ -25,7 +25,7 @@ final class CapabilityAvailabilityStore {
 
     /// Default cooldown after a route fails. Short, so a transient failure doesn't hide a
     /// route for long; long enough to fall back on the immediate retry.
-    static let defaultCooldown: TimeInterval = 120
+    nonisolated static let defaultCooldown: TimeInterval = 120
 
     private var entries: [String: Entry] = [:]
 

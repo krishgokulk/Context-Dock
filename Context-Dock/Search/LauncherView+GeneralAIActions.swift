@@ -386,9 +386,14 @@ extension LauncherView {
             await MainActor.run {
                 aiMode.loadingStatus = nil
                 switch verification {
-                case .verified, .skipped:
+                case .verified:
                     aiMode.actionProgress?.finish()
-                    aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Done"]
+                    aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
+                case .skipped:
+                    aiMode.actionProgress?.finish()
+                    aiMode.pendingToolChips = [
+                        "\(candidate.title) · \(candidate.routeLabel)", "Executor confirmed",
+                    ]
                 case .unverified:
                     aiMode.actionProgress?.failed = true
                     aiMode.pendingToolChips = [
@@ -403,10 +408,11 @@ extension LauncherView {
                 mark(available: true)
                 return refined ?? result.message
             case .skipped:
-                // Executor succeeded; no read-back verifier for this route. Count as success.
+                // Executor succeeded; clearly disclose that no read-back verifier exists.
                 learn(success: true)
                 mark(available: true)
                 return result.message
+                    + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
             case .unverified(let reason):
                 learn(success: false)
                 mark(available: false, reason: reason)
@@ -910,7 +916,7 @@ extension LauncherView {
         }
         await MainActor.run { aiMode.loadingStatus = "Reading your Reminders…" }
         let items = await Task.detached(priority: .utility) {
-            AppleAppsAPI.shared.getReminders(limit: 30)
+            await AppleAppsAPI.shared.getReminders(limit: 30)
         }.value
         await MainActor.run { aiMode.loadingStatus = nil }
         guard !items.isEmpty else { return "You have no open reminders." }

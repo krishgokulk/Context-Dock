@@ -792,6 +792,13 @@ extension LauncherView {
                     case .appFocused, .none:
                         setFrontmostAppContextOnly(reason: "dock context pre-detection")
                     }
+                    // A Space/desktop switch often keeps Finder as the frontmost bundle, so no
+                    // frontmostAppUpdates event follows this context refresh. The dock content
+                    // updates correctly, but the new Space's responder chain can drop the field
+                    // editor. Reclaim after the context mutation has rendered.
+                    if AppDelegate.shared?.launcherWindow?.isVisible == true {
+                        DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
+                    }
                     return
                 }
                 currentContext = context
@@ -943,6 +950,16 @@ extension LauncherView {
                             }
                         }
                     }
+                }
+
+                // Switching the external app rebuilds the scoped row asynchronously. Restore
+                // focus after this handler has committed the new app so that rebuild cannot
+                // leave the visible dock with no field editor. Explicitly locked app scopes do
+                // not follow the external app and therefore need no responder reset here.
+                if appChanged, showContextInDock, !scopeLocked,
+                    AppDelegate.shared?.launcherWindow?.isVisible == true
+                {
+                    DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .servicesOpenWithFiles)) {

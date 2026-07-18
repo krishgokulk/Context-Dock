@@ -42,7 +42,7 @@ enum XcodeCapabilities {
             ) { request in
                 let path = projectDirectory(from: request)
                 let scopedCommand = "cd \(shellQuote(path)) && \(command)"
-                let result = await TerminalAIBridge.shared.processAICommand(
+                let result = await TerminalCommandExecutor.shared.run(
                     scopedCommand,
                     purpose: purpose
                 )

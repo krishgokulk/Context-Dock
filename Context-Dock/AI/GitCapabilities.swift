@@ -56,7 +56,7 @@ enum GitCapabilities {
             ) { request in
                 let directory = workingDirectory(from: request)
                 let scopedCommand = "cd \(shellQuote(directory)) && \(command)"
-                let result = await TerminalAIBridge.shared.processAICommand(
+                let result = await TerminalCommandExecutor.shared.run(
                     scopedCommand,
                     purpose: purpose
                 )

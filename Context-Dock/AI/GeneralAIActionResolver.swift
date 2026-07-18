@@ -169,6 +169,12 @@ final class GeneralAIActionResolver {
     /// Per-app capability routers — consulted BEFORE the generic ranking so each app
     /// can pick its most deterministic route (Safari: bridge/history-cache/CLI over menus).
     private let appRouters: [String: any AppCapabilityRouting]
+    private struct PendingClarification {
+        let originalQuery: String
+        let options: [String]
+        let expiresAt: Date
+    }
+    private var pendingClarification: PendingClarification?
 
     private init() {
         let routers: [any AppCapabilityRouting] = [
@@ -181,6 +187,21 @@ final class GeneralAIActionResolver {
 
     func resolve(query: String) async -> GeneralAIActionResolution {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let pending = pendingClarification {
+            if Date() > pending.expiresAt {
+                pendingClarification = nil
+            } else if let option = pending.options.first(where: {
+                $0.caseInsensitiveCompare(trimmed) == .orderedSame
+                    || trimmed.lowercased().contains($0.lowercased())
+            }) {
+                pendingClarification = nil
+                return await resolve(query: pending.originalQuery + " using " + option)
+            } else if !trimmed.isEmpty {
+                // A non-option response starts a new request rather than trapping the user
+                // in stale clarification state.
+                pendingClarification = nil
+            }
+        }
         guard isLikelyExecutable(trimmed) else { return .none }
         let lowered = trimmed.lowercased()
 
@@ -202,6 +223,9 @@ final class GeneralAIActionResolver {
         }
         if let fileCreation = resolveCreateFileIntent(lowered) {
             return fileCreation
+        }
+        if let screenshot = resolveScreenshotIntent(lowered, original: trimmed) {
+            return screenshot
         }
 
         // Generic app-scoped action: "open safari new private window", "quit music", …
@@ -275,6 +299,9 @@ final class GeneralAIActionResolver {
         if installed.count > 1 {
             let names = installed.map(\.name)
             let list = names.dropLast().joined(separator: ", ")
+            pendingClarification = PendingClarification(
+                originalQuery: original, options: names,
+                expiresAt: Date().addingTimeInterval(120))
             return .clarify(
                 question: "Do you want \(names.count == 2 ? names.joined(separator: " or ") : "\(list), or \(names.last!)")?",
                 options: names)
@@ -303,10 +330,22 @@ final class GeneralAIActionResolver {
     /// Cheap local check: does this look like a command rather than a question?
     /// Runs only on submit (never while typing) and uses no AX or provider calls.
     private func isLikelyExecutable(_ query: String) -> Bool {
-        let lowered = query.lowercased()
+        var lowered = query.lowercased()
         guard !lowered.isEmpty, lowered.count < 160 else { return false }
+        // Treat polite assistant requests as commands while preserving real questions:
+        // “can you take a screenshot?” becomes “take a screenshot”, but “can you explain”
+        // becomes “explain” and is rejected by the conversational prefixes below.
+        for prefix in ["please ", "can you please ", "could you please ", "would you please ",
+                       "can you ", "could you ", "would you "] where lowered.hasPrefix(prefix) {
+            lowered = String(lowered.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        if lowered.hasSuffix("?") {
+            lowered.removeLast()
+            lowered = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         // Questions and explanations stay in normal chat.
-        if lowered.hasSuffix("?") { return false }
         // Page-grounded browser tasks are executable even though they start like
         // a chat request ("summarize this safari page" → Safari router).
         if (lowered.contains("summarize") || lowered.contains("summarise"))
@@ -322,6 +361,7 @@ final class GeneralAIActionResolver {
 
         let verbs = [
             "open ", "launch ", "start ", "create ", "new ", "add ", "make ",
+            "take ", "capture ", "snap ",
             "quit ", "close ", "show ", "hide ", "toggle ", "enable ", "disable ",
             "turn ", "mute ", "unmute ", "minimize ", "maximize ", "empty ",
             "run ", "activate ", "switch ", "remind ", "schedule ", "send ",
@@ -336,6 +376,49 @@ final class GeneralAIActionResolver {
     /// Public gate for callers (AppleScript-model fallback) that only want to act on
     /// automation-shaped requests, never plain Q&A.
     func looksExecutable(_ query: String) -> Bool { isLikelyExecutable(query) }
+
+    /// Native macOS capture is a system-wide capability. A specifically named app still
+    /// routes through its adapter, so requests such as “capture with CleanShot” keep the
+    /// user's chosen workflow instead of being swallowed by this built-in fallback.
+    private func resolveScreenshotIntent(
+        _ lowered: String, original: String
+    ) -> GeneralAIActionResolution? {
+        let mentionsCapture = lowered.contains("screenshot")
+            || lowered.contains("screen shot")
+            || lowered.contains("capture the screen")
+            || lowered.contains("capture my screen")
+        guard mentionsCapture, resolveTargetApp(in: lowered) == nil else { return nil }
+
+        let mode: String
+        if lowered.contains("window") { mode = "window" }
+        else if lowered.contains("region") || lowered.contains("area")
+            || lowered.contains("portion") || lowered.contains("selection") {
+            mode = "region"
+        } else { mode = "screen" }
+
+        let destination = lowered.contains("clipboard") ? "clipboard" : "file"
+        let modeTitle: String
+        switch mode {
+        case "window": modeTitle = "window"
+        case "region": modeTitle = "selected region"
+        default: modeTitle = "screen"
+        }
+        var candidate = DoraXActionCandidate(
+            id: "system.captureScreenshot.\(mode).\(destination)",
+            title: "Capture \(modeTitle)\(destination == "clipboard" ? " to clipboard" : "")",
+            appName: "macOS Screenshot",
+            bundleID: nil,
+            source: .system,
+            route: .adapter,
+            capabilityID: "system.captureScreenshot",
+            requiredInputs: ["mode", "destination"],
+            riskLevel: .medium,
+            confidence: 0.98,
+            permissionKey: "generalAI.execute.system.captureScreenshot.\(mode).\(destination)",
+            debugReason: "native macOS screenshot capability for: \(original)")
+        candidate.inputValues = ["mode": mode, "destination": destination]
+        return .candidates([candidate])
+    }
 
     /// Public read-intent gate for General Chat. This is still local and cheap: no AX,
     /// no provider, no app launch.
@@ -828,6 +911,11 @@ final class GeneralAIActionResolver {
         app: (name: String, bundleId: String),
         query: String
     ) -> [DoraXActionCandidate] {
+        // Cached menus are discovery metadata, not timeless app state. Old snapshots may
+        // still route execution (which is live-verified), but must not be quoted as a read.
+        let maximumReadAge: TimeInterval = 15 * 60
+        guard let age = AppMenuCapabilityCache.shared.snapshotAge(
+            bundleIdentifier: app.bundleId), age <= maximumReadAge else { return [] }
         let semantics = readSemanticTypes(for: query)
         guard !semantics.isEmpty else { return [] }
         var candidates: [DoraXActionCandidate] = []
@@ -861,7 +949,8 @@ final class GeneralAIActionResolver {
             candidate.operation = .read
             candidate.semanticType = semantic
             candidate.readValues = Array(unique)
-            candidate.readSourceLabel = "Menu Cache"
+            let ageMinutes = max(0, Int(age / 60))
+            candidate.readSourceLabel = "Menu Cache (fresh, \(ageMinutes)m old)"
             candidate.readContext = Array(unique).enumerated()
                 .map { "\($0.offset + 1). \($0.element)" }
                 .joined(separator: "\n")

@@ -86,7 +86,7 @@ struct ShellCommandTool: Tool {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No shell command provided." }
 
-        let (success, output) = await TerminalAIBridge.shared.processAICommand(
+        let (success, output) = await TerminalCommandExecutor.shared.run(
             command,
             purpose: "On-device AI shell command"
         )
@@ -122,7 +122,7 @@ struct SpawnWorkerTool: Tool {
         guard !command.isEmpty else { return "❌ No worker command provided." }
 
         let purpose = arguments.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
-        let workerID = await TerminalAIBridge.shared.spawnWorker(
+        let workerID = await TerminalCommandExecutor.shared.spawnWorker(
             command: command,
             purpose: purpose.isEmpty ? "On-device AI worker" : purpose
         )
@@ -148,7 +148,7 @@ struct SendKeysTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let keys = arguments.keys
         guard !keys.isEmpty else { return "❌ No keys provided." }
-        return await TerminalAIBridge.shared.sendKeys(keys)
+        return await TerminalCommandExecutor.shared.sendKeys(keys)
     }
 }
 
@@ -794,7 +794,7 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
-        let (success, output) = await TerminalAIBridge.shared.processAICommand(
+        let (success, output) = await TerminalCommandExecutor.shared.run(
             fullCommand,
             purpose: "\(cliCommand) CLI"
         )

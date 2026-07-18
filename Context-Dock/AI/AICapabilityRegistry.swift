@@ -134,11 +134,80 @@ final class CapabilityRegistry {
 
         register(
             AICapability(
-                id: "menu.execute",
-                title: "Execute Frontmost App Menu",
+                id: "system.captureScreenshot",
+                title: "Capture the Screen",
                 appBundleID: nil,
                 inputSchema: .init(fields: [
-                    .init(name: "menuPath", description: "Menu path separated by >", required: true)
+                    .init(name: "mode", description: "screen, window, or region", required: true),
+                    .init(name: "destination", description: "file or clipboard", required: true),
+                ]),
+                // Screen contents may contain private information, so capture always uses
+                // the normal inline approval flow even though it does not modify user data.
+                riskLevel: .medium
+            ) { request in
+                let mode = request.input["mode"] ?? "screen"
+                let destination = request.input["destination"] ?? "file"
+                guard ["screen", "window", "region"].contains(mode),
+                      ["file", "clipboard"].contains(destination)
+                else {
+                    return .init(success: false, output: "Unsupported screenshot options.")
+                }
+
+                var arguments: [String] = []
+                if mode == "window" { arguments.append("-w") }
+                if mode == "region" { arguments.append("-i") }
+                if destination == "clipboard" { arguments.append("-c") }
+
+                var outputURL: URL?
+                if destination == "file" {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+                    let filename = "Screenshot \(formatter.string(from: Date())).png"
+                    let desktop = FileManager.default.urls(
+                        for: .desktopDirectory, in: .userDomainMask).first
+                    outputURL = desktop?.appendingPathComponent(filename)
+                    guard let outputURL else {
+                        return .init(success: false, output: "I couldn't locate the Desktop folder.")
+                    }
+                    arguments.append(outputURL.path)
+                }
+
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                process.arguments = arguments
+                do {
+                    try process.run()
+                    await withCheckedContinuation { continuation in
+                        process.terminationHandler = { _ in continuation.resume() }
+                    }
+                } catch {
+                    return .init(success: false, output: "Screenshot failed: \(error.localizedDescription)")
+                }
+                guard process.terminationStatus == 0 else {
+                    return .init(
+                        success: false,
+                        output: mode == "screen"
+                            ? "The screenshot could not be captured. Check Screen Recording permission."
+                            : "Screenshot selection was cancelled or could not be captured.")
+                }
+                if let outputURL {
+                    guard FileManager.default.fileExists(atPath: outputURL.path) else {
+                        return .init(success: false, output: "The screenshot command finished, but no file was created.")
+                    }
+                    return .init(success: true, output: "Saved screenshot to \(outputURL.path).")
+                }
+                return .init(success: true, output: "Copied screenshot to the clipboard.")
+            }
+        )
+
+        register(
+            AICapability(
+                id: "menu.execute",
+                title: "Execute Verified App Menu",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(name: "menuPath", description: "Menu path separated by >", required: true),
+                    .init(name: "targetBundleID", description: "Optional app bundle ID for cross-app menu execution", required: false)
                 ]),
                 riskLevel: .medium
             ) { request in
@@ -147,6 +216,15 @@ final class CapabilityRegistry {
                 }
                 let path = rawPath.split(separator: ">").map {
                     String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if let targetBundleID = request.input["targetBundleID"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !targetBundleID.isEmpty {
+                    let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+                        bundleIdentifier: targetBundleID,
+                        path: path
+                    )
+                    return .init(success: result.success, output: result.message)
                 }
                 let pid = AXContextReader.shared.current.pid
                 guard pid != 0 else {
@@ -298,7 +376,7 @@ final class CapabilityRegistry {
                     throw AICapabilityError.missingInput("command")
                 }
                 let purpose = request.input["purpose"] ?? "AI suggested command"
-                let result = await TerminalAIBridge.shared.processAICommand(command, purpose: purpose)
+                let result = await TerminalCommandExecutor.shared.run(command, purpose: purpose)
                 return .init(success: result.success, output: result.output)
             }
         )
@@ -479,7 +557,10 @@ final class AIExecutionEngine {
                 success: result.success,
                 output: result.output,
                 sideEffects: result.success ? [plan.explanation] : [],
-                verification: .notAvailable,
+                verification: verificationStatus(
+                    for: plan,
+                    succeeded: result.success,
+                    output: result.output),
                 error: result.success ? nil : result.output
             )
         } catch {
@@ -492,6 +573,55 @@ final class AIExecutionEngine {
                 error: error.localizedDescription
             )
         }
+    }
+
+    /// Keep receipts truthful: only routes that perform their own concrete artifact
+    /// read-back are marked verified. All other successful executors are explicitly
+    /// distinguished from independent verification.
+    private func verificationStatus(
+        for plan: AIActionPlan,
+        succeeded: Bool,
+        output: String
+    ) -> AIVerificationStatus {
+        guard succeeded else { return .unverified }
+        if plan.capability == "system.captureScreenshot",
+           plan.input["destination"] != "clipboard" {
+            // The screenshot executor checks that its output file exists before success.
+            return .verified
+        }
+        if selfReadBackCapabilities.contains(plan.capability),
+           !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .verified
+        }
+        return .executorConfirmed
+    }
+
+    private var selfReadBackCapabilities: Set<String> {
+        [
+            "calendar.list",
+            "calendar.search",
+            "calendar.today",
+            "contacts.details",
+            "contacts.search",
+            "git.branches",
+            "git.diff",
+            "git.log",
+            "git.status",
+            "github.get_repo",
+            "github.list_issues",
+            "github.list_prs",
+            "mcp.listTools",
+            "notes.extract_tasks",
+            "notes.read",
+            "notes.search",
+            "notes.summarize",
+            "reminders.list",
+            "reminders.today",
+            "tailscale.netcheck",
+            "tailscale.status",
+            "xcode.list",
+            "xcode.showBuildSettings",
+        ]
     }
 }
 

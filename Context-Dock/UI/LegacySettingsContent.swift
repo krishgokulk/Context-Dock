@@ -406,10 +406,10 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "AI Chat", systemImage: "brain.head.profile") {
+            CardSection(title: "AI Assistant", systemImage: "brain.head.profile") {
                 SettingsRow {
-                    GeneralToggleLabel("Enable AI Chat Mode",
-                        caption: "Swipe left/right — or press Tab — to open AI chat from any layer.")
+                    GeneralToggleLabel("Enable AI Assistant Mode",
+                        caption: "Swipe left/right — or press Tab — to open AI Assistant from any layer.")
                     Toggle("", isOn: $settings.enableAIMode).labelsHidden()
                 }
             }

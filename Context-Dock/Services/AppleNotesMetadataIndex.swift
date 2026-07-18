@@ -27,7 +27,12 @@ actor AppleNotesMetadataIndex {
             .first!
             .appendingPathComponent("Context-Dock", isDirectory: true)
         cacheURL = dir.appendingPathComponent("notes-metadata-cache.json")
-        loadFromDisk()
+        if let envelope = Self.loadEnvelope(from: cacheURL) {
+            index = Dictionary(uniqueKeysWithValues: envelope.notes.map { ($0.id, $0) })
+            lastRefresh = envelope.refreshedAt
+        } else if let decoded = Self.loadLegacyNotes(from: cacheURL) {
+            index = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
+        }
     }
 
     // MARK: - Queries
@@ -107,15 +112,15 @@ actor AppleNotesMetadataIndex {
         let notes: [NoteMetadata]
     }
 
-    private func loadFromDisk() {
-        guard let data = try? Data(contentsOf: cacheURL) else { return }
-        if let envelope = try? JSONDecoder().decode(CacheEnvelope.self, from: data) {
-            index = Dictionary(uniqueKeysWithValues: envelope.notes.map { ($0.id, $0) })
-            lastRefresh = envelope.refreshedAt
-        } else if let decoded = try? JSONDecoder().decode([NoteMetadata].self, from: data) {
-            // Legacy cache format (bare array, no timestamp)
-            index = Dictionary(uniqueKeysWithValues: decoded.map { ($0.id, $0) })
-        }
+    private nonisolated static func loadEnvelope(from url: URL) -> CacheEnvelope? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(CacheEnvelope.self, from: data)
+    }
+
+    private nonisolated static func loadLegacyNotes(from url: URL) -> [NoteMetadata]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        // Legacy cache format (bare array, no timestamp)
+        return try? JSONDecoder().decode([NoteMetadata].self, from: data)
     }
 
     private func saveToDisk() {
