@@ -131,8 +131,10 @@ enum AdapterSkillSeeder {
                 When the user asks to download the current video or its audio:
                 1. Take the CURRENT PAGE URL from the context verbatim — never a placeholder, \
                 never a made-up URL. If no URL is in context, ask the user to open the video first.
-                2. Audio only: CMD: yt-dlp -f bestaudio --extract-audio --audio-format mp3 -P ~/Downloads "<the exact URL>"
-                3. Video: CMD: yt-dlp -f "bv*+ba/b" -P ~/Downloads "<the exact URL>"
+                2. Audio only: request typed JSON only:
+                {"terminal_call":{"command":"yt-dlp -f bestaudio --extract-audio --audio-format mp3 -P ~/Downloads \\"<the exact URL>\\"","purpose":"Download audio from the current page"}}
+                3. Video: request typed JSON only:
+                {"terminal_call":{"command":"yt-dlp -f \\"bv*+ba/b\\" -P ~/Downloads \\"<the exact URL>\\"","purpose":"Download video from the current page"}}
                 4. Always pass -P ~/Downloads so results land in the Downloads folder.
                 5. After the command finishes, tell the user the file name and that it is in \
                 Downloads (a notification badge also appears in the launcher).
@@ -218,8 +220,9 @@ enum AdapterSkillSeeder {
                 "Tailnet Diagnosis Flow",
                 "Read state before proposing changes",
                 """
-                For any connectivity question, read state first: CMD: tailscale status, then \
-                CMD: tailscale ip. For "why can't I reach X": tailscale ping <peer> and \
+                For any connectivity question, read state first with typed terminal_call JSON for \
+                `tailscale status`, then typed terminal_call JSON for `tailscale ip`. For \
+                "why can't I reach X": use typed terminal_call JSON for `tailscale ping <peer>` and \
                 tailscale netcheck before proposing changes. State-changing commands \
                 (up, down, set, logout) always need explicit user approval — propose, don't run.
                 """

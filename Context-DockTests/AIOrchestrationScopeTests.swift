@@ -107,4 +107,38 @@ struct AIOrchestrationScopeTests {
         #expect(!MCPToolSafety.isClearlyReadOnly(name: "delete_message"))
         #expect(!MCPToolSafety.isClearlyReadOnly(name: "do_thing"))
     }
+
+    @MainActor
+    @Test func discoverySelectionOnlyReturnsSelectionSafeCandidates() async {
+        let selection = AISelectionSnapshot(text: "hello", files: [], pageURL: nil)
+        let result = await CapabilityDiscoveryService.shared.discover(
+            query: "share this with Mail",
+            scope: .selection(selection)
+        )
+        #expect(!result.candidates.isEmpty)
+        #expect(result.candidates.allSatisfy { $0.bundleID == nil })
+        #expect(result.candidates.allSatisfy { $0.capabilityID == "system.share" })
+    }
+
+    @MainActor
+    @Test func discoverySelectionDoesNotExposeAppReads() async {
+        let selection = AISelectionSnapshot(text: "hello", files: [], pageURL: nil)
+        let result = await CapabilityDiscoveryService.shared.discover(
+            query: "saved links from Artifacts",
+            scope: .selection(selection)
+        )
+        #expect(result.candidates.isEmpty)
+    }
+
+    @MainActor
+    @Test func discoveryPromptLinesSummarizeCandidates() async {
+        let selection = AISelectionSnapshot(text: "hello", files: [], pageURL: nil)
+        let result = await CapabilityDiscoveryService.shared.discover(
+            query: "share this",
+            scope: .selection(selection)
+        )
+        let lines = result.promptLines.joined(separator: "\n")
+        #expect(lines.contains("Ranked DoraX Capability Candidates"))
+        #expect(lines.contains("system.share"))
+    }
 }

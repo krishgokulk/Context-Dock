@@ -30,10 +30,11 @@ struct CapabilityDiscoveryResult {
         for candidate in candidates.prefix(12) {
             let app = candidate.appName.map { " app=\($0)" } ?? ""
             let bundle = candidate.bundleID.map { " bundle=\($0)" } ?? ""
+            let capability = candidate.capabilityID.map { " capability=\($0)" } ?? ""
             let type = candidate.operation == .read ? "read" : "execute"
             let confidence = String(format: "%.2f", candidate.confidence)
             lines.append(
-                "- [\(type)] \(candidate.title) | source=\(candidate.source.rawValue) route=\(candidate.route.rawValue)\(app)\(bundle) confidence=\(confidence) reason=\(candidate.debugReason)"
+                "- [\(type)] \(candidate.title) | source=\(candidate.source.rawValue) route=\(candidate.route.rawValue)\(capability)\(app)\(bundle) confidence=\(confidence) reason=\(candidate.debugReason)"
             )
         }
         return lines

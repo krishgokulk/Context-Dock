@@ -332,3 +332,7 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-17 14:33 · `da59b9ce` · `codex-context-dock-polish-fixes`
 **feat(adapters): expose complete pack inventory**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-18 02:46 · `ca448904` · `codex-context-dock-polish-fixes`
+**feat(ai): enforce scoped capability routing**
+Swift: +3 added · ~30 modified · -0 deleted
