@@ -356,3 +356,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 00:32 · `3923b40c` · `codex-context-dock-polish-fixes`
 **feat(ai): improve contextual orchestration**
 Swift: +4 added · ~29 modified · -0 deleted
+
+## 2026-07-20 00:50 · `35e04704` · `codex-context-dock-polish-fixes`
+**fix(chat): execute scoped app commands**
+Swift: +0 added · ~3 modified · -0 deleted
