@@ -93,12 +93,13 @@ extension LauncherView {
                 }
             }
             .onChange(of: listViewResizeToken) { _, _ in
-                // Long debounce → the sheet SETTLES to fit after typing pauses instead
-                // of resizing on every keystroke. Animated so the settle glides.
+                // Global Context owns a fixed-height result sheet: dismiss it as soon as
+                // typing invalidates the expanded state, like Spotlight. Other variable-height
+                // surfaces still settle after typing to avoid resizing on every keystroke.
                 requestWindowSizeUpdate(
                     reason: .rowLayoutChanged,
                     animated: true,
-                    debounceNanoseconds: 260_000_000
+                    debounceNanoseconds: isGlobalContextActive ? 0 : 260_000_000
                 )
             }
             .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in

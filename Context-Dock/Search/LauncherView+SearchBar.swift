@@ -1792,6 +1792,12 @@ extension LauncherView {
                                     // For fuzzy match or empty: hide it so the full result name shows cleanly.
                                     .opacity(
                                         {
+                                            // Global Context must paint the user's keystroke directly.
+                                            // Search/ghost state is allowed to arrive later, but it must
+                                            // never replace or temporarily hide the editable text field.
+                                            if isGlobalContextActive {
+                                                return 1
+                                            }
                                             if settings.effectiveDockAtBottom
                                                 && usesVerticalListDockLayout
                                                 && !searchState.query.isEmpty
@@ -1864,7 +1870,33 @@ extension LauncherView {
                                                 globalGroupedTask?.cancel()
                                                 pendingGlobalAppQuery = nil
                                                 pendingGlobalGroupedQuery = nil
-                                                updateGlobalContextTypingSnapshot(query: q)
+                                                // Publish only lightweight typing state in this event.
+                                                // Resolving matches synchronously here prevents SwiftUI from
+                                                // painting the character until that work finishes. Deferring
+                                                // one main-loop turn gives the TextField the same input-first
+                                                // behavior users expect from Spotlight.
+                                                globalContextViewModel.prepareTask?.cancel()
+                                                globalContextViewModel.typingSnapshot =
+                                                    GlobalContextTypingSnapshot(
+                                                        query: q,
+                                                        phase: q.isEmpty ? .idle : .typing,
+                                                        preparedResultsVersion:
+                                                            globalContextViewModel.typingSnapshot
+                                                            .preparedResultsVersion
+                                                    )
+                                                DispatchQueue.main.async {
+                                                    guard
+                                                        self.searchState.query
+                                                            .trimmingCharacters(
+                                                                in: .whitespacesAndNewlines
+                                                            )
+                                                            .lowercased() == q,
+                                                        self.isGlobalContextActive,
+                                                        self.shouldUsePureGlobalAppSearch,
+                                                        self.globalInlineAppScope == nil
+                                                    else { return }
+                                                    self.updateGlobalContextTypingSnapshot(query: q)
+                                                }
                                             } else {
                                                 globalContextViewModel.typingSnapshot =
                                                     GlobalContextTypingSnapshot(
