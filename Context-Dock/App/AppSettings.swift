@@ -892,8 +892,9 @@ class AppSettings: ObservableObject {
     @AppStorage("allowContacts") var allowContacts: Bool = true
     @AppStorage("allowAutomation") var allowAutomation: Bool = true  // AppleScript (Notes/Mail/Messages)
 
-    // Apple Notes MCP — all off by default; user must opt in explicitly
-    @AppStorage("noteMCPEnabled") var noteMCPEnabled: Bool = false
+    // First-party Apple MCP suite. Enabled by default, but macOS privacy permissions and
+    // Context Dock's risk approvals still gate data access and every write operation.
+    @AppStorage("noteMCPEnabled") var noteMCPEnabled: Bool = true
     @AppStorage("noteMCPAllowMetadataSearch") var noteMCPAllowMetadataSearch: Bool = true
     @AppStorage("noteMCPAllowPersistentFullRead") var noteMCPAllowPersistentFullRead: Bool = false
     @AppStorage("noteMCPAllowGlobalAccess") var noteMCPAllowGlobalAccess: Bool = false
@@ -902,10 +903,10 @@ class AppSettings: ObservableObject {
     @AppStorage("noteMCPPreferLocalAI") var noteMCPPreferLocalAI: Bool = true
     @AppStorage("noteMCPRequireCloudApproval") var noteMCPRequireCloudApproval: Bool = true
 
-    // Apple system apps MCP — off by default; user opts in per-app
-    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = false
-    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = false
-    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = false
+    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = true
+    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = true
+    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = true
+    @AppStorage("messagesMCPEnabled") var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 
     // UI Feature Toggles
@@ -973,6 +974,9 @@ class AppSettings: ObservableObject {
             )
         }
     }
+    @AppStorage("selectedOpenAIModel") var selectedOpenAIModel: String = "gpt-4o-mini"
+    @AppStorage("selectedAnthropicModel") var selectedAnthropicModel: String =
+        AnthropicModelCatalog.defaultModelID
     @AppStorage("ollamaEndpoint") var ollamaEndpoint: String = "http://localhost:11434"
     @AppStorage("selectedOllamaModel") var selectedOllamaModel: String = ""
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =

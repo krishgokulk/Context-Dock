@@ -355,7 +355,7 @@ extension LauncherView {
                             AIChatMessageView(message: message)
                         }
                     }
-                    if l2.isLoading { AILoadingView() }
+                    if l2.isLoading { AILoadingView(status: l2.loadingStatus) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)

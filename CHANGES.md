@@ -340,3 +340,15 @@ Swift: +3 added · ~30 modified · -0 deleted
 ## 2026-07-18 02:50 · `cd85386c` · `codex-context-dock-polish-fixes`
 **fix(ai): tighten capability discovery**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-18 02:50 · `9ed6ce46` · `codex-context-dock-polish-fixes`
+**docs: update change journal**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-19 01:26 · `e38bf7cc` · `codex-context-dock-polish-fixes`
+**fix(dock): stabilize result sheet reveal**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-19 01:43 · `6ed6b230` · `codex-context-dock-polish-fixes`
+**fix(search): prioritize input rendering**
+Swift: +0 added · ~2 modified · -0 deleted

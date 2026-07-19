@@ -322,6 +322,7 @@ extension AIProviderService {
         commandExecutor: @escaping (String, String) async -> (Bool, String),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
+        model: String,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -335,7 +336,7 @@ extension AIProviderService {
 
         for _ in 0..<maxIterations {
             let body: [String: Any] = [
-                "model": "claude-3-5-haiku-20241022",
+                "model": model,
                 "system": contextPrompt,
                 "messages": messages,
                 "tools": ToolDefinitions.anthropic + customTools,

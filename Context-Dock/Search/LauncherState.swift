@@ -37,6 +37,9 @@ struct L2State {
     var terminalDismissed: Bool = false
     var activeDockSessionKey: String? = nil
     var isLoading: Bool = false
+    /// Truthful, user-visible orchestration activity for Context Dock chat.
+    /// This reports app/tool work, never private model reasoning.
+    var loadingStatus: String? = nil
     var currentTask: Task<Void, Never>? = nil
     var activeRequestID: UUID? = nil
     var contextExtensions: [ExtensionDiscoveryResult] = []

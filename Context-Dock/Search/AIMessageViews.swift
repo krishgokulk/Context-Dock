@@ -707,6 +707,7 @@ struct ToolSelectionInlineView: View {
 
 // MARK: - AI Loading View
 struct AILoadingView: View {
+    var status: String? = nil
     @State private var animationOffset: CGFloat = 0
     @ObservedObject private var settings = AppSettings.shared
 
@@ -734,19 +735,27 @@ struct AILoadingView: View {
                 .background(providerColor.opacity(0.1))
                 .clipShape(Circle())
 
-            // Loading indicator
-            HStack(spacing: 4) {
-                ForEach(0..<3) { index in
-                    Circle()
-                        .fill(providerColor.opacity(0.6))
-                        .frame(width: 8, height: 8)
-                        .offset(y: animationOffset)
-                        .animation(
-                            Animation.easeInOut(duration: 0.5)
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(index) * 0.15),
-                            value: animationOffset
-                        )
+            HStack(spacing: 9) {
+                HStack(spacing: 4) {
+                    ForEach(0..<3) { index in
+                        Circle()
+                            .fill(providerColor.opacity(0.6))
+                            .frame(width: 8, height: 8)
+                            .offset(y: animationOffset)
+                            .animation(
+                                Animation.easeInOut(duration: 0.5)
+                                    .repeatForever(autoreverses: true)
+                                    .delay(Double(index) * 0.15),
+                                value: animationOffset
+                            )
+                    }
+                }
+                if let status, !status.isEmpty {
+                    Text(status)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
             .padding(.horizontal, 16)
@@ -1173,6 +1182,7 @@ struct MarkdownMessageView: View {
 
     private func parseContent(_ src: String) -> [MessageBlock] {
         var blocks: [MessageBlock] = []
+        let src = normalizeLeakedToolMarkup(src)
 
         let pattern = "```([a-zA-Z]*)\\n([\\s\\S]*?)```"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
@@ -1212,6 +1222,84 @@ struct MarkdownMessageView: View {
         return blocks.isEmpty ? [MessageBlock(kind: .text(src))] : blocks
     }
 
+    /// Some OpenAI-compatible bridges occasionally return Claude's internal XML-style
+    /// tool notation as assistant text. Present those payloads as normal code blocks so
+    /// provider implementation details never leak into the conversation UI.
+    private func normalizeLeakedToolMarkup(_ source: String) -> String {
+        var result = source
+
+        result = replacingToolPayloads(
+            in: result,
+            pattern: #"<ExecuteBashTool>\s*<command>([\s\S]*?)</command>\s*</ExecuteBashTool>"#
+        ) { payload in
+            "```bash\n\(decodeXMLText(payload).trimmingCharacters(in: .whitespacesAndNewlines))\n```"
+        }
+
+        result = replacingToolPayloads(
+            in: result,
+            pattern: #"<WriteFilesTool>[\s\S]*?<path>([\s\S]*?)</path>\s*<content>([\s\S]*?)</content>\s*</WriteFilesTool>"#,
+            captureCount: 2
+        ) { captures in
+            let path = decodeXMLText(captures[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = decodeXMLText(captures[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let language = URL(fileURLWithPath: path).pathExtension
+            let fenceLanguage = language.isEmpty ? "text" : language
+            return "`\(path)`\n\n```\(fenceLanguage)\n\(content)\n```"
+        }
+
+        return result
+    }
+
+    private func replacingToolPayloads(
+        in source: String,
+        pattern: String,
+        captureCount: Int = 1,
+        transform: ([String]) -> String
+    ) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else { return source }
+
+        var result = source
+        let matches = regex.matches(
+            in: source,
+            range: NSRange(source.startIndex..., in: source)
+        )
+        for match in matches.reversed() {
+            guard let fullRange = Range(match.range, in: result) else { continue }
+            var captures: [String] = []
+            for index in 1...captureCount {
+                guard index < match.numberOfRanges,
+                    let range = Range(match.range(at: index), in: source)
+                else { continue }
+                captures.append(String(source[range]))
+            }
+            guard captures.count == captureCount else { continue }
+            result.replaceSubrange(fullRange, with: transform(captures))
+        }
+        return result
+    }
+
+    private func replacingToolPayloads(
+        in source: String,
+        pattern: String,
+        transform: (String) -> String
+    ) -> String {
+        replacingToolPayloads(in: source, pattern: pattern) { captures in
+            transform(captures[0])
+        }
+    }
+
+    private func decodeXMLText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
     @available(macOS 12.0, *)
     private func attributedMarkdown(_ text: String) -> AttributedString {
         do {
@@ -1236,6 +1324,9 @@ struct CodeBlockView: View {
 
     @State private var copied = false
     @State private var saved = false
+    @State private var isRunning = false
+    @State private var runSucceeded: Bool?
+    @State private var runOutput = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1284,6 +1375,46 @@ struct CodeBlockView: View {
                     .padding(12)
             }
             .background(Color.black.opacity(0.02))
+
+            if executableCommand != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Spacer()
+                        Button(action: runCode) {
+                            HStack(spacing: 5) {
+                                if isRunning {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                Text(isRunning ? "Running…" : "Run")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isRunning)
+                        .help("Run this code using the standard command approval flow")
+                    }
+
+                    if !runOutput.isEmpty {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: runSucceeded == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundStyle(runSucceeded == true ? .green : .red)
+                            Text(runOutput)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.05))
+            }
         }
         .background(Color(NSColor.textBackgroundColor))
         .cornerRadius(8)
@@ -1301,6 +1432,47 @@ struct CodeBlockView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copied = false
         }
+    }
+
+    private var executableCommand: String? {
+        let normalized = language?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        switch normalized {
+        case "bash", "sh", "shell", "zsh", "terminal":
+            return code
+        case "applescript", "osascript":
+            return "osascript -e \(shellQuote(code))"
+        case "python", "python3", "py":
+            return "python3 -c \(shellQuote(code))"
+        case "javascript", "js", "node":
+            return "node -e \(shellQuote(code))"
+        default:
+            if code.hasPrefix("#!") { return code }
+            return nil
+        }
+    }
+
+    private func runCode() {
+        guard let command = executableCommand else { return }
+        isRunning = true
+        runSucceeded = nil
+        runOutput = ""
+
+        Task { @MainActor in
+            let result = await TerminalCommandExecutor.shared.run(
+                command,
+                purpose: "Run code suggested by the AI Assistant"
+            )
+            runSucceeded = result.success
+            runOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if runOutput.isEmpty {
+                runOutput = result.success ? "Completed successfully." : "The command failed without output."
+            }
+            isRunning = false
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private func saveToExtensions() {

@@ -864,6 +864,11 @@ struct AIProviderSettingsView: View {
     @State private var isDiscoveringCompatibleModels = false
     @State private var compatibleModels: [String] = []
     @State private var compatibleModelDiscoveryError: String?
+    @State private var firstPartyModels: [String] = []
+    @State private var discoveredFirstPartyProvider: AIProvider?
+    @State private var firstPartyModelDiscoveryError: String?
+    @State private var isDiscoveringFirstPartyModels = false
+    @State private var modelDiscoveryTask: Task<Void, Never>?
     @State private var isTestingAppleScriptModel = false
     @State private var appleScriptModelTestMessage: String?
     @State private var appleScriptModelTestOK = false
@@ -992,6 +997,9 @@ struct AIProviderSettingsView: View {
                     Text("Local and on-device providers can always use selected text. Cloud requests still require the existing private-data approval.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("Cloud providers never receive a continuous screen feed. They receive your prompt plus context used for that request: explicit attachments, approved selected text or browser content, and—in app-scoped Context Dock chat—a textual summary of the active app. Screenshots are sent only when explicitly attached or captured with approval.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -1006,12 +1014,18 @@ struct AIProviderSettingsView: View {
         case .onDevice:
             onDeviceConfigView
         case .openAI:
-            apiKeyConfigView(
-                title: "OpenAI API Key",
-                key: $settings.openAIAPIKey,
-                placeholder: "sk-...",
-                helpURL: "https://platform.openai.com/api-keys"
-            )
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "OpenAI API Key",
+                    key: $settings.openAIAPIKey,
+                    placeholder: "sk-...",
+                    helpURL: "https://platform.openai.com/api-keys"
+                )
+                firstPartyModelPicker(
+                    selection: $settings.selectedOpenAIModel,
+                    provider: .openAI,
+                    apiKey: settings.openAIAPIKey)
+            }
         case .googleGemini:
             apiKeyConfigView(
                 title: "Google Gemini API Key",
@@ -1020,12 +1034,18 @@ struct AIProviderSettingsView: View {
                 helpURL: "https://makersuite.google.com/app/apikey"
             )
         case .anthropic:
-            apiKeyConfigView(
-                title: "Anthropic API Key",
-                key: $settings.anthropicAPIKey,
-                placeholder: "sk-ant-...",
-                helpURL: "https://console.anthropic.com/settings/keys"
-            )
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "Anthropic API Key",
+                    key: $settings.anthropicAPIKey,
+                    placeholder: "sk-ant-...",
+                    helpURL: "https://platform.claude.com/settings/workspaces/default/keys"
+                )
+                firstPartyModelPicker(
+                    selection: $settings.selectedAnthropicModel,
+                    provider: .anthropic,
+                    apiKey: settings.anthropicAPIKey)
+            }
         case .ollama:
             ollamaConfigView
         case .openAICompatible:
@@ -1172,6 +1192,103 @@ struct AIProviderSettingsView: View {
                 Text("Your API key is stored securely in your Mac's Keychain")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func firstPartyModelPicker(
+        selection: Binding<String>,
+        provider: AIProvider,
+        apiKey: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Chat Model")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Spacer()
+                Button(action: { discoverFirstPartyModels(provider: provider, apiKey: apiKey) }) {
+                    if isDiscoveringFirstPartyModels {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Refresh Models", systemImage: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(apiKey.isEmpty || isDiscoveringFirstPartyModels)
+            }
+
+            if firstPartyModels.isEmpty || discoveredFirstPartyProvider != provider {
+                TextField("Model ID", text: selection)
+                    .textFieldStyle(.roundedBorder)
+            } else {
+                Picker("Available Model", selection: selection) {
+                    if !firstPartyModels.contains(selection.wrappedValue) {
+                        Text(selection.wrappedValue).tag(selection.wrappedValue)
+                    }
+                    ForEach(firstPartyModels, id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            if let firstPartyModelDiscoveryError {
+                Text(firstPartyModelDiscoveryError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Text("The selected model is used for chat, attachments, and tool calls.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: apiKey) { _, newKey in
+            modelDiscoveryTask?.cancel()
+            guard newKey.count > 10 else { return }
+            modelDiscoveryTask = Task {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    discoverFirstPartyModels(provider: provider, apiKey: newKey)
+                }
+            }
+        }
+        .onAppear {
+            guard apiKey.count > 10,
+                (firstPartyModels.isEmpty || discoveredFirstPartyProvider != provider)
+            else { return }
+            discoverFirstPartyModels(provider: provider, apiKey: apiKey)
+        }
+    }
+
+    private func discoverFirstPartyModels(provider: AIProvider, apiKey: String) {
+        isDiscoveringFirstPartyModels = true
+        firstPartyModelDiscoveryError = nil
+        Task {
+            do {
+                let models: [String]
+                switch provider {
+                case .openAI:
+                    models = try await FirstPartyModelDiscovery.openAI(apiKey: apiKey)
+                case .anthropic:
+                    models = try await FirstPartyModelDiscovery.anthropic(apiKey: apiKey)
+                default:
+                    models = []
+                }
+                await MainActor.run {
+                    firstPartyModels = models
+                    discoveredFirstPartyProvider = provider
+                    if models.isEmpty {
+                        firstPartyModelDiscoveryError = "The provider returned no chat models."
+                    }
+                    isDiscoveringFirstPartyModels = false
+                }
+            } catch {
+                await MainActor.run {
+                    firstPartyModelDiscoveryError = error.localizedDescription
+                    isDiscoveringFirstPartyModels = false
+                }
             }
         }
     }
@@ -1667,16 +1784,22 @@ struct AIProviderSettingsView: View {
 
     private func testProviderVision() {
         runProviderQA {
-            guard let data = Data(base64Encoded:
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=")
-            else { throw AIServiceError.networkError("Could not create vision test image") }
+            guard AIProviderRouter.shared.capabilities(for: settings.selectedAIProvider)
+                .supportsImages
+            else {
+                throw AIServiceError.unsupportedProvider(
+                    "The selected provider or model does not support image input")
+            }
+            guard let data = visionTestImageData() else {
+                throw AIServiceError.networkError("Could not create vision test image")
+            }
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("context-dock-vision-test.png")
             try data.write(to: url, options: .atomic)
             defer { try? FileManager.default.removeItem(at: url) }
             let response = try await AIProviderRouter.shared.send(
                 AIRequest(
-                    text: "Describe this image in one short sentence.",
+                    text: "What is the dominant color of this image? Reply briefly.",
                     context: .none,
                     attachments: [.init(kind: .image, url: url)],
                     source: .aiChat
@@ -1688,6 +1811,33 @@ struct AIProviderSettingsView: View {
             }
             return "Vision test passed"
         }
+    }
+
+    /// A provider-safe fixture. The previous 1×1 PNG was valid but below the practical
+    /// minimum accepted by several vision APIs, which made every provider look broken.
+    private func visionTestImageData() -> Data? {
+        let width = 128
+        let height = 128
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: width * 4,
+            bitsPerPixel: 32
+        ), let pixels = bitmap.bitmapData else { return nil }
+
+        for index in stride(from: 0, to: width * height * 4, by: 4) {
+            pixels[index] = 45
+            pixels[index + 1] = 115
+            pixels[index + 2] = 230
+            pixels[index + 3] = 255
+        }
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     private func testProviderToolCalls() {

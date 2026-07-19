@@ -271,6 +271,18 @@ extension LauncherView {
             let urls = paths.map { URL(fileURLWithPath: $0) }
             presentSharingPicker(items: urls)
         }
+        let convertibleFiles = selectedURLs.filter(MarkItDownService.supports)
+        if !convertibleFiles.isEmpty, MarkItDownService.isAvailable {
+            add(
+                "markitdown",
+                convertibleFiles.count == 1 ? "Convert to Markdown" : "Convert to Markdown",
+                "doc.text",
+                "purple",
+                aliases: ["markdown", "extract", "document", "text", "markitdown"]
+            ) {
+                convertFilesToMarkdown(convertibleFiles)
+            }
+        }
         if count > 1 {
             add(
                 "new-folder-selection",
@@ -396,6 +408,114 @@ extension LauncherView {
             }
         }
         return pills
+    }
+
+    func convertFilesToMarkdown(_ urls: [URL]) {
+        let jobs = urls.map { input -> (URL, URL) in
+            let output = uniqueFinderOutputURL(
+                directory: input.deletingLastPathComponent(),
+                baseName: input.deletingPathExtension().lastPathComponent,
+                extensionName: "md"
+            )
+            return (input, output)
+        }
+        Task.detached(priority: .userInitiated) {
+            var created: [URL] = []
+            for (input, output) in jobs {
+                guard let converted = MarkItDownService.convert(
+                    input,
+                    characterBudget: 500_000
+                ) else { continue }
+                do {
+                    try converted.markdown.write(to: output, atomically: true, encoding: .utf8)
+                    created.append(output)
+                } catch { continue }
+            }
+            let completed = created
+            await MainActor.run {
+                if completed.isEmpty {
+                    AppToast.show(
+                        "MarkItDown could not convert the selection",
+                        icon: "exclamationmark.triangle",
+                        tint: .orange)
+                } else {
+                    AppToast.show(
+                        completed.count == 1
+                            ? "Created \(completed[0].lastPathComponent)"
+                            : "Created \(completed.count) Markdown files",
+                        icon: "doc.text",
+                        tint: .purple)
+                    NSWorkspace.shared.activateFileViewerSelecting(completed)
+                }
+            }
+        }
+    }
+
+    func buildMarkItDownPagePills(query q: String) -> [DockPill] {
+        guard MarkItDownService.isAvailable else { return [] }
+        let bundleId = axContext.bundleId.isEmpty ? frontmost.bundleID : axContext.bundleId
+        guard bundleId.hasPrefix("com.apple.Safari")
+                || bundleId.lowercased().contains("chrome")
+                || bundleId.lowercased().contains("browser"),
+            let rawURL = axContext.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url,
+            let url = URL(string: rawURL),
+            MarkItDownService.supports(url)
+        else { return [] }
+
+        let normalized = normalizedDockPillText(q)
+        let terms = ["convert page to markdown", "markdown page", "extract page", "markitdown"]
+        if !normalized.isEmpty,
+            !terms.map(normalizedDockPillText).contains(where: {
+                $0.contains(normalized) || normalized.contains($0)
+                    || !Set(dockPillTokens($0)).intersection(dockPillTokens(normalized)).isEmpty
+            })
+        { return [] }
+
+        var pill = DockPill(
+            id: "markitdown-current-page",
+            name: "Convert Page to Markdown",
+            icon: "doc.text",
+            accentColorName: "purple",
+            badge: URL(string: rawURL)?.host,
+            execute: { convertPageToMarkdown(url) }
+        )
+        pill.rankingKind = "browser"
+        pill.sourceBundleId = bundleId
+        pill.sourceAppName = axContext.appName
+        pill.trackingIdentifier = "markitdown:page"
+        pill.searchTerms = terms
+        return [pill]
+    }
+
+    func convertPageToMarkdown(_ url: URL) {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+        let output = uniqueFinderOutputURL(
+            directory: downloads,
+            baseName: url.host ?? "Web Page",
+            extensionName: "md")
+        Task.detached(priority: .userInitiated) {
+            let converted = MarkItDownService.convert(url, characterBudget: 500_000)
+            let saved: Bool
+            if let markdown = converted?.markdown {
+                do {
+                    try markdown.write(to: output, atomically: true, encoding: .utf8)
+                    saved = true
+                } catch {
+                    saved = false
+                }
+            } else {
+                saved = false
+            }
+            await MainActor.run {
+                guard converted != nil, saved else {
+                    AppToast.show("Could not convert this page", icon: "exclamationmark.triangle", tint: .orange)
+                    return
+                }
+                AppToast.show("Saved \(output.lastPathComponent)", icon: "doc.text", tint: .purple)
+                NSWorkspace.shared.activateFileViewerSelecting([output])
+            }
+        }
     }
 
     func createPDFFromFinderSelectionImages(_ urls: [URL]) {

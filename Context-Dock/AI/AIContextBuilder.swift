@@ -38,6 +38,22 @@ final class AIContextBuilder {
         switch context {
         case .filesSelected(let files):
             sections.append("Selected files:\n\(files.prefix(20).map(\.path).joined(separator: "\n"))")
+            let analyzed = ContextDetector.shared.analyzeFiles(Array(files.prefix(6)))
+            var remainingBudget = 12_000
+            let documentBlocks = analyzed.compactMap { item -> String? in
+                guard remainingBudget > 500,
+                    let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !content.isEmpty
+                else { return nil }
+                let excerpt = String(content.prefix(remainingBudget))
+                remainingBudget -= excerpt.count
+                return "### \(item.url.lastPathComponent)\n\(excerpt)"
+            }
+            if !documentBlocks.isEmpty {
+                sections.append(
+                    "Token-budgeted document context (MarkItDown when available):\n\n"
+                        + documentBlocks.joined(separator: "\n\n"))
+            }
         case .textSelected(let text):
             sections.append("Selected text:\n\(text)")
         case .url(let url):

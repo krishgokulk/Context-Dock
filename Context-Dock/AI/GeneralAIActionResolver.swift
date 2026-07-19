@@ -230,6 +230,11 @@ final class GeneralAIActionResolver {
 
         // Generic app-scoped action: "open safari new private window", "quit music", …
         if let target = resolveTargetApp(in: lowered) {
+            guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
+                return .explain(
+                    "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
+                    + "Add it in Settings → App Adapters → Choose App, then ask again.")
+            }
             // Compound "save and quit" style requests → an ordered plan, each step resolved
             // independently. Checked before single-action routing so we don't hunt for one
             // combined "save and quit" menu that doesn't exist.
@@ -367,6 +372,7 @@ final class GeneralAIActionResolver {
             "run ", "activate ", "switch ", "remind ", "schedule ", "send ",
             "compose ", "email ", "text ", "play ", "pause ", "paste ",
             "share ", "save ", "export ", "bookmark ", "download ",
+            "print", "settings", "preferences", "extensions", "history", "bookmarks",
         ]
         return verbs.contains(where: lowered.hasPrefix)
             // "safari new private window" — app name first, verb inside.

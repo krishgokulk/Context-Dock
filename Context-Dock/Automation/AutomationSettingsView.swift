@@ -2948,10 +2948,11 @@ struct AutomationAdapterDetailView: View {
     @State private var isFetchingSkillURL = false
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
-    @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
-    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = false
-    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = false
-    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = false
+    @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = true
+    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = true
+    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = true
+    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = true
+    @AppStorage("messagesMCPEnabled") private var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
     private var packActionItems: [String] {
@@ -3333,6 +3334,7 @@ struct AutomationAdapterDetailView: View {
         case "com.apple.iCal": return calendarMCPEnabled
         case "com.apple.AddressBook": return contactsMCPEnabled
         case "com.apple.reminders": return remindersMCPEnabled
+        case "com.apple.MobileSMS": return messagesMCPEnabled
         case "com.github.GitHubClient": return githubMCPEnabled
         default: return false
         }
@@ -3357,7 +3359,7 @@ struct AutomationAdapterDetailView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("DoraX Notes MCP")
+                        Text("DoraX Apple MCP · Notes")
                             .font(.system(size: 12, weight: .medium))
                         Text("built-in")
                             .font(.system(size: 9, weight: .medium))
@@ -3399,6 +3401,7 @@ struct AutomationAdapterDetailView: View {
     /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
     private var hasBuiltInIntegration: Bool {
         ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
+         "com.apple.MobileSMS",
          "com.github.GitHubClient"].contains(currentAdapter.bundleId)
     }
 
@@ -3473,7 +3476,7 @@ struct AutomationAdapterDetailView: View {
         switch currentAdapter.bundleId {
         case "com.apple.iCal":
             builtInIntegrationRow(
-                title: "DoraX Calendar",
+                title: "DoraX Apple MCP · Calendar",
                 capabilities: "today · list upcoming · search · create event",
                 icon: "calendar", tint: .red,
                 isOn: liveRegisteringBinding($calendarMCPEnabled) {
@@ -3482,7 +3485,7 @@ struct AutomationAdapterDetailView: View {
             )
         case "com.apple.AddressBook":
             builtInIntegrationRow(
-                title: "DoraX Contacts",
+                title: "DoraX Apple MCP · Contacts",
                 capabilities: "search · contact details",
                 icon: "person.crop.circle", tint: .brown,
                 isOn: liveRegisteringBinding($contactsMCPEnabled) {
@@ -3491,11 +3494,20 @@ struct AutomationAdapterDetailView: View {
             )
         case "com.apple.reminders":
             builtInIntegrationRow(
-                title: "DoraX Reminders",
+                title: "DoraX Apple MCP · Reminders",
                 capabilities: "today · list · create reminder",
                 icon: "checklist", tint: .orange,
                 isOn: liveRegisteringBinding($remindersMCPEnabled) {
                     AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.MobileSMS":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Messages",
+                capabilities: "recent conversations · search · compose for review",
+                icon: "message.fill", tint: .green,
+                isOn: liveRegisteringBinding($messagesMCPEnabled) {
+                    AppleMessagesMCPCapabilities.register(in: CapabilityRegistry.shared)
                 }
             )
         case "com.github.GitHubClient":

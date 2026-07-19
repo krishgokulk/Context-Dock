@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -128,6 +129,9 @@ final class CapabilityRegistry {
         if AppSettings.shared.remindersMCPEnabled {
             AppleRemindersMCPCapabilities.register(in: self)
         }
+        if AppSettings.shared.messagesMCPEnabled {
+            AppleMessagesMCPCapabilities.register(in: self)
+        }
         if AppSettings.shared.githubMCPEnabled {
             GitHubMCPCapabilities.register(in: self)
         }
@@ -220,6 +224,15 @@ final class CapabilityRegistry {
                 if let targetBundleID = request.input["targetBundleID"]?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                    !targetBundleID.isEmpty {
+                    let isCurrentFrontmostScope = AXContextReader.shared.current.bundleId
+                        .caseInsensitiveCompare(targetBundleID) == .orderedSame
+                    guard isCurrentFrontmostScope
+                        || AppAdapterManager.shared.adapter(for: targetBundleID) != nil
+                    else {
+                        return .init(
+                            success: false,
+                            output: "That app is neither the current frontmost scope nor enabled in App Adapters, so its menu cannot be executed.")
+                    }
                     let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
                         bundleIdentifier: targetBundleID,
                         path: path
@@ -230,11 +243,16 @@ final class CapabilityRegistry {
                 guard pid != 0 else {
                     return .init(success: false, output: "No frontmost app is available")
                 }
-                let success = AXMenuReader.shared.clickMenuItem(path: path, in: pid)
-                return .init(
-                    success: success,
-                    output: success ? "Executed \(path.joined(separator: " > "))" : "Menu action is unavailable now"
+                guard let app = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.processIdentifier == pid && !$0.isTerminated
+                }), let bundleID = app.bundleIdentifier else {
+                    return .init(success: false, output: "The scoped app is not running.")
+                }
+                let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+                    bundleIdentifier: bundleID,
+                    path: path
                 )
+                return .init(success: result.success, output: result.message)
             }
         )
 

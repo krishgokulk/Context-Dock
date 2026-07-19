@@ -13,11 +13,25 @@ struct SelectedContextResolver {
     static func effectiveShareContext(_ input: ShareInput) -> AXContext {
         var context = input.axContext
 
+        // Selection Scope is selection-first. Recover frozen/context text before
+        // considering a focused-document fallback, otherwise editors such as Xcode
+        // share the source file instead of the highlighted code.
+        if context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            if case .textSelected(let text) = input.currentContext {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { context.selectedText = trimmed }
+            } else if let frozenSelectionText = input.frozenSelectionText {
+                let trimmed = frozenSelectionText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { context.selectedText = trimmed }
+            }
+        }
+
         if context.selectedFilePaths.isEmpty {
             context.selectedFilePaths = input.selectedFileURLs.map(\.path)
         }
 
         if context.selectedFilePaths.isEmpty,
+            context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
             let documentURL = focusedDocumentURL(pid: input.previousFrontmostPID)
         {
             context.selectedFilePaths = [documentURL.path]
@@ -47,16 +61,6 @@ struct SelectedContextResolver {
                 !liveURL.isEmpty
             {
                 context.currentURL = liveURL
-            }
-        }
-
-        if context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-            if case .textSelected(let text) = input.currentContext {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { context.selectedText = trimmed }
-            } else if let frozenSelectionText = input.frozenSelectionText {
-                let trimmed = frozenSelectionText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { context.selectedText = trimmed }
             }
         }
 

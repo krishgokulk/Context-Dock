@@ -283,6 +283,11 @@ final class GeneralAIActionExecutor {
         guard MenuExecutionCoordinator.ensureAccessibilityTrustOrPrompt() else {
             return .init(success: false, message: "Accessibility permission is required to send shortcuts.")
         }
+        // Cached shortcuts belong to a cached menu record. Live-verify that menu first,
+        // then let the coordinator send its shortcut or click the menu item as fallback.
+        if candidate.menuPath?.isEmpty == false {
+            return await executeVerifiedMenu(candidate)
+        }
         guard let bundleID = candidate.bundleID,
               let char = candidate.shortcutChar, !char.isEmpty,
               let app = await launchAndActivate(bundleID: bundleID)
@@ -584,7 +589,7 @@ final class GeneralAIActionExecutor {
             if running.isHidden { running.unhide() }
             running.activate(options: [.activateIgnoringOtherApps])
             await AXActionResolver.waitForActivation(of: running)
-            return running
+            return await confirmActive(running, bundleID: bundleID) ? running : nil
         }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             return nil
@@ -603,6 +608,20 @@ final class GeneralAIActionExecutor {
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
         await AXActionResolver.waitForActivation(of: launched)
-        return launched
+        return await confirmActive(launched, bundleID: bundleID) ? launched : nil
+    }
+
+    /// Confirm both launch completion and foreground activation before sending input.
+    private func confirmActive(_ app: NSRunningApplication, bundleID: String) async -> Bool {
+        for _ in 0..<12 {
+            let isRunning = !app.isTerminated
+                && NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                    .contains { !$0.isTerminated }
+            let isFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID
+            if isRunning && isFrontmost { return true }
+            app.activate(options: [.activateIgnoringOtherApps])
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
     }
 }

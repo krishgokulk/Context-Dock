@@ -317,10 +317,12 @@ final class MenuExecutionCoordinator {
         // Fastest verified strategy first: post the item's own shortcut, then AX click.
         if !shortcutChar.isEmpty,
            AXMenuReader.shared.executeShortcut(char: shortcutChar, modifiers: shortcutModifiers, in: pid) {
-            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+            let shortcut = MenuShortcutFormatter.display(
+                char: shortcutChar, modifiers: shortcutModifiers) ?? shortcutChar
+            return (true, "Opened \(app.localizedName ?? bundleIdentifier) and sent \(shortcut) for \(pathLabel).")
         }
         if AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid) {
-            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+            return (true, "Opened \(app.localizedName ?? bundleIdentifier) and clicked \(pathLabel).")
         }
         return (false, "Found \(pathLabel) but the click didn't register — nothing was confirmed.")
     }

@@ -353,8 +353,8 @@ extension LauncherView {
         }
         lines.append("")
         lines.append(
-            "Tool choice order: MCP tool → linked CLI (typed terminal_call) → adapter action → answer from "
-            + "the live context. If no linked integration can do what the user asks, say what "
+            "Tool choice order: adapter action → MCP tool → linked CLI (typed terminal_call) → verified live app menu → answer from "
+            + "the live context. Never generate shell or AppleScript for an operation exposed by the scoped app's live menu. If no linked integration or menu can do what the user asks, say what "
             + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
             + "\(appName) (Tools tab: CLI, MCP, API, Shortcuts).")
         if !clis.isEmpty {
@@ -1046,7 +1046,7 @@ extension LauncherView {
                                 }
 
                                 if l2.isLoading {
-                                    AILoadingView().id("l2loading")
+                                    AILoadingView(status: l2.loadingStatus).id("l2loading")
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -1157,20 +1157,7 @@ extension LauncherView {
                                 .id("action-progress")
                         }
                         if aiMode.isLoading {
-                            HStack(spacing: 8) {
-                                AILoadingView()
-                                // The progress card already narrates stages — don't repeat
-                                // the status line under it.
-                                if aiMode.actionProgress == nil, let status = aiMode.loadingStatus {
-                                    Text(status)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .transition(.opacity)
-                                        .id(status)
-                                }
-                                Spacer()
-                            }
+                            AILoadingView(status: aiMode.loadingStatus)
                             .animation(.easeInOut(duration: 0.18), value: aiMode.loadingStatus)
                             .padding(.horizontal, 4)
                             .id("loading")
@@ -1407,6 +1394,9 @@ extension LauncherView {
         aiMode.attachments = []
 
         aiMode.isLoading = true
+        aiMode.loadingStatus = pendingAttachments.isEmpty
+            ? "Checking App Adapters…"
+            : "Reading attached files…"
         aiMode.currentTask?.cancel()
         let providerSelection = AIProviderSelectionResolver.current(settings: settings)
 
@@ -2147,7 +2137,14 @@ extension LauncherView {
         guard l2.activeRequestID == requestID else { return }
         l2.activeRequestID = nil
         l2.isLoading = false
+        l2.loadingStatus = nil
         l2.currentTask = nil
+    }
+
+    @MainActor
+    func setL2LoadingStatus(_ status: String?, requestID: UUID) {
+        guard l2.activeRequestID == requestID, l2.isLoading else { return }
+        l2.loadingStatus = status
     }
 
     func isCancellationError(_ error: Error) -> Bool {
@@ -2457,6 +2454,7 @@ extension LauncherView {
         let userMessage = AIChatMessage(role: .user, content: query)
         l2.chatMessages.append(userMessage)
         l2.isLoading = true
+        l2.loadingStatus = "Looking at Notes capabilities…"
         let requestID = beginL2AIRequest()
 
         l2.currentTask = Task {
@@ -3148,6 +3146,7 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                await self.setL2LoadingStatus("Checking linked actions, CLI, and MCP…", requestID: l2RequestID)
                 let runtimeCLIContextPrompt = await self.runtimeAppCLIContextPrompt(
                     bundleId: scopedBundleId,
                     appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName,
@@ -3254,6 +3253,8 @@ extension LauncherView {
                                 tool: invocation.capabilityID,
                                 arguments: self.decodeMCPArguments(from: scopedInvocation)
                             )
+                            await self.setL2LoadingStatus(
+                                "Using MCP tool \(call.tool)…", requestID: l2RequestID)
                             let result = (try? await MCPRuntime.shared.callProviderReadOnlyTool(
                                 bundleId: scopedBundleId, server: call.server, tool: call.tool,
                                 arguments: call.arguments)) ?? "MCP tool failed"
@@ -3261,12 +3262,16 @@ extension LauncherView {
                                 "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
                             return (true, result)
                         }
+                        await self.setL2LoadingStatus(
+                            "Running linked CLI…", requestID: l2RequestID)
                         return await TerminalCommandExecutor.shared.run(
                             command, purpose: purpose)
                     }
                     let toolQuery = activeContextPrompt.isEmpty
                         ? query
                         : "\(activeContextPrompt)\n\nUser request: \(query)"
+                    await self.setL2LoadingStatus(
+                        "Choosing the best available capability…", requestID: l2RequestID)
                     var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
                         toolQuery,
                         context: scopedConversationContext,
@@ -3281,6 +3286,8 @@ extension LauncherView {
                         return
                     }
                     var toolsRan = await mcpRan.tools
+                    await self.setL2LoadingStatus(
+                        "Checking the result…", requestID: l2RequestID)
                     // Fallback: model emitted a raw mcp_call as its final text (not via the loop).
                     if let resolved = await self.resolveMCPToolCall(
                         in: finalResponse, bundleId: scopedBundleId, userQuery: query,
@@ -3316,6 +3323,8 @@ extension LauncherView {
                         }
                     }
                 } else if provider == .onDevice {
+                    await self.setL2LoadingStatus(
+                        "Reading app context and live capabilities…", requestID: l2RequestID)
                     // On-device Apple Intelligence: trim history + use minimal context for scoped apps
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))
@@ -3450,6 +3459,8 @@ extension LauncherView {
                         finishL2AIRequest(l2RequestID)
                     }
                 } else if provider == .shortcuts {
+                    await self.setL2LoadingStatus(
+                        "Running the configured Shortcut…", requestID: l2RequestID)
                     // Shortcuts provider runs a user-built Shortcut (Apple
                     // Intelligence, Ollama, any API) and returns its text. It is
                     // non-streaming. activeContextPrompt already carries the live
@@ -3975,6 +3986,14 @@ extension LauncherView {
         attachments: [URL] = [],
         providerSelection capturedSelection: AIProviderSelection? = nil
     ) async throws -> String {
+        await MainActor.run {
+            aiMode.loadingStatus = attachments.isEmpty
+                ? "Checking App Adapters…"
+                : "Reading attached files…"
+        }
+        // A short follow-up such as “try again” refers to the last executable user request.
+        // Resolve it locally instead of letting a provider narrate an action it cannot run.
+        let actionQuery = generalAIRetryExpandedQuery(query)
         let providerSelection = capturedSelection
             ?? AIProviderSelectionResolver.current(settings: settings)
         // Build context from previous messages (uses aiMode.messages for global AI mode)
@@ -3996,6 +4015,16 @@ extension LauncherView {
         let requestLiveContext = generalChatPolicy.includesLiveContext(
             explicitlyRequested: false
         ) ? ContextCollector.shared.snapshot() : nil
+
+        // App Adapters are General AI's explicit app-access allowlist. Block locally before
+        // building or sending context, so an unconfigured app's identity/state never reaches
+        // the selected provider.
+        if currentAISelectionSnapshot.isEmpty,
+            let namedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: actionQuery),
+            AppAdapterManager.shared.adapter(for: namedApp.bundleId) == nil
+        {
+            return "\(namedApp.name) isn’t added to App Adapters, so General AI can’t access or act on that app. Add it in Settings → App Adapters → Choose App, then ask again."
+        }
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead
         var sysContent = """
@@ -4052,7 +4081,7 @@ extension LauncherView {
         }
 
         if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
-           let actionAnswer = await generalAIExecutableActionAnswer(query: query) {
+           let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer
         }
 
@@ -4104,7 +4133,7 @@ extension LauncherView {
             && selectionRequestNeedsCapabilities(query)
         if shouldDiscoverAppTools, toolProvider != .shortcuts
         {
-            await MainActor.run { aiMode.loadingStatus = "Checking app tools…" }
+            await MainActor.run { aiMode.loadingStatus = "Looking for MCP and app tools…" }
             let executionScope: AIConversationScope = currentAISelectionSnapshot.isEmpty
                 ? .general : .selection(currentAISelectionSnapshot)
             let appToolsBlock = await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
@@ -4119,7 +4148,7 @@ extension LauncherView {
                 for _ in 0..<4 {
                     await MainActor.run {
                         aiMode.loadingStatus = toolChips.isEmpty
-                            ? "Thinking…" : "Reading tool result…"
+                            ? "Choosing the best capability…" : "Reading tool result…"
                     }
                     let loopRequest = AIRequestBuilder.aiChat(
                         text: loopQuery,
@@ -4203,6 +4232,7 @@ extension LauncherView {
             attachments: attachments,
             liveContext: requestLiveContext
         )
+        await MainActor.run { aiMode.loadingStatus = "Writing answer…" }
         return try await AIOrchestrationEngine.shared.submit(
             AIOrchestrationRequest(
                 providerRequest: request,
@@ -4213,6 +4243,26 @@ extension LauncherView {
                 contextPrompt: sysContent
             )
         ).text
+    }
+
+    /// Expand only explicit retry phrases. The current user message may already be present
+    /// in `aiMode.messages`, so walk backwards past it and assistant responses to the most
+    /// recent executable user request. This state stays local to DoraX.
+    private func generalAIRetryExpandedQuery(_ query: String) -> String {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let retryPhrases: Set<String> = [
+            "retry", "retry it", "try again", "try it again", "do it again", "go again",
+        ]
+        guard retryPhrases.contains(normalized) else { return query }
+        for message in aiMode.messages.reversed() where message.role == .user {
+            let previous = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard previous.caseInsensitiveCompare(query) != .orderedSame,
+                !retryPhrases.contains(previous.lowercased()),
+                GeneralAIActionResolver.shared.looksExecutable(previous)
+            else { continue }
+            return previous
+        }
+        return query
     }
 
     func directGeneralAppMCPAnswer(
@@ -4424,7 +4474,9 @@ extension LauncherView {
     /// mcp_call JSON with server "builtin". Empty when none are enabled.
     func builtInCapabilityPromptBlock() async -> String {
         await MainActor.run {
-            let prefixes = ["notes.", "calendar.", "contacts.", "reminders.", "github."]
+            let prefixes = [
+                "notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."
+            ]
             let caps = CapabilityRegistry.shared.all.filter { cap in
                 prefixes.contains(where: cap.id.hasPrefix)
             }
@@ -4454,6 +4506,15 @@ extension LauncherView {
             CapabilityRegistry.shared.capability(id: tool) != nil
         }
         guard isRegistered else { return nil }
+        let isAllowlisted = await MainActor.run { () -> Bool in
+            guard let bundleID = CapabilityRegistry.shared.capability(id: tool)?.appBundleID else {
+                return true
+            }
+            return AppAdapterManager.shared.adapter(for: bundleID) != nil
+        }
+        guard isAllowlisted else {
+            return "That app isn’t added to App Adapters, so General AI cannot use \(tool)."
+        }
         let input = arguments.mapValues { value -> String in
             if let s = value as? String { return s }
             return "\(value)"
@@ -4471,9 +4532,110 @@ extension LauncherView {
         }
     }
 
+    /// Deterministic last-mile routing for Context Dock app UI commands. Relevant linked
+    /// integrations retain priority; otherwise DoraX refreshes the live frontmost menu and
+    /// executes its verified shortcut/menu locally instead of allowing shell substitution.
+    @MainActor
+    private func scopedFrontmostMenuFallbackAnswer(
+        query: String,
+        bundleId: String,
+        appName: String
+    ) async -> String? {
+        guard !bundleId.isEmpty,
+            GeneralAIActionResolver.shared.looksExecutable(query),
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleId && !$0.isTerminated
+            }),
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId
+        else { return nil }
+
+        let matchingActions = AppAdapterManager.shared.actions(for: bundleId, query: query)
+            .filter { $0.type != .aiPrompt }
+        let matchingCLI = TerminalPackageManager.shared.packages(
+            forContextBundleId: bundleId,
+            query: query,
+            maxResults: 1
+        )
+        let queryTokens = Set(query.lowercased().split {
+            !$0.isLetter && !$0.isNumber
+        }.map(String.init))
+        let matchingMCP = await MCPRuntime.shared.cachedTools(forBundleId: bundleId).contains {
+            let toolTokens = Set($0.tool.name.lowercased().split {
+                $0 == "_" || $0 == "-" || $0.isWhitespace
+            }.map(String.init))
+            return !queryTokens.isDisjoint(with: toolTokens)
+        }
+        guard matchingActions.isEmpty, matchingCLI.isEmpty, !matchingMCP else { return nil }
+
+        if let requestID = l2.activeRequestID {
+            setL2LoadingStatus("Reading \(appName) live menus…", requestID: requestID)
+            await Task.yield()
+        }
+        let liveItems = AXMenuReader.shared.refreshAllMenuItems(
+            for: app.processIdentifier,
+            maxDepth: 6
+        )
+        if !liveItems.isEmpty {
+            AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
+        }
+
+        guard let match = bestMenuMatch(
+            intent: query,
+            bundleId: bundleId,
+            appName: appName,
+            processIdentifier: app.processIdentifier
+        ) else {
+            let closest = menuSuggestions(
+                intent: query,
+                bundleId: bundleId,
+                appName: appName,
+                processIdentifier: app.processIdentifier
+            )
+            if closest.isEmpty { return nil }
+            return "I checked \(appName)’s live menus but couldn’t confidently match “\(query)”. Nothing was executed.\n\nClosest menus:\n"
+                + closest.joined(separator: "\n")
+        }
+        guard match.isEnabled else {
+            return "I found \(match.path.joined(separator: " → ")) in \(appName), but it is currently disabled. Nothing was executed."
+        }
+
+        if let requestID = l2.activeRequestID {
+            let route = match.shortcutChar?.isEmpty == false
+                ? "Running menu shortcut…"
+                : "Clicking \(match.path.joined(separator: " → "))…"
+            setL2LoadingStatus(route, requestID: requestID)
+            await Task.yield()
+        }
+        let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+            bundleIdentifier: bundleId,
+            path: match.path,
+            cachedShortcutChar: match.shortcutChar,
+            cachedShortcutModifiers: match.shortcutModifiers
+        )
+        return result.message
+    }
+
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
         async throws -> String
     {
+        let scopedForRead = currentContextDockChatScope
+        let isMessagesScope = scopedForRead.bundleId.caseInsensitiveCompare(
+            "com.apple.MobileSMS") == .orderedSame
+            || scopedForRead.appName.lowercased().contains("messages")
+        if isMessagesScope || readOnlyDataDomain(for: query) == .messages,
+            let readAnswer = await readOnlyCapabilityAnswer(query: query)
+        {
+            return readAnswer
+        }
+        if !isGlobalQueryModeActive,
+            let menuAnswer = await scopedFrontmostMenuFallbackAnswer(
+                query: query,
+                bundleId: scopedForRead.bundleId,
+                appName: scopedForRead.appName
+            )
+        {
+            return menuAnswer
+        }
         let providerSelection = AIProviderSelectionResolver.current(settings: settings)
         // Build context from provided message history (for L2, uses l2.chatMessages)
         var context = messageHistory.map { msg in
@@ -4509,6 +4671,21 @@ extension LauncherView {
         )
         if !identityBlock.isEmpty {
             sysL2 += "\n\n" + identityBlock
+        }
+        if !isGlobalQueryModeActive {
+            sysL2 += """
+
+
+                ## Scoped App Execution Rules
+                This chat is temporarily scoped to the frontmost app \(scoped.appName) (\(scoped.bundleId)).
+                Its live menu may be inspected and executed even when no App Adapter exists, because the user explicitly opened this frontmost-app scope.
+                App Adapter integrations (actions, readers, MCP, API, CLI, skills, and saved capabilities) remain available only when configured for this app.
+                Prefer, in order: adapter action, MCP/API, linked CLI, macOS Shortcut, then a verified app menu.
+                When no linked action/tool matches an app UI command, use the scoped app's known menu catalog.
+                Prefer the live-verified menu item's keyboard shortcut; if it has none or sending it fails, click the live-verified menu item.
+                Never claim an action ran from prose alone. Report only the executor's returned result.
+                If no exact menu matches, say nothing was executed and provide the closest known menu paths.
+                """
         }
         if let guardedAnswer = scopedChatMissingInternalDataAnswer(
             query: query,
@@ -4619,10 +4796,11 @@ extension LauncherView {
             return ChatMessage(role: role, content: content)
         }
         let lowerQuery = query.lowercased()
-        let capabilityPlanningRequested = [
+        let capabilityPlanningRequested = GeneralAIActionResolver.shared.looksExecutable(query) || [
             "run ", "execute ", "rename ", "reveal ", "open ", "close ",
             "summarize this page", "create ", "delete ", "update ", "send ",
-            "compose ", "call ", "use ", "do "
+            "compose ", "call ", "use ", "do ", "print", "settings", "extensions",
+            "bookmarks", "history"
         ].contains { lowerQuery.contains($0) }
         let planningBundleID = isGlobalQueryModeActive
             ? nil

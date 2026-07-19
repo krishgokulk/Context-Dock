@@ -1126,7 +1126,8 @@ class AIProviderService: ObservableObject {
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations, endpoint: "https://api.openai.com/v1/chat/completions",
-                model: "gpt-4o-mini",
+                model: AppSettings.shared.selectedOpenAIModel.isEmpty
+                    ? "gpt-4o-mini" : AppSettings.shared.selectedOpenAIModel,
                 transport: OpenAIToolProviderAdapter(),
                 simulateAllTools: simulateAllTools
             )
@@ -1141,6 +1142,9 @@ class AIProviderService: ObservableObject {
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
+                model: AppSettings.shared.selectedAnthropicModel.isEmpty
+                    ? AnthropicModelCatalog.defaultModelID
+                    : AppSettings.shared.selectedAnthropicModel,
                 simulateAllTools: simulateAllTools
             )
 

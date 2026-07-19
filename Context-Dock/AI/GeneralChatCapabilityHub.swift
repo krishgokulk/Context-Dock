@@ -16,6 +16,7 @@ final class GeneralChatCapabilityHub {
 
     private var cachedBlock: String?
     private var cachedAt: Date = .distantPast
+    private var cachedAllowlistFingerprint = ""
     private let cacheTTL: TimeInterval = 300
     private let chatPanelKeyPrefix = "dock_app_"
 
@@ -24,6 +25,7 @@ final class GeneralChatCapabilityHub {
     func invalidate() {
         cachedBlock = nil
         cachedAt = .distantPast
+        cachedAllowlistFingerprint = ""
     }
 
     // MARK: - Prompt block
@@ -41,10 +43,18 @@ final class GeneralChatCapabilityHub {
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         let builtinLines = builtInCapabilityLines()
+        let allowlistFingerprint = AppAdapterManager.shared.adapters
+            .filter(\.isEnabled)
+            .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
+            .sorted()
+            .joined(separator: "|")
         let inventoryLines = appInventoryLines()
             + discoveryLines
             + targetedSkillLines(query: query, scope: scope)
-        if let cachedBlock, Date().timeIntervalSince(cachedAt) < cacheTTL {
+        if let cachedBlock,
+            cachedAllowlistFingerprint == allowlistFingerprint,
+            Date().timeIntervalSince(cachedAt) < cacheTTL
+        {
             let block = withInventory(
                 cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
                 inventoryLines: inventoryLines
@@ -96,6 +106,7 @@ final class GeneralChatCapabilityHub {
         else {
             cachedBlock = ""
             cachedAt = Date()
+            cachedAllowlistFingerprint = allowlistFingerprint
             return ""
         }
 
@@ -145,6 +156,7 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
+        cachedAllowlistFingerprint = allowlistFingerprint
         let full = withInventory(
             cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
             inventoryLines: inventoryLines
@@ -162,11 +174,15 @@ final class GeneralChatCapabilityHub {
             ("calendar.", "Calendar", "calendarMCPEnabled"),
             ("contacts.", "Contacts", "contactsMCPEnabled"),
             ("reminders.", "Reminders", "remindersMCPEnabled"),
+            ("messages.", "Messages", "messagesMCPEnabled"),
             ("github.", "GitHub (gh CLI)", "githubMCPEnabled"),
         ]
         let prefixes = families.map(\.prefix)
         let caps = CapabilityRegistry.shared.all.filter { cap in
             prefixes.contains(where: cap.id.hasPrefix)
+                && cap.appBundleID.map {
+                    AppAdapterManager.shared.adapter(for: $0) != nil
+                } == true
         }
         let disabledNames = families
             .filter { family in !caps.contains { $0.id.hasPrefix(family.prefix) } }
@@ -212,6 +228,9 @@ final class GeneralChatCapabilityHub {
             server.bundleIds.map { (bundleId: $0, server: server) }
         }, by: \.bundleId).mapValues(\.count)
 
+        // Inventory is broader than authority: running/frontmost apps and cached menus help
+        // General AI understand what the user means and which DoraX routes exist. An enabled
+        // App Adapter remains the hard gate for app reads and execution.
         var importantBundleIds = Set<String>()
         importantBundleIds.formUnion(runningBundleIds)
         importantBundleIds.formUnion(adapterByBundle.keys)
@@ -247,13 +266,16 @@ final class GeneralChatCapabilityHub {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         var lines: [String] = [
-            "- Installed apps indexed: \(installed.count). Running apps indexed: \(runningBundleIds.count).",
-            "- Native share routes available for selected files/text/current URL: Messages, Mail, AirDrop, and system share sheet.",
-            "- AX/Vision deeper inspection is available only after user approval; ask before reading screen, frontmost UI, selected files, selected text, or page contents unless already attached.",
+            "- App access is allowlisted by enabled App Adapters: \(adapterByBundle.count) app(s) available.",
+            "- Inventory entries without an enabled adapter are awareness-only: never read their private data or execute their routes; explain that the app must be added in Settings → App Adapters.",
+            "- AX/Vision inspection is available only for allowlisted apps and only after user approval unless content was explicitly attached.",
         ]
         if let frontmostBundleId,
            let frontmost = ordered.first(where: { $0.bundleId == frontmostBundleId }) {
-            lines.append("- Frontmost app now: \(frontmost.name) (\(frontmost.bundleId)).")
+            let access = adapterByBundle[frontmostBundleId] == nil
+                ? "awareness only; not added to App Adapters"
+                : "available through App Adapters"
+            lines.append("- Frontmost app now: \(frontmost.name) (\(frontmost.bundleId)); \(access).")
         }
 
         lines.append("Running app status snapshot:")
@@ -261,6 +283,9 @@ final class GeneralChatCapabilityHub {
             var bits: [String] = []
             if app.bundleId == frontmostBundleId { bits.append("frontmost") }
             if runningBundleIds.contains(app.bundleId) { bits.append("running") }
+            if adapterByBundle[app.bundleId] == nil {
+                bits.append("awareness only — not added to App Adapters")
+            }
             if let adapter = adapterByBundle[app.bundleId] {
                 let actions = adapter.visibleActions.count
                 bits.append("\(actions) adapter action\(actions == 1 ? "" : "s")")
@@ -395,6 +420,14 @@ final class GeneralChatCapabilityHub {
             // Built-in capability ids (notes.search, calendar.today, …) win over MCP
             // server tools — there is no overlap in practice.
             if CapabilityRegistry.shared.capability(id: tool) != nil {
+                if let appBundleID = CapabilityRegistry.shared.capability(id: tool)?.appBundleID,
+                    AppAdapterManager.shared.adapter(for: appBundleID) == nil
+                {
+                    return ToolCallResult(
+                        handled: true, success: false,
+                        output: "That app isn’t added to App Adapters, so General AI cannot use \(tool).",
+                        label: "\(tool) blocked")
+                }
                 let input = arguments.mapValues { value in String(describing: value) }
                 let plan = AIActionPlan(
                     capability: tool, input: input, explanation: "Requested from AI chat")
@@ -553,12 +586,16 @@ final class GeneralChatCapabilityHub {
         AppPanelChatStore.shared.allPanelKeys()
             .filter { $0.hasPrefix(chatPanelKeyPrefix) }
             .map { String($0.dropFirst(chatPanelKeyPrefix.count)) }
+            .filter { AppAdapterManager.shared.adapter(for: $0) != nil }
             .map { SavedChatApp(bundleId: $0, appName: displayName(forBundleId: $0)) }
     }
 
     private func chatHistoryText(for appRef: String) -> String {
         guard let bundleId = resolveChatHistoryBundleId(appRef: appRef) else {
             return "No saved chat history found for \"\(appRef)\"."
+        }
+        guard AppAdapterManager.shared.adapter(for: bundleId) != nil else {
+            return "That app isn’t added to App Adapters, so General AI cannot read its saved app chat."
         }
         let messages = AppPanelChatStore.shared.load(for: chatPanelKeyPrefix + bundleId)
         guard !messages.isEmpty else {

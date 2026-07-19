@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(log stream *)",
+      "Bash(/usr/bin/log show *)",
+      "Bash(perl -0pi -e 's/\\\\Q? fileIcon\\(for: urls[0].pathExtension.lowercased\\(\\)\\)\\\\E/? selectionSymbol\\(for: urls[0]\\)/g' Search/LauncherView+SearchBar.swift)",
+      "Bash(open /Users/gokulakannan/Developer/Context-Dock/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app)"
+    ]
+  }
+}

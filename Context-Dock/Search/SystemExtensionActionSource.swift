@@ -206,9 +206,11 @@ extension LauncherView {
                 accentColorName: "blue",
                 badge: "Share",
                 execute: {
-                    let freshItems = ShareIntentRouter.shared.shareableItems(
-                        for: effectiveShareAXContext()
-                    )
+                    // Resolve the payload while the source app context is still available.
+                    // NSSharingService UI must be presented after DoraX yields frontmost
+                    // status; otherwise destinations such as Notes may only activate their
+                    // host app without receiving the selected content.
+                    let freshItems = liveShareItems()
                     guard !freshItems.isEmpty else {
                         AppToast.show(
                             "Nothing to share",
@@ -217,19 +219,15 @@ extension LauncherView {
                         )
                         return
                     }
-                    guard let destination = ShareDestinationResolver.resolve(
-                        query: title,
-                        items: freshItems
-                    ) else {
-                        presentSharingPicker(items: freshItems)
-                        return
+                    forceHideLauncherAfterResultExecution()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        service.perform(withItems: freshItems)
+                        AppToast.show(
+                            "Sharing via \(title)",
+                            icon: "square.and.arrow.up",
+                            tint: .blue
+                        )
                     }
-                    destination.service.perform(withItems: freshItems)
-                    AppToast.show(
-                        "Sharing via \(destination.title)",
-                        icon: "square.and.arrow.up",
-                        tint: .blue
-                    )
                 }
             )
             pill.menuItemImage = service.image

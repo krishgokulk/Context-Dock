@@ -3706,6 +3706,7 @@ extension LauncherView {
         pills.append(contentsOf: buildShareQueryDestinationPills(query: q))
         pills.append(contentsOf: buildContextDockSelectionAIPills(query: q))
         pills.append(contentsOf: buildNativeWritingToolPills(query: q))
+        pills.append(contentsOf: buildMarkItDownPagePills(query: q))
         // Safari page-level command pills (search, click, open) — appear before AX menu items
         pills.append(contentsOf: buildSafariCommandPills(query: q))
         pills.append(contentsOf: buildSafariRecentURLPills(query: q))

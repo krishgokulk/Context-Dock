@@ -201,6 +201,9 @@ final class AXContextReader {
         updated.selectedText       = readSelectedText(axApp)
         updated.focusedElementRole = readFocusedRole(axApp)
         updated.windowTitle        = readWindowTitle(axApp)
+        if updated.bundleId == "com.apple.Preview" {
+            updated.selectedFilePaths = readDocumentPaths(axApp)
+        }
         updated.timestamp          = Date()
         updateIfChanged(updated)
     }
@@ -237,6 +240,11 @@ final class AXContextReader {
 
         if bundleId == "com.apple.finder" {
             ctx.selectedFilePaths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
+        } else if bundleId == "com.apple.Preview" {
+            // Preview exposes the open file through AXDocument on its focused window. Treating
+            // that document as scoped file context lets the same attachment pipeline answer
+            // questions about what the user is currently viewing.
+            ctx.selectedFilePaths = readDocumentPaths(axApp)
         }
 
         // Carry forward cached menu items while async reload is in flight
@@ -303,6 +311,26 @@ final class AXContextReader {
             return strAttr(first, kAXTitleAttribute as CFString)
         }
         return nil
+    }
+
+    private func readDocumentPaths(_ axApp: AXUIElement) -> [String] {
+        var windowsRef: CFTypeRef?
+        let attributes = [kAXFocusedWindowAttribute, kAXMainWindowAttribute]
+        for attribute in attributes {
+            guard AXUIElementCopyAttributeValue(axApp, attribute as CFString, &windowsRef)
+                    == .success,
+                let rawWindow = windowsRef
+            else { continue }
+            let window = unsafeBitCast(rawWindow, to: AXUIElement.self)
+            guard let rawDocument = strAttr(window, kAXDocumentAttribute as CFString),
+                !rawDocument.isEmpty
+            else { continue }
+            if let url = URL(string: rawDocument), url.isFileURL {
+                return [url.path]
+            }
+            if rawDocument.hasPrefix("/") { return [rawDocument] }
+        }
+        return []
     }
 
     // MARK: - Selected text

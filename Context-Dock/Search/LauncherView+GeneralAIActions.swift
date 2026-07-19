@@ -20,7 +20,7 @@ extension LauncherView {
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
     func generalAIExecutableActionAnswer(query: String) async -> String? {
-        await MainActor.run { aiMode.loadingStatus = "Understanding request…" }
+        await MainActor.run { aiMode.loadingStatus = "Checking App Adapter capabilities…" }
         let resolution = await GeneralAIActionResolver.shared.resolve(query: query)
 
         switch resolution {
@@ -372,7 +372,7 @@ extension LauncherView {
 
         await MainActor.run {
             aiMode.actionProgress?.advance(to: "Executing")
-            aiMode.loadingStatus = "Executing…"
+            aiMode.loadingStatus = generalAIExecutionStatus(for: candidate)
         }
         let result = await GeneralAIActionExecutor.shared.execute(candidate)
 
@@ -406,6 +406,43 @@ extension LauncherView {
             case .verified(let refined):
                 learn(success: true)
                 mark(available: true)
+                // A cold menu cache initially resolves to an honest launch-only candidate.
+                // Once launch is confirmed, warm that allowlisted app's menus and resolve
+                // the original request again. This turns “open Calculator scientific” into
+                // launch → verified shortcut/menu instead of stopping after launch.
+                if candidate.route == .appLaunch, candidate.caveat != nil,
+                    let bundleID = candidate.bundleID,
+                    AppAdapterManager.shared.adapter(for: bundleID) != nil,
+                    let app = NSRunningApplication
+                        .runningApplications(withBundleIdentifier: bundleID)
+                        .first(where: { !$0.isTerminated })
+                {
+                    await MainActor.run { aiMode.loadingStatus = "Reading \(appLabel) menus…" }
+                    await MenuWarmCacheService.shared.warm(app: app, force: true)
+                    let refreshed = await GeneralAIActionResolver.shared.resolve(query: query)
+                    if case .candidates(let refreshedCandidates) = refreshed,
+                        let menuCandidate = refreshedCandidates.first(where: {
+                            $0.route != .appLaunch && $0.bundleID == bundleID
+                        })
+                    {
+                        let followUp = await runGeneralAIAction(
+                            menuCandidate,
+                            alternatives: refreshedCandidates.filter { $0.id != menuCandidate.id },
+                            query: query)
+                        return "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
+                    }
+                    await MainActor.run { aiMode.loadingStatus = nil }
+                    let closest = AppMenuCapabilityCache.shared.menuItems(
+                        bundleIdentifier: bundleID,
+                        appName: appLabel,
+                        query: "",
+                        maxResults: 5
+                    ).map(\.pathString)
+                    let suggestion = closest.isEmpty
+                        ? "No cached or live menu commands are available yet. Open the relevant view in \(appLabel), then refresh its App Adapter menu cache."
+                        : "Closest available menus:\n" + closest.map { "• \($0)" }.joined(separator: "\n")
+                    return "Opened \(appLabel) and confirmed it is active, but I couldn't find an exact menu or shortcut for this request. Nothing else was executed.\n\n\(suggestion)"
+                }
                 return refined ?? result.message
             case .skipped:
                 // Executor succeeded; clearly disclose that no read-back verifier exists.
@@ -434,6 +471,42 @@ extension LauncherView {
                 + "(\(fallback.routeLabel)). Say “try the fallback” and I'll run it."
         }
         return answer
+    }
+
+    /// Concise execution receipt shown in the shared chat shell. It describes only the
+    /// concrete route DoraX is invoking; it is not model reasoning or a hidden prompt log.
+    private func generalAIExecutionStatus(for candidate: DoraXActionCandidate) -> String {
+        switch candidate.route {
+        case .adapter:
+            return "Running App Adapter action…"
+        case .mcp:
+            return "Running MCP tool…"
+        case .api:
+            return "Calling connected API…"
+        case .cli:
+            return "Running linked CLI…"
+        case .shortcutRunner:
+            return "Running macOS Shortcut…"
+        case .keyboardShortcut:
+            let display = MenuShortcutFormatter.display(
+                char: candidate.shortcutChar,
+                modifiers: candidate.shortcutModifiers)
+            return display.map { "Running \($0)…" } ?? "Running keyboard shortcut…"
+        case .verifiedMenu:
+            if let display = MenuShortcutFormatter.display(
+                char: candidate.shortcutChar,
+                modifiers: candidate.shortcutModifiers)
+            {
+                return "Reading live menus, then running \(display)…"
+            }
+            return "Reading live menus…"
+        case .axFallback:
+            return "Running Accessibility action…"
+        case .appLaunch:
+            return "Launching \(candidate.appName ?? "app")…"
+        case .automation:
+            return "Running app automation…"
+        }
     }
 
     /// Dedicated-automation-backend fallback: when no deterministic route matched, ask the
@@ -584,7 +657,7 @@ extension LauncherView {
 
     /// Personal-data sources General Chat can read. Each gets its own first-run approval
     /// so "any unread messages?" or "events this week?" ask before touching private data.
-    enum ReadOnlyDataDomain: String {
+    enum ReadOnlyDataDomain: String, Equatable {
         case messages, mail, calendar, reminders, contacts, notes, photos
         var displayName: String {
             switch self {
@@ -652,6 +725,7 @@ extension LauncherView {
                     + "Ask again and choose Allow to let me."
             }
             switch domain {
+            case .messages: return await messagesReadAnswer(query: query)
             case .calendar: return await calendarReadAnswer(query: query)
             case .reminders: return await remindersReadAnswer(query: query)
             case .contacts: return await contactsReadAnswer(query: query)
@@ -663,6 +737,37 @@ extension LauncherView {
         }
 
         return await groundedCapabilityReadAnswer(query: query)
+    }
+
+    /// Reads recent Messages locally through the built-in Apple MCP. Apple does not expose
+    /// a reliable public unread flag, so unread-only questions are answered honestly while
+    /// still returning recent conversation evidence instead of provider speculation.
+    private func messagesReadAnswer(query: String) async -> String {
+        guard AppSettings.shared.messagesMCPEnabled else {
+            return "Messages access is disabled. Enable DoraX Apple MCP · Messages in Settings → App Adapters → Messages → Tools."
+        }
+        let lower = query.lowercased()
+        let contact: String = {
+            for marker in [" from ", " by "] {
+                if let range = lower.range(of: marker) {
+                    return String(query[range.upperBound...])
+                        .trimmingCharacters(in: CharacterSet(charactersIn: " ?.!,"))
+                }
+            }
+            return ""
+        }()
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            MessagesAutomation.conversationSnapshot(contactFilter: contact, limit: 20)
+        }.value
+        if lower.contains("unread") {
+            return """
+                DoraX can read recent Messages conversations, but Apple does not expose a reliable unread flag through its supported Messages automation interface. I won't guess unread status.
+
+                Recent conversation evidence:
+                \(snapshot)
+                """
+        }
+        return snapshot
     }
 
     /// First-run read approval for a personal-data source. Returns false only on Cancel.

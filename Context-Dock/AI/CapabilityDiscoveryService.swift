@@ -87,7 +87,10 @@ final class CapabilityDiscoveryService {
         if case .candidates(let routes) = executable {
             candidates.append(contentsOf: routes)
         }
-        return candidates
+        return candidates.filter { candidate in
+            guard let bundleID = candidate.bundleID else { return true }
+            return AppAdapterManager.shared.adapter(for: bundleID) != nil
+        }
     }
 
     private func contextDockCandidates(

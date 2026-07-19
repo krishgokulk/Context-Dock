@@ -622,9 +622,17 @@ final class AIProviderRouter {
         }
         switch provider {
         case .openAI:
-            return .init(apiKey: key, endpoint: "https://api.openai.com/v1/chat/completions", modelID: "gpt-4o-mini")
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.openai.com/v1/chat/completions",
+                modelID: settings.selectedOpenAIModel.isEmpty
+                    ? "gpt-4o-mini" : settings.selectedOpenAIModel)
         case .anthropic:
-            return .init(apiKey: key, endpoint: "https://api.anthropic.com/v1/messages", modelID: "claude-3-5-haiku-20241022")
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.anthropic.com/v1/messages",
+                modelID: settings.selectedAnthropicModel.isEmpty
+                    ? AnthropicModelCatalog.defaultModelID : settings.selectedAnthropicModel)
         case .googleGemini:
             return .init(apiKey: key, endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", modelID: "gemini-2.0-flash")
         case .ollama:

@@ -1403,7 +1403,7 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
+                                        } else if !isGlobalContextActive {
                                             Text(title)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.primary)
@@ -1418,9 +1418,11 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.25))
                                         }
-                                        Text("  — ↵")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.25))
+                                        if isPrefixMatch || !isGlobalContextActive {
+                                            Text("  — ↵")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.25))
+                                        }
                                     }
                                 } else if let result = focusedGlobalAppResult {
                                     let title = inputFieldDisplayTitle(for: result)
@@ -1437,15 +1439,17 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
+                                        } else if !isGlobalContextActive {
                                             Text(title)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.primary)
                                                 .lineLimit(1)
                                         }
-                                        Text("  —  \(selectedResultAction(result))")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.35))
+                                        if isPrefixMatch || !isGlobalContextActive {
+                                            Text("  —  \(selectedResultAction(result))")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.35))
+                                        }
                                     }
                                 } else if let title = topGlobalContextTitle,
                                     title.lowercased().hasPrefix(searchState.query.lowercased()),
@@ -1504,7 +1508,7 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
+                                        } else if !isGlobalContextActive {
                                             // Fuzzy match — show full name in primary color
                                             Text(title)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
@@ -1512,9 +1516,11 @@ extension LauncherView {
                                                 .lineLimit(1)
                                         }
                                         // Action hint
-                                        Text("  —  \(selectedResultAction(result))")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.35))
+                                        if isPrefixMatch || !isGlobalContextActive {
+                                            Text("  —  \(selectedResultAction(result))")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.35))
+                                        }
                                     }
                                 } else if !aiFallbackActive,
                                     !shouldUsePureGlobalAppSearch,
