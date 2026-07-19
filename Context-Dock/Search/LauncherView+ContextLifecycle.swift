@@ -47,7 +47,8 @@ extension LauncherView {
             // In dock mode anchor content to bottom so dock bar stays fixed while results grow upward.
             // In normal mode anchor to top so results grow downward.
             .frame(
-                height: calculatedHeight, alignment: settings.effectiveDockAtBottom ? .bottom : .top
+                height: renderedDockHeight ?? calculatedHeight,
+                alignment: settings.effectiveDockAtBottom ? .bottom : .top
             )
             .background(
                 backgroundView
@@ -65,6 +66,11 @@ extension LauncherView {
             )
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
+            .onAppear {
+                if renderedDockHeight == nil {
+                    renderedDockHeight = calculatedHeight
+                }
+            }
             .onChange(of: searchState.results.isEmpty) { _, isEmpty in
                 if isEmpty {
                     l1ResultsReservedHeight = 0
@@ -72,7 +78,7 @@ extension LauncherView {
                 requestWindowSizeUpdate(
                     reason: .resultsChanged,
                     animated: false,
-                    debounceNanoseconds: 110_000_000
+                    debounceNanoseconds: 0
                 )
             }
             .onChange(of: searchState.results.count) { _, newCount in
@@ -82,7 +88,7 @@ extension LauncherView {
                     requestWindowSizeUpdate(
                         reason: .resultsChanged,
                         animated: false,
-                        debounceNanoseconds: 110_000_000
+                        debounceNanoseconds: 0
                     )
                 }
             }

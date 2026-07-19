@@ -17,6 +17,13 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         wantsLayer = true
+        // The launcher grows downward from a pinned top edge. AppKit's default preserved-content
+        // resize can reuse the BOTTOM slice of the final NSHostingView while the window is still
+        // pill-height, which temporarily replaces the input with result rows. Force the hosting
+        // layer to redraw at every animated size and keep any interim layer contents top-aligned.
+        layerContentsRedrawPolicy = .duringViewResize
+        layerContentsPlacement = .topLeft
+        window?.preservesContentDuringLiveResize = false
         layer?.backgroundColor = CGColor.clear
         layer?.cornerCurve = .continuous
         layer?.cornerRadius = 34

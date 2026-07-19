@@ -134,6 +134,9 @@ struct LauncherView: View {
     @State var selectionScopePayload: GlobalContextActivation?
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
+    // Visible shell height is staged separately from the NSWindow's target capacity so the
+    // input stays pinned while only the area beneath it animates open/closed.
+    @State var renderedDockHeight: CGFloat?
     @StateObject var launcherViewModel = LauncherViewModel()
     @StateObject var globalContextViewModel = GlobalContextViewModel()
     @StateObject var finderContext = FinderContextViewModel()

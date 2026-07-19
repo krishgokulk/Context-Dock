@@ -1206,20 +1206,33 @@ extension LauncherView {
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: effectiveHeight)
 
-            let shouldAnimateFrame =
-                animated
-                && (presetChanged || modeChanged || heightDelta > 80 || widthChanged)
-            if shouldAnimateFrame {
-                // Animate visible sheet expand/collapse. Small result churn is filtered before
-                // this path, so typing stays steady while meaningful shape changes glide.
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = heightDelta > 260 ? 0.26 : 0.20
-                NSAnimationContext.current.timingFunction = CAMediaTimingFunction(
-                    controlPoints: 0.18, 0.92, 0.22, 1.0)
-                window.animator().setFrame(newFrame, display: false)
-                NSAnimationContext.endGrouping()
+            let visibleStartHeight = self.renderedDockHeight ?? currentFrame.height
+            let shouldAnimateVisibleShell = animated && abs(visibleStartHeight - effectiveHeight) > 1
+            self.renderedDockHeight = visibleStartHeight
+
+            if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
+                // Expansion: give the transparent host its final capacity first. On the next
+                // runloop turn, reveal only the top-aligned SwiftUI shell beneath the input.
+                window.setFrame(newFrame, display: true)
+                if shouldAnimateVisibleShell {
+                    DispatchQueue.main.async {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                            self.renderedDockHeight = effectiveHeight
+                        }
+                    }
+                } else {
+                    self.renderedDockHeight = effectiveHeight
+                }
             } else {
-                window.setFrame(newFrame, display: false)
+                // Collapse: hide the visible shell first while the larger transparent host still
+                // provides room, then shrink the host after the animation. This is the inverse of
+                // expansion and prevents either edge from clipping the persistent input.
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                    self.renderedDockHeight = effectiveHeight
+                }
+                try? await Task.sleep(nanoseconds: 230_000_000)
+                guard !Task.isCancelled else { return }
+                window.setFrame(newFrame, display: true)
             }
             // Transparent window: recompute the macOS drop-shadow for the new glass
             // shape, otherwise it lags / keeps the old outline as the dock resizes.
