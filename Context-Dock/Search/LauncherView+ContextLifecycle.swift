@@ -737,19 +737,7 @@ extension LauncherView {
                     return
                 }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        // Backspace on an empty frontmost chat: CLEAR the conversation and
-                        // return to the app's menu search — a fresh chat next time.
-                        l2.chatMessages = []
-                        if let key = l2.activeDockSessionKey {
-                            AppPanelChatStore.shared.clear(for: key)
-                        }
-                        l2.isLoading = false
-                        l2.currentTask?.cancel()
-                        l2.currentTask = nil
-                        exitContextDockChatBackToContext()
-                    }
-                    isSearchFieldFocused = true
+                    clearAndExitContextDockChatBackToContext()
                     return
                 }
                 // Attached Finder folder and Selection Scope exit FIRST — a Finder app

@@ -350,6 +350,18 @@ final class GeneralAIActionResolver {
             lowered.removeLast()
             lowered = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // Compact launcher-style noun phrases are commands even without an explicit verb.
+        // Keep this allowlist narrow so ordinary topic phrases remain normal conversation.
+        let implicitLaunchIntents: Set<String> = [
+            "calculator",
+            "basic calculator",
+            "scientific calculator",
+            "programmer calculator",
+            "calculator basic",
+            "calculator scientific",
+            "calculator programmer",
+        ]
+        if implicitLaunchIntents.contains(lowered) { return true }
         // Questions and explanations stay in normal chat.
         // Page-grounded browser tasks are executable even though they start like
         // a chat request ("summarize this safari page" → Safari router).
@@ -510,6 +522,7 @@ final class GeneralAIActionResolver {
         "maps": "com.apple.Maps",
         "facetime": "com.apple.FaceTime",
         "preview": "com.apple.Preview",
+        "calculator": "com.apple.calculator",
         "xcode": "com.apple.dt.Xcode",
         "vs code": "com.microsoft.VSCode",
         "vscode": "com.microsoft.VSCode",

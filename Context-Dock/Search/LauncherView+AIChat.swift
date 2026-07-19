@@ -719,6 +719,24 @@ extension LauncherView {
         }
     }
 
+    /// Shared exit used by the header button and empty-field Backspace. Clear the current
+    /// app chat, cancel any in-flight work, then return the unified shell to Context Dock.
+    func clearAndExitContextDockChatBackToContext() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            l2.chatMessages = []
+            if let key = l2.activeDockSessionKey {
+                AppPanelChatStore.shared.clear(for: key)
+            }
+            l2.isLoading = false
+            l2.loadingStatus = nil
+            l2.activeRequestID = nil
+            l2.currentTask?.cancel()
+            l2.currentTask = nil
+            exitContextDockChatBackToContext()
+        }
+        isSearchFieldFocused = true
+    }
+
     func exitContextDockChatAndScope() {
         exitContextDockChatSheet()
         clearSearchContext()
@@ -992,7 +1010,7 @@ extension LauncherView {
                         .buttonStyle(.plain)
                         if scopedTarget != nil {
                             Button("Exit Scope") {
-                                clearContextDockChatConversation(keepScope: true)
+                                clearAndExitContextDockChatBackToContext()
                             }
                                 .buttonStyle(.bordered)
                                 .controlSize(.mini)
@@ -4565,7 +4583,10 @@ extension LauncherView {
             }.map(String.init))
             return !queryTokens.isDisjoint(with: toolTokens)
         }
-        guard matchingActions.isEmpty, matchingCLI.isEmpty, !matchingMCP else { return nil }
+        // Explicit adapter actions retain priority. A linked CLI or MCP must not suppress an
+        // exact frontmost menu command: providers otherwise synthesize fragile shell/AX code
+        // for universal UI requests such as Minimize or Print despite a live menu shortcut.
+        guard matchingActions.isEmpty else { return nil }
 
         if let requestID = l2.activeRequestID {
             setL2LoadingStatus("Reading \(appName) live menus…", requestID: requestID)
@@ -4585,6 +4606,8 @@ extension LauncherView {
             appName: appName,
             processIdentifier: app.processIdentifier
         ) else {
+            // No exact live menu route: linked integrations get their normal opportunity.
+            if !matchingCLI.isEmpty || matchingMCP { return nil }
             let closest = menuSuggestions(
                 intent: query,
                 bundleId: bundleId,
@@ -4600,9 +4623,11 @@ extension LauncherView {
         }
 
         if let requestID = l2.activeRequestID {
-            let route = match.shortcutChar?.isEmpty == false
-                ? "Running menu shortcut…"
-                : "Clicking \(match.path.joined(separator: " → "))…"
+            let shortcut = MenuShortcutFormatter.display(
+                char: match.shortcutChar,
+                modifiers: match.shortcutModifiers)
+            let route = shortcut.map { "Running \($0)…" }
+                ?? "Clicking \(match.path.joined(separator: " → "))…"
             setL2LoadingStatus(route, requestID: requestID)
             await Task.yield()
         }
