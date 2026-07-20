@@ -13,6 +13,34 @@ struct BluetoothDeviceSnapshot: Identifiable, Hashable {
 }
 
 enum BluetoothDeviceProvider {
+    /// Current controller power state, read natively (no shell/AppleScript).
+    static func isPoweredOn() -> Bool {
+        IOBluetoothHostController.default().powerState.rawValue == 1
+    }
+
+    /// Set controller power on/off natively.
+    ///
+    /// The visible Bluetooth toggle previously drove Control Center through
+    /// System Events AppleScript, which fails silently whenever that UI shifts
+    /// (leaving Bluetooth "on" after the user turned it off). This calls the
+    /// IOBluetooth C entry point `IOBluetoothPreferenceSetControllerPowerState`
+    /// directly — the same mechanism tools like `blueutil` use — resolved via
+    /// `dlsym` so no bridging header/build-setting change is required.
+    /// - Returns: `true` if the power call was dispatched.
+    @discardableResult
+    static func setPower(_ enabled: Bool) -> Bool {
+        typealias SetPowerState = @convention(c) (Int32) -> Int32
+        let path = "/System/Library/Frameworks/IOBluetooth.framework/IOBluetooth"
+        guard let handle = dlopen(path, RTLD_NOW) else { return false }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "IOBluetoothPreferenceSetControllerPowerState") else {
+            return false
+        }
+        let setPower = unsafeBitCast(symbol, to: SetPowerState.self)
+        _ = setPower(enabled ? 1 : 0)
+        return true
+    }
+
     static func pairedDevices() -> [BluetoothDeviceSnapshot] {
         let rawDevices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
         let snapshots: [BluetoothDeviceSnapshot] = rawDevices.compactMap {

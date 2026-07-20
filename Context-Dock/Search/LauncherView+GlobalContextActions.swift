@@ -1793,9 +1793,17 @@ extension LauncherView {
 
         if direction > 0 {
             let visibleOrder = globalGroupedVisibleOrder(state: state)
+            // Row 0 is shown pre-selected (render default) whenever the list renders
+            // a default-first row even though the focus index is nil — while typing
+            // (q non-empty) OR inside any active global scope (which always shows the
+            // first row selected via isRunningAppMenuScopeDefaultFirstRow). Start from
+            // that row so the first Down advances to the second instead of re-selecting
+            // the first. Mirrors the fallback in moveGlobalAppResultFocus(direction:).
+            let showsDefaultFirstRow = !q.isEmpty || isActiveGlobalRunningAppMenuScope()
             let current =
                 currentGlobalGroupedFocusIndex(state: state)
-                .flatMap { visibleOrder.firstIndex(of: $0) } ?? -1
+                .flatMap { visibleOrder.firstIndex(of: $0) }
+                ?? (showsDefaultFirstRow ? 0 : -1)
             setGlobalGroupedFocus(
                 visibleOrder[min(current + 1, visibleOrder.count - 1)], state: state)
             return true
@@ -1951,18 +1959,29 @@ extension LauncherView {
     }
 
     func executeGlobalAppSearchResult(_ result: SearchResult) {
-        // A Global Command is a navigable scope. The command's child row performs
-        // the actual action after the user sees live devices, networks, or presets.
-        if result.subtitle.hasPrefix("syscmd://"),
-            activateGlobalInlineScope(result: result, bundleID: result.subtitle)
-        {
+        // A Global Command with an inline control executes in place and keeps the
+        // results sheet open: a toggle flips on Enter/click; a slider is adjusted by
+        // the inline control itself, so Enter is a no-op rather than resetting it.
+        // Scoping into the device/network list is the explicit scope gesture (→).
+        if let command = interactiveSystemCommand(forResult: result) {
+            switch command.interactionType {
+            case .toggle:
+                let current = InteractiveCommandState.shared.value(for: command) ?? 0
+                let next = current < 0.5
+                InteractiveCommandState.shared.setLocal(next ? 1 : 0, for: command.id)
+                SystemCommandInteractiveRunner.run(command, value: next ? "on" : "off")
+            case .slider, .none:
+                break
+            }
             focusedAppPillIndex = nil
             hoveredAppPillIndex = nil
             l2.focusedPillIndex = nil
             l2.pillNavViaKeyboard = false
-            reclaimSearchInputFocus()
             return
         }
+        // Enter/click runs the command's action directly — Global Commands no longer
+        // auto-scope on Enter. Scoping into a command's live list (Bluetooth devices,
+        // Wi-Fi networks, presets) is reserved for the explicit scope gesture (→).
         // Arm the launch morph BEFORE running the action: result.action() may activate a
         // running app and force-hide the dock — this makes those hides no-op so the dock
         // stays and morphs into the launched app's Context Dock.
@@ -4992,6 +5011,15 @@ extension LauncherView {
             return Array(sorted.prefix(maxListViewDockPills))
         }
 
+        if isSystemCommandScope {
+            // Provider scopes already emit their intended semantic order:
+            // interactive control first, then the summary and device rows. The
+            // low-value partition below is tuned for app menus and would demote
+            // the control here — its pill name ("Bluetooth") equals the scope's
+            // app name, so it reads as a self/"about" row and sinks beneath the
+            // device list. Preserve insertion order instead.
+            return Array(sorted.prefix(maxListViewDockPills))
+        }
         let useful = sorted.filter {
             !isLowValueScopedGlobalMenuPill($0, appName: scope.scopedAppName)
         }

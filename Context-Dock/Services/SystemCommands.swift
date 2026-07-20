@@ -293,6 +293,17 @@ final class SystemCommandsRegistry {
         "Take Screenshot",
         "Show Desktop",
         "Do Not Disturb",
+        // Retired built-in Global Commands — trimmed to a focused default set
+        // (Wi-Fi, Bluetooth, Volume, Keep Awake, Sleep, Restart, Shut Down). Wi-Fi
+        // Power is folded into the Wi-Fi command's inline toggle. Users can
+        // re-create any of these as their own commands.
+        "Wi-Fi Power",
+        "About This Mac",
+        "System Settings...",
+        "App Store...",
+        "Force Quit...",
+        "Lock Screen",
+        "Log Out...",
     ]
 
     private static func migratedCommands(from decoded: [SystemCommand]) -> [SystemCommand] {
@@ -306,6 +317,21 @@ final class SystemCommandsRegistry {
                     // persisted copies used a single brittle AX lookup that
                     // opened Settings but skipped switches with a missing name.
                     var enriched = command
+                    enriched.description = currentDefault.description
+                    enriched.script = currentDefault.script
+                    enriched.interaction = currentDefault.interaction
+                    enriched.valueScript = currentDefault.valueScript
+                    return enriched
+                }
+                if command.name == "Wi-Fi",
+                    command.keywords.contains(where: { $0.lowercased() == "provider:wifi" }),
+                    let currentDefault = defaults.first(where: { $0.name == "Wi-Fi" })
+                {
+                    // Fold the standalone "Wi-Fi Power" toggle into the Wi-Fi command:
+                    // refresh persisted copies so they gain the inline power toggle plus
+                    // the on/off handling in the script.
+                    var enriched = command
+                    enriched.keywords = currentDefault.keywords
                     enriched.description = currentDefault.description
                     enriched.script = currentDefault.script
                     enriched.interaction = currentDefault.interaction
@@ -337,10 +363,14 @@ final class SystemCommandsRegistry {
         SystemCommand(
             name: "Wi-Fi",
             icon: "wifi",
-            keywords: ["wifi", "wi-fi", "wireless", "network", "networks", "provider:wifi"],
+            keywords: ["wifi", "wi-fi", "wireless", "network", "networks", "power", "airport", "provider:wifi"],
             scriptType: "applescript",
             script: #"""
             set targetNetwork to system attribute "CD_QUERY"
+            if targetNetwork is "on" or targetNetwork is "off" then
+                do shell script "dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}'); networksetup -setairportpower \"$dev\" " & quoted form of targetNetwork
+                return
+            end if
             if targetNetwork is missing value or targetNetwork is "" or targetNetwork is "settings" then
                 open location "x-apple.systempreferences:com.apple.wifi-settings-extension"
                 return
@@ -354,7 +384,11 @@ final class SystemCommandsRegistry {
                 end tell
             end tell
             """#,
-            description: "Show visible Wi-Fi networks and open selected network"
+            description: "Wi-Fi power and visible networks",
+            interaction: "toggle",
+            valueScript: #"""
+            do shell script "dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}'); networksetup -getairportpower \"$dev\" | awk '{print tolower($NF)}'"
+            """#
         ),
         SystemCommand(
             name: "Bluetooth",
@@ -453,7 +487,7 @@ final class SystemCommandsRegistry {
         SystemCommand(
             name: "Volume",
             icon: "speaker.wave.3.fill",
-            keywords: ["volume", "sound", "audio", "speaker", "presets:10|25|30|45|50|65|75|80|95|max"],
+            keywords: ["volume", "sound", "audio", "speaker"],
             scriptType: "applescript",
             script: #"""
             set rawValue to system attribute "CD_QUERY"
@@ -467,60 +501,12 @@ final class SystemCommandsRegistry {
             if targetVolume > 100 then set targetVolume to 100
             set volume output volume targetVolume
             """#,
-            description: "Set Mac output volume",
+            description: "Adjust Mac output volume",
             interaction: "slider",
             sliderMin: 0,
             sliderMax: 100,
             sliderStep: 1,
             valueScript: "output volume of (get volume settings)"
-        ),
-        SystemCommand(
-            name: "Wi-Fi Power",
-            icon: "wifi.circle",
-            keywords: ["wifi", "wi-fi", "wireless", "power", "toggle", "airport"],
-            scriptType: "bash",
-            script: #"""
-            dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}')
-            networksetup -setairportpower "$dev" "$CD_QUERY"
-            """#,
-            description: "Turn Wi-Fi on or off",
-            interaction: "toggle",
-            valueScript: #"""
-            dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}')
-            networksetup -getairportpower "$dev" | awk '{print tolower($NF)}'
-            """#
-        ),
-        SystemCommand(
-            name: "About This Mac",
-            icon: "laptopcomputer",
-            keywords: ["about", "mac", "about this mac", "system info"],
-            scriptType: "applescript",
-            script: appleMenuClickScript("About This Mac"),
-            description: "Open About This Mac from Apple menu"
-        ),
-        SystemCommand(
-            name: "System Settings...",
-            icon: "gearshape",
-            keywords: ["settings", "system settings", "preferences", "system preferences"],
-            scriptType: "applescript",
-            script: #"tell application "System Settings" to activate"#,
-            description: "Open System Settings"
-        ),
-        SystemCommand(
-            name: "App Store...",
-            icon: "app.badge",
-            keywords: ["app store", "updates", "software", "apps"],
-            scriptType: "applescript",
-            script: #"tell application "App Store" to activate"#,
-            description: "Open App Store"
-        ),
-        SystemCommand(
-            name: "Force Quit...",
-            icon: "exclamationmark.octagon",
-            keywords: ["force quit", "quit app", "force", "applications"],
-            scriptType: "applescript",
-            script: appleMenuClickScript("Force Quit..."),
-            description: "Open Force Quit Applications"
         ),
         SystemCommand(
             name: "Keep Awake",
@@ -589,22 +575,6 @@ final class SystemCommandsRegistry {
             scriptType: "applescript",
             script: appleMenuClickScript("Shut Down..."),
             description: "Shut down Mac"
-        ),
-        SystemCommand(
-            name: "Lock Screen",
-            icon: "lock",
-            keywords: ["lock", "lock screen", "secure", "password"],
-            scriptType: "applescript",
-            script: #"tell application "System Events" to keystroke "q" using {control down, command down}"#,
-            description: "Lock screen"
-        ),
-        SystemCommand(
-            name: "Log Out...",
-            icon: "rectangle.portrait.and.arrow.right",
-            keywords: ["log out", "logout", "sign out"],
-            scriptType: "applescript",
-            script: appleMenuClickScript("Log Out..."),
-            description: "Log out current user"
         ),
     ]
 }

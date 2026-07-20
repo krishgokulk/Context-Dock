@@ -21,6 +21,25 @@ struct WiFiNetworkSnapshot: Identifiable, Hashable {
 }
 
 enum WiFiNetworkProvider {
+    /// Current Wi-Fi radio power, read natively via CoreWLAN.
+    static func isPoweredOn() -> Bool {
+        CWWiFiClient.shared().interface()?.powerOn() ?? false
+    }
+
+    /// Set Wi-Fi radio power natively via CoreWLAN — no `networksetup` shell out,
+    /// no admin prompt on a standard user account.
+    /// - Returns: `true` if the power call succeeded.
+    @discardableResult
+    static func setPower(_ enabled: Bool) -> Bool {
+        guard let interface = CWWiFiClient.shared().interface() else { return false }
+        do {
+            try interface.setPower(enabled)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     static func visibleNetworks() -> [WiFiNetworkSnapshot] {
         guard let interface = CWWiFiClient.shared().interface() else { return [] }
         let currentSSID = interface.ssid() ?? ""

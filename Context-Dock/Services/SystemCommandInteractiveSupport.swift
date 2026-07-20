@@ -41,7 +41,8 @@ final class InteractiveCommandState: ObservableObject {
         guard command.interactionType != .none else { return }
         let script = command.valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
         let readsBluetoothPower = command.keywords.contains("provider:bluetooth")
-        guard readsBluetoothPower || !script.isEmpty else { return }
+        let readsWiFiPower = command.keywords.contains("provider:wifi")
+        guard readsBluetoothPower || readsWiFiPower || !script.isEmpty else { return }
         let id = command.id
         if let last = fetchedAt[id], Date().timeIntervalSince(last) < maxAge { return }
         guard inflight.insert(id).inserted else { return }
@@ -53,6 +54,8 @@ final class InteractiveCommandState: ObservableObject {
             if readsBluetoothPower {
                 let powerState = IOBluetoothHostController.default().powerState
                 output = powerState.rawValue == 1 ? "on" : "off"
+            } else if readsWiFiPower {
+                output = WiFiNetworkProvider.isPoweredOn() ? "on" : "off"
             } else {
                 output = SystemCommandInteractiveRunner.runForOutput(
                     script: script, actionType: actionType
@@ -81,6 +84,25 @@ enum SystemCommandInteractiveRunner {
     /// Run the command's script with the control value injected as CD_QUERY.
     /// No feedback UI — interactive controls show their own state.
     static func run(_ command: SystemCommand, value: String) {
+        // The Bluetooth / Wi-Fi power switches write natively rather than through
+        // the command's AppleScript / networksetup path, which failed silently and
+        // left the radio in the wrong state. Device/network selection (any other
+        // value) still flows through the script below.
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedValue == "on" || normalizedValue == "off" {
+            if command.keywords.contains("provider:bluetooth") {
+                Task.detached(priority: .userInitiated) {
+                    BluetoothDeviceProvider.setPower(normalizedValue == "on")
+                }
+                return
+            }
+            if command.keywords.contains("provider:wifi") {
+                Task.detached(priority: .userInitiated) {
+                    WiFiNetworkProvider.setPower(normalizedValue == "on")
+                }
+                return
+            }
+        }
         let script = command.script
         let actionType = command.actionType
         Task.detached(priority: .userInitiated) {

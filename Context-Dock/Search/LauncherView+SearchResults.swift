@@ -838,6 +838,19 @@ extension LauncherView {
         return command
     }
 
+    /// Resolves the interactive SystemCommand behind a global search result so its
+    /// live control (Bluetooth/Wi-Fi toggle, Volume slider) can render inline in the
+    /// results sheet instead of requiring the user to scope in.
+    func interactiveSystemCommand(forResult result: SearchResult) -> SystemCommand? {
+        guard result.subtitle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(result.subtitle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.isEnabled,
+            command.interactionType != .none
+        else { return nil }
+        return command
+    }
+
     @ViewBuilder
     func groupedMenuPillRow(group: MenuPillGroup, index: Int) -> some View {
         let primary = group.primaryPill
@@ -1033,6 +1046,7 @@ extension LauncherView {
         index: Int,
         isCommandIcon: Bool = false,
         defaultsToFirstSelection: Bool = false,
+        interactiveCommand: SystemCommand? = nil,
         quitAction: (() -> Void)? = nil,
         quitPhase: DockInlineFeedback.Phase? = nil,
         previewApp: NSRunningApplication? = nil,
@@ -1112,7 +1126,15 @@ extension LauncherView {
 
                 Spacer(minLength: 0)
 
-                if isActive {
+                // An inline live control (Bluetooth/Wi-Fi toggle, Volume slider) owns
+                // the trailing edge — reserve room for the overlay and drop the ⏎ chip.
+                // A slider needs far more width than a toggle switch.
+                if let interactiveCommand {
+                    Color.clear.frame(
+                        width: interactiveCommand.interactionType == .slider ? 200 : 52,
+                        height: 1
+                    )
+                } else if isActive {
                     HStack(spacing: 6) {
                         if let quitAction {
                             Button(role: .destructive) {
@@ -1177,6 +1199,14 @@ extension LauncherView {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Live control sits above the button so the toggle/slider receives the
+        // mouse event instead of triggering the row action (which would scope).
+        .overlay(alignment: .trailing) {
+            if let interactiveCommand {
+                SystemCommandAccessoryView(command: interactiveCommand)
+                    .padding(.trailing, 16)
+            }
+        }
         .onHover { hovering in
             guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {

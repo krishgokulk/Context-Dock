@@ -607,6 +607,7 @@ extension LauncherView {
                             index: idx,
                             isCommandIcon: globalListUsesCommandIcon(for: result),
                             defaultsToFirstSelection: true,
+                            interactiveCommand: interactiveSystemCommand(forResult: result),
                             quitAction: isRunning ? makeQuitAction(result) : nil,
                             quitPhase: appQuitFeedbackPhase(bundleID: runningApp?.bundleIdentifier),
                             previewApp: runningApp,
