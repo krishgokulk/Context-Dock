@@ -1382,7 +1382,11 @@ extension LauncherView {
                                     && !suppressScopedResultPreview
                                 ? topContextMatchDockTitleForInputPreview() : nil
                             ZStack(alignment: .leading) {
-                                if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {
+                                if !allGlobalInlineAppScopes.isEmpty,
+                                    !isGlobalContextActive
+                                        || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                {
                                     globalInlineScopeQueryOverlay
                                 }
                                 // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
@@ -1637,6 +1641,13 @@ extension LauncherView {
                                         Text("filter…")
                                             .foregroundStyle(.secondary.opacity(0.4))
                                             .font(.system(size: 15, weight: .regular))
+                                    } else if currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                    {
+                                        // The extension scope overlay owns this entire input
+                                        // layer. Do not render the generic "Search menus" prompt
+                                        // underneath its pill and caret.
+                                        EmptyView()
                                     } else if currentDockSurfaceMode == .generalChat {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
@@ -1798,6 +1809,13 @@ extension LauncherView {
                                     // For fuzzy match or empty: hide it so the full result name shows cleanly.
                                     .opacity(
                                         {
+                                            if !allGlobalInlineAppScopes.isEmpty,
+                                                !isGlobalContextActive
+                                                    || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                                    || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                            {
+                                                return 0
+                                            }
                                             // Global Context must paint the user's keystroke directly.
                                             // Search/ghost state is allowed to arrive later, but it must
                                             // never replace or temporarily hide the editable text field.
@@ -1923,10 +1941,15 @@ extension LauncherView {
                                                     self.updateGlobalContextTypingSnapshot(query: q)
                                                 }
                                             } else {
+                                                let keepsExtensionSheet =
+                                                    globalInlineAppScope?.bundleId.hasPrefix("syscmd://") == true
+                                                    || globalInlineAppScope?.bundleId.hasPrefix("cli://") == true
                                                 globalContextViewModel.typingSnapshot =
                                                     GlobalContextTypingSnapshot(
                                                         query: q,
-                                                        phase: q.isEmpty ? .idle : .expandable,
+                                                        phase: keepsExtensionSheet
+                                                            ? .expanded
+                                                            : (q.isEmpty ? .idle : .expandable),
                                                         matchDockIcons: globalContextViewModel.typingSnapshot.matchDockIcons,
                                                         matchDockOverflowCount: globalContextViewModel.typingSnapshot.matchDockOverflowCount,
                                                         preparedResultsVersion: globalContextViewModel.typingSnapshot.preparedResultsVersion
@@ -3151,6 +3174,22 @@ extension LauncherView {
     /// running-app scope). Prefers the live running-app icon, then the resolved app icon,
     /// then the app-path icon — so it's never nil during the scope transition.
     func leadingScopedAppIcon(bundleID: String) -> NSImage? {
+        if bundleID.hasPrefix("syscmd://") {
+            let id = String(bundleID.dropFirst("syscmd://".count))
+            if let uuid = UUID(uuidString: id),
+                let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == uuid }),
+                let icon = NSImage(
+                    systemSymbolName: command.icon,
+                    accessibilityDescription: command.name
+                )
+            {
+                return icon
+            }
+            return NSImage(systemSymbolName: "command", accessibilityDescription: "Global Command")
+        }
+        if bundleID.hasPrefix("cli://") {
+            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+        }
         if let running = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }), let icon = running.icon {
@@ -3210,6 +3249,12 @@ extension LauncherView {
             )
         }
         guard !q.isEmpty else { return nil }
+        // The visible grouped order is authoritative. In particular, an exact
+        // Global Command must beat an installed app with the same name before
+        // transient app-scope heuristics get a chance to steal the leading icon.
+        if let ordered = orderedGlobalContextMatchDockIcons(for: q, limit: 1).first {
+            return ordered
+        }
         if let target = transientGlobalInlineAppScopeTarget(for: q) {
             let icon =
                 FileManager.default.fileExists(atPath: target.appPath)
@@ -3246,7 +3291,7 @@ extension LauncherView {
                 isExactAppPrefix: true
             )
         }
-        return orderedGlobalContextMatchDockIcons(for: q, limit: 1).first
+        return nil
     }
 
     func focusedGlobalGroupedMatchDockIcon(for query: String) -> MatchDockIcon? {
@@ -3277,7 +3322,10 @@ extension LauncherView {
     }
 
     func shouldHideStandaloneLeadingIcon(compactScopeKey: String?) -> Bool {
-        let inlineScopeOwnsText = globalInlineAppScope != nil && !isGlobalContextActive
+        let inlineScopeOwnsText = globalInlineAppScope != nil
+            && (!isGlobalContextActive
+                || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true)
         let expandedScopeOwnsLeadingSlot =
             isSearchBarExpanded
             && (compactScopeKey != nil

@@ -516,7 +516,10 @@ struct LauncherView: View {
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if shouldUsePureGlobalAppSearch {
-            guard !q.isEmpty else { return false }
+            let hasExtensionScope =
+                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+            guard !q.isEmpty || hasExtensionScope else { return false }
             return hasExpandedGlobalContextResults
         }
         let finderSearchPopoverActive = shouldUseFinderSearchPopover(for: q)
@@ -2632,6 +2635,12 @@ struct LauncherView: View {
             globalContextViewModel.typingSnapshot.phase == .expanded
         else { return false }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if q.isEmpty,
+            let bundleID = currentGlobalScopedBundleID,
+            bundleID.hasPrefix("syscmd://") || bundleID.hasPrefix("cli://")
+        {
+            return visibleGlobalScopedMenuNavigationState(for: q)?.totalCount ?? 0 > 0
+        }
         guard !q.isEmpty else { return false }
         if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
         if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
@@ -2858,7 +2867,7 @@ struct LauncherView: View {
     /// Returns the action label shown next to a selected result (like Spotlight's "— Open")
     func selectedResultAction(_ result: SearchResult) -> String {
         if result.subtitle.hasPrefix("syscmd://") {
-            return "Run"
+            return "Scope"
         }
         if result.subtitle.hasPrefix("cli://") {
             return "Scope"

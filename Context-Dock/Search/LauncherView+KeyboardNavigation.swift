@@ -645,19 +645,7 @@ extension LauncherView {
                         let qq = self.searchState.query
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !qq.isEmpty else { return event }
-                        let matches = self.currentOrImmediateGlobalAppMatches(for: qq)
-                        // Render-default highlights row 0 even when focusedAppPillIndex is nil.
-                        let targetIdx = self.focusedAppPillIndex ?? 0
-                        guard targetIdx >= 0, targetIdx < matches.count else { return event }
-                        let result = matches[targetIdx]
-                        guard result.type == .application,
-                            let bundleId = self.bundleIdentifier(forApplicationResult: result),
-                            !bundleId.isEmpty
-                        else { return event }
-                        let activated = self.activateGlobalInlineScope(
-                            result: result,
-                            bundleID: bundleId
-                        )
+                        let activated = self.scopeFocusedGlobalGroupedListRow()
                         guard activated else { return event }
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil

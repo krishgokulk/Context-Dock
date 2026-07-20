@@ -6541,6 +6541,10 @@ struct SystemCommandCreateSheet: View {
     @State private var undoTitle = "Undo"
     @State private var undoScriptType = "applescript"
     @State private var undoScript = ""
+    @State private var interaction = SystemCommandInteraction.none.rawValue
+    @State private var valueScript = ""
+    @State private var scopeProvider = "none"
+    @State private var scopeItems = ""
     @State private var script = """
 tell application "Finder"
     empty trash
@@ -6623,6 +6627,33 @@ end tell
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
+                    labeledField("Scoped Experience") {
+                        Picker("Control", selection: $interaction) {
+                            ForEach(SystemCommandInteraction.allCases) { kind in
+                                Text(kind.label).tag(kind.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Picker("Dynamic list", selection: $scopeProvider) {
+                            Text("None").tag("none")
+                            Text("Bluetooth devices").tag("bluetooth")
+                            Text("Wi-Fi networks").tag("wifi")
+                        }
+                        .pickerStyle(.menu)
+                        TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
+                            .textFieldStyle(.roundedBorder)
+                        if interaction != SystemCommandInteraction.none.rawValue {
+                            TextEditor(text: $valueScript)
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(minHeight: 70)
+                                .scrollContentBackground(.hidden)
+                                .background(Color(NSColor.textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Text("Value script prints the current number or on/off state. Dynamic lists and custom rows appear below the control while scoped.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
                     labeledField("Dock Completion") {
                         TextField("Empty Bin done", text: $successTitle)
                             .textFieldStyle(.roundedBorder)
@@ -6666,14 +6697,20 @@ end tell
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Add Command") {
+                    var commandKeywords = keywords.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if scopeProvider != "none" { commandKeywords.append("provider:\(scopeProvider)") }
+                    let customItems = scopeItems.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if !customItems.isEmpty { commandKeywords.append("presets:\(customItems.joined(separator: "|"))") }
                     let command = SystemCommand(
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                         icon: icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? "command"
                             : icon.trimmingCharacters(in: .whitespacesAndNewlines),
-                        keywords: keywords.components(separatedBy: ",")
-                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                            .filter { !$0.isEmpty },
+                        keywords: commandKeywords,
                         scriptType: scriptType,
                         script: script,
                         description: description.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -6681,7 +6718,9 @@ end tell
                         successMessage: successMessage.trimmingCharacters(in: .whitespacesAndNewlines),
                         undoTitle: undoTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                         undoScriptType: undoScriptType,
-                        undoScript: undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        undoScript: undoScript.trimmingCharacters(in: .whitespacesAndNewlines),
+                        interaction: interaction,
+                        valueScript: valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
                     )
                     onCreate(command)
                     dismiss()
@@ -6772,6 +6811,8 @@ struct SystemCommandEditorView: View {
     @State private var sliderMax: String
     @State private var sliderStep: String
     @State private var valueScript: String
+    @State private var scopeProvider: String
+    @State private var scopeItems: String
 
     init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
         self.command  = command
@@ -6794,6 +6835,8 @@ struct SystemCommandEditorView: View {
         _sliderMax   = State(initialValue: String(Int(command.sliderMax)))
         _sliderStep  = State(initialValue: String(Int(command.sliderStep)))
         _valueScript = State(initialValue: command.valueScript)
+        _scopeProvider = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
+        _scopeItems = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
     }
 
     private var hasChanges: Bool {
@@ -6809,6 +6852,8 @@ struct SystemCommandEditorView: View {
             || sliderMax != String(Int(command.sliderMax))
             || sliderStep != String(Int(command.sliderStep))
             || valueScript != command.valueScript
+            || scopeProvider != (command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
+            || scopeItems != (command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
     }
 
     private var actionType: SystemCommandActionType {
@@ -6947,6 +6992,20 @@ struct SystemCommandEditorView: View {
                     }
                 }
 
+                labeledField("Scoped Results") {
+                    Picker("Dynamic list", selection: $scopeProvider) {
+                        Text("None").tag("none")
+                        Text("Bluetooth devices").tag("bluetooth")
+                        Text("Wi-Fi networks").tag("wifi")
+                    }
+                    .pickerStyle(.menu)
+                    TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
+                        .textFieldStyle(.roundedBorder)
+                    Text("When this command is scoped, its control stays at the top and these dynamic or custom rows remain searchable below it.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+
                 labeledField("Dock Completion") {
                     TextField("Shown after success", text: $successTitle)
                         .textFieldStyle(.roundedBorder)
@@ -6991,7 +7050,14 @@ struct SystemCommandEditorView: View {
                             updated.name        = name.trimmingCharacters(in: .whitespaces)
                             updated.description = description.trimmingCharacters(in: .whitespaces)
                             updated.icon        = icon.trimmingCharacters(in: .whitespaces)
-                            updated.keywords    = keywords.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                            updated.keywords = keywords.components(separatedBy: ",")
+                                .map { $0.trimmingCharacters(in: .whitespaces) }
+                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") }
+                            if scopeProvider != "none" { updated.keywords.append("provider:\(scopeProvider)") }
+                            let customItems = scopeItems.components(separatedBy: ",")
+                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                .filter { !$0.isEmpty }
+                            if !customItems.isEmpty { updated.keywords.append("presets:\(customItems.joined(separator: "|"))") }
                             updated.scriptType  = scriptType
                             updated.script      = script
                             updated.successTitle = successTitle.trimmingCharacters(in: .whitespaces)

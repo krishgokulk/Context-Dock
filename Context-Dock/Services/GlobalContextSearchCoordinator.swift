@@ -277,12 +277,12 @@ final class GlobalContextSearchCoordinator {
             }
 
         let match: GlobalContextTopMatch?
-        if let doc = installedExactPrefix {
+        if let doc = commandExactPrefix {
+            match = topMatch(from: doc, kind: .globalCommand, idPrefix: "global-command")
+        } else if let doc = installedExactPrefix {
             match = topMatch(from: doc, kind: .installedApp)
         } else if let doc = runningExactPrefix {
             match = topMatch(from: doc, kind: .runningApp)
-        } else if let doc = commandExactPrefix {
-            match = topMatch(from: doc, kind: .globalCommand, idPrefix: "global-command")
         } else if let menuTop {
             match = menuTop
         } else if let doc = installedFuzzy {

@@ -165,8 +165,10 @@ extension LauncherView {
             }
         }
 
-        // Interactive commands render a live control (slider/toggle) on a single
-        // pill — value presets become redundant rows.
+        var scopedRows: [DockPill] = []
+
+        // The interactive command is the scoped header. Provider and preset
+        // children are appended below it; only this row owns the live control.
         if command.interactionType != .none, !isVolume {
             var pill = DockPill(
                 id: "syscmd-\(command.id)-interactive",
@@ -194,7 +196,7 @@ extension LauncherView {
             pill.sourceAppName = command.name
             pill.trackingIdentifier = "system:\(command.id):interactive"
             pill.searchTerms = [command.name, command.description] + command.keywords
-            return [pill]
+            scopedRows.append(pill)
         }
 
         let query = scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,10 +213,10 @@ extension LauncherView {
                     || normalizedDockPillText($0.subtitle).contains(normalizedQuery)
             }
         if !dynamicItems.isEmpty {
-            return dynamicItems.map { item in
+            scopedRows.append(contentsOf: dynamicItems.map { item in
                 var pill = DockPill(
                     id: "syscmd-\(command.id)-\(item.value)",
-                    name: "\(command.name) \(item.title)",
+                    name: item.title,
                     icon: command.icon,
                     accentColorName: item.isActive ? "green" : "indigo",
                     badge: item.subtitle,
@@ -230,7 +232,8 @@ extension LauncherView {
                 pill.trackingIdentifier = "system:\(command.id):\(item.value)"
                 pill.searchTerms = [command.name, command.description, item.title, item.subtitle, item.value] + command.keywords
                 return pill
-            }
+            })
+            return scopedRows
         }
 
         let presetValues = systemCommandPresetValues(command, fallbackVolume: isVolume)
@@ -238,8 +241,8 @@ extension LauncherView {
             ? presetValues
             : [query]
 
-        return values.map { value in
-            let label = !value.isEmpty && !presetValues.isEmpty ? "\(command.name) \(value)" : command.name
+        scopedRows.append(contentsOf: values.map { value in
+            let label = !value.isEmpty && !presetValues.isEmpty ? value : command.name
             var pill = DockPill(
                 id: "syscmd-\(command.id)-\(value)",
                 name: label,
@@ -258,7 +261,8 @@ extension LauncherView {
             pill.trackingIdentifier = "system:\(command.id):\(value)"
             pill.searchTerms = [command.name, command.description, value] + command.keywords
             return pill
-        }
+        })
+        return scopedRows
     }
 
     func systemCommandAdapterScopeId(_ command: SystemCommand) -> String? {
@@ -329,6 +333,13 @@ extension LauncherView {
             ]
         case "bluetooth":
             let devices = BluetoothDeviceProvider.pairedDevices()
+            let connectedCount = devices.filter(\.isConnected).count
+            let summary = SystemCommandDynamicItem(
+                title: "Bluetooth Settings",
+                value: "settings",
+                subtitle: "\(connectedCount) connected · \(devices.count) paired",
+                isActive: false
+            )
             let rows = devices.map {
                 SystemCommandDynamicItem(
                     title: $0.name,
@@ -337,15 +348,7 @@ extension LauncherView {
                     isActive: $0.isConnected
                 )
             }
-            if !rows.isEmpty { return rows }
-            return [
-                SystemCommandDynamicItem(
-                    title: "Settings",
-                    value: "settings",
-                    subtitle: "Open Bluetooth Settings",
-                    isActive: false
-                )
-            ]
+            return [summary] + rows
         default:
             return []
         }

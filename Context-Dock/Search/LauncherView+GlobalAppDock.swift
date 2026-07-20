@@ -313,14 +313,7 @@ extension LauncherView {
 
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
-                result.action()
-                searchState.query = ""
-                focusedAppPillIndex = nil
-                let bundleId = bundleIdentifierForApplicationPath(result.filePath)
-                scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
-                if let bid = bundleId {
-                    AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
-                }
+                executeGlobalAppSearchResult(result)
             }
         }
         let makeQuitAction: (SearchResult) -> (() -> Void)? = { result in
@@ -537,16 +530,7 @@ extension LauncherView {
             {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased()
-                result.action()
-                searchState.query = ""
-                focusedAppPillIndex = nil
-                hoveredAppPillIndex = nil
-                guard result.type == .application else { return }
-                let bundleId = bundleIdentifierForApplicationPath(result.filePath)
-                scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
-                if let bid = bundleId {
-                    AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
-                }
+                executeGlobalAppSearchResult(result)
                 // Teach intent: user picked an app for this query
                 if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: false) }
             }

@@ -298,6 +298,18 @@ final class SystemCommandsRegistry {
     private static func migratedCommands(from decoded: [SystemCommand]) -> [SystemCommand] {
         var migrated = decoded.filter { !legacyDefaultNames.contains($0.name) }
             .map { command -> SystemCommand in
+                if command.name == "Bluetooth",
+                    command.interactionType == .none,
+                    command.keywords.contains(where: { $0.lowercased() == "provider:bluetooth" }),
+                    let currentDefault = defaults.first(where: { $0.name == "Bluetooth" })
+                {
+                    var enriched = command
+                    enriched.description = currentDefault.description
+                    enriched.script = currentDefault.script
+                    enriched.interaction = currentDefault.interaction
+                    enriched.valueScript = currentDefault.valueScript
+                    return enriched
+                }
                 guard command.name == "Sleep",
                     !command.keywords.contains(where: { $0.lowercased().hasPrefix("presets:") }),
                     command.script.contains(#"System Events" to sleep"#),
@@ -349,6 +361,25 @@ final class SystemCommandsRegistry {
             scriptType: "applescript",
             script: #"""
             set targetDevice to system attribute "CD_QUERY"
+            if targetDevice is "on" or targetDevice is "off" then
+                open location "x-apple.systempreferences:com.apple.BluetoothSettings"
+                delay 1
+                tell application "System Events"
+                    tell process "System Settings"
+                        set wantedValue to 1
+                        if targetDevice is "off" then set wantedValue to 0
+                        repeat with candidate in entire contents of window 1
+                            try
+                                if role of candidate is "AXCheckBox" and (name of candidate contains "Bluetooth" or description of candidate contains "Bluetooth") then
+                                    if value of candidate is not wantedValue then click candidate
+                                    exit repeat
+                                end if
+                            end try
+                        end repeat
+                    end tell
+                end tell
+                return
+            end if
             if targetDevice is missing value or targetDevice is "" or targetDevice is "settings" then
                 open location "x-apple.systempreferences:com.apple.BluetoothSettings"
                 return
@@ -367,7 +398,9 @@ final class SystemCommandsRegistry {
                 end tell
             end tell
             """#,
-            description: "Show paired Bluetooth devices and open selected device"
+            description: "Bluetooth power and paired devices",
+            interaction: "toggle",
+            valueScript: #"do shell script "system_profiler SPBluetoothDataType | grep -q 'State: On' && echo on || echo off""#
         ),
         SystemCommand(
             name: "Volume",

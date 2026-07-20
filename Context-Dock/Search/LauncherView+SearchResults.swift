@@ -829,7 +829,7 @@ extension LauncherView {
     func interactiveSystemCommand(for pill: DockPill) -> SystemCommand? {
         guard pill.rankingKind == "systemCommand" else { return nil }
         let parts = pill.trackingIdentifier.split(separator: ":")
-        guard parts.count >= 2, parts[0] == "system",
+        guard parts.count >= 3, parts[0] == "system", parts.last == "interactive",
             let id = UUID(uuidString: String(parts[1])),
             let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
             command.isEnabled,

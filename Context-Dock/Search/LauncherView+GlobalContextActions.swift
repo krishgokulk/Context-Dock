@@ -99,9 +99,13 @@ extension LauncherView {
             scope.isExplicitAppScope
         else { return nil }
         let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
+        let isCLIScope = scope.scopedBundleId.hasPrefix("cli://")
         let pills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
             .filter { pill in
                 guard !pill.isSeparator else { return false }
+                if isSystemCommandScope { return pill.rankingKind == "systemCommand" }
+                if isCLIScope { return pill.rankingKind == "cliTool" }
                 // Running-app capsules are isolated cached-menu scopes. Generic
                 // content search, web search, app launch, window management, tools,
                 // and Global Context actions belong to other surfaces.
@@ -110,10 +114,26 @@ extension LauncherView {
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
-        let icon = resolvedApplicationIcon(
-            bundleIdentifier: scope.scopedBundleId,
-            appName: scope.scopedAppName
-        )
+        let icon: NSImage? = {
+            if isSystemCommandScope {
+                let id = String(scope.scopedBundleId.dropFirst("syscmd://".count))
+                if let uuid = UUID(uuidString: id),
+                    let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == uuid })
+                {
+                    return NSImage(
+                        systemSymbolName: command.icon,
+                        accessibilityDescription: command.name
+                    )
+                }
+            }
+            if isCLIScope {
+                return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.scopedAppName)
+            }
+            return resolvedApplicationIcon(
+                bundleIdentifier: scope.scopedBundleId,
+                appName: scope.scopedAppName
+            )
+        }()
         return GlobalGroupedListNavigationState(
             appResults: [],
             menuPills: pills,
@@ -705,7 +725,16 @@ extension LauncherView {
         guard limit > 0 else { return [] }
         let q = normalizedDockPillText(query)
         guard !q.isEmpty else { return [] }
-        let exactPresetRows = globalSystemCommandPresetRows(for: q, limit: limit)
+        // Provider-backed commands (Bluetooth/Wi-Fi) remain a single parent row in
+        // global search. Enumerating private device data belongs to the explicit scope,
+        // not typing or ghost completion.
+        let matchesProviderCommand = SystemCommandsRegistry.shared.commands.contains { command in
+            command.isEnabled
+                && systemCommandProviderName(command) != nil
+                && ([command.name] + command.keywords).map(normalizedDockPillText).contains(q)
+        }
+        let exactPresetRows = matchesProviderCommand
+            ? [] : globalSystemCommandPresetRows(for: q, limit: limit)
         if !exactPresetRows.isEmpty { return exactPresetRows }
         return SystemCommandsRegistry.shared.commands
             .filter(\.isEnabled)
@@ -1415,14 +1444,21 @@ extension LauncherView {
                     limit: appRowLimit
                 )
             }
+            let strongCommandMatch = commandRows.first.map {
+                normalizedDockPillText($0.title).hasPrefix(q)
+            } ?? false
             if !indexedRows.isEmpty {
                 return mergeGlobalRowsPreservingPriority(
-                    [appRows, commandRows, runningRows, indexedRows],
+                    strongCommandMatch
+                        ? [commandRows, appRows, runningRows, indexedRows]
+                        : [appRows, commandRows, runningRows, indexedRows],
                     limit: appRowLimit
                 )
             }
             return mergeGlobalRowsPreservingPriority(
-                [appRows, commandRows, runningRows],
+                strongCommandMatch
+                    ? [commandRows, appRows, runningRows]
+                    : [appRows, commandRows, runningRows],
                 limit: appRowLimit
             )
         }()
@@ -1806,6 +1842,32 @@ extension LauncherView {
         return true
     }
 
+    /// Scopes exactly the row highlighted by the grouped result sheet. This must
+    /// use the grouped navigation snapshot—not the app-only match array—because
+    /// Global Commands and apps can share the same visible title.
+    @discardableResult
+    func scopeFocusedGlobalGroupedListRow() -> Bool {
+        guard isGlobalContextActive, currentGlobalScopedBundleID == nil else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let state = visibleGlobalGroupedListNavigationState(for: q)
+        guard state.totalCount > 0,
+            let index = currentGlobalGroupedFocusIndex(state: state)
+                ?? globalGroupedVisibleOrder(state: state).first,
+            index >= 0,
+            index < state.appResults.count
+        else { return false }
+
+        let result = state.appResults[index]
+        if result.subtitle.hasPrefix("syscmd://") || result.subtitle.hasPrefix("cli://") {
+            return activateGlobalInlineScope(result: result, bundleID: result.subtitle)
+        }
+        guard result.type == .application,
+            let bundleID = bundleIdentifier(forApplicationResult: result),
+            !bundleID.isEmpty
+        else { return false }
+        return activateGlobalInlineScope(result: result, bundleID: bundleID)
+    }
+
     func quitFocusedGlobalAppResultIfPossible(state: GlobalGroupedListNavigationState) -> Bool {
         guard let index = currentGlobalGroupedFocusIndex(state: state),
             index >= 0,
@@ -1885,6 +1947,18 @@ extension LauncherView {
     }
 
     func executeGlobalAppSearchResult(_ result: SearchResult) {
+        // A Global Command is a navigable scope. The command's child row performs
+        // the actual action after the user sees live devices, networks, or presets.
+        if result.subtitle.hasPrefix("syscmd://"),
+            activateGlobalInlineScope(result: result, bundleID: result.subtitle)
+        {
+            focusedAppPillIndex = nil
+            hoveredAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            reclaimSearchInputFocus()
+            return
+        }
         // Arm the launch morph BEFORE running the action: result.action() may activate a
         // running app and force-hide the dock — this makes those hides no-op so the dock
         // stays and morphs into the launched app's Context Dock.
@@ -1979,6 +2053,25 @@ extension LauncherView {
         else { return false }
 
         let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = typed.lowercased()
+
+        // Global Commands are extension scopes, not text completions. If the
+        // authoritative first visible row is a command, Right Arrow enters that
+        // scope immediately; installed apps and ordinary results retain normal
+        // ghost-text completion.
+        if !typed.isEmpty {
+            let state = visibleGlobalGroupedListNavigationState(for: normalizedQuery)
+            if let first = globalGroupedVisibleOrder(state: state).first,
+                first >= 0,
+                first < state.appResults.count
+            {
+                let result = state.appResults[first]
+                if result.subtitle.hasPrefix("syscmd://") {
+                    return activateGlobalInlineScope(result: result, bundleID: result.subtitle)
+                }
+            }
+        }
+
         let completionTitle =
             topContextMatchDockTitleForInputPreview()
             ?? focusedOrTopGlobalAppResult()?.title
@@ -2031,8 +2124,27 @@ extension LauncherView {
         hoveredGlobalInlineScopeBundleId = nil
         searchState.query = ""
         clearSearchFieldEditorText()
+        if bundleID.hasPrefix("syscmd://") || bundleID.hasPrefix("cli://") {
+            globalContextViewModel.idleCollapseTask?.cancel()
+            globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
+                query: "",
+                phase: .expanded,
+                matchDockIcons: [],
+                matchDockOverflowCount: 0,
+                preparedResultsVersion: globalContextViewModel.typingSnapshot.preparedResultsVersion
+            )
+        }
         scheduleGlobalAppMatchRebuild(query: "", delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
+        DispatchQueue.main.async {
+            guard self.currentGlobalScopedBundleID == bundleID else { return }
+            self.globalContextViewModel.typingSnapshot.phase = .expanded
+            self.requestWindowSizeUpdate(
+                reason: .modeChanged,
+                animated: true,
+                debounceNanoseconds: 0
+            )
+        }
         reclaimSearchInputFocus()
         return true
     }
@@ -2452,7 +2564,8 @@ extension LauncherView {
             defer { globalContextViewModel.idleCollapseTask = nil }
             guard !Task.isCancelled,
                 isGlobalContextActive,
-                globalContextViewModel.typingSnapshot.phase == .expanded
+                globalContextViewModel.typingSnapshot.phase == .expanded,
+                currentGlobalScopedBundleID == nil
             else { return }
             let icons = globalContextViewModel.typingSnapshot.matchDockIcons
             globalContextViewModel.typingSnapshot.phase = icons.contains(where: \.isExpandable)
