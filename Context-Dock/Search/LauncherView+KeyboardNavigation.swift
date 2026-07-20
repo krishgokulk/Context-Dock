@@ -173,6 +173,19 @@ extension LauncherView {
                     self.notepadSelectedNoteID = QuickNotesStore.shared.create()
                     return nil
                 }
+                // Return in the top input field = ask the selected AI provider and
+                // insert its reply into the open note. Return in the editor (input not
+                // focused), or Shift+Return, stays a plain newline.
+                if event.keyCode == 36,
+                    self.isSearchFieldFocused,
+                    !event.modifierFlags.contains(.shift)
+                {
+                    let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !q.isEmpty {
+                        self.submitNotepadAIPrompt(q)
+                        return nil
+                    }
+                }
                 return event
             }
 

@@ -11,6 +11,8 @@ struct NotepadScopeView: View {
     @ObservedObject var store = QuickNotesStore.shared
     @Binding var selectedNoteID: UUID?
     var isDark: Bool
+    var isGenerating: Bool = false
+    var aiProviderName: String = "AI"
     var onExit: () -> Void
 
     @FocusState private var editorFocused: Bool
@@ -144,6 +146,20 @@ struct NotepadScopeView: View {
                     .scrollContentBackground(.hidden)
                     .padding(12)
                     .background(Color.clear)
+                if isGenerating {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                        Text("Asking \(aiProviderName)…")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(accent.opacity(0.10))
+                }
             }
         } else {
             VStack(spacing: 8) {

@@ -262,6 +262,8 @@ extension LauncherView {
             NotepadScopeView(
                 selectedNoteID: $notepadSelectedNoteID,
                 isDark: isEffectiveDark,
+                isGenerating: notepadAIGenerating,
+                aiProviderName: settings.selectedAIProvider.shortName,
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)
@@ -317,6 +319,8 @@ extension LauncherView {
             NotepadScopeView(
                 selectedNoteID: $notepadSelectedNoteID,
                 isDark: isEffectiveDark,
+                isGenerating: notepadAIGenerating,
+                aiProviderName: settings.selectedAIProvider.shortName,
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)

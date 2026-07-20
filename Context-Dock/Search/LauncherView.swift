@@ -18,6 +18,8 @@ struct LauncherView: View {
     @State var queryChangeGeneration: Int = 0
     // Selected note in the Quick Note (provider:notepad) split editor scope.
     @State var notepadSelectedNoteID: UUID? = nil
+    // True while a Quick Note AI prompt is generating into the open note.
+    @State var notepadAIGenerating: Bool = false
     // Max visible list height: rows beyond this scroll inside the glass card.
     let listViewVisibleHeight: CGFloat = 372
     // These are isolated from searchState so their mutations don't trigger a struct-wide re-render

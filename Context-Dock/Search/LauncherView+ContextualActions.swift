@@ -1425,6 +1425,45 @@ extension LauncherView {
         return pills
     }
 
+    /// Quick Note AI: send the input-field prompt to the user's selected AI provider
+    /// and insert the reply into the open note (creating one if none is selected).
+    /// The provider is whatever the user picked globally — so the notepad's AI is
+    /// their AI, no extra config.
+    func submitNotepadAIPrompt(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !notepadAIGenerating else { return }
+
+        let targetID: UUID
+        if let id = notepadSelectedNoteID,
+            QuickNotesStore.shared.notes.contains(where: { $0.id == id })
+        {
+            targetID = id
+        } else {
+            targetID = QuickNotesStore.shared.create()
+            notepadSelectedNoteID = targetID
+        }
+
+        notepadAIGenerating = true
+        searchState.query = ""
+        clearSearchFieldEditorText()
+
+        Task { [weak store = QuickNotesStore.shared] in
+            let reply: String
+            do {
+                reply = try await sendToAIProvider(query: trimmed)
+            } catch {
+                reply = "⚠️ AI error: \(error.localizedDescription)"
+            }
+            await MainActor.run {
+                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
+                let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                let joined = existing.isEmpty ? body : existing + "\n\n" + body
+                store?.updateText(joined, for: targetID)
+                self.notepadAIGenerating = false
+            }
+        }
+    }
+
     /// Launch (if needed) and tile. In Global Context the target app may be quit,
     /// minimized, or on another Space — so instead of erroring "not running", open it
     /// on the current desktop, restore/activate it, then apply the window arrangement.
