@@ -388,3 +388,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 03:02 · `c6cdd522` · `codex-context-dock-polish-fixes`
 **It now:**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 10:37 · `e939498f` · `codex-context-dock-polish-fixes`
+**feat(global-context): add command scopes**
+Swift: +0 added · ~10 modified · -0 deleted
