@@ -2095,31 +2095,36 @@ extension LauncherView {
         let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedQuery = typed.lowercased()
 
-        // Global Commands are extension scopes, not text completions. If the
-        // authoritative first visible row is a command, Right Arrow enters that
-        // scope immediately; installed apps and ordinary results retain normal
-        // ghost-text completion.
-        if !typed.isEmpty {
-            let state = visibleGlobalGroupedListNavigationState(for: normalizedQuery)
-            if let first = globalGroupedVisibleOrder(state: state).first,
-                first >= 0,
-                first < state.appResults.count
-            {
-                let result = state.appResults[first]
-                if result.subtitle.hasPrefix("syscmd://") {
-                    return activateGlobalInlineScope(result: result, bundleID: result.subtitle)
-                }
-            }
+        // Right Arrow always follows the visibly highlighted row. Commands enter
+        // their scope immediately; apps first accept their visible completion.
+        let state = visibleGlobalGroupedListNavigationState(for: normalizedQuery)
+        let selectedIndex =
+            currentGlobalGroupedFocusIndex(state: state)
+            ?? globalGroupedVisibleOrder(state: state).first
+        let selectedResult: SearchResult? = {
+            guard let selectedIndex,
+                selectedIndex >= 0,
+                selectedIndex < state.appResults.count
+            else { return nil }
+            return state.appResults[selectedIndex]
+        }()
+        if let selectedResult,
+            selectedResult.subtitle.hasPrefix("syscmd://")
+                || selectedResult.subtitle.hasPrefix("cli://")
+        {
+            return activateGlobalInlineScope(
+                result: selectedResult,
+                bundleID: selectedResult.subtitle
+            )
         }
 
-        let completionTitle =
-            topContextMatchDockTitleForInputPreview()
+        let completionTitle = selectedResult?.title
+            ?? topContextMatchDockTitleForInputPreview()
             ?? focusedOrTopGlobalAppResult()?.title
 
         guard !typed.isEmpty,
             let completionTitle,
-            completionTitle.count > typed.count,
-            completionTitle.lowercased().hasPrefix(typed.lowercased())
+            completionTitle.caseInsensitiveCompare(typed) != .orderedSame
         else { return false }
 
         suppressGlobalInlineAppScopeDetection = true

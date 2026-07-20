@@ -337,6 +337,11 @@ extension LauncherView {
                     {
                         return nil
                     }
+                    if event.keyCode == 124,
+                        self.activateFocusedGlobalAppScopeIfPossible()
+                    {
+                        return nil
+                    }
                     if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: {
                         $0.isExpandable
                     }),

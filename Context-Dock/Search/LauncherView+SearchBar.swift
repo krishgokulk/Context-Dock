@@ -1393,7 +1393,8 @@ extension LauncherView {
                                 {
                                     globalInlineScopeQueryOverlay
                                 }
-                                // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
+                                // Spotlight-style completion: the TextField owns the typed prefix;
+                                // this layer may add only the untyped suffix for a true prefix match.
                                 if allGlobalInlineAppScopes.isEmpty,
                                     let pill = focusedDockPill
                                 {
@@ -1413,22 +1414,25 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else if !isGlobalContextActive {
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
                                         // Finder desktop pills carry the folder PATH as their badge —
                                         // the input bar shows the file name only, never the path.
                                         if let badge = pill.badge, !badge.isEmpty,
-                                            !isFinderDesktopOnlyMode
+                                            !isFinderDesktopOnlyMode, isPrefixMatch
                                         {
                                             Text("  \(badge)")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.25))
                                         }
-                                        if isPrefixMatch || !isGlobalContextActive {
+                                        if isPrefixMatch {
                                             Text("  — ↵")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.25))
@@ -1449,13 +1453,16 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else if !isGlobalContextActive {
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
-                                        if isPrefixMatch || !isGlobalContextActive {
+                                        if isPrefixMatch {
                                             Text("  —  \(selectedResultAction(result))")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.35))
@@ -1499,9 +1506,8 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.35))
                                     }
                                 } else if let result = selectedResult {
-                                    // Intelligent inline completion:
-                                    // • Prefix match  → show typed text (invisible spacer) + greyed remainder + action
-                                    // • Fuzzy match   → show full result name + action
+                                    // Prefix completion only. Fuzzy matches remain in the result list
+                                    // and never replace or overlap the editable query.
                                     let title = inputFieldDisplayTitle(for: result)
                                     let typed = searchState.query
                                     let isPrefixMatch = title.lowercased().hasPrefix(
@@ -1518,15 +1524,17 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else if !isGlobalContextActive {
-                                            // Fuzzy match — show full name in primary color
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
                                         // Action hint
-                                        if isPrefixMatch || !isGlobalContextActive {
+                                        if isPrefixMatch {
                                             Text("  —  \(selectedResultAction(result))")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.35))
@@ -1812,8 +1820,8 @@ extension LauncherView {
                                     .focusEffectDisabled()
                                     .background(FocusRingSuppressor())
                                     .accessibilityLabel("Search — Context Dock")
-                                    // For prefix match: TextField stays visible (shows typed text + cursor).
-                                    // For fuzzy match or empty: hide it so the full result name shows cleanly.
+                                    // The TextField owns user input. Only explicit scope overlays hide it;
+                                    // autocomplete layers never replace typed text with a fuzzy result.
                                     .opacity(
                                         {
                                             if !allGlobalInlineAppScopes.isEmpty,
@@ -1835,19 +1843,11 @@ extension LauncherView {
                                             {
                                                 return 1
                                             }
-                                            if let pill = focusedDockPill {
-                                                let isPrefixMatch = pill.name.lowercased()
-                                                    .hasPrefix(
-                                                        searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if focusedDockPill != nil {
+                                                return 1
                                             }
-                                            if let result = focusedGlobalAppResult {
-                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
-                                                    .lowercased()
-                                                    .hasPrefix(searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if focusedGlobalAppResult != nil {
+                                                return 1
                                             }
                                             if let result = topGlobalAppResult {
                                                 // Only hide TextField for prefix match (ghost shows completion).
@@ -1858,12 +1858,8 @@ extension LauncherView {
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 1
                                             }
-                                            if let result = selectedResult {
-                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
-                                                    .lowercased()
-                                                    .hasPrefix(searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if selectedResult != nil {
+                                                return 1
                                             }
                                             if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {
                                                 return 0
