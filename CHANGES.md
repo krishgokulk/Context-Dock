@@ -396,3 +396,15 @@ Swift: +0 added · ~10 modified · -0 deleted
 ## 2026-07-20 11:06 · `5d326511` · `codex-context-dock-polish-fixes`
 **fix(global-context): stabilize command scopes**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 11:45 · `e7bf3725` · `codex-context-dock-polish-fixes`
+**fix(global-context): stabilize command scopes**
+Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 11:45 · `761c47e9` · `codex-context-dock-polish-fixes`
+**docs(changelog): record command scope fix**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-20 11:46 · `f24d1280` · `codex-context-dock-polish-fixes`
+**docs(changelog): record command scope fix**
+Swift: +0 added · ~0 modified · -0 deleted
