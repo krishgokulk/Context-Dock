@@ -93,14 +93,10 @@ final class BrowserURLLibraryService: @unchecked Sendable {
 
     func refreshIfNeeded(completion: @escaping @MainActor () -> Void) {
         let needsRefresh = Date().timeIntervalSince(refreshedAt) >= freshness
-        guard needsRefresh else {
-            Task { @MainActor in completion() }
-            return
-        }
-        guard !isRefreshing else {
-            Task { @MainActor in completion() }
-            return
-        }
+        // Callers use completion to rebuild their index after new data arrives. Calling it
+        // for an already-fresh cache recursively schedules another rebuild, because those
+        // rebuilds call refreshIfNeeded again.
+        guard needsRefresh, !isRefreshing else { return }
         refresh(completion: completion)
     }
 
@@ -112,17 +108,21 @@ final class BrowserURLLibraryService: @unchecked Sendable {
         bundleId: String? = nil,
         limit: Int = 24
     ) async -> [BrowserURLLibraryEntry] {
-        if isRefreshing {
-            for _ in 0..<20 where isRefreshing {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-        } else if Date().timeIntervalSince(refreshedAt) >= freshness {
-            await withCheckedContinuation { continuation in
-                refresh { continuation.resume() }
-            }
+        if !isRefreshing, Date().timeIntervalSince(refreshedAt) >= freshness {
+            refresh {}
+        }
+
+        // Browser databases can be locked or slow while their app is running. Chat must
+        // never inherit that unbounded wait: use any cache produced within 1.5 seconds,
+        // otherwise let the caller report that the local refresh is still in progress.
+        for _ in 0..<30 where isRefreshing {
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return entries(matching: query, bundleId: bundleId, limit: limit)
     }
+
+    @MainActor
+    var refreshInProgress: Bool { isRefreshing }
 
     func refresh(completion: @escaping @MainActor () -> Void) {
         guard !isRefreshing else { return }

@@ -360,3 +360,11 @@ Swift: +4 added · ~29 modified · -0 deleted
 ## 2026-07-20 00:50 · `35e04704` · `codex-context-dock-polish-fixes`
 **fix(chat): execute scoped app commands**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 01:08 · `bcbcb600` · `codex-context-dock-polish-fixes`
+**feat(chat): ground browser history locally**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 01:44 · `8426bd14` · `codex-context-dock-polish-fixes`
+**fix(global-context): move matching off main actor**
+Swift: +0 added · ~2 modified · -0 deleted

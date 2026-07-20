@@ -4019,6 +4019,9 @@ extension LauncherView {
         }
 
         guard !entries.isEmpty else {
+            if BrowserURLLibraryService.shared.refreshInProgress {
+                return "Your local browser history is still refreshing. Please try again in a moment."
+            }
             let subject = searchTerm.isEmpty ? "that" : "“\(searchTerm)”"
             return "I checked the local browser-history URL cache and found no recent visits matching \(subject)."
         }
