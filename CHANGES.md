@@ -492,3 +492,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 20:48 · `fbdf664a` · `codex-context-dock-polish-fixes`
 **fix(compact-scope): backspace exits; no ghost text bleed**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:50 · `79eaa55e` · `codex-context-dock-polish-fixes`
+**fix(notifications): show provider usage as soon as the scope opens**
+Swift: +0 added · ~1 modified · -0 deleted

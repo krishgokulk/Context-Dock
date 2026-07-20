@@ -716,6 +716,16 @@ extension LauncherView {
                 else {
                     return
                 }
+                // Compact scopes (Clipboard / Notifications) step out first — backspace
+                // on their empty field returns to the surface underneath.
+                if searchState.activeSmartQueryKey != nil {
+                    clearSearchContext()
+                    isSearchFieldFocused = true
+                    scheduleDockPillRebuild(
+                        query: "", delayNanoseconds: 0, refreshContext: false)
+                    requestWindowSizeUpdate(reason: .modeChanged)
+                    return
+                }
                 if dismissSelectionScopeFromEmptyBackspaceIfNeeded() {
                     return
                 }

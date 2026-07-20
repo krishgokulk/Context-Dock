@@ -104,6 +104,17 @@ private struct StickyNoteView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
+                // New note → opens in its own sticky window (a new "tab").
+                Button {
+                    let id = store.create()
+                    StickyNotesManager.shared.pin(id)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("New note in a new window")
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -140,6 +151,14 @@ private struct StickyNoteView: View {
     /// to the selected AI provider and appends the reply into this note.
     private var composer: some View {
         HStack(spacing: 8) {
+            // Attach a file into the note (same idea as the chat composer's "+").
+            Button(action: attachFile) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Attach a file reference")
             Image(systemName: "sparkles")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -208,10 +227,25 @@ private struct StickyNoteView: View {
         )
     }
 
-    /// Match the launcher's own surface instead of a yellow Stickies sheet.
+    private func attachFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.message = "Attach files to this note"
+        guard panel.runModal() == .OK else { return }
+        let lines = panel.urls.map { "\($0.lastPathComponent) — \($0.path)" }
+            .joined(separator: "\n")
+        guard !lines.isEmpty else { return }
+        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
+        store.updateText(existing.isEmpty ? lines : existing + "\n" + lines, for: noteID)
+    }
+
+    /// Follows the app's Appearance settings (Liquid Glass + Glass Darkness) so a
+    /// sticky reads as part of Context-Dock, not a yellow Stickies sheet.
     private var stickyBackground: some View {
         Rectangle()
             .fill(.ultraThinMaterial)
-            .overlay(Color.black.opacity(0.28))
+            .overlay(Color.black.opacity(0.15 + 0.55 * settings.glassDarkness))
     }
 }
