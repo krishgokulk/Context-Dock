@@ -28,6 +28,7 @@ struct LauncherView: View {
     // Clipboard scope: selected source-app filter (empty = All).
     @State var clipboardSourceFilterBundleId: String = ""
     @State var clipboardSourceFilterName: String = ""
+    @State var clipboardSourcePillFocusIndex: Int? = nil
     // Running app the General AI chat is focused on (from the App Store picker).
     @State var chatFocusAppName: String? = nil
     @State var chatFocusAppBundleId: String? = nil

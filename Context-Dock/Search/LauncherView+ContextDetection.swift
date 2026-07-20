@@ -758,7 +758,7 @@ extension LauncherView {
         if searchState.activeSmartQueryKey == "clipboard",
             let index = focusedClipboardEntryIndex
         {
-            let entries = filteredClipboardEntriesForScope()
+            let entries = visibleClipboardEntriesForScope()
             if entries.indices.contains(index), let url = quickLookURL(for: entries[index]) {
                 _ = showQuickLookURL(url, toggleIfSame: false)
             }

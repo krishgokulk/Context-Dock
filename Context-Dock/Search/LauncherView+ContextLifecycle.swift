@@ -847,6 +847,19 @@ extension LauncherView {
                     switchGlobalLaunchToContextDock(bundleId: bundleID, appName: appName)
                 }
 
+                // Clipboard and Notifications own their result sheet independently of the
+                // frontmost app. Let the app metadata update above land, then stop before the
+                // generic Context Dock switch path clears list measurements and rebuilds app
+                // context. That race could collapse a compact scope to only its input bar.
+                if isCompactSmartScope {
+                    AppDelegate.shared?.smartScopeActive = true
+                    showContextInDock = true
+                    isSearchBarExpanded = true
+                    refreshCompactScopeResults(resetSelection: false)
+                    requestWindowSizeUpdate(reason: .panelChanged)
+                    return
+                }
+
                 if appChanged {
                     l2.appCompletion = nil
                     l2.focusedPillIndex = nil

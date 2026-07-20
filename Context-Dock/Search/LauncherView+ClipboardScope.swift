@@ -482,7 +482,7 @@ extension LauncherView {
     }
 
     func selectedClipboardEntriesForPaste(fallback entry: ClipboardEntry? = nil) -> [ClipboardEntry] {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         let selected = entries.filter { selectedClipboardEntryIDs.contains($0.id) }
         if !selected.isEmpty {
             return selected
@@ -499,7 +499,7 @@ extension LauncherView {
         let relevant = relevantClipboardHistory()
         let selected = relevant.filter { selectedClipboardEntryIDs.contains($0.id) }
         if !selected.isEmpty { return selected }
-        let filtered = filteredClipboardEntriesForScope()
+        let filtered = visibleClipboardEntriesForScope()
         let index = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? 0
         guard filtered.indices.contains(index) else {
             return relevant.first.map { [$0] } ?? []
@@ -855,7 +855,7 @@ extension LauncherView {
     }
 
     func clipboardSearchResults() -> [SearchResult] {
-        clipboardEntriesForScope(query: searchState.query).map { entry in
+        visibleClipboardEntriesForScope().map { entry in
             return SearchResult(
                 title: entry.preview,
                 subtitle: clipboardEntrySubtitle(entry),
@@ -1492,9 +1492,9 @@ extension LauncherView {
     }
 
     @ViewBuilder
-    /// Split clipboard surface: a horizontally-scrolling "Recent" rail on top and
-    /// per-source-app pills below. Selecting an app pill filters the list to that
-    /// app's clips; the input filters across everything as usual.
+    /// Clipboard surface with source-app pills above the vertically scrolling results.
+    /// Selecting an app pill filters the list to that app's clips; the input filters
+    /// across everything as usual.
     var clipboardScopeView: some View {
         let entries = filteredClipboardEntriesForScope()
         let scoped =
@@ -1505,8 +1505,6 @@ extension LauncherView {
             clipboardSharedRow(entry, index: index)
         }
         return VStack(spacing: 0) {
-            clipboardRecentRail(Array(entries.prefix(10)))
-            Divider().opacity(0.35)
             clipboardSourceAppPills(entries)
             Divider().opacity(0.35)
             sharedResultSheet(
@@ -1525,85 +1523,30 @@ extension LauncherView {
         }
     }
 
-    /// Top half — the 10 most recent clips as a horizontal scroller.
-    @ViewBuilder
-    func clipboardRecentRail(_ recent: [ClipboardEntry]) -> some View {
-        if !recent.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("RECENT")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.tertiary)
-                    .tracking(0.7)
-                    .padding(.horizontal, 12)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(recent) { entry in
-                            Button {
-                                copyClipboardEntryToPasteboard(entry)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    // Real content preview: image clips render their
-                                    // thumbnail, everything else shows its actual text.
-                                    if entry.imageData != nil,
-                                        let image = clipboardEntryImage(for: entry)
-                                    {
-                                        Image(nsImage: image)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(width: 112, height: 40)
-                                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                                    } else {
-                                        Text(clipboardEntryPreviewText(entry))
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.primary)
-                                            .lineLimit(3)
-                                            .multilineTextAlignment(.leading)
-                                    }
-                                    Spacer(minLength: 0)
-                                    if !entry.sourceAppName.isEmpty {
-                                        Text(entry.sourceAppName)
-                                            .font(.system(size: 9, weight: .medium))
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                .padding(8)
-                                .frame(width: 128, height: 74, alignment: .topLeading)
-                                .background(
-                                    Color.primary.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .strokeBorder(Color.primary.opacity(0.08)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                }
-            }
-            .padding(.vertical, 8)
-        }
-    }
-
-    /// Bottom half — one floating pill per source app; tap to filter to its clips.
+    /// One floating pill per source app; tap to filter to its clips.
     @ViewBuilder
     func clipboardSourceAppPills(_ entries: [ClipboardEntry]) -> some View {
         let groups = clipboardSourceGroups(entries)
-        if !groups.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    clipboardSourcePill(
-                        name: "All", bundleId: "", count: entries.count,
-                        isSelected: clipboardSourceFilterBundleId.isEmpty)
-                    ForEach(groups, id: \.bundleId) { group in
+        if !entries.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
                         clipboardSourcePill(
-                            name: group.name, bundleId: group.bundleId, count: group.count,
-                            isSelected: clipboardSourceFilterBundleId == group.bundleId)
+                            name: "All", bundleId: "", count: entries.count,
+                            isSelected: clipboardSourceFilterBundleId.isEmpty)
+                        ForEach(groups, id: \.bundleId) { group in
+                            clipboardSourcePill(
+                                name: group.name, bundleId: group.bundleId, count: group.count,
+                                isSelected: clipboardSourceFilterBundleId == group.bundleId)
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .onChange(of: clipboardSourceFilterBundleId) { _, bundleId in
+                    guard clipboardSourcePillFocusIndex != nil else { return }
+                    proxy.scrollTo("clipboard-source-\(bundleId)", anchor: .center)
+                }
             }
         }
     }
@@ -1614,6 +1557,7 @@ extension LauncherView {
         Button {
             clipboardSourceFilterBundleId = isSelected ? "" : bundleId
             clipboardSourceFilterName = isSelected ? "" : name
+            clipboardSourcePillFocusIndex = nil
             refreshCompactScopeResults(resetSelection: true)
         } label: {
             HStack(spacing: 6) {
@@ -1643,6 +1587,7 @@ extension LauncherView {
                     isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08)))
         }
         .buttonStyle(.plain)
+        .id("clipboard-source-\(bundleId)")
     }
 
     func clipboardSourceGroups(_ entries: [ClipboardEntry])
@@ -1739,8 +1684,62 @@ extension LauncherView {
         clipboardEntriesForScope(query: searchState.query)
     }
 
-    func navigateClipboardScope(direction: Int) {
+    func visibleClipboardEntriesForScope() -> [ClipboardEntry] {
         let entries = filteredClipboardEntriesForScope()
+        guard !clipboardSourceFilterBundleId.isEmpty else { return entries }
+        return entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
+    }
+
+    func clipboardSourceChoices() -> [(bundleId: String, name: String, count: Int)] {
+        let entries = filteredClipboardEntriesForScope()
+        return [(bundleId: "", name: "All", count: entries.count)]
+            + clipboardSourceGroups(entries)
+    }
+
+    func focusFirstClipboardSourcePill() {
+        clipboardSourcePillFocusIndex = 0
+        clipboardSourceFilterBundleId = ""
+        clipboardSourceFilterName = ""
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        isKeyboardNavigation = true
+        refreshCompactScopeResults(resetSelection: true)
+    }
+
+    @discardableResult
+    func advanceClipboardSourcePill() -> Bool {
+        guard let current = clipboardSourcePillFocusIndex else { return false }
+        let choices = clipboardSourceChoices()
+        guard !choices.isEmpty else { return false }
+        let next = min(current + 1, choices.count - 1)
+        let choice = choices[next]
+        clipboardSourcePillFocusIndex = next
+        clipboardSourceFilterBundleId = choice.bundleId
+        clipboardSourceFilterName = choice.bundleId.isEmpty ? "" : choice.name
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        refreshCompactScopeResults(resetSelection: true)
+        return true
+    }
+
+    @discardableResult
+    func retreatClipboardSourcePill() -> Bool {
+        guard let current = clipboardSourcePillFocusIndex else { return false }
+        let choices = clipboardSourceChoices()
+        guard !choices.isEmpty else { return false }
+        let previous = max(current - 1, 0)
+        let choice = choices[previous]
+        clipboardSourcePillFocusIndex = previous
+        clipboardSourceFilterBundleId = choice.bundleId
+        clipboardSourceFilterName = choice.bundleId.isEmpty ? "" : choice.name
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        refreshCompactScopeResults(resetSelection: true)
+        return true
+    }
+
+    func navigateClipboardScope(direction: Int) {
+        let entries = visibleClipboardEntriesForScope()
         guard !entries.isEmpty else {
             focusedClipboardEntryIndex = nil
             return
@@ -1752,12 +1751,14 @@ extension LauncherView {
 
         let current = focusedClipboardEntryIndex ?? (direction < 0 ? entries.count : -1)
         if direction < 0, current <= 0 {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                focusedClipboardEntryIndex = nil
-                searchState.selectedIndex = nil
-                isKeyboardNavigation = false
-                isSearchFieldFocused = true
-            }
+            focusedClipboardEntryIndex = nil
+            searchState.selectedIndex = nil
+            let choices = clipboardSourceChoices()
+            clipboardSourcePillFocusIndex = choices.firstIndex {
+                $0.bundleId == clipboardSourceFilterBundleId
+            } ?? 0
+            isKeyboardNavigation = true
+            isSearchFieldFocused = true
             refreshQuickLookPreviewForCurrentFocusIfVisible()
             return
         }
@@ -1780,7 +1781,7 @@ extension LauncherView {
     }
 
     func extendClipboardSelection(direction: Int) {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         guard !entries.isEmpty else {
             focusedClipboardEntryIndex = nil
             selectedClipboardEntryIDs.removeAll()
@@ -1798,7 +1799,7 @@ extension LauncherView {
     }
 
     func quickLookFocusedClipboardEntry() {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         let index = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? 0
         guard entries.indices.contains(index) else { return }
         focusedClipboardEntryIndex = index

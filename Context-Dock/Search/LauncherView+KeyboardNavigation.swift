@@ -1368,6 +1368,12 @@ extension LauncherView {
                         extendClipboardSelection(direction: -1)
                         return .handled
                     }
+                    if clipboardSourcePillFocusIndex != nil {
+                        clipboardSourcePillFocusIndex = nil
+                        isKeyboardNavigation = false
+                        isSearchFieldFocused = true
+                        return .handled
+                    }
                     navigateClipboardScope(direction: -1)
                     return .handled
                 }
@@ -1438,6 +1444,16 @@ extension LauncherView {
                     if NSEvent.modifierFlags.contains(.command) {
                         extendClipboardSelection(direction: 1)
                         return .handled
+                    }
+                    if clipboardSourcePillFocusIndex == nil,
+                        focusedClipboardEntryIndex == nil,
+                        searchState.selectedIndex == nil
+                    {
+                        focusFirstClipboardSourcePill()
+                        return .handled
+                    }
+                    if clipboardSourcePillFocusIndex != nil {
+                        clipboardSourcePillFocusIndex = nil
                     }
                     navigateClipboardScope(direction: 1)
                     return .handled
@@ -1845,6 +1861,11 @@ extension LauncherView {
             // Left Arrow on an empty field (no scope chips) → standalone General AI
             // chat. With text or a scope chip present it stays a normal cursor/scope key.
             .onKeyPress(.leftArrow) {
+                if searchState.activeSmartQueryKey == "clipboard",
+                    clipboardSourcePillFocusIndex != nil
+                {
+                    return retreatClipboardSourcePill() ? .handled : .ignored
+                }
                 guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     allGlobalInlineAppScopes.isEmpty,
                     activeNotepadScopeCommand == nil,
@@ -1861,6 +1882,11 @@ extension LauncherView {
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
                 if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "clipboard",
+                    clipboardSourcePillFocusIndex != nil
+                {
+                    return advanceClipboardSourcePill() ? .handled : .ignored
+                }
                 if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }

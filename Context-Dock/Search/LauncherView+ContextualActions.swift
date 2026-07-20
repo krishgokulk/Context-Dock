@@ -3373,6 +3373,9 @@ extension LauncherView {
         remPanelIsProcessing = false
         selectedClipboardEntryIDs.removeAll()
         focusedClipboardEntryIndex = nil
+        clipboardSourcePillFocusIndex = nil
+        clipboardSourceFilterBundleId = ""
+        clipboardSourceFilterName = ""
 
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
             searchState.contextApp = nil

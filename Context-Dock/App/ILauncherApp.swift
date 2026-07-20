@@ -1177,6 +1177,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
             guard Date() >= self.suppressHideOnResignUntil else { return }
+            // The scope may have activated after this resign callback was queued.
+            // Re-check at execution time so a stale hide cannot collapse Clipboard/
+            // Notifications after the user has entered the persistent scope.
+            guard !self.smartScopeActive else { return }
             // Keep launcher available while one of our own panels (settings, approvals) owns focus.
             guard !NSApp.isActive else { return }
             // Hide on any focus loss to another app — mouse click OR Cmd+Tab OR Dock click.
@@ -2011,6 +2015,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hideLauncher(force: Bool = false) {
         WebQuickLookPanel.shared.close()
         guard let window = launcherWindow else { return }
+        // Compact scopes are intentionally persistent while the user works in another app.
+        // Only an explicit forced dismissal (Escape/hotkey) or clearSearchContext(), which
+        // first clears smartScopeActive, may close them.
+        if !force && smartScopeActive {
+            window.alphaValue = 1
+            applyPersistentDockBehavior()
+            window.orderFrontRegardless()
+            return
+        }
         // Pinned: stay floating over every app — even after actions run. Only a
         // forced hide (Escape / hotkey toggle) dismisses, which also unpins.
         if !force && settings.launcherPinned {
