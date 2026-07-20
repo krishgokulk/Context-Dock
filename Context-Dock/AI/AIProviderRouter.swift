@@ -104,6 +104,10 @@ private enum AIProviderHTTP {
         guard let http = response as? HTTPURLResponse else {
             throw AIServiceError.networkError("Invalid provider response")
         }
+        // Record live rate-limit usage from the response headers (keyed by host).
+        if let host = url.host {
+            AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
+        }
         guard (200..<300).contains(http.statusCode) else {
             let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
             if http.statusCode == 401 || http.statusCode == 403 {

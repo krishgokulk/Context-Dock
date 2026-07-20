@@ -472,3 +472,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-20 19:57 · `d85b5cf2` · `codex-context-dock-polish-fixes`
 **fix(global-context): backspace never quits apps**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 20:09 · `7038c9f8` · `codex-context-dock-polish-fixes`
+**feat: clipboard-scope hotkey in Settings; pin notes as Stickies windows**
+Swift: +1 added · ~2 modified · -0 deleted

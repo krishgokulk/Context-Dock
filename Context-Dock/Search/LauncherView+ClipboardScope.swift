@@ -1132,17 +1132,22 @@ extension LauncherView {
         }
     }
 
-    @ViewBuilder
-    var notificationScopeView: some View {
+    func notificationScopeSections() -> [SharedResultSectionModel] {
         let visible = filteredNotificationsForScope()
         let rows = visible.enumerated().map { index, notification in
             notificationSharedRow(notification, index: index)
         }
-        let sections = [
-            SharedResultSectionModel(id: "notifications", title: "Notifications", rows: rows)
+        return [
+            SharedResultSectionModel(
+                id: "usage", title: "AI Provider Usage", rows: aiUsageScopeRows()),
+            SharedResultSectionModel(id: "notifications", title: "Notifications", rows: rows),
         ]
+    }
+
+    @ViewBuilder
+    var notificationScopeView: some View {
         sharedResultSheet(
-            sections: sections,
+            sections: notificationScopeSections(),
             emptyIcon: "bell.slash",
             emptyTitle: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "No notifications"
@@ -1152,6 +1157,46 @@ extension LauncherView {
             if searchState.activeSmartQueryKey == "notifications" {
                 refreshCompactScopeResults(resetSelection: false)
             }
+        }
+        .onReceive(usageStore.$usage) { _ in
+            if searchState.activeSmartQueryKey == "notifications" {
+                refreshCompactScopeResults(resetSelection: false)
+            }
+        }
+    }
+
+    /// Live per-provider rate-limit rows (from API response headers). Shows a hint
+    /// row until the first API-key request populates real numbers.
+    func aiUsageScopeRows() -> [SharedResultRowModel] {
+        let usage = usageStore.usage
+        guard !usage.isEmpty else {
+            return [
+                SharedResultRowModel(
+                    id: "usage-empty",
+                    title: "Usage appears after your next AI request",
+                    subtitle: "API-key providers report remaining requests/tokens; "
+                        + "subscription & bridge providers don't expose limits.",
+                    systemIcon: "gauge.with.dots.needle.bottom.50percent"
+                )
+            ]
+        }
+        return usage.map { u in
+            var parts: [String] = []
+            if let remaining = u.remainingRequests {
+                let limit = u.limitRequests.map { "/\($0)" } ?? ""
+                parts.append("requests \(remaining)\(limit)")
+            }
+            if let remaining = u.remainingTokens {
+                let limit = u.limitTokens.map { "/\($0)" } ?? ""
+                parts.append("tokens \(remaining)\(limit)")
+            }
+            if let reset = u.resetText { parts.append(reset) }
+            return SharedResultRowModel(
+                id: "usage-\(u.id)",
+                title: u.providerName,
+                subtitle: parts.joined(separator: " • "),
+                systemIcon: "gauge.with.dots.needle.67percent"
+            )
         }
     }
 

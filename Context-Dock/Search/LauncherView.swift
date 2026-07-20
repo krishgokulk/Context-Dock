@@ -103,6 +103,7 @@ struct LauncherView: View {
     @ObservedObject var adapterManager = AppAdapterManager.shared
 
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared
+    @ObservedObject var usageStore = AIProviderUsageStore.shared
     @ObservedObject var mediaObserver = MediaPlayerObserver.shared
     @StateObject var taskExecutor = L2AITaskExecutor.shared
     @StateObject var selectionModel = SelectionObserverModel()
