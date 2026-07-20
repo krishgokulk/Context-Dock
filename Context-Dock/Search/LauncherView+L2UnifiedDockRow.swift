@@ -264,6 +264,8 @@ extension LauncherView {
                 isDark: isEffectiveDark,
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
+                frontmostLabel: notepadFrontmostLabel,
+                onAttachFrontmost: { toggleNotepadFrontmostContext() },
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)
@@ -321,6 +323,8 @@ extension LauncherView {
                 isDark: isEffectiveDark,
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
+                frontmostLabel: notepadFrontmostLabel,
+                onAttachFrontmost: { toggleNotepadFrontmostContext() },
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)

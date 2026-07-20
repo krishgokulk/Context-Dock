@@ -1429,6 +1429,30 @@ extension LauncherView {
     /// and insert the reply into the open note (creating one if none is selected).
     /// The provider is whatever the user picked globally — so the notepad's AI is
     /// their AI, no extra config.
+    /// Capture the frontmost window's context (app, window title, URL, selected
+    /// text) to attach to the next Quick Note AI prompt — or clear it if already set.
+    func toggleNotepadFrontmostContext() {
+        if notepadFrontmostContext != nil {
+            notepadFrontmostContext = nil
+            notepadFrontmostLabel = nil
+            return
+        }
+        let ctx = AXContextReader.shared.current
+        let appName = ctx.appName.isEmpty
+            ? (AppDelegate.shared?.previousFrontmostApp?.localizedName ?? "Frontmost app")
+            : ctx.appName
+        var parts: [String] = ["Frontmost app: \(appName)"]
+        if let title = ctx.windowTitle, !title.isEmpty { parts.append("Window: \(title)") }
+        if let url = ctx.currentURL, !url.isEmpty { parts.append("URL: \(url)") }
+        if let selection = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !selection.isEmpty
+        {
+            parts.append("Selected text:\n\(selection)")
+        }
+        notepadFrontmostContext = parts.joined(separator: "\n")
+        notepadFrontmostLabel = appName
+    }
+
     func submitNotepadAIPrompt(_ prompt: String) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !notepadAIGenerating else { return }
@@ -1443,6 +1467,17 @@ extension LauncherView {
             notepadSelectedNoteID = targetID
         }
 
+        // Fold in the attached frontmost-window context, if any, then clear it.
+        let aiQuery: String
+        if let context = notepadFrontmostContext {
+            aiQuery =
+                "Context from the user's frontmost window:\n\(context)\n\n---\n\nRequest: \(trimmed)"
+        } else {
+            aiQuery = trimmed
+        }
+        notepadFrontmostContext = nil
+        notepadFrontmostLabel = nil
+
         notepadAIGenerating = true
         searchState.query = ""
         clearSearchFieldEditorText()
@@ -1450,7 +1485,7 @@ extension LauncherView {
         Task { [weak store = QuickNotesStore.shared] in
             let reply: String
             do {
-                reply = try await sendToAIProvider(query: trimmed)
+                reply = try await sendToAIProvider(query: aiQuery)
             } catch {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }

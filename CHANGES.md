@@ -444,3 +444,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 18:34 · `79f687d6` · `codex-context-dock-polish-fixes`
 **feat(quick-note): AI prompt from the input field inserts into the open note**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 18:49 · `5bb0558c` · `codex-context-dock-polish-fixes`
+**feat(quick-note): drag-drop files into notes; fix app-scope pills in scope input**
+Swift: +0 added · ~2 modified · -0 deleted

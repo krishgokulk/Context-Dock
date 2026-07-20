@@ -14,6 +14,8 @@ struct NotepadScopeView: View {
     var isDark: Bool
     var isGenerating: Bool = false
     var aiProviderName: String = "AI"
+    var frontmostLabel: String? = nil
+    var onAttachFrontmost: () -> Void = {}
     var onExit: () -> Void
 
     @FocusState private var editorFocused: Bool
@@ -43,12 +45,20 @@ struct NotepadScopeView: View {
 
     private var listColumn: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("NOTES")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.tertiary)
                     .tracking(0.7)
                 Spacer()
+                // Attach the frontmost window's context to the next AI prompt.
+                Button(action: onAttachFrontmost) {
+                    Image(systemName: frontmostLabel == nil ? "plus.viewfinder" : "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(frontmostLabel == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.green))
+                }
+                .buttonStyle(.plain)
+                .help(frontmostLabel == nil ? "Attach frontmost window to AI" : "Attached: \(frontmostLabel!)")
                 Button {
                     let id = store.create()
                     selectedNoteID = id
@@ -63,6 +73,27 @@ struct NotepadScopeView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+
+            if let frontmostLabel {
+                HStack(spacing: 6) {
+                    Image(systemName: "macwindow")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Using \(frontmostLabel) for next AI prompt")
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Spacer()
+                    Button(action: onAttachFrontmost) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(.green)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.green.opacity(0.10))
+            }
 
             Divider()
 
