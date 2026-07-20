@@ -1,9 +1,20 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
+
+private enum ClipboardScopeRenderCache {
+    static let thumbnails = NSCache<NSString, NSImage>()
+    static let appIcons = NSCache<NSString, NSImage>()
+    static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+}
 
 extension LauncherView {
     // MARK: - Clipboard Pocket Pill
@@ -367,10 +378,19 @@ extension LauncherView {
 
     func clipboardSourceIcon(for entry: ClipboardEntry) -> NSImage? {
         if !entry.sourceBundleId.isEmpty,
+            let cached = ClipboardScopeRenderCache.appIcons.object(
+                forKey: entry.sourceBundleId as NSString)
+        {
+            return cached
+        }
+        if !entry.sourceBundleId.isEmpty,
             let url = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: entry.sourceBundleId)
         {
-            return NSWorkspace.shared.icon(forFile: url.path)
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            ClipboardScopeRenderCache.appIcons.setObject(
+                icon, forKey: entry.sourceBundleId as NSString)
+            return icon
         }
         let name = entry.sourceAppName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !name.isEmpty else { return nil }
@@ -381,10 +401,15 @@ extension LauncherView {
     }
 
     func sourceAppIcon(bundleId: String) -> NSImage? {
+        if let cached = ClipboardScopeRenderCache.appIcons.object(forKey: bundleId as NSString) {
+            return cached
+        }
         guard !bundleId.isEmpty,
             let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
         else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        ClipboardScopeRenderCache.appIcons.setObject(icon, forKey: bundleId as NSString)
+        return icon
     }
 
     func clipboardEntrySubtitle(_ entry: ClipboardEntry) -> String {
@@ -395,9 +420,8 @@ extension LauncherView {
         if entry.fileCount > 0 {
             parts.append(entry.fileCount == 1 ? "1 file" : "\(entry.fileCount) files")
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        let age = formatter.localizedString(for: entry.timestamp, relativeTo: Date())
+        let age = ClipboardScopeRenderCache.relativeDateFormatter.localizedString(
+            for: entry.timestamp, relativeTo: Date())
         parts.append(age)
         return parts.joined(separator: " • ")
     }
@@ -832,7 +856,6 @@ extension LauncherView {
 
     func clipboardSearchResults() -> [SearchResult] {
         clipboardEntriesForScope(query: searchState.query).map { entry in
-            let previewURL = quickLookURL(for: entry)
             return SearchResult(
                 title: entry.preview,
                 subtitle: clipboardEntrySubtitle(entry),
@@ -842,7 +865,9 @@ extension LauncherView {
                 },
                 score: 100,
                 type: entry.fileCount > 0 ? .file : .document,
-                filePath: previewURL?.path ?? entry.filePaths.first,
+                // Image/text preview files are created only when Quick Look is requested.
+                // Writing one file per row here blocks the main thread before scrolling.
+                filePath: entry.filePaths.first,
                 contactData: nil,
                 displayBadges: entry.ocrText.isEmpty ? [] : ["OCR"],
                 showsTypeLabel: false,
@@ -1383,7 +1408,26 @@ extension LauncherView {
     }
 
     func clipboardEntryImage(for entry: ClipboardEntry) -> NSImage? {
-        if let imageData = entry.imageData, let image = NSImage(data: imageData) {
+        let cacheKey = entry.id.uuidString as NSString
+        if let cached = ClipboardScopeRenderCache.thumbnails.object(forKey: cacheKey) {
+            return cached
+        }
+        if let imageData = entry.imageData,
+            let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+            let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 320,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ] as CFDictionary
+            )
+        {
+            let image = NSImage(cgImage: thumbnail, size: .zero)
+            ClipboardScopeRenderCache.thumbnails.setObject(
+                image, forKey: cacheKey, cost: thumbnail.bytesPerRow * thumbnail.height)
             return image
         }
         if entry.filePaths.count == 1 {
@@ -1438,7 +1482,7 @@ extension LauncherView {
                 "clipboard",
                 "clip",
             ]
-            pill.quickLookURL = quickLookURL(for: entry)
+            pill.quickLookURL = entry.filePaths.first.map { URL(fileURLWithPath: $0) }
             pill.dragProvider = {
                 clipboardDragProvider(for: entry)
             }
@@ -1500,8 +1544,8 @@ extension LauncherView {
                                 VStack(alignment: .leading, spacing: 4) {
                                     // Real content preview: image clips render their
                                     // thumbnail, everything else shows its actual text.
-                                    if let data = entry.imageData,
-                                        let image = NSImage(data: data)
+                                    if entry.imageData != nil,
+                                        let image = clipboardEntryImage(for: entry)
                                     {
                                         Image(nsImage: image)
                                             .resizable()
@@ -1669,7 +1713,7 @@ extension LauncherView {
             badges: entry.ocrText.isEmpty ? [] : ["OCR"],
             isFocused: focusedClipboardEntryIndex == index || searchState.selectedIndex == index
                 || selectedClipboardEntryIDs.contains(entry.id),
-            quickLookURL: quickLookURL(for: entry),
+            quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
             dragProvider: { clipboardDragProvider(for: entry) },
             open: {
                 pasteClipboardEntryToFrontmost(entry, index: index)
