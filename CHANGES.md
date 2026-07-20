@@ -368,3 +368,23 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-20 01:44 · `8426bd14` · `codex-context-dock-polish-fixes`
 **fix(global-context): move matching off main actor**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 01:45 · `3b91634d` · `codex-context-dock-polish-fixes`
+**fix(chat): bound browser history refresh**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 02:12 · `c07b3877` · `codex-context-dock-polish-fixes`
+**The first result sheet now immediately includes:**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 02:41 · `734dfd12` · `codex-context-dock-polish-fixes`
+**perf(finder): detach desktop matching**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 02:42 · `ca8cfd18` · `codex-context-dock-polish-fixes`
+**fix(global-context): keep result sheet stable**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 03:02 · `c6cdd522` · `codex-context-dock-polish-fixes`
+**It now:**
+Swift: +0 added · ~3 modified · -0 deleted
