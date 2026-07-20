@@ -25,6 +25,9 @@ struct LauncherView: View {
     @State var notepadFrontmostLabel: String? = nil
     // Image/file attachments for the next Quick Note AI prompt.
     @State var notepadAttachments: [URL] = []
+    // Clipboard scope: selected source-app filter (empty = All).
+    @State var clipboardSourceFilterBundleId: String = ""
+    @State var clipboardSourceFilterName: String = ""
     // Running app the General AI chat is focused on (from the App Store picker).
     @State var chatFocusAppName: String? = nil
     @State var chatFocusAppBundleId: String? = nil

@@ -1448,19 +1448,176 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// Split clipboard surface: a horizontally-scrolling "Recent" rail on top and
+    /// per-source-app pills below. Selecting an app pill filters the list to that
+    /// app's clips; the input filters across everything as usual.
     var clipboardScopeView: some View {
         let entries = filteredClipboardEntriesForScope()
-        let rows = entries.enumerated().map { index, entry in
+        let scoped =
+            clipboardSourceFilterBundleId.isEmpty
+            ? entries
+            : entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
+        let rows = scoped.enumerated().map { index, entry in
             clipboardSharedRow(entry, index: index)
         }
-        sharedResultSheet(
-            sections: [
-                SharedResultSectionModel(id: "clipboard", title: "Clipboard Items", rows: rows)
-            ],
-            emptyIcon: "doc.on.clipboard",
-            emptyTitle: "Clipboard is empty"
-        )
+        return VStack(spacing: 0) {
+            clipboardRecentRail(Array(entries.prefix(10)))
+            Divider().opacity(0.35)
+            clipboardSourceAppPills(entries)
+            Divider().opacity(0.35)
+            sharedResultSheet(
+                sections: [
+                    SharedResultSectionModel(
+                        id: "clipboard",
+                        title: clipboardSourceFilterBundleId.isEmpty
+                            ? "Clipboard Items"
+                            : (clipboardSourceFilterName.isEmpty
+                                ? "Clipboard Items" : "\(clipboardSourceFilterName) Clips"),
+                        rows: rows)
+                ],
+                emptyIcon: "doc.on.clipboard",
+                emptyTitle: "Clipboard is empty"
+            )
+        }
     }
+
+    /// Top half — the 10 most recent clips as a horizontal scroller.
+    @ViewBuilder
+    func clipboardRecentRail(_ recent: [ClipboardEntry]) -> some View {
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("RECENT")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.7)
+                    .padding(.horizontal, 12)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(recent) { entry in
+                            Button {
+                                copyClipboardEntryToPasteboard(entry)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(clipboardEntryPreviewText(entry))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(3)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer(minLength: 0)
+                                    if !entry.sourceAppName.isEmpty {
+                                        Text(entry.sourceAppName)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .padding(8)
+                                .frame(width: 128, height: 74, alignment: .topLeading)
+                                .background(
+                                    Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .strokeBorder(Color.primary.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    /// Bottom half — one floating pill per source app; tap to filter to its clips.
+    @ViewBuilder
+    func clipboardSourceAppPills(_ entries: [ClipboardEntry]) -> some View {
+        let groups = clipboardSourceGroups(entries)
+        if !groups.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    clipboardSourcePill(
+                        name: "All", bundleId: "", count: entries.count,
+                        isSelected: clipboardSourceFilterBundleId.isEmpty)
+                    ForEach(groups, id: \.bundleId) { group in
+                        clipboardSourcePill(
+                            name: group.name, bundleId: group.bundleId, count: group.count,
+                            isSelected: clipboardSourceFilterBundleId == group.bundleId)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    func clipboardSourcePill(name: String, bundleId: String, count: Int, isSelected: Bool)
+        -> some View
+    {
+        Button {
+            clipboardSourceFilterBundleId = isSelected ? "" : bundleId
+            clipboardSourceFilterName = isSelected ? "" : name
+            refreshCompactScopeResults(resetSelection: true)
+        } label: {
+            HStack(spacing: 6) {
+                if !bundleId.isEmpty, let icon = sourceAppIcon(bundleId: bundleId) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 14, height: 14)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                } else {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(name)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
+                in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    func clipboardSourceGroups(_ entries: [ClipboardEntry])
+        -> [(bundleId: String, name: String, count: Int)]
+    {
+        var order: [String] = []
+        var names: [String: String] = [:]
+        var counts: [String: Int] = [:]
+        for entry in entries where !entry.sourceBundleId.isEmpty {
+            if counts[entry.sourceBundleId] == nil {
+                order.append(entry.sourceBundleId)
+                names[entry.sourceBundleId] =
+                    entry.sourceAppName.isEmpty ? entry.sourceBundleId : entry.sourceAppName
+            }
+            counts[entry.sourceBundleId, default: 0] += 1
+        }
+        return order.map {
+            (bundleId: $0, name: names[$0] ?? $0, count: counts[$0] ?? 0)
+        }
+    }
+
+    func clipboardEntryPreviewText(_ entry: ClipboardEntry) -> String {
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { return text }
+        if !entry.filePaths.isEmpty {
+            return entry.filePaths.map { ($0 as NSString).lastPathComponent }
+                .joined(separator: ", ")
+        }
+        return entry.imageData != nil ? "Image" : "Empty"
+    }
+
 
     var clipboardScopeHeader: some View {
         HStack(spacing: 8) {

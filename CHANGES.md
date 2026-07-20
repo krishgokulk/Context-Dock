@@ -496,3 +496,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 20:50 · `79eaa55e` · `codex-context-dock-polish-fixes`
 **fix(notifications): show provider usage as soon as the scope opens**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 20:57 · `a2923d00` · `codex-context-dock-polish-fixes`
+**feat(sticky): attach + new-note buttons, app appearance; fix scope backspace**
+Swift: +0 added · ~2 modified · -0 deleted
