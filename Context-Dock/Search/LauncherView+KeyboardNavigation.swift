@@ -591,11 +591,8 @@ extension LauncherView {
                     return event
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
-                case 51:  // Delete/Backspace — quit focused running app row, else clear focus
+                case 51:  // Delete/Backspace — clear focus only (never quit apps)
                     if self.currentGlobalGroupedFocusIndex(state: state) != nil {
-                        if self.quitFocusedGlobalAppResultIfPossible(state: state) {
-                            return nil
-                        }
                         self.setGlobalGroupedFocus(nil, state: state)
                         return nil
                     }
@@ -757,24 +754,8 @@ extension LauncherView {
                         return nil
                     }
                     return event
-                case 51:  // Delete/Backspace — quit focused running app, else clear focus
-                    if let idx = self.focusedAppPillIndex {
-                        if idx < appPills.count, let quit = appPills[idx].quit {
-                            let preservedQuery = self.searchState.query
-                            quit()
-                            self.searchState.query = preservedQuery
-                            self.focusedAppPillIndex = nil
-                            self.l2.pillNavViaKeyboard = false
-                            self.scheduleGlobalAppMatchRebuild(
-                                query: preservedQuery,
-                                delayNanoseconds: 0
-                            )
-                            self.scheduleGlobalGroupedListRebuild(
-                                query: preservedQuery,
-                                delayNanoseconds: 0
-                            )
-                            return nil
-                        }
+                case 51:  // Delete/Backspace — clear focus, return to input (never quit apps)
+                    if self.focusedAppPillIndex != nil {
                         self.focusedAppPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
                         DispatchQueue.main.async { self.reclaimSearchInputFocus() }

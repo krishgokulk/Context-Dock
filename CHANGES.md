@@ -464,3 +464,7 @@ Swift: +1 added · ~4 modified · -0 deleted
 ## 2026-07-20 19:29 · `431d34b7` · `codex-context-dock-polish-fixes`
 **fix(nav): left arrow (not right) opens General AI chat**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 19:33 · `e53da466` · `codex-context-dock-polish-fixes`
+**feat(ai-chat): App Store picker to focus the chat on a running app**
+Swift: +0 added · ~3 modified · -0 deleted
