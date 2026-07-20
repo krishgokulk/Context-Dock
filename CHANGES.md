@@ -484,3 +484,7 @@ Swift: +1 added · ~3 modified · -0 deleted
 ## 2026-07-20 20:31 · `393d9c65` · `codex-context-dock-polish-fixes`
 **feat(sticky+scopes): sticky app chrome + AI composer; backspace exits scopes**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:33 · `953d7141` · `codex-context-dock-polish-fixes`
+**fix(window): seat top anchor when a smart scope opens on a visible window**
+Swift: +0 added · ~1 modified · -0 deleted

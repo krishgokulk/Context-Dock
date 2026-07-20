@@ -1351,22 +1351,26 @@ extension LauncherView {
                                 (showContextInDock && l2.chatArmed)
                                 || shouldShowContextDockAIQueryFallback
                             let suppressScopedResultPreview =
-                                showContextInDock
-                                && currentGlobalScopedBundleID != nil
+                                (showContextInDock && currentGlobalScopedBundleID != nil)
+                                || searchState.activeSmartQueryKey != nil
                             let focusedDockPill =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && !suppressScopedResultPreview
                                 ? focusedDockPillForInputPreview() : nil
+                            // Compact scopes (Clipboard / Notifications) own their input —
+                            // never let a Global Context / dock completion ghost bleed in.
                             let rawQueryAllowsGhost =
-                                searchState.query
-                                == searchState.query.trimmingCharacters(
-                                    in: .whitespacesAndNewlines)
+                                searchState.activeSmartQueryKey == nil
+                                && searchState.query
+                                    == searchState.query.trimmingCharacters(
+                                        in: .whitespacesAndNewlines)
                             // Once an app is scoped (right-arrow / click), no global-app
                             // completion ghost may render — otherwise the old typed query
                             // bleeds through behind the scope pill.
                             let focusedGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && l2.targetApp == nil
+                                    && searchState.activeSmartQueryKey == nil
                                     && !suppressScopedResultPreview
                                 ? focusedGlobalAppResultForInputPreview() : nil
                             let topGlobalAppResult =

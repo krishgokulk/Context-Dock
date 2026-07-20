@@ -153,6 +153,20 @@ extension LauncherView {
 
     func setupDockPillKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
+            // Handled here because the field editor swallows Backspace before SwiftUI's
+            // .onKeyPress ever sees it.
+            if event.keyCode == 51,
+                self.searchState.activeSmartQueryKey != nil,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                self.clearSearchContext()
+                self.isSearchFieldFocused = true
+                self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                self.requestWindowSizeUpdate(reason: .modeChanged)
+                return nil
+            }
+
             let routingMode = self.keyRoutingMode
             if let routedEvent = self.handleTopLevelKeyRouting(event, mode: routingMode) {
                 return routedEvent
