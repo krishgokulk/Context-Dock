@@ -480,3 +480,7 @@ Swift: +1 added · ~2 modified · -0 deleted
 ## 2026-07-20 20:19 · `73abc842` · `codex-context-dock-polish-fixes`
 **feat(notifications): live AI provider usage from rate-limit headers**
 Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-20 20:31 · `393d9c65` · `codex-context-dock-polish-fixes`
+**feat(sticky+scopes): sticky app chrome + AI composer; backspace exits scopes**
+Swift: +0 added · ~2 modified · -0 deleted

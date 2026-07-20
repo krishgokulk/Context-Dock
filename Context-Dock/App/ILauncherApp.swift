@@ -1676,6 +1676,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.isDockContextMode = true
             if let window = self.launcherWindow, window.isVisible {
                 window.makeKeyAndOrderFront(nil)
+                // Seat the top anchor at the CURRENT position so entering/leaving a
+                // smart scope only grows/shrinks the sheet below the input bar
+                // instead of letting the resize re-place the window (the "jump").
+                if let keyable = window as? KeyableWindow, !keyable.anchorAtBottom {
+                    keyable.pinnedTopY = window.frame.maxY
+                }
                 self.launcherWindow?.makeKey()
             } else {
                 self.showLauncher()
