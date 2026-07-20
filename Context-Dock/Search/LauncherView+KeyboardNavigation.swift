@@ -1832,6 +1832,21 @@ extension LauncherView {
                 }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
+            // Left Arrow on an empty field (no scope chips) → standalone General AI
+            // chat. With text or a scope chip present it stays a normal cursor/scope key.
+            .onKeyPress(.leftArrow) {
+                guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    allGlobalInlineAppScopes.isEmpty,
+                    activeNotepadScopeCommand == nil,
+                    isGlobalContextActive || showContextInDock,
+                    !aiMode.isActive,
+                    !showMediaLayer,
+                    !isCompactSmartScope,
+                    settings.enableAIMode
+                else { return .ignored }
+                enterGeneralChatPreservingLayer()
+                return .handled
+            }
             // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
@@ -1881,8 +1896,7 @@ extension LauncherView {
                     !isCompactSmartScope,
                     frontmost.bundleID != "com.apple.finder"
                 {
-                    // Right arrow on an empty field → the standalone General AI chat.
-                    enterGeneralChatPreservingLayer()
+                    openInlineAIChatPanel()
                     return .handled
                 }
                 if let findToken = lockedFindToken,
