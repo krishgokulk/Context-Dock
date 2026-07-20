@@ -4,7 +4,11 @@
       "Bash(log stream *)",
       "Bash(/usr/bin/log show *)",
       "Bash(perl -0pi -e 's/\\\\Q? fileIcon\\(for: urls[0].pathExtension.lowercased\\(\\)\\)\\\\E/? selectionSymbol\\(for: urls[0]\\)/g' Search/LauncherView+SearchBar.swift)",
-      "Bash(open /Users/gokulakannan/Developer/Context-Dock/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app)"
+      "Bash(open /Users/gokulakannan/Developer/Context-Dock/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app)",
+      "Bash(osascript -e 'tell application \"System Events\" to tell appearance preferences to get dark mode')",
+      "Bash(echo \"value-read exit=$?\")",
+      "Bash(CD_QUERY=dark osascript -e 'set rawValue to system attribute \"CD_QUERY\" *)",
+      "Bash(echo \"set-dark exit=$?\")"
     ]
   }
 }

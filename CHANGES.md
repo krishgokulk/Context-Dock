@@ -408,3 +408,7 @@ Swift: +0 added · ~0 modified · -0 deleted
 ## 2026-07-20 11:46 · `f24d1280` · `codex-context-dock-polish-fixes`
 **docs(changelog): record command scope fix**
 Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-20 16:10 · `d51278f9` · `codex-context-dock-polish-fixes`
+**feat(global-context): native radio toggles, inline controls, focused command set**
+Swift: +0 added · ~7 modified · -0 deleted

@@ -791,9 +791,9 @@ struct AutomationSettingsView: View {
                     isEnabled: cmd.isEnabled
                 )
                 .tag(cmd.id)
-                .onTapGesture {
-                    selectedPackageID = nil
-                }
+                // No .onTapGesture here: it competes with List(selection:)'s own tap
+                // recognizer and makes selection feel laggy / need a second click.
+                // selectedPackageID is already cleared by onChange(of: selectedSystemCommandID).
             }
             .onDelete { idx in
                 let toRemove = idx.map { cmds[$0] }

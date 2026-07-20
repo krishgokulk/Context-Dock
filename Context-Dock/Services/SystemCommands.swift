@@ -509,6 +509,31 @@ final class SystemCommandsRegistry {
             valueScript: "output volume of (get volume settings)"
         ),
         SystemCommand(
+            name: "Appearance",
+            icon: "circle.lefthalf.filled",
+            keywords: ["appearance", "theme", "dark", "light", "mode", "presets:Light|Dark|Auto"],
+            scriptType: "applescript",
+            script: #"""
+            set rawValue to system attribute "CD_QUERY"
+            if rawValue is missing value then set rawValue to ""
+            set q to do shell script "printf %s " & quoted form of (rawValue as text) & " | tr '[:upper:]' '[:lower:]'"
+            if q is "" then return
+            if q is "auto" then
+                do shell script "defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool true"
+                return
+            end if
+            set wantDark to false
+            if q is "on" or q is "dark" then set wantDark to true
+            do shell script "defaults delete -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null; true"
+            tell application "System Events"
+                tell appearance preferences to set dark mode to wantDark
+            end tell
+            """#,
+            description: "Light / Dark / Auto appearance",
+            interaction: "toggle",
+            valueScript: #"tell application "System Events" to tell appearance preferences to get dark mode"#
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],
