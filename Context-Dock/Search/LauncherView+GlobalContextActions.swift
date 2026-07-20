@@ -1773,6 +1773,10 @@ extension LauncherView {
             return
         }
 
+        // Keyboard navigation is active interaction, not idle time. Once focus enters
+        // the result sheet, keep it open until the user explicitly leaves/collapses it.
+        globalContextViewModel.idleCollapseTask?.cancel()
+        globalContextViewModel.idleCollapseTask = nil
         l2.pillNavViaKeyboard = true
         if index < state.appResults.count {
             focusedAppPillIndex = index
@@ -2610,7 +2614,10 @@ extension LauncherView {
             guard !Task.isCancelled,
                 isGlobalContextActive,
                 globalContextViewModel.typingSnapshot.phase == .expanded,
-                currentGlobalScopedBundleID == nil
+                currentGlobalScopedBundleID == nil,
+                focusedAppPillIndex == nil,
+                l2.focusedPillIndex == nil,
+                !l2.pillNavViaKeyboard
             else { return }
             let icons = globalContextViewModel.typingSnapshot.matchDockIcons
             globalContextViewModel.typingSnapshot.phase = icons.contains(where: \.isExpandable)
