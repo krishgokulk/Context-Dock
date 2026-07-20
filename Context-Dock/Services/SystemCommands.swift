@@ -299,10 +299,12 @@ final class SystemCommandsRegistry {
         var migrated = decoded.filter { !legacyDefaultNames.contains($0.name) }
             .map { command -> SystemCommand in
                 if command.name == "Bluetooth",
-                    command.interactionType == .none,
                     command.keywords.contains(where: { $0.lowercased() == "provider:bluetooth" }),
                     let currentDefault = defaults.first(where: { $0.name == "Bluetooth" })
                 {
+                    // Keep the built-in provider implementation current. Older
+                    // persisted copies used a single brittle AX lookup that
+                    // opened Settings but skipped switches with a missing name.
                     var enriched = command
                     enriched.description = currentDefault.description
                     enriched.script = currentDefault.script
@@ -363,21 +365,49 @@ final class SystemCommandsRegistry {
             set targetDevice to system attribute "CD_QUERY"
             if targetDevice is "on" or targetDevice is "off" then
                 open location "x-apple.systempreferences:com.apple.BluetoothSettings"
-                delay 1
+                set wantedValue to 1
+                if targetDevice is "off" then set wantedValue to 0
                 tell application "System Events"
-                    tell process "System Settings"
-                        set wantedValue to 1
-                        if targetDevice is "off" then set wantedValue to 0
-                        repeat with candidate in entire contents of window 1
-                            try
-                                if role of candidate is "AXCheckBox" and (name of candidate contains "Bluetooth" or description of candidate contains "Bluetooth") then
-                                    if value of candidate is not wantedValue then click candidate
-                                    exit repeat
+                    repeat 40 times
+                        if exists process "System Settings" then
+                            tell process "System Settings"
+                                set frontmost to true
+                                if exists window 1 then
+                                    repeat with candidate in entire contents of window 1
+                                        set candidateRole to ""
+                                        set candidateName to ""
+                                        set candidateDescription to ""
+                                        try
+                                            set candidateRole to role of candidate as text
+                                        end try
+                                        try
+                                            set candidateName to name of candidate as text
+                                        end try
+                                        try
+                                            set candidateDescription to description of candidate as text
+                                        end try
+                                        if (candidateRole is "AXCheckBox" or candidateRole is "AXSwitch") and (candidateName contains "Bluetooth" or candidateDescription contains "Bluetooth") then
+                                            set currentValue to -1
+                                            try
+                                                set currentValue to value of candidate as integer
+                                            end try
+                                            if currentValue is not wantedValue then
+                                                try
+                                                    perform action "AXPress" of candidate
+                                                on error
+                                                    click candidate
+                                                end try
+                                            end if
+                                            return
+                                        end if
+                                    end repeat
                                 end if
-                            end try
-                        end repeat
-                    end tell
+                            end tell
+                        end if
+                        delay 0.1
+                    end repeat
                 end tell
+                error "Bluetooth power control was not found in System Settings"
                 return
             end if
             if targetDevice is missing value or targetDevice is "" or targetDevice is "settings" then

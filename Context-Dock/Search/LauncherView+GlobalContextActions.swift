@@ -101,7 +101,7 @@ extension LauncherView {
         let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
         let isCLIScope = scope.scopedBundleId.hasPrefix("cli://")
-        let pills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
+        let resolvedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
             .filter { pill in
                 guard !pill.isSeparator else { return false }
                 if isSystemCommandScope { return pill.rankingKind == "systemCommand" }
@@ -111,6 +111,13 @@ extension LauncherView {
                 // and Global Context actions belong to other surfaces.
                 return ["menu", "submenuChild", "finderMenu"].contains(pill.rankingKind)
             }
+        // Bottom-docked lists rotate both the scroll container and each row so
+        // the sheet grows upward without mirroring its content. Compensate the
+        // data order for System Command scopes so their semantic first row —
+        // the live toggle/slider — still appears visually first.
+        let pills = settings.effectiveDockAtBottom && isSystemCommandScope
+            ? Array(resolvedPills.reversed())
+            : resolvedPills
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
@@ -5387,10 +5394,17 @@ extension LauncherView {
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if isActiveGlobalRunningAppMenuScope() {
-            return min(
+            let resolvedCount = min(
                 maxListViewDockPills,
                 visibleGlobalScopedMenuNavigationState(for: q)?.totalCount ?? 0
             )
+            let isExtensionScope =
+                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+            // Reserve one row while a provider-backed extension scope resolves.
+            // This keeps the shared result-sheet frame alive instead of snapping
+            // back to the capsule between scope activation and row publication.
+            return isExtensionScope ? max(1, resolvedCount) : resolvedCount
         }
         if shouldUsePureGlobalAppSearch {
             guard !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil

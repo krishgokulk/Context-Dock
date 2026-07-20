@@ -1215,7 +1215,10 @@ extension LauncherView {
             return false
         }
         if isGlobalContextActive {
-            if q.isEmpty {
+            let hasExtensionScope =
+                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+            if q.isEmpty, !hasExtensionScope {
                 return false
             }
             if shouldUsePureGlobalAppSearch {

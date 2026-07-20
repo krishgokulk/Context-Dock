@@ -2639,7 +2639,10 @@ struct LauncherView: View {
             let bundleID = currentGlobalScopedBundleID,
             bundleID.hasPrefix("syscmd://") || bundleID.hasPrefix("cli://")
         {
-            return visibleGlobalScopedMenuNavigationState(for: q)?.totalCount ?? 0 > 0
+            // The explicit extension scope owns the result sheet. Do not make
+            // its shell depend on the first provider read already having rows;
+            // Bluetooth/Wi-Fi can briefly be resolving their dynamic content.
+            return true
         }
         guard !q.isEmpty else { return false }
         if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
@@ -2694,6 +2697,11 @@ struct LauncherView: View {
             && showContextInDock
             && !showMediaLayer
             && !aiMode.isActive
+            // An explicit Global Context scope owns the shared result sheet even
+            // when its text query is empty. System Commands clear the query as
+            // they enter scope, so treating that state as ordinary dock idleness
+            // hid Bluetooth's toggle and device rows immediately after scoping.
+            && currentGlobalScopedBundleID == nil
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

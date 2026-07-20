@@ -179,8 +179,14 @@ extension LauncherView {
             return (bundleId, appName, path)
         }()
         let globalSearchLoading =
-            showGlobalAppSearch && !q.isEmpty && scopedAppLaunchHint == nil
-            && searchState.isLoadingApps && globalNavState == nil
+            showGlobalAppSearch
+            && (
+                (currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                    || currentGlobalScopedBundleID?.hasPrefix("cli://") == true)
+                    && (globalNavState?.totalCount ?? 0) == 0
+                || (!q.isEmpty && scopedAppLaunchHint == nil
+                    && searchState.isLoadingApps && globalNavState == nil)
+            )
 
         return L2DockRowPresentation(
             query: q,
