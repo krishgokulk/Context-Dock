@@ -132,12 +132,14 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
     @Published var typingSnapshot = GlobalContextTypingSnapshot()
     @Published var preparedResults: GlobalContextPreparedResults?
+    @Published var isResolvingFastMatches = false
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0
     var groupedTask: Task<Void, Never>?
     var groupedGeneration = 0
     var prepareTask: Task<Void, Never>?
+    var fastMatchTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
 }

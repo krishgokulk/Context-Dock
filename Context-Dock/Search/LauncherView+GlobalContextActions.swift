@@ -878,6 +878,7 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let groupedKey = globalGroupedStateCacheKey(for: q)
         guard !q.isEmpty else { return false }
+        if globalContextViewModel.isResolvingFastMatches { return true }
         // Committed state for the current query → done, no spinner.
         if cachedGlobalGroupedQuery == groupedKey, cachedGlobalGroupedState != nil {
             return false
@@ -1574,7 +1575,7 @@ extension LauncherView {
     }
 
     func scheduleGlobalGroupedListRebuild(
-        query: String, delayNanoseconds: UInt64 = 50_000_000
+        query: String, delayNanoseconds: UInt64 = 140_000_000
     ) {
         let scheduleStarted = Date()
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2170,7 +2171,7 @@ extension LauncherView {
         }
     }
 
-    func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 18_000_000) {
+    func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 120_000_000) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         globalAppMatchGeneration &+= 1
         globalAppMatchTask?.cancel()
@@ -2210,8 +2211,10 @@ extension LauncherView {
 
     func updateGlobalContextTypingSnapshot(query rawQuery: String) {
         let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        globalContextViewModel.fastMatchTask?.cancel()
         guard isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil
         else {
+            globalContextViewModel.isResolvingFastMatches = false
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2220,6 +2223,7 @@ extension LauncherView {
         }
 
         if q.isEmpty {
+            globalContextViewModel.isResolvingFastMatches = false
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2227,50 +2231,74 @@ extension LauncherView {
             return
         }
 
-        var matchDockIcons = GlobalContextSearchCoordinator.shared.resolveFastMatchDockIcons(
-            query: q,
-            limit: 12
-        )
-        if let target = transientGlobalInlineAppScopeTarget(for: q),
-            !matchDockIcons.contains(where: { $0.bundleID == target.bundleId })
-        {
-            let icon =
-                FileManager.default.fileExists(atPath: target.appPath)
-                ? NSWorkspace.shared.icon(forFile: target.appPath)
-                : (resolvedApplicationIcon(bundleIdentifier: target.bundleId, appName: target.appName)
-                    ?? NSImage())
-            let item = MatchDockIcon(
-                id: "transient-scope:\(target.bundleId)",
-                bundleID: target.bundleId,
-                title: target.appName,
-                icon: icon,
-                isRunning: NSWorkspace.shared.runningApplications.contains {
-                    $0.bundleIdentifier == target.bundleId && !$0.isTerminated
-                },
-                isExpandable: true,
-                score: 90_000,
-                isExactAppPrefix: true
-            )
-            matchDockIcons.insert(item, at: 0)
-            if matchDockIcons.count > 12 {
-                matchDockIcons = Array(matchDockIcons.prefix(12))
-            }
-        }
-        let hasExpandableMatch = matchDockIcons.contains { $0.isExpandable }
-        let preservesExpandedSheet =
-            globalContextViewModel.typingSnapshot.phase == .expanded
-            && globalContextViewModel.typingSnapshot.query == q
+        let preparedVersion = globalContextViewModel.typingSnapshot.preparedResultsVersion
+        globalContextViewModel.isResolvingFastMatches = true
         globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
             query: q,
-            phase: preservesExpandedSheet
-                ? .expanded
-                : (hasExpandableMatch ? .expandable : (matchDockIcons.isEmpty ? .typing : .matched)),
-            topMatch: nil,
-            matchDockIcons: matchDockIcons,
-            matchDockOverflowCount: max(0, matchDockIcons.count - 3),
-            preparedResultsVersion: globalContextViewModel.typingSnapshot.preparedResultsVersion
+            phase: .typing,
+            preparedResultsVersion: preparedVersion
         )
         scheduleBackgroundGlobalContextPreparation(q)
+
+        // Search the immutable Global Context index away from the main actor. Every
+        // keystroke cancels this task, so stale work cannot interrupt typing or publish
+        // results over a newer query.
+        globalContextViewModel.fastMatchTask = Task.detached(priority: .userInitiated) {
+            let resolved = GlobalContextSearchCoordinator.shared.resolveFastMatchDockIcons(
+                query: q,
+                limit: 12
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard
+                    self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased() == q,
+                    self.isGlobalContextActive,
+                    self.shouldUsePureGlobalAppSearch,
+                    self.globalInlineAppScope == nil
+                else { return }
+
+                var matchDockIcons = resolved
+                if let target = self.transientGlobalInlineAppScopeTarget(for: q),
+                    !matchDockIcons.contains(where: { $0.bundleID == target.bundleId })
+                {
+                    let icon =
+                        FileManager.default.fileExists(atPath: target.appPath)
+                        ? NSWorkspace.shared.icon(forFile: target.appPath)
+                        : (self.resolvedApplicationIcon(
+                            bundleIdentifier: target.bundleId, appName: target.appName) ?? NSImage())
+                    matchDockIcons.insert(
+                        MatchDockIcon(
+                            id: "transient-scope:\(target.bundleId)",
+                            bundleID: target.bundleId,
+                            title: target.appName,
+                            icon: icon,
+                            isRunning: NSWorkspace.shared.runningApplications.contains {
+                                $0.bundleIdentifier == target.bundleId && !$0.isTerminated
+                            },
+                            isExpandable: true,
+                            score: 90_000,
+                            isExactAppPrefix: true
+                        ),
+                        at: 0
+                    )
+                    matchDockIcons = Array(matchDockIcons.prefix(12))
+                }
+
+                let hasExpandableMatch = matchDockIcons.contains { $0.isExpandable }
+                self.globalContextViewModel.isResolvingFastMatches = false
+                self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
+                    query: q,
+                    phase: hasExpandableMatch ? .expandable : .matched,
+                    topMatch: nil,
+                    matchDockIcons: matchDockIcons,
+                    matchDockOverflowCount: max(0, matchDockIcons.count - 3),
+                    preparedResultsVersion:
+                        self.globalContextViewModel.typingSnapshot.preparedResultsVersion
+                )
+                self.globalContextViewModel.fastMatchTask = nil
+            }
+        }
     }
 
     func scheduleBackgroundGlobalContextPreparation(_ query: String) {
