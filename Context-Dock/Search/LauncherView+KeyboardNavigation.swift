@@ -1440,6 +1440,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.space) {
+                // Quick Note editor: space is text — never steal it back to the input.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
                     searchState.query.append(" ")
                     reclaimSearchInputFocus()
@@ -1485,6 +1487,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.return) {
+                // Quick Note editor: Return / Shift+Return insert a newline.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if !showFolderPreview {
                     if executeScopedRunningAppIfIdle() {
                         return .handled
@@ -1586,6 +1590,7 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.tab) {
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isL2ContextActive && !isGlobalContextActive {
                     return .handled
                 }
@@ -1744,6 +1749,8 @@ extension LauncherView {
                 return .handled
             }
             .onKeyPress(.delete) {
+                // Quick Note editor: Backspace deletes characters in the note.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
                     // Exit inline Share Sheet first
@@ -1815,6 +1822,7 @@ extension LauncherView {
             // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }

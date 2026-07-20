@@ -432,3 +432,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 17:44 · `9420d487` · `codex-context-dock-polish-fixes`
 **feat(quick-note): split editor scope with inline delete**
 Swift: +1 added · ~4 modified · -0 deleted
+
+## 2026-07-20 17:55 · `e5674505` · `codex-context-dock-polish-fixes`
+**fix(quick-note): render split editor in scope; stop arrows switching layer**
+Swift: +0 added · ~2 modified · -0 deleted
