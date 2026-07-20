@@ -313,7 +313,7 @@ extension LauncherView {
             return
         }
         if isFinderDesktopOnlyMode {
-            commitFinderDesktopModeSnapshot(query: newQuery, preserveFocus: true)
+            scheduleFinderDesktopFastMatch(query: newQuery, preserveFocus: true)
             scheduleFinderDesktopSearchEnrichment(query: newQuery)
             return
         }
@@ -371,6 +371,10 @@ extension LauncherView {
         } else {
             contextDockViewModel.finderDesktopSearchTask?.cancel()
             contextDockViewModel.finderDesktopSearchTask = nil
+            contextDockViewModel.finderDesktopFastMatchTask?.cancel()
+            contextDockViewModel.finderDesktopFastMatchTask = nil
+            contextDockViewModel.finderDesktopSearchRecords = []
+            contextDockViewModel.finderDesktopPillsByPath = [:]
             finderDesktopRecentPills = []
             finderDesktopSearchPills = []
             finderDesktopSearchQuery = ""

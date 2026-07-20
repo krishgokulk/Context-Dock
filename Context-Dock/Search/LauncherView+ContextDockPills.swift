@@ -3,6 +3,25 @@ import Foundation
 import PDFKit
 import SwiftUI
 
+struct FinderDesktopSearchRecord: Sendable {
+    let pathKey: String
+    let normalizedName: String
+    let normalizedTerms: [String]
+
+    nonisolated func score(for query: String) -> Int? {
+        guard !query.isEmpty else { return 0 }
+        if normalizedName == query { return 600 }
+        let base = (normalizedName as NSString).deletingPathExtension
+        if base == query { return 550 }
+        if normalizedName.hasPrefix(query) { return 500 }
+        let words = normalizedName.split { !$0.isLetter && !$0.isNumber }
+        if words.contains(where: { $0.hasPrefix(query) }) { return 400 }
+        if normalizedName.contains(query) { return 300 }
+        if normalizedTerms.contains(where: { $0.contains(query) }) { return 150 }
+        return nil
+    }
+}
+
 extension LauncherView {
     // MARK: - Unified dock pill list (drives both rendering and keyboard navigation)
 
@@ -792,6 +811,70 @@ extension LauncherView {
         lastPillQuery = q
     }
 
+    /// Finder's keystroke path searches immutable strings off the main actor and publishes
+    /// only a bounded row set. File-system/Spotlight enrichment remains an idle second pass.
+    func scheduleFinderDesktopFastMatch(query: String, preserveFocus: Bool) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        contextDockViewModel.finderDesktopFastMatchGeneration &+= 1
+        let generation = contextDockViewModel.finderDesktopFastMatchGeneration
+        contextDockViewModel.finderDesktopFastMatchTask?.cancel()
+
+        guard !q.isEmpty else {
+            commitFinderDesktopModeSnapshot(query: q, preserveFocus: preserveFocus)
+            return
+        }
+        let records = contextDockViewModel.finderDesktopSearchRecords
+        contextDockViewModel.finderDesktopFastMatchTask = Task { @MainActor in
+            let matches = await Task.detached(priority: .userInitiated) {
+                records.compactMap { record -> (String, Int)? in
+                    guard let score = record.score(for: q) else { return nil }
+                    return (record.pathKey, score)
+                }
+                .sorted {
+                    if $0.1 != $1.1 { return $0.1 > $1.1 }
+                    return $0.0 < $1.0
+                }
+                .prefix(80)
+                .map { $0 }
+            }.value
+            guard !Task.isCancelled,
+                isFinderDesktopOnlyMode,
+                contextDockViewModel.finderDesktopFastMatchGeneration == generation,
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == q
+            else { return }
+
+            var pills: [DockPill] = []
+            pills.reserveCapacity(matches.count)
+            for (pathKey, score) in matches {
+                guard var pill = contextDockViewModel.finderDesktopPillsByPath[pathKey] else { continue }
+                pill.rankingScore = Double(score)
+                pills.append(pill)
+            }
+            replaceCachedDockPills(pills, preserveFocus: preserveFocus)
+            lastPillQuery = q
+            contextDockViewModel.finderDesktopFastMatchTask = nil
+        }
+    }
+
+    func rebuildFinderDesktopFastSearchIndex() {
+        let allPills = dedupeFinderDesktopPills(
+            finderDesktopIndexedPills + finderDesktopRecentPills)
+        var byPath: [String: DockPill] = [:]
+        var records: [FinderDesktopSearchRecord] = []
+        byPath.reserveCapacity(allPills.count)
+        records.reserveCapacity(allPills.count)
+        for pill in allPills {
+            guard let path = pill.resolvedURL?.path.lowercased(), !path.isEmpty else { continue }
+            byPath[path] = pill
+            records.append(FinderDesktopSearchRecord(
+                pathKey: path,
+                normalizedName: pill.name.lowercased(),
+                normalizedTerms: pill.searchTerms.map { $0.lowercased() }))
+        }
+        contextDockViewModel.finderDesktopPillsByPath = byPath
+        contextDockViewModel.finderDesktopSearchRecords = records
+    }
+
     /// Match-quality score for a Finder desktop file/folder against the query. Higher = better.
     /// Exact/prefix NAME beats a mid-name contains, which beats a content-only hit — so the top
     /// row is always the best name match, Spotlight/Raycast style (not just most-recent).
@@ -935,7 +1018,7 @@ extension LauncherView {
                     badge: finderDisplayPath(url.deletingLastPathComponent().path),
                     rankingKind: file.isDirectory ? "finderRecent" : "spotlightSearch",
                     query: nil,
-                    loadIcon: true,
+                    loadIcon: false,
                     isDirectoryHint: file.isDirectory
                 )
             )
@@ -1009,6 +1092,7 @@ extension LauncherView {
 
         finderDesktopIndexedPills = dedupeFinderDesktopPills(indexedPills + fallbackPills)
         finderDesktopRecentPills = dedupeFinderDesktopPills(runningAppPills + recentFilePills)
+        rebuildFinderDesktopFastSearchIndex()
 
         if let commitQuery, isFinderDesktopOnlyMode {
             commitFinderDesktopModeSnapshot(query: commitQuery, preserveFocus: preserveFocus)
@@ -1043,12 +1127,13 @@ extension LauncherView {
                 makeDesktopPill(
                     path: path, name: name,
                     badge: finderDisplayPath(url.deletingLastPathComponent().path),
-                    rankingKind: "spotlightSearch", query: nil, loadIcon: true,
+                    rankingKind: "spotlightSearch", query: nil, loadIcon: false,
                     isDirectoryHint: nil))
         }
 
         guard isFinderDesktopOnlyMode else { return }
         finderDesktopIndexedPills = dedupeFinderDesktopPills(finderDesktopIndexedPills + pills)
+        rebuildFinderDesktopFastSearchIndex()
         commitFinderDesktopModeSnapshot(
             query: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             preserveFocus: true)
@@ -1238,6 +1323,7 @@ extension LauncherView {
 
         guard isFinderDesktopOnlyMode else { return }
         finderDesktopRecentPills = dedupeFinderDesktopPills(finderDesktopRecentPills + filePills)
+        rebuildFinderDesktopFastSearchIndex()
     }
 
     func scheduleFinderDesktopSearchEnrichment(query: String) {
@@ -1310,7 +1396,7 @@ extension LauncherView {
             guard !name.hasPrefix("."), seen.insert(path.lowercased()).inserted else { continue }
             enriched.append(makeDesktopPill(path: path, name: name,
                 badge: finderDisplayPath(url.deletingLastPathComponent().path),
-                rankingKind: "spotlightSearch", query: nil, loadIcon: true, isDirectoryHint: nil))
+                rankingKind: "spotlightSearch", query: nil, loadIcon: false, isDirectoryHint: nil))
         }
         guard generation == nil || contextDockViewModel.finderDesktopSearchGeneration == generation
         else { return }
@@ -1332,6 +1418,7 @@ extension LauncherView {
         }
         guard !newEnriched.isEmpty else { return }
         finderDesktopIndexedPills = dedupeFinderDesktopPills(finderDesktopIndexedPills + newEnriched)
+        rebuildFinderDesktopFastSearchIndex()
         finderDesktopSearchQuery = ""
         finderDesktopSearchPills = []
         commitFinderDesktopModeSnapshot(query: query, preserveFocus: true)

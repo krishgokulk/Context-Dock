@@ -205,6 +205,10 @@ final class ContextDockViewModel: ObservableObject {
     var crossAppMenuTask: Task<Void, Never>?
     var finderDesktopSearchTask: Task<Void, Never>?
     var finderDesktopSearchGeneration = 0
+    var finderDesktopFastMatchTask: Task<Void, Never>?
+    var finderDesktopFastMatchGeneration = 0
+    var finderDesktopSearchRecords: [FinderDesktopSearchRecord] = []
+    var finderDesktopPillsByPath: [String: DockPill] = [:]
     var axContextRefreshTimer: Timer?
     var cachedPreviewPillQuery = ""
     var cachedPreviewPillSourceFingerprint = ""
