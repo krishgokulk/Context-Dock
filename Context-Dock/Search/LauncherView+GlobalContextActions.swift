@@ -2318,7 +2318,7 @@ extension LauncherView {
                         self.globalContextViewModel.typingSnapshot.preparedResultsVersion
                 )
                 self.globalContextViewModel.fastMatchTask = nil
-                if wasExpanded, !matchDockIcons.isEmpty {
+                if wasExpanded {
                     // Keep the expanded sheet useful during inline filtering. The hot,
                     // bounded first pass includes lightweight application rows, Global
                     // Commands, and cached-menu hits belonging to currently running apps.
@@ -2326,11 +2326,8 @@ extension LauncherView {
                     let state = self.instantGlobalGroupedListNavigationState(for: q)
                     self.setCachedGlobalGroupedState(
                         query: q, state: state, animated: false)
-                    self.measuredGlobalListContentHeight = min(
-                        max(CGFloat(min(state.totalCount, 12)) * 52 + 36, 86),
-                        self.listViewVisibleHeight)
-                    self.requestWindowSizeUpdate(
-                        reason: .contentSettled, animated: false, debounceNanoseconds: 0)
+                    // Do not resize an already-expanded sheet for each filtered result
+                    // count. Its shell stays anchored; only rows change inline.
                 }
                 if self.globalContextViewModel.expandWhenFastMatchesResolve {
                     self.globalContextViewModel.expandWhenFastMatchesResolve = false
@@ -2367,11 +2364,8 @@ extension LauncherView {
                 {
                     self.setCachedGlobalGroupedState(
                         query: prepared.query, state: state, animated: false)
-                    self.measuredGlobalListContentHeight = min(
-                        max(CGFloat(min(state.totalCount, 12)) * 52 + 36, 86),
-                        self.listViewVisibleHeight)
-                    self.requestWindowSizeUpdate(
-                        reason: .contentSettled, animated: false, debounceNanoseconds: 0)
+                    // Richer grouping replaces the lightweight rows in place. Resizing
+                    // here would replay the sheet's entrance on every keystroke.
                 }
             }
         }
