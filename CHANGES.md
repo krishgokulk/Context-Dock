@@ -504,3 +504,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 21:00 · `22278f91` · `codex-context-dock-polish-fixes`
 **feat(clipboard): split scope surface — recent rail + per-app pills**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 21:18 · `03eba09c` · `codex-context-dock-polish-fixes`
+**feat: sticky tabs + attach menu; clipboard thumbnails; keep scopes visible**
+Swift: +0 added · ~4 modified · -0 deleted

@@ -20,6 +20,11 @@ final class StickyNotesManager {
 
     func isPinned(_ id: UUID) -> Bool { windows[id] != nil }
 
+    /// Tab labels come from NSWindow.title — keep it in sync with the note heading.
+    func updateTitle(_ id: UUID, to title: String) {
+        windows[id]?.title = title.isEmpty ? "Note" : title
+    }
+
     /// Pin the note if it isn't already; otherwise close its sticky.
     func toggle(_ id: UUID) {
         if let existing = windows[id] {
@@ -154,6 +159,10 @@ private struct StickyNoteView: View {
             }
         }
         .background(stickyBackground)
+        .onAppear { StickyNotesManager.shared.updateTitle(noteID, to: title) }
+        .onChange(of: title) { _, newTitle in
+            StickyNotesManager.shared.updateTitle(noteID, to: newTitle)
+        }
     }
 
     /// ChatGPT-style composer pinned to the bottom: type a prompt, Return sends it

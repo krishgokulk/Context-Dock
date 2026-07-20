@@ -3364,6 +3364,8 @@ extension LauncherView {
     }
 
     func activateClipboardScope(queryOverride: String = "") {
+        // Compact scope is up — keep the launcher visible when another app takes focus.
+        AppDelegate.shared?.smartScopeActive = true
         if let previousKey = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
@@ -3407,6 +3409,8 @@ extension LauncherView {
     }
 
     func activateNotificationScope(queryOverride: String = "") {
+        // Compact scope is up — keep the launcher visible when another app takes focus.
+        AppDelegate.shared?.smartScopeActive = true
         if let previousKey = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
