@@ -460,3 +460,7 @@ Swift: +0 added · ~6 modified · -0 deleted
 ## 2026-07-20 19:26 · `57478f6b` · `codex-context-dock-polish-fixes`
 **feat(ai+nav): global commands as AI tools; right-arrow→chat; sturdier swipe**
 Swift: +1 added · ~4 modified · -0 deleted
+
+## 2026-07-20 19:29 · `431d34b7` · `codex-context-dock-polish-fixes`
+**fix(nav): left arrow (not right) opens General AI chat**
+Swift: +0 added · ~1 modified · -0 deleted

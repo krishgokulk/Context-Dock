@@ -4189,6 +4189,18 @@ extension LauncherView {
             path succeeds.
             \(currentDateTimeContextBlock())
             """
+        // App Store picker: the user explicitly chose a running app to focus on, so
+        // ground answers on it (and treat it as allowed for this conversation).
+        if let focusName = chatFocusAppName {
+            let focusBundle = chatFocusAppBundleId ?? ""
+            sysContent += """
+
+
+            Focus app for this conversation: \(focusName)\(focusBundle.isEmpty ? "" : " (\(focusBundle))").
+            The user picked it explicitly — ground answers on this app and its DoraX
+            adapter/menu/MCP capabilities; you may use them without asking again.
+            """
+        }
         if !attachments.isEmpty {
             // Extract the actual content (PDF text, text/code/markdown) so on-device AI can
             // answer about the file — passing only the filename gave the model nothing to

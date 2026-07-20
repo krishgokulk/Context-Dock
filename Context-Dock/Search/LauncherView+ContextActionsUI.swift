@@ -84,6 +84,53 @@ extension LauncherView {
             .fixedSize()
             .help("Attach file, photo, or screenshot")
 
+            // App Store icon: pick a running app to focus the conversation on.
+            Menu {
+                if chatFocusAppName != nil {
+                    Button {
+                        chatFocusAppName = nil
+                        chatFocusAppBundleId = nil
+                    } label: { Label("Clear focus app", systemImage: "xmark.circle") }
+                    Divider()
+                }
+                ForEach(runningAppsForChatFocus(), id: \.bundleId) { app in
+                    Button {
+                        chatFocusAppName = app.name
+                        chatFocusAppBundleId = app.bundleId
+                    } label: { Text(app.name) }
+                }
+            } label: {
+                Image(systemName: "app.badge")
+                    .font(.system(size: 15))
+                    .foregroundStyle(
+                        chatFocusAppName == nil
+                            ? AnyShapeStyle(.secondary.opacity(0.6)) : AnyShapeStyle(Color.accentColor))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(chatFocusAppName == nil ? "Ask about a running app" : "Focused: \(chatFocusAppName!)")
+
+            if let chatFocusAppName {
+                HStack(spacing: 4) {
+                    Image(systemName: "app.dashed").font(.system(size: 9))
+                    Text(chatFocusAppName)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                    Button {
+                        self.chatFocusAppName = nil
+                        chatFocusAppBundleId = nil
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
+
             // Clear chat button
             if !aiMode.messages.isEmpty {
                 Button(action: {
@@ -110,6 +157,24 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+    }
+
+    /// Regular (user-visible) running apps for the chat focus picker, excluding
+    /// Context-Dock itself, sorted by name.
+    func runningAppsForChatFocus() -> [(name: String, bundleId: String)] {
+        NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            .compactMap { app -> (name: String, bundleId: String)? in
+                guard let name = app.localizedName, let bundleId = app.bundleIdentifier else {
+                    return nil
+                }
+                return (name, bundleId)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
