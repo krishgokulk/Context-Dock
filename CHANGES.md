@@ -524,3 +524,15 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 23:54 · `0ba01fac` · `codex-context-dock-polish-fixes`
 **feat(clipboard): persist scope navigation**
 Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-21 00:10 · `412f497b` · `codex-context-dock-polish-fixes`
+**feat(window-layouts): app-icon previews in Context Dock, two apps on splits**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 00:27 · `39007277` · `codex-context-dock-polish-fixes`
+**fix(dock): stabilize layer navigation**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 00:42 · `dc0175fe` · `codex-context-dock-polish-fixes`
+**fix(global): keep results open while browsing**
+Swift: +0 added · ~1 modified · -0 deleted

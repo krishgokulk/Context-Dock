@@ -5564,7 +5564,14 @@ extension LauncherView {
 
     var currentListViewDockContentHeight: CGFloat {
         let rowCount = currentListViewDockRowCount
-        guard rowCount > 0 else { return 0 }
+        // `shouldShowSeparateActionList` can become true one render before async app/menu
+        // rows publish. Returning zero in that frame keeps the NSPanel capsule-height while
+        // the shared list already draws its section header, producing a clipped half-sheet.
+        // Once list mode owns the shell, reserve its stable viewport immediately in both
+        // Global Context and Context Dock; rows can then populate inside without resizing.
+        guard rowCount > 0 else {
+            return usesVerticalListDockLayout ? listViewVisibleHeight : 0
+        }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // A running-app capsule is an isolated menu sheet, not the fixed-height Global
         // Context results surface. Hug its actual rows so the NSPanel ends at the same

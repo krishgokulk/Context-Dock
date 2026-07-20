@@ -124,6 +124,7 @@ final class CapabilityRegistry {
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
+        FinderCoworkerCapabilities.register(in: self)
         AppWorkflowToolCatalog.shared.register(in: self)
         GlobalCommandCapabilities.register(in: self)
         // Apple Notes MCP — only registered when explicitly enabled
