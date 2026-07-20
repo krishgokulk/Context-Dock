@@ -15,7 +15,8 @@ struct BluetoothDeviceSnapshot: Identifiable, Hashable {
 enum BluetoothDeviceProvider {
     static func pairedDevices() -> [BluetoothDeviceSnapshot] {
         let rawDevices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-        return rawDevices.compactMap { device in
+        let snapshots: [BluetoothDeviceSnapshot] = rawDevices.compactMap {
+            device -> BluetoothDeviceSnapshot? in
             let address = device.addressString ?? ""
             let name = (device.name ?? address).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
@@ -25,6 +26,14 @@ enum BluetoothDeviceProvider {
                 address: address,
                 isConnected: device.isConnected()
             )
+        }
+        var seen = Set<String>()
+        return snapshots.filter { device in
+            // IOBluetooth can expose the same paired accessory through multiple
+            // controller records/addresses. The UI identity is its visible name;
+            // collapse those records so filtering never renders duplicate rows.
+            let identity = device.name.lowercased()
+            return seen.insert(identity).inserted
         }
         .sorted {
             if $0.isConnected != $1.isConnected { return $0.isConnected && !$1.isConnected }

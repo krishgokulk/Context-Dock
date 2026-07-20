@@ -364,50 +364,66 @@ final class SystemCommandsRegistry {
             script: #"""
             set targetDevice to system attribute "CD_QUERY"
             if targetDevice is "on" or targetDevice is "off" then
-                open location "x-apple.systempreferences:com.apple.BluetoothSettings"
                 set wantedValue to 1
                 if targetDevice is "off" then set wantedValue to 0
                 tell application "System Events"
-                    repeat 40 times
-                        if exists process "System Settings" then
-                            tell process "System Settings"
-                                set frontmost to true
-                                if exists window 1 then
-                                    repeat with candidate in entire contents of window 1
-                                        set candidateRole to ""
-                                        set candidateName to ""
-                                        set candidateDescription to ""
+                    tell process "ControlCenter"
+                        set controlCenterItem to missing value
+                        repeat with menuItem in menu bar items of menu bar 1
+                            set itemName to ""
+                            set itemDescription to ""
+                            try
+                                set itemName to name of menuItem as text
+                            end try
+                            try
+                                set itemDescription to description of menuItem as text
+                            end try
+                            if itemName contains "Control Center" or itemDescription contains "Control Center" then
+                                set controlCenterItem to menuItem
+                                exit repeat
+                            end if
+                        end repeat
+                        if controlCenterItem is missing value then error "Control Center menu was not found"
+                        click controlCenterItem
+
+                        repeat 30 times
+                            if exists window 1 then
+                                repeat with candidate in entire contents of window 1
+                                    set candidateRole to ""
+                                    set candidateName to ""
+                                    set candidateDescription to ""
+                                    try
+                                        set candidateRole to role of candidate as text
+                                    end try
+                                    try
+                                        set candidateName to name of candidate as text
+                                    end try
+                                    try
+                                        set candidateDescription to description of candidate as text
+                                    end try
+                                    if (candidateRole is "AXCheckBox" or candidateRole is "AXSwitch") and (candidateName is "Bluetooth" or candidateDescription is "Bluetooth") then
+                                        set currentValue to -1
                                         try
-                                            set candidateRole to role of candidate as text
+                                            set currentValue to value of candidate as integer
                                         end try
-                                        try
-                                            set candidateName to name of candidate as text
-                                        end try
-                                        try
-                                            set candidateDescription to description of candidate as text
-                                        end try
-                                        if (candidateRole is "AXCheckBox" or candidateRole is "AXSwitch") and (candidateName contains "Bluetooth" or candidateDescription contains "Bluetooth") then
-                                            set currentValue to -1
+                                        if currentValue is not wantedValue then
                                             try
-                                                set currentValue to value of candidate as integer
+                                                perform action "AXPress" of candidate
+                                            on error
+                                                click candidate
                                             end try
-                                            if currentValue is not wantedValue then
-                                                try
-                                                    perform action "AXPress" of candidate
-                                                on error
-                                                    click candidate
-                                                end try
-                                            end if
-                                            return
                                         end if
-                                    end repeat
-                                end if
-                            end tell
-                        end if
-                        delay 0.1
-                    end repeat
+                                        key code 53
+                                        return
+                                    end if
+                                end repeat
+                            end if
+                            delay 0.1
+                        end repeat
+                        key code 53
+                    end tell
                 end tell
-                error "Bluetooth power control was not found in System Settings"
+                error "Bluetooth power control was not found in Control Center"
                 return
             end if
             if targetDevice is missing value or targetDevice is "" or targetDevice is "settings" then
@@ -430,7 +446,9 @@ final class SystemCommandsRegistry {
             """#,
             description: "Bluetooth power and paired devices",
             interaction: "toggle",
-            valueScript: #"do shell script "system_profiler SPBluetoothDataType | grep -q 'State: On' && echo on || echo off""#
+            // Read natively by InteractiveCommandState. Retained as a portable
+            // fallback for imported/exported command configurations.
+            valueScript: #"do shell script "ioreg -r -c IOBluetoothHCIController -l | grep -q '\"CurrentPowerState\"=3' && echo on || echo off""#
         ),
         SystemCommand(
             name: "Volume",

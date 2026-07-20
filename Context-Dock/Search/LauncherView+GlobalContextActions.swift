@@ -111,13 +111,10 @@ extension LauncherView {
                 // and Global Context actions belong to other surfaces.
                 return ["menu", "submenuChild", "finderMenu"].contains(pill.rankingKind)
             }
-        // Bottom-docked lists rotate both the scroll container and each row so
-        // the sheet grows upward without mirroring its content. Compensate the
-        // data order for System Command scopes so their semantic first row —
-        // the live toggle/slider — still appears visually first.
-        let pills = settings.effectiveDockAtBottom && isSystemCommandScope
-            ? Array(resolvedPills.reversed())
-            : resolvedPills
+        // System-command providers define semantic display order directly:
+        // power control, summary, then devices. The shared result shell handles
+        // its own dock transform, so keep the provider array unchanged.
+        let pills = resolvedPills
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
@@ -3300,6 +3297,10 @@ extension LauncherView {
             guard tokenIndex >= 0, tokenIndex < tokenRanges.count else { return nil }
             return tokenRanges[tokenIndex]
         case .scope(let scope):
+            // Explicit extension scopes clear their matched alias from the real
+            // NSTextField. Their chip is visual-only and therefore owns no text
+            // range once the user starts a scoped filter query.
+            if scope.isExplicit, !queryContainsInlineScopeAlias(scope) { return nil }
             let count = max(1, scope.matchedAlias.split(separator: " ").count)
             let end = scope.aliasStartIndex + count - 1
             guard scope.aliasStartIndex >= 0, end < tokenRanges.count else { return nil }
@@ -3329,6 +3330,18 @@ extension LauncherView {
         let tokens = searchState.query
             .split(separator: " ", omittingEmptySubsequences: true)
             .map(String.init)
+        if allGlobalInlineAppScopes.count == 1,
+            let scope = allGlobalInlineAppScopes.first,
+            scope.isExplicit,
+            !queryContainsInlineScopeAlias(scope)
+        {
+            // The scope chip is no longer backed by a token in the query. Keep
+            // it as a visual prefix and preserve every typed token after it so
+            // device filtering never consumes the first word.
+            return [.scope(scope)] + tokens.enumerated().map {
+                .text($0.element, $0.offset)
+            }
+        }
         let scopesByStartIndex = allGlobalInlineAppScopes.reduce(
             into: [Int: GlobalInlineAppScope]()
         ) { scopes, scope in
@@ -3351,6 +3364,20 @@ extension LauncherView {
             }
         }
         return pieces
+    }
+
+    func queryContainsInlineScopeAlias(_ scope: GlobalInlineAppScope) -> Bool {
+        let tokens = searchState.query
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .map { normalizedDockPillText(String($0)) }
+        let alias = scope.matchedAlias
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .map { normalizedDockPillText(String($0)) }
+        let end = scope.aliasStartIndex + alias.count
+        return !alias.isEmpty
+            && scope.aliasStartIndex >= 0
+            && tokens.count >= end
+            && Array(tokens[scope.aliasStartIndex..<end]) == alias
     }
 
     func effectiveGlobalInlineActionQuery(_ query: String) -> String {
@@ -4861,6 +4888,7 @@ extension LauncherView {
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let isPseudoExtensionScope =
             scope.scopedBundleId.hasPrefix("cli://") || scope.scopedBundleId.hasPrefix("syscmd://")
+        let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
         var pills =
             cachedGlobalCLIScopeDockPills(
                 scopedBundleId: scope.scopedBundleId,
@@ -4909,6 +4937,13 @@ extension LauncherView {
             .filter { pill in
                 guard !pill.isSeparator else { return false }
                 guard pill.rankingKind != "appLaunch" else { return false }
+                // The live control is the fixed first row of a System Command
+                // scope. Device filtering must never remove or reorder it.
+                if isSystemCommandScope,
+                    pill.trackingIdentifier.hasSuffix(":interactive")
+                {
+                    return true
+                }
                 if !isGlobalContextActive,
                     (pill.menuContext ?? "").caseInsensitiveCompare("Apple Menu") == .orderedSame
                 {
@@ -4930,7 +4965,13 @@ extension LauncherView {
                     dockPillTokens(nameLower + " " + contextLower + " " + termsLower))
                 return !actionTokens.intersection(pillTokens).isEmpty
             }
-        var sorted = sortScopedGlobalAppPills(visible, query: actionQuery)
+        // System Command providers already return semantic UI order:
+        // interactive control, summary, then provider rows. Usage ranking is
+        // appropriate for app menus, but moving a power switch among devices
+        // makes the scoped surface unstable and unpredictable.
+        var sorted = isSystemCommandScope
+            ? visible
+            : sortScopedGlobalAppPills(visible, query: actionQuery)
         guard actionQuery.isEmpty else {
             // Content search is a fallback action, not the primary command. Keep real
             // app menus first so "safari new private window" executes Safari's menu,
@@ -5469,6 +5510,13 @@ extension LauncherView {
         // place as the visible glass; otherwise the old 372pt reservation leaves a clear
         // window tail that intercepts clicks below a short scoped result list.
         if isActiveGlobalRunningAppMenuScope() {
+            let isExtensionScope =
+                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+            // An extension scope is a stable filtering workspace. Keep its
+            // viewport fixed while rows are replaced inline so the panel and
+            // input never jump as the match count changes.
+            if isExtensionScope { return listViewVisibleHeight }
             let measured = measuredGlobalListContentHeight
             if measured > 1 {
                 return min(max(measured, 86), listViewVisibleHeight)

@@ -11,6 +11,7 @@
 import AppKit
 import Combine
 import Foundation
+import IOBluetooth
 
 // MARK: - Live value cache
 
@@ -39,7 +40,8 @@ final class InteractiveCommandState: ObservableObject {
     func refreshIfNeeded(_ command: SystemCommand, maxAge: TimeInterval = 4) {
         guard command.interactionType != .none else { return }
         let script = command.valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !script.isEmpty else { return }
+        let readsBluetoothPower = command.keywords.contains("provider:bluetooth")
+        guard readsBluetoothPower || !script.isEmpty else { return }
         let id = command.id
         if let last = fetchedAt[id], Date().timeIntervalSince(last) < maxAge { return }
         guard inflight.insert(id).inserted else { return }
@@ -47,9 +49,15 @@ final class InteractiveCommandState: ObservableObject {
         let actionType = command.actionType
         let isToggle = command.interactionType == .toggle
         Task.detached(priority: .utility) {
-            let output = SystemCommandInteractiveRunner.runForOutput(
-                script: script, actionType: actionType
-            )
+            let output: String?
+            if readsBluetoothPower {
+                let powerState = IOBluetoothHostController.default().powerState
+                output = powerState.rawValue == 1 ? "on" : "off"
+            } else {
+                output = SystemCommandInteractiveRunner.runForOutput(
+                    script: script, actionType: actionType
+                )
+            }
             await MainActor.run {
                 let state = InteractiveCommandState.shared
                 state.inflight.remove(id)

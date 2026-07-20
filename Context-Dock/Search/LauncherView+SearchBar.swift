@@ -1390,7 +1390,9 @@ extension LauncherView {
                                     globalInlineScopeQueryOverlay
                                 }
                                 // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
-                                if let pill = focusedDockPill {
+                                if allGlobalInlineAppScopes.isEmpty,
+                                    let pill = focusedDockPill
+                                {
                                     // Finder folder/file pills carry the full path as name —
                                     // ghost shows just the file/folder name, not the path.
                                     let title = inputGhostPillTitle(pill)
@@ -1612,6 +1614,7 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.2))
                                     }
                                 } else if !aiFallbackActive,
+                                    allGlobalInlineAppScopes.isEmpty,
                                     let ghost = ghostPillCompletion,
                                     rawQueryAllowsGhost,
                                     !searchState.query.isEmpty
