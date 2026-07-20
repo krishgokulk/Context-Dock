@@ -1247,6 +1247,7 @@ extension LauncherView {
             ]
             : WindowManagementService.shared.matchingCommands(query: trimmed)
 
+        let appIcon = app.icon
         return commands.map { command in
             var pill = DockPill(
                 id: "syscmd-windows-\(command.id)",
@@ -1261,6 +1262,9 @@ extension LauncherView {
                     l2.focusedPillIndex = nil
                 }
             )
+            // Render a live layout preview: the frontmost app's icon sitting in the
+            // region the layout will move it to — instead of a generic split glyph.
+            pill.menuItemImage = windowLayoutPreviewImage(appIcon: appIcon, command: command)
             pill.rankingKind = "systemCommand"
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = appName
@@ -1268,6 +1272,79 @@ extension LauncherView {
             pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
+    }
+
+    /// Normalized regions (top-left origin) a layout moves the window into. `nil`
+    /// means the full screen. Quarters is handled specially (four cells).
+    private func windowLayoutRegions(
+        for command: WindowManagementService.Command
+    ) -> [CGRect] {
+        switch command {
+        case .left: return [CGRect(x: 0, y: 0, width: 0.5, height: 1)]
+        case .right: return [CGRect(x: 0.5, y: 0, width: 0.5, height: 1)]
+        case .top: return [CGRect(x: 0, y: 0, width: 1, height: 0.5)]
+        case .bottom: return [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)]
+        case .topLeft: return [CGRect(x: 0, y: 0, width: 0.5, height: 0.5)]
+        case .topRight: return [CGRect(x: 0.5, y: 0, width: 0.5, height: 0.5)]
+        case .bottomLeft: return [CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5)]
+        case .bottomRight: return [CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5)]
+        case .center: return [CGRect(x: 0.18, y: 0.16, width: 0.64, height: 0.68)]
+        case .quarters:
+            return [
+                CGRect(x: 0, y: 0, width: 0.5, height: 0.5),
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 0.5),
+                CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5),
+                CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5),
+            ]
+        default:
+            return [CGRect(x: 0, y: 0, width: 1, height: 1)]  // fill / fullscreen / restore
+        }
+    }
+
+    /// Draws a small screen with the app icon placed in the layout's target region.
+    func windowLayoutPreviewImage(
+        appIcon: NSImage?, command: WindowManagementService.Command
+    ) -> NSImage {
+        let size = NSSize(width: 30, height: 22)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        let screen = NSRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+        let screenPath = NSBezierPath(roundedRect: screen, xRadius: 3, yRadius: 3)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.18).setFill()
+        screenPath.fill()
+        NSColor.secondaryLabelColor.withAlphaComponent(0.45).setStroke()
+        screenPath.lineWidth = 1
+        screenPath.stroke()
+
+        let isQuarters = command == .quarters
+        for region in windowLayoutRegions(for: command) {
+            // Flip Y: layout regions use a top-left origin; AppKit draws bottom-up.
+            let rect = NSRect(
+                x: screen.minX + region.minX * screen.width,
+                y: screen.minY + (1 - region.minY - region.height) * screen.height,
+                width: region.width * screen.width,
+                height: region.height * screen.height
+            ).insetBy(dx: 0.6, dy: 0.6)
+            let tile = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+            NSColor.systemBlue.withAlphaComponent(0.85).setFill()
+            tile.fill()
+
+            // Place the app icon inside single-region layouts (skip the busy quarters grid).
+            if !isQuarters, let appIcon {
+                let side = min(rect.width, rect.height) * 0.72
+                let iconRect = NSRect(
+                    x: rect.midX - side / 2,
+                    y: rect.midY - side / 2,
+                    width: side,
+                    height: side
+                )
+                appIcon.draw(
+                    in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            }
+        }
+        return image
     }
 
     /// Rows for the "Quick Note" (provider:notepad) scope: a Save row that captures

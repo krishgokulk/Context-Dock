@@ -420,3 +420,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 17:09 · `0e6153a9` · `codex-context-dock-polish-fixes`
 **feat(global-context): add Windows command with native layout scope**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 17:19 · `ece1bbd7` · `codex-context-dock-polish-fixes`
+**feat(global-context): Quick Note provider, example templates, editor providers**
+Swift: +1 added · ~3 modified · -0 deleted
