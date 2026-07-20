@@ -3164,6 +3164,30 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                let historyBundle = scopedBundleId.isEmpty
+                    ? frontmost.bundleID : scopedBundleId
+                if self.isContextDockBrowserBundle(historyBundle),
+                    self.isBrowserHistoryReadQuery(query)
+                {
+                    await self.setL2LoadingStatus(
+                        "Reading local browser-history URLs…", requestID: l2RequestID)
+                    if let historyAnswer = await self.localBrowserHistoryAnswer(
+                        query: query,
+                        scopedBundleId: historyBundle,
+                        requireAppAdapter: false)
+                    {
+                        await MainActor.run {
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: historyAnswer,
+                                    mcpToolsRan: ["Local browser history"]))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
                 await self.setL2LoadingStatus("Checking linked actions, CLI, and MCP…", requestID: l2RequestID)
                 let runtimeCLIContextPrompt = await self.runtimeAppCLIContextPrompt(
                     bundleId: scopedBundleId,
@@ -3928,6 +3952,94 @@ extension LauncherView {
         return detector.matches(in: text, options: [], range: range).compactMap(\.url)
     }
 
+    /// Answer browser-history questions from the same local URL library that powers
+    /// Context Dock search rows. The full history never enters a provider prompt.
+    @MainActor
+    func isBrowserHistoryReadQuery(_ query: String) -> Bool {
+        let normalized = query.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.hasPrefix("open ") else { return false }
+        return (normalized.contains("visit")
+            && (normalized.contains("recent") || normalized.contains("history")
+                || normalized.hasPrefix("did i")))
+            || normalized.contains("browser history")
+            || normalized.contains("browsing history")
+    }
+
+    @MainActor
+    func localBrowserHistoryAnswer(
+        query: String,
+        scopedBundleId: String? = nil,
+        requireAppAdapter: Bool
+    ) async -> String? {
+        let normalized = query.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isBrowserHistoryReadQuery(query) else { return nil }
+
+        let namedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        let requestedBundle: String? = {
+            if let scopedBundleId, isContextDockBrowserBundle(scopedBundleId) {
+                return scopedBundleId
+            }
+            if let namedApp, AXWebReader.shared.isBrowser(bundleId: namedApp.bundleId) {
+                return namedApp.bundleId
+            }
+            return nil
+        }()
+
+        let allowedBrowserBundles = Set(
+            AppAdapterManager.shared.adapters
+                .filter { $0.isEnabled && AXWebReader.shared.isBrowser(bundleId: $0.bundleId) }
+                .map(\.bundleId)
+        )
+        if requireAppAdapter, let requestedBundle,
+            !allowedBrowserBundles.contains(requestedBundle)
+        {
+            let appName = namedApp?.name ?? "That browser"
+            return "\(appName) isn’t added to App Adapters, so General AI can’t read its local history."
+        }
+
+        let stopWords: Set<String> = [
+            "a", "about", "any", "browser", "browsing", "did", "do", "have", "history",
+            "i", "in", "my", "recent", "recently", "safari", "site", "the", "visit",
+            "visited", "website",
+        ]
+        let searchTerm = normalized
+            .split { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" }
+            .map(String.init)
+            .filter { !stopWords.contains($0) }
+            .joined(separator: " ")
+        let libraryQuery = searchTerm.isEmpty ? "history" : searchTerm
+        var entries = await BrowserURLLibraryService.shared.refreshedEntries(
+            matching: libraryQuery,
+            bundleId: requestedBundle,
+            limit: requireAppAdapter && requestedBundle == nil ? 200 : 20)
+        if requireAppAdapter, requestedBundle == nil {
+            entries = entries.filter { allowedBrowserBundles.contains($0.browserBundleId) }
+        }
+
+        guard !entries.isEmpty else {
+            let subject = searchTerm.isEmpty ? "that" : "“\(searchTerm)”"
+            return "I checked the local browser-history URL cache and found no recent visits matching \(subject)."
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        let lines = entries.prefix(8).map { entry in
+            let rawTitle = entry.title.isEmpty ? entry.domain : entry.title
+            let title = rawTitle
+                .replacingOccurrences(of: "[", with: "(")
+                .replacingOccurrences(of: "]", with: ")")
+            let date = entry.visitDate.map(formatter.string(from:)) ?? "date unavailable"
+            return "- [\(title)](\(entry.url.absoluteString)) — \(entry.browserName), \(date)"
+        }
+        let countLabel = entries.count == 1 ? "one matching visit" : "\(entries.count) matching visits"
+        return "I checked the local browser-history URL cache and found \(countLabel):\n\n"
+            + lines.joined(separator: "\n")
+    }
+
     /// Parse a `{"mcp_call": {"server","tool","arguments"}}` directive out of an AI reply —
     /// even when the model wraps it in a ```json fence or a [TERMINAL_COMMAND: …] tag. Finds
     /// the balanced JSON object that encloses the "mcp_call" key.
@@ -4042,6 +4154,19 @@ extension LauncherView {
             AppAdapterManager.shared.adapter(for: namedApp.bundleId) == nil
         {
             return "\(namedApp.name) isn’t added to App Adapters, so General AI can’t access or act on that app. Add it in Settings → App Adapters → Choose App, then ask again."
+        }
+
+        if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+            isBrowserHistoryReadQuery(query)
+        {
+            await MainActor.run { aiMode.loadingStatus = "Reading local browser-history URLs…" }
+            if let historyAnswer = await localBrowserHistoryAnswer(
+                query: query,
+                requireAppAdapter: true)
+            {
+                await MainActor.run { aiMode.pendingToolChips = ["Local browser history"] }
+                return historyAnswer
+            }
         }
 
         // Lightweight system message for standalone AI chat — no menu/AX overhead

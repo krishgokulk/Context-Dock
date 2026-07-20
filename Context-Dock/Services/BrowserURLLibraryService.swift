@@ -93,8 +93,35 @@ final class BrowserURLLibraryService: @unchecked Sendable {
 
     func refreshIfNeeded(completion: @escaping @MainActor () -> Void) {
         let needsRefresh = Date().timeIntervalSince(refreshedAt) >= freshness
-        guard needsRefresh, !isRefreshing else { return }
+        guard needsRefresh else {
+            Task { @MainActor in completion() }
+            return
+        }
+        guard !isRefreshing else {
+            Task { @MainActor in completion() }
+            return
+        }
         refresh(completion: completion)
+    }
+
+    /// Chat-safe cache read. Refreshes the same URL library used by Context Dock rows,
+    /// then returns structured local entries without involving an AI provider.
+    @MainActor
+    func refreshedEntries(
+        matching query: String,
+        bundleId: String? = nil,
+        limit: Int = 24
+    ) async -> [BrowserURLLibraryEntry] {
+        if isRefreshing {
+            for _ in 0..<20 where isRefreshing {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        } else if Date().timeIntervalSince(refreshedAt) >= freshness {
+            await withCheckedContinuation { continuation in
+                refresh { continuation.resume() }
+            }
+        }
+        return entries(matching: query, bundleId: bundleId, limit: limit)
     }
 
     func refresh(completion: @escaping @MainActor () -> Void) {

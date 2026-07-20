@@ -1157,7 +1157,14 @@ struct MarkdownMessageView: View {
                             .environment(
                                 \.openURL,
                                 OpenURLAction { url in
-                                    NSWorkspace.shared.open(url)
+                                    let sourceBundle = AppDelegate.shared?.previousFrontmostApp?
+                                        .bundleIdentifier ?? ""
+                                    if sourceBundle.hasPrefix("com.apple.Safari") {
+                                        SafariTabManager.shared.switchToOpenTabOrOpenURL(
+                                            url.absoluteString)
+                                    } else {
+                                        NSWorkspace.shared.open(url)
+                                    }
                                     return .handled
                                 })
                     } else {
