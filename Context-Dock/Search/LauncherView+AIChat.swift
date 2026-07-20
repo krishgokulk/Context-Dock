@@ -4178,9 +4178,9 @@ extension LauncherView {
             Provide concise, accurate answers.
             Keep responses brief and to the point.
             This is AI Assistant mode. It is not Global Context and not Context Dock chat.
-            Use explicit chat attachments/selection normally. For frontmost app, browser page,
-            Finder selection, menu commands, Accessibility, or Vision context that was not
-            explicitly attached, ask before inspecting it.
+            Use explicit chat attachments/selection normally. Never ask for Accessibility,
+            Vision, browser-page, or app-context permission in chat text. DoraX handles all
+            permission decisions with native approval UI before verified context reaches you.
             When the user names or implies an app, ground the answer in DoraX's installed-app
             inventory, app adapters, cached menus, MCP tools, skills, CLI routes, and native
             share routes when those sections are provided. Prefer actionable approval-backed
@@ -4197,8 +4197,9 @@ extension LauncherView {
 
 
             Focus app for this conversation: \(focusName)\(focusBundle.isEmpty ? "" : " (\(focusBundle))").
-            The user picked it explicitly — ground answers on this app and its DoraX
-            adapter/menu/MCP capabilities; you may use them without asking again.
+            The user picked it explicitly as this conversation's scope. Ground answers on
+            the verified context and DoraX adapter/menu/MCP capabilities supplied below.
+            Never produce a conversational permission request.
             """
         }
         if !attachments.isEmpty {
@@ -4228,6 +4229,16 @@ extension LauncherView {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
         }
 
+        if chatFocusAppBundleId != nil {
+            let focusedContext = await selectedGeneralChatAppContext()
+            if focusedContext.cancelled {
+                return "Cancelled — \(chatFocusAppName ?? "the selected app") context was not read."
+            }
+            if !focusedContext.block.isEmpty {
+                sysContent += "\n\n" + focusedContext.block
+            }
+        }
+
         // DoraX Action Chat: executable requests ("open safari new private window",
         // "add reminder to buy milk") resolve to real capability routes and execute
         // with approval instead of getting an instructional chatbot answer.
@@ -4255,7 +4266,7 @@ extension LauncherView {
         // Named-app status grounding: "what's going on with vs code?" answers from
         // live app state (context readers, code --status, menu cache, MCP inventory)
         // — the same powers frontmost-app chat has — instead of provider guesses.
-        let appRuntimeBlock = currentAISelectionSnapshot.isEmpty
+        let appRuntimeBlock = currentAISelectionSnapshot.isEmpty && chatFocusAppBundleId == nil
             ? await generalAppRuntimeContextBlock(for: query) : ""
         if !appRuntimeBlock.isEmpty {
             sysContent += "\n\n" + appRuntimeBlock

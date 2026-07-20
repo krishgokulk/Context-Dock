@@ -508,3 +508,19 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 21:18 · `03eba09c` · `codex-context-dock-polish-fixes`
 **feat: sticky tabs + attach menu; clipboard thumbnails; keep scopes visible**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-20 21:47 · `df2ff604` · `codex-context-dock-polish-fixes`
+**fix: sticky tab titles; keep compact scopes visible on focus loss**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 22:14 · `8a1ad817` · `codex-context-dock-polish-fixes`
+**fix(search): align ghost and scope navigation**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 22:39 · `8fc784f8` · `codex-context-dock-polish-fixes`
+**perf(clipboard): smooth scope scrolling**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 23:54 · `0ba01fac` · `codex-context-dock-polish-fixes`
+**feat(clipboard): persist scope navigation**
+Swift: +0 added · ~7 modified · -0 deleted

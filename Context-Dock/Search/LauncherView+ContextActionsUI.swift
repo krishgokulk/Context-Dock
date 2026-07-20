@@ -97,19 +97,60 @@ extension LauncherView {
                     Button {
                         chatFocusAppName = app.name
                         chatFocusAppBundleId = app.bundleId
-                    } label: { Text(app.name) }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(nsImage: app.icon)
+                            Text(app.name)
+                        }
+                    }
                 }
             } label: {
-                Image(systemName: "app.badge")
-                    .font(.system(size: 15))
-                    .foregroundStyle(
-                        chatFocusAppName == nil
-                            ? AnyShapeStyle(.secondary.opacity(0.6)) : AnyShapeStyle(Color.accentColor))
+                ZStack {
+                    if let bundleId = chatFocusAppBundleId,
+                        let icon = chatFocusAppIcon(bundleId: bundleId)
+                    {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 18, height: 18)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .opacity(isHoveringChatFocusAppIcon ? 0.22 : 1)
+                    } else {
+                        Image(systemName: "app.badge")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                    }
+
+                    if chatFocusAppBundleId != nil, isHoveringChatFocusAppIcon {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .frame(width: 22, height: 22)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help(chatFocusAppName == nil ? "Ask about a running app" : "Focused: \(chatFocusAppName!)")
+            .onHover { hovering in
+                isHoveringChatFocusAppIcon = hovering
+            }
+            .overlay {
+                if chatFocusAppBundleId != nil, isHoveringChatFocusAppIcon {
+                    Button {
+                        chatFocusAppName = nil
+                        chatFocusAppBundleId = nil
+                        isHoveringChatFocusAppIcon = false
+                    } label: {
+                        Color.clear
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove focused app")
+                }
+            }
 
             if let chatFocusAppName {
                 HStack(spacing: 4) {
@@ -161,20 +202,31 @@ extension LauncherView {
 
     /// Regular (user-visible) running apps for the chat focus picker, excluding
     /// Context-Dock itself, sorted by name.
-    func runningAppsForChatFocus() -> [(name: String, bundleId: String)] {
+    func runningAppsForChatFocus() -> [(name: String, bundleId: String, icon: NSImage)] {
         NSWorkspace.shared.runningApplications
             .filter {
                 $0.activationPolicy == .regular
                     && !$0.isTerminated
                     && $0.bundleIdentifier != Bundle.main.bundleIdentifier
             }
-            .compactMap { app -> (name: String, bundleId: String)? in
+            .compactMap { app -> (name: String, bundleId: String, icon: NSImage)? in
                 guard let name = app.localizedName, let bundleId = app.bundleIdentifier else {
                     return nil
                 }
-                return (name, bundleId)
+                let icon = resolvedRunningAppIcon(for: app) ?? app.icon
+                    ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
+                return (name, bundleId, icon)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func chatFocusAppIcon(bundleId: String) -> NSImage? {
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleId && !$0.isTerminated
+        }) {
+            return resolvedRunningAppIcon(for: app) ?? app.icon
+        }
+        return resolvedApplicationIcon(bundleIdentifier: bundleId, appName: chatFocusAppName)
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.

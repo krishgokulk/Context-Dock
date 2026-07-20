@@ -1202,6 +1202,12 @@ extension LauncherView {
             !scopedAppName.isEmpty
         else { return [] }
 
+        let scopedIcon = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == scopedBundleId && !$0.isTerminated }?.icon
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: scopedBundleId)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let otherIcon = secondaryDesktopAppIcon(excluding: scopedBundleId)
+
         return WindowManagementService.shared.matchingCommands(query: rawScopedQuery).map {
             command in
             var pill = DockPill(
@@ -1215,6 +1221,10 @@ extension LauncherView {
                         bundleId: scopedBundleId, appName: scopedAppName, command: command)
                 }
             )
+            // Layout preview showing the scoped app (and the other desktop app for
+            // split arrangements) sitting where the layout will place it.
+            pill.menuItemImage = windowLayoutPreviewImage(
+                appIcon: scopedIcon, secondaryIcon: otherIcon, command: command)
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = scopedAppName
             pill.rankingKind = "nativeWindow"
@@ -1264,7 +1274,10 @@ extension LauncherView {
             )
             // Render a live layout preview: the frontmost app's icon sitting in the
             // region the layout will move it to — instead of a generic split glyph.
-            pill.menuItemImage = windowLayoutPreviewImage(appIcon: appIcon, command: command)
+            pill.menuItemImage = windowLayoutPreviewImage(
+                appIcon: appIcon,
+                secondaryIcon: secondaryDesktopAppIcon(excluding: bundleId),
+                command: command)
             pill.rankingKind = "systemCommand"
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = appName
@@ -1296,6 +1309,28 @@ extension LauncherView {
                 CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5),
                 CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5),
             ]
+        // Two-window arrangements: first region is the scoped app, second is the
+        // other app sharing the desktop.
+        case .leftAndRight:
+            return [
+                CGRect(x: 0, y: 0, width: 0.5, height: 1),
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 1),
+            ]
+        case .rightAndLeft:
+            return [
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 1),
+                CGRect(x: 0, y: 0, width: 0.5, height: 1),
+            ]
+        case .topAndBottom:
+            return [
+                CGRect(x: 0, y: 0, width: 1, height: 0.5),
+                CGRect(x: 0, y: 0.5, width: 1, height: 0.5),
+            ]
+        case .bottomAndTop:
+            return [
+                CGRect(x: 0, y: 0.5, width: 1, height: 0.5),
+                CGRect(x: 0, y: 0, width: 1, height: 0.5),
+            ]
         default:
             return [CGRect(x: 0, y: 0, width: 1, height: 1)]  // fill / fullscreen / restore
         }
@@ -1303,7 +1338,9 @@ extension LauncherView {
 
     /// Draws a small screen with the app icon placed in the layout's target region.
     func windowLayoutPreviewImage(
-        appIcon: NSImage?, command: WindowManagementService.Command
+        appIcon: NSImage?,
+        secondaryIcon: NSImage? = nil,
+        command: WindowManagementService.Command
     ) -> NSImage {
         let size = NSSize(width: 30, height: 22)
         let image = NSImage(size: size)
@@ -1318,8 +1355,9 @@ extension LauncherView {
         screenPath.lineWidth = 1
         screenPath.stroke()
 
+        let regions = windowLayoutRegions(for: command)
         let isQuarters = command == .quarters
-        for region in windowLayoutRegions(for: command) {
+        for (index, region) in regions.enumerated() {
             // Flip Y: layout regions use a top-left origin; AppKit draws bottom-up.
             let rect = NSRect(
                 x: screen.minX + region.minX * screen.width,
@@ -1331,8 +1369,10 @@ extension LauncherView {
             NSColor.systemBlue.withAlphaComponent(0.85).setFill()
             tile.fill()
 
-            // Place the app icon inside single-region layouts (skip the busy quarters grid).
-            if !isQuarters, let appIcon {
+            // Region 0 is the scoped app; region 1 is the other app sharing the
+            // desktop (split arrangements). Quarters stays a plain grid.
+            let icon: NSImage? = isQuarters ? nil : (index == 0 ? appIcon : secondaryIcon)
+            if let icon {
                 let side = min(rect.width, rect.height) * 0.72
                 let iconRect = NSRect(
                     x: rect.midX - side / 2,
@@ -1340,11 +1380,23 @@ extension LauncherView {
                     width: side,
                     height: side
                 )
-                appIcon.draw(
-                    in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
             }
         }
         return image
+    }
+
+    /// Icon of another regular app sharing the current desktop — used as the second
+    /// tile in split layout previews. `nil` when the scoped app is the only one.
+    func secondaryDesktopAppIcon(excluding bundleId: String) -> NSImage? {
+        NSWorkspace.shared.runningApplications
+            .first {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != bundleId
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }?
+            .icon
     }
 
     /// Rows for the "Quick Note" (provider:notepad) scope: a Save row that captures

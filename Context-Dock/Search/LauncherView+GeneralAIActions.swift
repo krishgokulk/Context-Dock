@@ -1115,6 +1115,91 @@ extension LauncherView {
 
 extension LauncherView {
 
+    /// Reads live context for the app explicitly selected in General Chat. App selection
+    /// chooses the scope; the native approval card grants the first read. The provider
+    /// never participates in permission handling and only receives verified context.
+    func selectedGeneralChatAppContext() async -> (block: String, cancelled: Bool) {
+        guard let bundleID = chatFocusAppBundleId,
+              let appName = chatFocusAppName
+        else { return ("", false) }
+
+        let permissionKey = "generalAI.read.focusedApp.\(bundleID)"
+        if !GeneralAIActionApprovalStore.isAlwaysAllowed(permissionKey) {
+            var candidate = DoraXActionCandidate(
+                id: "read.focusedApp.\(bundleID)",
+                title: "Read current \(appName) context",
+                appName: appName,
+                bundleID: bundleID,
+                source: .system,
+                route: .automation,
+                capabilityID: nil,
+                requiredInputs: [],
+                riskLevel: .low,
+                confidence: 1.0,
+                permissionKey: permissionKey,
+                debugReason: "read-only context for explicitly selected General Chat app"
+            )
+            candidate.operation = .read
+            candidate.caveat = "DoraX will read the current visible context from \(appName) to answer this chat. Nothing will be changed."
+            await MainActor.run {
+                aiMode.loadingStatus = "Approval required to read \(appName)…"
+            }
+            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
+            await MainActor.run { aiMode.loadingStatus = nil }
+            guard decision != .cancel else { return ("", true) }
+        }
+
+        await MainActor.run { aiMode.loadingStatus = "Reading \(appName) context…" }
+        var details: [String] = []
+        let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID).first
+        details.append(running == nil ? "App state: not running" : "App state: running")
+
+        if bundleID == "com.apple.Safari" {
+            if let page = ContextDetector.shared.getSafariPageContextForAI() {
+                details.append("Current Safari page:\n\(page)")
+            } else if let page = ContextDetector.shared.getSafariContext() {
+                details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
+            }
+        } else if bundleID == "com.google.Chrome",
+                  let page = ContextDetector.shared.getChromeContext() {
+            details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
+        } else if bundleID == "company.thebrowser.Browser",
+                  let page = ContextDetector.shared.getArcContext() {
+            details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
+        }
+
+        let ax = AXContextReader.shared.current
+        if ax.bundleId == bundleID {
+            let summary = ax.contextSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !summary.isEmpty { details.append("Accessibility context:\n\(summary)") }
+        }
+
+        if running != nil, AppAdapterManager.shared.adapter(for: bundleID) != nil {
+            let readerData = await AppAdapterManager.shared.runContextReaders(
+                for: bundleID, axContext: ax)
+            for (label, value) in readerData.sorted(by: { $0.key < $1.key }) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    details.append("\(label):\n\(String(trimmed.prefix(4_000)))")
+                }
+            }
+        }
+
+        await MainActor.run {
+            aiMode.loadingStatus = nil
+            aiMode.pendingToolChips.append("\(appName) live context")
+        }
+        let block = """
+            ## Verified live context from selected app: \(appName) (\(bundleID))
+            \(details.joined(separator: "\n\n"))
+
+            Use only this supplied context for claims about the app's current contents or state.
+            If the requested detail is absent, say it was not readable; never request permission in chat.
+            """
+        return (block, false)
+    }
+
     /// Live app-state context for General Chat questions about a named app
     /// ("what's going on with vs code?"). Pulls the SAME powers frontmost-app chat
     /// already uses — adapter context readers, runtime CLI snapshots (code --status,
