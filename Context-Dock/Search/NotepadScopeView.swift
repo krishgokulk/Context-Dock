@@ -80,6 +80,18 @@ struct NotepadScopeView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Attach context for AI")
+                // Pin the selected note into its own floating Stickies-style window.
+                if let id = selectedNoteID, store.notes.contains(where: { $0.id == id }) {
+                    Button {
+                        StickyNotesManager.shared.toggle(id)
+                    } label: {
+                        Image(systemName: StickyNotesManager.shared.isPinned(id) ? "pin.fill" : "pin")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(StickyNotesManager.shared.isPinned(id) ? AnyShapeStyle(Color.yellow) : AnyShapeStyle(.secondary))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Pin note as a floating window")
+                }
                 Button {
                     let id = store.create()
                     selectedNoteID = id
