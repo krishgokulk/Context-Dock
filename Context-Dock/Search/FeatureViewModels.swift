@@ -142,8 +142,7 @@ final class GlobalContextViewModel: ObservableObject {
     var fastMatchTask: Task<Void, Never>?
     var expandWhenFastMatchesResolve = false
     var autoExpandTask: Task<Void, Never>?
-    var sustainedTypingCollapseTask: Task<Void, Never>?
-    var lastTypingChangeAt: Date = .distantPast
+    var idleCollapseTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
 }

@@ -1861,17 +1861,24 @@ extension LauncherView {
                                             let q = newValue
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
-                                            if globalContextViewModel.typingSnapshot.phase == .expanded {
-                                                globalMenuResultsRevealed = false
-                                            }
                                             if globalInlineAppScope == nil {
+                                                let keepExpanded =
+                                                    !q.isEmpty
+                                                    && globalContextViewModel.typingSnapshot.phase
+                                                        == .expanded
                                                 focusedAppPillIndex = nil
                                                 l2.focusedPillIndex = nil
                                                 cachedGlobalAppQuery = ""
                                                 cachedGlobalAppMatches = []
-                                                cachedGlobalGroupedQuery = ""
-                                                cachedGlobalGroupedState = nil
-                                                globalContextViewModel.cachedGroupedFingerprint = ""
+                                                if keepExpanded {
+                                                    // Spotlight behavior: keep the shell and
+                                                    // remove stale rows in this key event.
+                                                    immediatelyPruneExpandedGlobalContextRows(for: q)
+                                                } else {
+                                                    cachedGlobalGroupedQuery = ""
+                                                    cachedGlobalGroupedState = nil
+                                                    globalContextViewModel.cachedGroupedFingerprint = ""
+                                                }
                                                 globalAppMatchTask?.cancel()
                                                 globalGroupedTask?.cancel()
                                                 pendingGlobalAppQuery = nil
@@ -1882,10 +1889,22 @@ extension LauncherView {
                                                 // one main-loop turn gives the TextField the same input-first
                                                 // behavior users expect from Spotlight.
                                                 globalContextViewModel.prepareTask?.cancel()
+                                                let previousIcons =
+                                                    globalContextViewModel.typingSnapshot
+                                                    .matchDockIcons
+                                                let previousOverflow =
+                                                    globalContextViewModel.typingSnapshot
+                                                    .matchDockOverflowCount
                                                 globalContextViewModel.typingSnapshot =
                                                     GlobalContextTypingSnapshot(
                                                         query: q,
-                                                        phase: q.isEmpty ? .idle : .typing,
+                                                        phase: q.isEmpty
+                                                            ? .idle
+                                                            : (keepExpanded ? .expanded : .typing),
+                                                        matchDockIcons: keepExpanded
+                                                            ? previousIcons : [],
+                                                        matchDockOverflowCount: keepExpanded
+                                                            ? previousOverflow : 0,
                                                         preparedResultsVersion:
                                                             globalContextViewModel.typingSnapshot
                                                             .preparedResultsVersion

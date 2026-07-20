@@ -2221,12 +2221,11 @@ extension LauncherView {
         globalContextViewModel.fastMatchTask?.cancel()
         globalContextViewModel.expandWhenFastMatchesResolve = false
         globalContextViewModel.autoExpandTask?.cancel()
-        globalContextViewModel.lastTypingChangeAt = Date()
         guard isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil
         else {
             globalContextViewModel.isResolvingFastMatches = false
-            globalContextViewModel.sustainedTypingCollapseTask?.cancel()
-            globalContextViewModel.sustainedTypingCollapseTask = nil
+            globalContextViewModel.idleCollapseTask?.cancel()
+            globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2236,8 +2235,8 @@ extension LauncherView {
 
         if q.isEmpty {
             globalContextViewModel.isResolvingFastMatches = false
-            globalContextViewModel.sustainedTypingCollapseTask?.cancel()
-            globalContextViewModel.sustainedTypingCollapseTask = nil
+            globalContextViewModel.idleCollapseTask?.cancel()
+            globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2245,6 +2244,9 @@ extension LauncherView {
             return
         }
 
+        if wasExpanded {
+            immediatelyPruneExpandedGlobalContextRows(for: q)
+        }
         let preparedVersion = globalContextViewModel.typingSnapshot.preparedResultsVersion
         globalContextViewModel.isResolvingFastMatches = true
         globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
@@ -2258,7 +2260,7 @@ extension LauncherView {
         )
         scheduleBackgroundGlobalContextPreparation(q)
         scheduleGlobalContextIdleAutoExpansion(query: q)
-        if wasExpanded { scheduleSustainedGlobalContextTypingCollapse() }
+        if wasExpanded { scheduleGlobalContextIdleCollapse() }
 
         // Search the immutable Global Context index away from the main actor. Every
         // keystroke cancels this task, so stale work cannot interrupt typing or publish
@@ -2337,6 +2339,59 @@ extension LauncherView {
         }
     }
 
+    /// Stage zero of expanded Global Context search. Spotlight removes stale rows in the
+    /// same key event, before its index has produced replacements. Filter only the already-
+    /// rendered bounded snapshot here; detached matching remains the authoritative search.
+    func immediatelyPruneExpandedGlobalContextRows(for query: String) {
+        guard let current = cachedGlobalGroupedState else { return }
+        let normalizedQuery = normalizedDockPillText(query)
+        let tokens = dockPillTokens(normalizedQuery)
+        guard !tokens.isEmpty else { return }
+
+        func containsAllTokens(_ values: [String]) -> Bool {
+            let searchable = normalizedDockPillText(values.joined(separator: " "))
+            return tokens.allSatisfy { searchable.contains($0) }
+        }
+
+        let apps = current.appResults.filter { result in
+            containsAllTokens(
+                [result.title, result.subtitle, result.trackingIdentifier]
+                    + result.displayBadges)
+        }
+        let pillMatches: (DockPill) -> Bool = { pill in
+            containsAllTokens(
+                [
+                    pill.name,
+                    pill.badge ?? "",
+                    pill.sourceAppName,
+                    pill.menuItemName,
+                    pill.menuContext ?? "",
+                    pill.rankingKind,
+                ] + pill.searchTerms)
+        }
+        let groups = current.appMenuGroups.compactMap { group -> AppMenuGroup? in
+            let pills = group.pills.filter(pillMatches)
+            guard !pills.isEmpty else { return nil }
+            return AppMenuGroup(
+                id: group.id, appName: group.appName, icon: group.icon, pills: pills)
+        }
+        let menuPills = groups.isEmpty
+            ? current.menuPills.filter(pillMatches)
+            : groups.flatMap(\.pills)
+        let menuGroups = current.menuGroups.compactMap { group -> MenuPillGroup? in
+            let pills = group.allPills.filter(pillMatches)
+            guard let primary = pills.first else { return nil }
+            return MenuPillGroup(id: group.id, primaryPill: primary, allPills: pills)
+        }
+        let pruned = GlobalGroupedListNavigationState(
+            appResults: apps,
+            menuPills: menuPills,
+            menuGroups: groups.isEmpty ? menuGroups : [],
+            appMenuGroups: groups,
+            menuFirst: current.menuFirst)
+        setCachedGlobalGroupedState(query: query, state: pruned, animated: false)
+    }
+
     func scheduleBackgroundGlobalContextPreparation(_ query: String) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         globalContextViewModel.prepareTask?.cancel()
@@ -2388,16 +2443,16 @@ extension LauncherView {
         }
     }
 
-    /// Preserve an expanded sheet during ordinary edits. Collapse only during a sustained
-    /// typing burst; the idle task reopens it from prepared results as soon as typing stops.
-    func scheduleSustainedGlobalContextTypingCollapse() {
-        guard globalContextViewModel.sustainedTypingCollapseTask == nil else { return }
-        globalContextViewModel.sustainedTypingCollapseTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            defer { globalContextViewModel.sustainedTypingCollapseTask = nil }
+    /// Spotlight-style lease: active typing keeps the expanded shell alive and only resets
+    /// this timer. Collapse after a long idle period, never during an active typing burst.
+    func scheduleGlobalContextIdleCollapse() {
+        globalContextViewModel.idleCollapseTask?.cancel()
+        globalContextViewModel.idleCollapseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 55_000_000_000)
+            defer { globalContextViewModel.idleCollapseTask = nil }
             guard !Task.isCancelled,
-                globalContextViewModel.typingSnapshot.phase == .expanded,
-                Date().timeIntervalSince(globalContextViewModel.lastTypingChangeAt) < 0.28
+                isGlobalContextActive,
+                globalContextViewModel.typingSnapshot.phase == .expanded
             else { return }
             let icons = globalContextViewModel.typingSnapshot.matchDockIcons
             globalContextViewModel.typingSnapshot.phase = icons.contains(where: \.isExpandable)
@@ -2497,6 +2552,7 @@ extension LauncherView {
         // 6. Flip the single expansion flag LAST. At this point every presentation and
         // height gate sees the same non-empty committed state in its first expanded pass.
         globalContextViewModel.typingSnapshot.phase = .expanded
+        scheduleGlobalContextIdleCollapse()
 
         // 7. Window follows the committed state (animated frame glide).
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
