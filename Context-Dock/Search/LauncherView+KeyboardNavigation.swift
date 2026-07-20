@@ -1331,6 +1331,8 @@ extension LauncherView {
                 onClose()
             }
             .onKeyPress(.upArrow) {
+                // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1376,6 +1378,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
+                // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

@@ -428,3 +428,7 @@ Swift: +1 added · ~3 modified · -0 deleted
 ## 2026-07-20 17:34 · `44f7e8b9` · `codex-context-dock-polish-fixes`
 **feat(windows): render layout tiles as app-in-region previews**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 17:44 · `9420d487` · `codex-context-dock-polish-fixes`
+**feat(quick-note): split editor scope with inline delete**
+Swift: +1 added · ~4 modified · -0 deleted

@@ -256,6 +256,28 @@ extension LauncherView {
 
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
+        // The Quick Note scope owns its whole surface (split list + editor), so it
+        // pre-empts the grouped results list this scope would otherwise render.
+        if activeNotepadScopeCommand != nil {
+            NotepadScopeView(
+                selectedNoteID: $notepadSelectedNoteID,
+                isDark: isEffectiveDark,
+                onExit: {
+                    if let scope = globalInlineAppScope {
+                        removeGlobalInlineAppScope(scope)
+                    }
+                }
+            )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                updateMeasuredGlobalListHeight(height)
+            }
+        } else {
+            l2GlobalSearchListContent(presentation)
+        }
+    }
+
+    @ViewBuilder
+    func l2GlobalSearchListContent(_ presentation: L2GlobalSearchPresentation) -> some View {
         // PERSISTENT hierarchy: the results container is ALWAYS in the tree and
         // reveals by clipped height. Conditional creation (`if expanded { list }`)
         // rebuilt the view identity on ↓, so the expansion could never animate
