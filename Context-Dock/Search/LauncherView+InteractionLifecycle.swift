@@ -110,16 +110,34 @@ extension LauncherView {
                 self.accumulatedSwipeDeltaX = 0
             }
 
-            if event.phase == .changed || event.phase == .began {
-                // Accumulate both deltas
+            // Accumulate through BOTH the finger-down phase and the momentum phase.
+            // A fast flick lands most of its travel in momentum (after lift), so
+            // accumulating only .changed missed it and the switch silently no-op'd.
+            if event.phase == .changed || event.phase == .began
+                || event.momentumPhase == .changed || event.momentumPhase == .began
+            {
                 self.accumulatedSwipeDeltaY += event.scrollingDeltaY
                 self.accumulatedSwipeDeltaX += event.scrollingDeltaX
             }
 
-            // When gesture ends, check if we have significant movement
-            if event.phase == .ended {
+            // Evaluate on lift AND at momentum-end — the retry lets a fast flick that
+            // was under-threshold at lift still switch once its momentum lands. The
+            // accumulators reset only after a switch fires (below), so momentum-end
+            // never double-switches a gesture that already acted.
+            if event.phase == .ended || event.momentumPhase == .ended {
                 let totalVertical = abs(self.accumulatedSwipeDeltaY)
                 let totalHorizontal = abs(self.accumulatedSwipeDeltaX)
+                let attempted =
+                    (totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
+                        && self.isHoveringInputField)
+                    || (totalVertical > 30 && totalVertical > totalHorizontal * 0.8
+                        && (self.isHoveringDockArea || self.isHoveringInputField))
+                defer {
+                    if attempted {
+                        self.accumulatedSwipeDeltaY = 0
+                        self.accumulatedSwipeDeltaX = 0
+                    }
+                }
 
                 // Horizontal swipe over the input toggles AI Chat from any layer and back.
                 if totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
@@ -352,6 +370,9 @@ extension LauncherView {
         guard settings.enableAIMode else { return }
         guard !isExplicitAppScopeLocked else { return }
         guard currentDockSurfaceMode != .generalChat else { return }
+
+        // Refresh so any Global Commands the user added this session are callable.
+        CapabilityRegistry.shared.refreshGlobalCommands()
 
         searchState.results = []
         searchState.selectedIndex = nil

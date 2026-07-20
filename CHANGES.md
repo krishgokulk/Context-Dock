@@ -452,3 +452,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-20 18:52 · `19367559` · `codex-context-dock-polish-fixes`
 **feat(quick-note): attach frontmost window context to AI prompt**
 Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-20 19:11 · `04e211c1` · `codex-context-dock-polish-fixes`
+**feat(ai): attach menu (file/photo/screenshot/capture) for chat and Quick Note**
+Swift: +0 added · ~6 modified · -0 deleted

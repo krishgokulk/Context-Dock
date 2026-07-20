@@ -133,6 +133,25 @@ enum SystemCommandInteractiveRunner {
         }
     }
 
+    /// Run a command's script with `CD_QUERY` injected and capture stdout — used by
+    /// the AI capability so it can report what a Global Command produced.
+    nonisolated static func runForOutput(command: SystemCommand, value: String) -> String? {
+        switch command.actionType {
+        case .applescript, .url, .file:
+            return runProcess("/usr/bin/osascript", ["-e", command.script], value: value)
+        case .jxa:
+            return runProcess(
+                "/usr/bin/osascript", ["-l", "JavaScript", "-e", command.script], value: value)
+        case .bash:
+            return runProcess("/bin/zsh", ["-lc", command.script], value: value)
+        case .scriptFile:
+            let path = (command.script as NSString).expandingTildeInPath
+            return runProcess("/bin/zsh", [path], value: value)
+        case .aiPrompt:
+            return nil
+        }
+    }
+
     /// Run a value script and capture stdout (used for reading current state).
     nonisolated static func runForOutput(
         script: String,

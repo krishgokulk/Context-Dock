@@ -109,12 +109,23 @@ final class CapabilityRegistry {
         ].joined(separator: "\n\n")
     }
 
+    /// Re-register the user's Global Commands as capabilities. Call after the
+    /// command registry changes (or before a chat) so newly-added commands are
+    /// visible to the AI without a relaunch.
+    func refreshGlobalCommands() {
+        for id in capabilitiesByID.keys where id.hasPrefix(GlobalCommandCapabilities.idPrefix) {
+            capabilitiesByID.removeValue(forKey: id)
+        }
+        GlobalCommandCapabilities.register(in: self)
+    }
+
     private func registerBuiltIns() {
         GitCapabilities.register(in: self)
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         AppWorkflowToolCatalog.shared.register(in: self)
+        GlobalCommandCapabilities.register(in: self)
         // Apple Notes MCP — only registered when explicitly enabled
         if AppSettings.shared.noteMCPEnabled {
             AppleNotesMCPCapabilities.register(in: self)

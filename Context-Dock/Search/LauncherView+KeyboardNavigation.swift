@@ -1881,7 +1881,8 @@ extension LauncherView {
                     !isCompactSmartScope,
                     frontmost.bundleID != "com.apple.finder"
                 {
-                    openInlineAIChatPanel()
+                    // Right arrow on an empty field → the standalone General AI chat.
+                    enterGeneralChatPreservingLayer()
                     return .handled
                 }
                 if let findToken = lockedFindToken,
