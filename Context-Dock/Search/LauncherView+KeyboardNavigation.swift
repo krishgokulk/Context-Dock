@@ -1747,6 +1747,16 @@ extension LauncherView {
                 if activeNotepadScopeCommand != nil { return .ignored }
                 let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
+                    // Backspace on an empty field leaves a compact scope (Clipboard,
+                    // Notifications) — same step-out gesture the other surfaces use.
+                    if searchState.activeSmartQueryKey != nil {
+                        clearSearchContext()
+                        isSearchFieldFocused = true
+                        scheduleDockPillRebuild(
+                            query: "", delayNanoseconds: 0, refreshContext: false)
+                        requestWindowSizeUpdate(reason: .modeChanged)
+                        return .handled
+                    }
                     // Exit inline Share Sheet first
                     if inlineShareActive {
                         inlineShareActive = false

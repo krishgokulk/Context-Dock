@@ -88,12 +88,17 @@ private struct StickyNoteView: View {
     var onClose: () -> Void
 
     @ObservedObject private var store = QuickNotesStore.shared
+    @ObservedObject private var settings = AppSettings.shared
     @FocusState private var focused: Bool
+    @State private var prompt: String = ""
+    @State private var isGenerating = false
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Circle().fill(Color.yellow.opacity(0.9)).frame(width: 9, height: 9)
+                Image(systemName: "note.text")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -110,7 +115,7 @@ private struct StickyNoteView: View {
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            Divider().opacity(0.4)
+            Divider().opacity(0.35)
 
             if store.notes.contains(where: { $0.id == noteID }) {
                 TextEditor(text: binding)
@@ -118,6 +123,7 @@ private struct StickyNoteView: View {
                     .font(.system(size: 13))
                     .scrollContentBackground(.hidden)
                     .padding(10)
+                composer
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: "trash").font(.system(size: 18))
@@ -128,6 +134,65 @@ private struct StickyNoteView: View {
             }
         }
         .background(stickyBackground)
+    }
+
+    /// ChatGPT-style composer pinned to the bottom: type a prompt, Return sends it
+    /// to the selected AI provider and appends the reply into this note.
+    private var composer: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            TextField("Ask AI…", text: $prompt)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .onSubmit { send() }
+                .disabled(isGenerating)
+            if isGenerating {
+                ProgressView().controlSize(.small).scaleEffect(0.6)
+            } else {
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(
+                            prompt.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
+                }
+                .buttonStyle(.plain)
+                .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    private func send() {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isGenerating else { return }
+        prompt = ""
+        isGenerating = true
+        let provider = settings.selectedAIProvider
+        let key = settings.getAPIKey(for: provider)
+        Task { @MainActor in
+            let reply: String
+            do {
+                reply = try await AIProviderService.shared.sendMessage(
+                    text,
+                    context: .none,
+                    provider: provider,
+                    apiKey: key.isEmpty ? nil : key
+                )
+            } catch {
+                reply = "⚠️ AI error: \(error.localizedDescription)"
+            }
+            let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
+            let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            store.updateText(existing.isEmpty ? body : existing + "\n\n" + body, for: noteID)
+            isGenerating = false
+        }
     }
 
     private var title: String {
@@ -143,11 +208,10 @@ private struct StickyNoteView: View {
         )
     }
 
+    /// Match the launcher's own surface instead of a yellow Stickies sheet.
     private var stickyBackground: some View {
-        LinearGradient(
-            colors: [Color(red: 0.20, green: 0.19, blue: 0.10), Color(red: 0.16, green: 0.15, blue: 0.08)],
-            startPoint: .top, endPoint: .bottom
-        )
-        .overlay(Color.yellow.opacity(0.04))
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .overlay(Color.black.opacity(0.28))
     }
 }

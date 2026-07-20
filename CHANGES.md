@@ -476,3 +476,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 20:09 · `7038c9f8` · `codex-context-dock-polish-fixes`
 **feat: clipboard-scope hotkey in Settings; pin notes as Stickies windows**
 Swift: +1 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:19 · `73abc842` · `codex-context-dock-polish-fixes`
+**feat(notifications): live AI provider usage from rate-limit headers**
+Swift: +1 added · ~3 modified · -0 deleted
