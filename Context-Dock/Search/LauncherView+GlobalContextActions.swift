@@ -1979,6 +1979,23 @@ extension LauncherView {
             l2.pillNavViaKeyboard = false
             return
         }
+        // A scope-only provider command (a picker with no toggle, e.g. Windows) opens
+        // its scope on Enter — its whole purpose IS the scoped list, there is no
+        // single action to run. Toggles are handled above; other providers scope here.
+        if result.subtitle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(result.subtitle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.interactionType == .none,
+            command.keywords.contains(where: { $0.lowercased().hasPrefix("provider:") }),
+            activateGlobalInlineScope(result: result, bundleID: result.subtitle)
+        {
+            focusedAppPillIndex = nil
+            hoveredAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            l2.pillNavViaKeyboard = false
+            reclaimSearchInputFocus()
+            return
+        }
         // Enter/click runs the command's action directly — Global Commands no longer
         // auto-scope on Enter. Scoping into a command's live list (Bluetooth devices,
         // Wi-Fi networks, presets) is reserved for the explicit scope gesture (→).

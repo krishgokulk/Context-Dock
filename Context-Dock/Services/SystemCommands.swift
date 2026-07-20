@@ -534,6 +534,17 @@ final class SystemCommandsRegistry {
             valueScript: #"tell application "System Events" to tell appearance preferences to get dark mode"#
         ),
         SystemCommand(
+            name: "Windows",
+            icon: "macwindow.on.rectangle",
+            keywords: ["windows", "window", "layout", "tile", "arrange", "snap", "resize", "halves", "quarters", "provider:windows"],
+            scriptType: "applescript",
+            // Enter opens the scoped layout picker; there is no single action. The
+            // provider:windows scope renders native window-management tiles that act
+            // on the app you were in before opening Context-Dock.
+            script: #"return"#,
+            description: "Tile and arrange the frontmost window"
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],

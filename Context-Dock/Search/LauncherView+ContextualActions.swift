@@ -126,6 +126,14 @@ extension LauncherView {
             })
         else { return [] }
 
+        // The Windows command is a native window-layout picker, not a script: its
+        // scope renders tiles that arrange the app you were in before opening the
+        // launcher. Handled before the generic script/preset path below.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:windows" }) {
+            return windowManagementScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -1205,6 +1213,51 @@ extension LauncherView {
             pill.rankingScore = 1_400
             pill.trackingIdentifier = "native-window:\(scopedBundleId):\(command.id)"
             pill.searchTerms = command.searchTerms + [scopedAppName]
+            return pill
+        }
+    }
+
+    /// Native window-layout tiles for the "Windows" Global Command scope. Targets the
+    /// app that was frontmost before Context-Dock opened, so arranging works even
+    /// though the launcher itself is key. Empty query shows the full intelligent set;
+    /// typing filters via the same matcher the app-scoped window pills use.
+    func windowManagementScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        guard let app = AppDelegate.shared?.previousFrontmostApp,
+            !app.isTerminated,
+            let bundleId = app.bundleIdentifier,
+            !bundleId.isEmpty
+        else { return [] }
+        let appName = app.localizedName ?? "Window"
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let commands: [WindowManagementService.Command] =
+            trimmed.isEmpty
+            ? [
+                .fill, .left, .right, .top, .bottom,
+                .topLeft, .topRight, .bottomLeft, .bottomRight,
+                .quarters, .center, .fullScreen, .restorePreviousSize,
+            ]
+            : WindowManagementService.shared.matchingCommands(query: trimmed)
+
+        return commands.map { command in
+            var pill = DockPill(
+                id: "syscmd-windows-\(command.id)",
+                name: command.title,
+                icon: command.icon,
+                accentColorName: "blue",
+                badge: appName,
+                execute: {
+                    launchAndApplyWindowCommand(
+                        bundleId: bundleId, appName: appName, command: command)
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
+                }
+            )
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = appName
+            pill.trackingIdentifier = "syscmd-windows:\(command.id)"
+            pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
     }

@@ -412,3 +412,7 @@ Swift: +0 added · ~0 modified · -0 deleted
 ## 2026-07-20 16:10 · `d51278f9` · `codex-context-dock-polish-fixes`
 **feat(global-context): native radio toggles, inline controls, focused command set**
 Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-20 17:05 · `9887039e` · `codex-context-dock-polish-fixes`
+**feat(global-context): add Appearance command; fix laggy settings selection**
+Swift: +0 added · ~2 modified · -0 deleted
