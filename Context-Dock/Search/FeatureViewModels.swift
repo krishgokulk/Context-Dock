@@ -64,6 +64,9 @@ final class LauncherViewModel: ObservableObject {
     @Published var lastKnownBrowserURL = ""
     @Published var accumulatedSwipeDeltaY: CGFloat = 0
     @Published var accumulatedSwipeDeltaX: CGFloat = 0
+    /// One physical trackpad gesture may emit both finger and momentum endings. Once a
+    /// layer switch fires, ignore the remaining events until the next finger-down gesture.
+    var didSwitchLayerInCurrentSwipe = false
     @Published var isHoveringDockArea = false
     @Published var hoveredDockAppKey: String?
     @Published var hoveredAppPillIndex: Int?

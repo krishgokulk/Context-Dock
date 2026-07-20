@@ -219,6 +219,11 @@ extension LauncherView {
         nonmutating set { launcherViewModel.accumulatedSwipeDeltaX = newValue }
     }
 
+    var didSwitchLayerInCurrentSwipe: Bool {
+        get { launcherViewModel.didSwitchLayerInCurrentSwipe }
+        nonmutating set { launcherViewModel.didSwitchLayerInCurrentSwipe = newValue }
+    }
+
     var isHoveringDockArea: Bool {
         get { launcherViewModel.isHoveringDockArea }
         nonmutating set { launcherViewModel.isHoveringDockArea = newValue }

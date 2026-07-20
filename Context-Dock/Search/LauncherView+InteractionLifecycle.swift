@@ -108,6 +108,7 @@ extension LauncherView {
             if event.phase == .began {
                 self.accumulatedSwipeDeltaY = 0
                 self.accumulatedSwipeDeltaX = 0
+                self.didSwitchLayerInCurrentSwipe = false
             }
 
             // Accumulate through BOTH the finger-down phase and the momentum phase.
@@ -125,12 +126,19 @@ extension LauncherView {
             // accumulators reset only after a switch fires (below), so momentum-end
             // never double-switches a gesture that already acted.
             if event.phase == .ended || event.momentumPhase == .ended {
+                guard !self.didSwitchLayerInCurrentSwipe else {
+                    if event.momentumPhase == .ended {
+                        self.accumulatedSwipeDeltaY = 0
+                        self.accumulatedSwipeDeltaX = 0
+                    }
+                    return event
+                }
                 let totalVertical = abs(self.accumulatedSwipeDeltaY)
                 let totalHorizontal = abs(self.accumulatedSwipeDeltaX)
                 let attempted =
-                    (totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
-                        && self.isHoveringInputField)
-                    || (totalVertical > 30 && totalVertical > totalHorizontal * 0.8
+                    (totalHorizontal > 70 && totalHorizontal > totalVertical * 1.8
+                        && (self.isHoveringDockArea || self.isHoveringInputField))
+                    || (totalVertical > 55 && totalVertical > totalHorizontal * 1.15
                         && (self.isHoveringDockArea || self.isHoveringInputField))
                 defer {
                     if attempted {
@@ -140,18 +148,19 @@ extension LauncherView {
                 }
 
                 // Horizontal swipe over the input toggles AI Chat from any layer and back.
-                if totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
-                    && self.isHoveringInputField
+                if totalHorizontal > 70 && totalHorizontal > totalVertical * 1.8
+                    && (self.isHoveringDockArea || self.isHoveringInputField)
                 {
-                    guard !self.isExplicitAppScopeLocked else { return event }
                     if self.currentDockSurfaceMode == .generalChat {
                         self.exitGeneralChatRestoringLayer()
+                        self.didSwitchLayerInCurrentSwipe = true
                     } else if self.accumulatedSwipeDeltaX > 0 {
                         self.enterGeneralChatPreservingLayer()
+                        self.didSwitchLayerInCurrentSwipe = true
                     }
                 }
                 // Vertical swipe — Context Dock is home: swipe down → Global, swipe up → Media.
-                else if totalVertical > 30 && totalVertical > totalHorizontal * 0.8
+                else if totalVertical > 55 && totalVertical > totalHorizontal * 1.15
                     && (self.isHoveringDockArea || self.isHoveringInputField)
                 {
                     guard !self.isExplicitAppScopeLocked else { return event }
@@ -162,7 +171,9 @@ extension LauncherView {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 self.dismissContextAndReturnToDock()
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                         } else if !self.showMediaLayer && self.settings.enableLayer3 {
+                            self.didSwitchLayerInCurrentSwipe = true
                             // Context Dock → Media Dock
                             Task {
                                 await self.mediaObserver.refreshNowPlaying()
@@ -182,12 +193,14 @@ extension LauncherView {
                         if self.currentDockSurfaceMode == .generalChat {
                             // AI chat → previous layer
                             self.exitGeneralChatRestoringLayer()
+                            self.didSwitchLayerInCurrentSwipe = true
                         } else if self.showMediaLayer {
                             // Media Dock → Context Dock
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 self.showMediaLayer = false
                                 self.showContextInDock = true
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                             if self.searchState.query.isEmpty && !self.isSearchFieldFocused {
                                 self.startCollapseTimer()
                             }
@@ -198,6 +211,7 @@ extension LauncherView {
                                 self.globalContextActivation = GlobalContextActivation(
                                     autoActivated: false)
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                             self.replaceCachedDockPills(
                                 self.buildDockPills(query: self.lastPillQuery),
                                 preserveFocus: true
@@ -368,7 +382,6 @@ extension LauncherView {
 
     func enterGeneralChatPreservingLayer() {
         guard settings.enableAIMode else { return }
-        guard !isExplicitAppScopeLocked else { return }
         guard currentDockSurfaceMode != .generalChat else { return }
 
         // Refresh so any Global Commands the user added this session are callable.

@@ -55,21 +55,6 @@ struct ContextDockSurface: View {
             .task(id: isFinderDesktopOnlyMode) {
                 await onFinderDesktopModeChange(isFinderDesktopOnlyMode)
             }
-            .gesture(swipeGesture)
-    }
-
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
-            .onEnded { value in
-                let dy = value.translation.height
-                let dx = value.translation.width
-                guard abs(dy) > abs(dx) else { return }
-                if dy > 30 {
-                    onSwipeDown()
-                } else if dy < -30 {
-                    onSwipeUp()
-                }
-            }
     }
 }
 

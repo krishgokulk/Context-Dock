@@ -528,16 +528,15 @@ extension LauncherView {
                 return nil
             }
 
-            // Cycle the running-app scope on ←/→ with an empty query — in Global Context
-            // AND in an app scope already entered from it (l2.targetApp set), so the user
-            // can right-arrow from one scoped app to the next.
+            // Right Arrow cycles the running-app scope. Empty-field Left Arrow is reserved
+            // consistently for entering General Chat from Global Context or Context Dock.
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
-                event.keyCode == 123 || event.keyCode == 124,
+                event.keyCode == 124,
                 self.focusedAppPillIndex == nil,
                 self.l2.focusedPillIndex == nil
             {
-                _ = self.cycleGlobalContextAppScope(direction: event.keyCode == 124 ? 1 : -1)
+                _ = self.cycleGlobalContextAppScope(direction: 1)
                 self.focusedAppPillIndex = nil
                 self.l2.focusedPillIndex = nil
                 return nil
