@@ -291,9 +291,35 @@ extension LauncherView {
 
     @ViewBuilder
     func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
-        if !presentation.showsGlobalSearch {
+        if activeNotepadScopeCommand != nil {
+            NotepadScopeView(
+                selectedNoteID: $notepadSelectedNoteID,
+                isDark: isEffectiveDark,
+                onExit: {
+                    if let scope = globalInlineAppScope {
+                        removeGlobalInlineAppScope(scope)
+                    }
+                }
+            )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                updateMeasuredGlobalListHeight(height)
+            }
+        } else if !presentation.showsGlobalSearch {
             dockPillListView(pills: presentation.pills)
         }
+    }
+
+    /// The scoped SystemCommand when the user is inside a provider:notepad scope,
+    /// else nil. Drives the Quick Note split editor surface.
+    var activeNotepadScopeCommand: SystemCommand? {
+        guard isGlobalContextActive,
+            let bundle = currentGlobalScopedBundleID,
+            bundle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(bundle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.keywords.contains(where: { $0.lowercased() == "provider:notepad" })
+        else { return nil }
+        return command
     }
 
     func handleL2PillQueryChange(_ newQuery: String) {

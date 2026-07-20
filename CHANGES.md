@@ -424,3 +424,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-20 17:19 · `ece1bbd7` · `codex-context-dock-polish-fixes`
 **feat(global-context): Quick Note provider, example templates, editor providers**
 Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-20 17:34 · `44f7e8b9` · `codex-context-dock-polish-fixes`
+**feat(windows): render layout tiles as app-in-region previews**
+Swift: +0 added · ~1 modified · -0 deleted

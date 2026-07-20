@@ -55,8 +55,30 @@ final class QuickNotesStore: ObservableObject {
         return true
     }
 
+    /// Create a blank note and return its id, for immediate editing.
+    @discardableResult
+    func create() -> UUID {
+        let note = QuickNote(text: "")
+        notes.insert(note, at: 0)
+        save()
+        return note.id
+    }
+
+    /// Live text edit from the split editor. Keeps position/order (does not bump
+    /// createdAt), so the row you're editing doesn't jump under the cursor.
+    func updateText(_ text: String, for id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[idx].text = text
+        save()
+    }
+
     func delete(_ note: QuickNote) {
         notes.removeAll { $0.id == note.id }
+        save()
+    }
+
+    func delete(id: UUID) {
+        notes.removeAll { $0.id == id }
         save()
     }
 

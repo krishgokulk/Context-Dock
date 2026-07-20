@@ -158,6 +158,24 @@ extension LauncherView {
                 return routedEvent
             }
 
+            // The Quick Note split editor owns the keyboard: yield every key to the
+            // focused TextEditor / list so the user types freely. Escape exits the
+            // scope; ⌘N starts a new note.
+            if self.activeNotepadScopeCommand != nil {
+                if event.keyCode == 53 {  // Escape
+                    if let scope = self.globalInlineAppScope {
+                        self.removeGlobalInlineAppScope(scope)
+                    }
+                    self.notepadSelectedNoteID = nil
+                    return nil
+                }
+                if event.keyCode == 45, event.modifierFlags.contains(.command) {  // ⌘N
+                    self.notepadSelectedNoteID = QuickNotesStore.shared.create()
+                    return nil
+                }
+                return event
+            }
+
             // Only context/global dock modes can consume dock navigation keys.
             guard routingMode == .contextDock || routingMode == .globalContext else {
                 return event
