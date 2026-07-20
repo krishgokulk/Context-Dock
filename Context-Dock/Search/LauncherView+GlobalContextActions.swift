@@ -1244,6 +1244,12 @@ extension LauncherView {
         if cachedGlobalGroupedQuery == cacheKey, let state = cachedGlobalGroupedState {
             return state
         }
+        // While the detached fast matcher is replacing an expanded sheet, retain its
+        // already-published lightweight rows. Do not fall back to synchronous index work
+        // on the main actor for every keystroke.
+        if globalContextViewModel.isResolvingFastMatches {
+            return emptyGlobalGroupedListNavigationState()
+        }
         if shouldUsePureGlobalAppSearch {
             return instantGlobalGroupedListNavigationState(for: q)
         }
@@ -2211,10 +2217,16 @@ extension LauncherView {
 
     func updateGlobalContextTypingSnapshot(query rawQuery: String) {
         let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wasExpanded = globalContextViewModel.typingSnapshot.phase == .expanded
         globalContextViewModel.fastMatchTask?.cancel()
+        globalContextViewModel.expandWhenFastMatchesResolve = false
+        globalContextViewModel.autoExpandTask?.cancel()
+        globalContextViewModel.lastTypingChangeAt = Date()
         guard isGlobalContextActive, shouldUsePureGlobalAppSearch, globalInlineAppScope == nil
         else {
             globalContextViewModel.isResolvingFastMatches = false
+            globalContextViewModel.sustainedTypingCollapseTask?.cancel()
+            globalContextViewModel.sustainedTypingCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2224,6 +2236,8 @@ extension LauncherView {
 
         if q.isEmpty {
             globalContextViewModel.isResolvingFastMatches = false
+            globalContextViewModel.sustainedTypingCollapseTask?.cancel()
+            globalContextViewModel.sustainedTypingCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2235,10 +2249,16 @@ extension LauncherView {
         globalContextViewModel.isResolvingFastMatches = true
         globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
             query: q,
-            phase: .typing,
+            phase: wasExpanded ? .expanded : .typing,
+            matchDockIcons: wasExpanded
+                ? globalContextViewModel.typingSnapshot.matchDockIcons : [],
+            matchDockOverflowCount: wasExpanded
+                ? globalContextViewModel.typingSnapshot.matchDockOverflowCount : 0,
             preparedResultsVersion: preparedVersion
         )
         scheduleBackgroundGlobalContextPreparation(q)
+        scheduleGlobalContextIdleAutoExpansion(query: q)
+        if wasExpanded { scheduleSustainedGlobalContextTypingCollapse() }
 
         // Search the immutable Global Context index away from the main actor. Every
         // keystroke cancels this task, so stale work cannot interrupt typing or publish
@@ -2289,7 +2309,8 @@ extension LauncherView {
                 self.globalContextViewModel.isResolvingFastMatches = false
                 self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
                     query: q,
-                    phase: hasExpandableMatch ? .expandable : .matched,
+                    phase: wasExpanded
+                        ? .expanded : (hasExpandableMatch ? .expandable : .matched),
                     topMatch: nil,
                     matchDockIcons: matchDockIcons,
                     matchDockOverflowCount: max(0, matchDockIcons.count - 3),
@@ -2297,6 +2318,24 @@ extension LauncherView {
                         self.globalContextViewModel.typingSnapshot.preparedResultsVersion
                 )
                 self.globalContextViewModel.fastMatchTask = nil
+                if wasExpanded, !matchDockIcons.isEmpty {
+                    // Keep the expanded sheet useful during inline filtering. The hot,
+                    // bounded first pass includes lightweight application rows, Global
+                    // Commands, and cached-menu hits belonging to currently running apps.
+                    // Background preparation can still replace this with richer grouping.
+                    let state = self.instantGlobalGroupedListNavigationState(for: q)
+                    self.setCachedGlobalGroupedState(
+                        query: q, state: state, animated: false)
+                    self.measuredGlobalListContentHeight = min(
+                        max(CGFloat(min(state.totalCount, 12)) * 52 + 36, 86),
+                        self.listViewVisibleHeight)
+                    self.requestWindowSizeUpdate(
+                        reason: .contentSettled, animated: false, debounceNanoseconds: 0)
+                }
+                if self.globalContextViewModel.expandWhenFastMatchesResolve {
+                    self.globalContextViewModel.expandWhenFastMatchesResolve = false
+                    _ = self.expandGlobalContextTypingMatch(selectFirst: true)
+                }
             }
         }
     }
@@ -2322,7 +2361,58 @@ extension LauncherView {
                 else { return }
                 self.globalContextViewModel.preparedResults = prepared
                 self.globalContextViewModel.typingSnapshot.preparedResultsVersion &+= 1
+                if self.globalContextViewModel.typingSnapshot.phase == .expanded,
+                    let state = prepared.navigationState,
+                    state.totalCount > 0
+                {
+                    self.setCachedGlobalGroupedState(
+                        query: prepared.query, state: state, animated: false)
+                    self.measuredGlobalListContentHeight = min(
+                        max(CGFloat(min(state.totalCount, 12)) * 52 + 36, 86),
+                        self.listViewVisibleHeight)
+                    self.requestWindowSizeUpdate(
+                        reason: .contentSettled, animated: false, debounceNanoseconds: 0)
+                }
             }
+        }
+    }
+
+    /// Spotlight-style idle reveal: matching remains detached; this only schedules the
+    /// already-existing expansion transaction after the user pauses briefly.
+    func scheduleGlobalContextIdleAutoExpansion(query: String) {
+        globalContextViewModel.autoExpandTask?.cancel()
+        globalContextViewModel.autoExpandTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 360_000_000)
+            guard !Task.isCancelled,
+                isGlobalContextActive,
+                shouldUsePureGlobalAppSearch,
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() == query,
+                globalContextViewModel.typingSnapshot.phase != .expanded
+            else { return }
+            _ = expandGlobalContextTypingMatch(selectFirst: true)
+        }
+    }
+
+    /// Preserve an expanded sheet during ordinary edits. Collapse only during a sustained
+    /// typing burst; the idle task reopens it from prepared results as soon as typing stops.
+    func scheduleSustainedGlobalContextTypingCollapse() {
+        guard globalContextViewModel.sustainedTypingCollapseTask == nil else { return }
+        globalContextViewModel.sustainedTypingCollapseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            defer { globalContextViewModel.sustainedTypingCollapseTask = nil }
+            guard !Task.isCancelled,
+                globalContextViewModel.typingSnapshot.phase == .expanded,
+                Date().timeIntervalSince(globalContextViewModel.lastTypingChangeAt) < 0.28
+            else { return }
+            let icons = globalContextViewModel.typingSnapshot.matchDockIcons
+            globalContextViewModel.typingSnapshot.phase = icons.contains(where: \.isExpandable)
+                ? .expandable : (icons.isEmpty ? .typing : .matched)
+            focusedAppPillIndex = nil
+            l2.focusedPillIndex = nil
+            measuredGlobalListContentHeight = 0
+            requestWindowSizeUpdate(
+                reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         }
     }
 
@@ -2339,6 +2429,14 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return false }
         guard globalContextViewModel.typingSnapshot.phase != .expanded else { return false }
+
+        // Fast matches resolve off the main actor. Remember an early Down Arrow instead of
+        // consuming it against an intentionally empty `.typing` snapshot. Publication of
+        // the matching snapshot immediately re-enters this function for the same query.
+        if globalContextViewModel.isResolvingFastMatches {
+            globalContextViewModel.expandWhenFastMatchesResolve = true
+            return true
+        }
 
         let started = Date()
         // 1. Results first — zero results never expand (token-word fallback covers
@@ -2370,12 +2468,10 @@ extension LauncherView {
             )
         }
 
-        // 2. Single expansion flag flips — every gate (presentation, deferral,
-        //    strip) derives from this one phase.
+        // 2. Freeze in-flight rebuilds before publishing the committed sheet payload.
+        // The expansion phase MUST remain compact until the rows and height exist; the
+        // NSPanel observes that phase transition to choose its target frame.
         globalContextViewModel.prepareTask?.cancel()
-        globalContextViewModel.typingSnapshot.phase = .expanded
-
-        // 3. Publish the results the sheet will render.
         // Generation bumps kill in-flight keystroke rebuilds even if they already
         // passed their sleep — cancel() alone loses the race and lets a stale
         // (often empty) rebuild overwrite this committed state right after ↓.
@@ -2404,7 +2500,11 @@ extension LauncherView {
         measuredGlobalListContentHeight = min(
             max(estimatedRows * 52 + 36, 86), listViewVisibleHeight)
 
-        // 6. Window follows the committed state (animated frame glide).
+        // 6. Flip the single expansion flag LAST. At this point every presentation and
+        // height gate sees the same non-empty committed state in its first expanded pass.
+        globalContextViewModel.typingSnapshot.phase = .expanded
+
+        // 7. Window follows the committed state (animated frame glide).
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {
