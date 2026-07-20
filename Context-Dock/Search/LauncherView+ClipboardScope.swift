@@ -881,8 +881,28 @@ extension LauncherView {
         refreshQuickLookPreviewForCurrentFocusIfVisible()
     }
 
+    /// Provider usage rows as SearchResults so the notification scope has content
+    /// (and a correctly-sized sheet) the moment it opens, before any notification.
+    func aiUsageSearchResults() -> [SearchResult] {
+        aiUsageScopeRows().map { row in
+            SearchResult(
+                title: row.title,
+                subtitle: row.subtitle,
+                icon: NSImage(
+                    systemSymbolName: row.systemIcon, accessibilityDescription: row.title),
+                action: {},
+                type: .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                displayBadges: ["Usage"],
+                showsTypeLabel: false,
+                dismissesLauncher: false
+            )
+        }
+    }
+
     func notificationSearchResults() -> [SearchResult] {
-        filteredNotificationsForScope().map { notification in
+        aiUsageSearchResults() + filteredNotificationsForScope().map { notification in
             SearchResult(
                 title: notification.title,
                 subtitle:
