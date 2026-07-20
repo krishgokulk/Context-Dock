@@ -416,3 +416,7 @@ Swift: +0 added · ~7 modified · -0 deleted
 ## 2026-07-20 17:05 · `9887039e` · `codex-context-dock-polish-fixes`
 **feat(global-context): add Appearance command; fix laggy settings selection**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 17:09 · `0e6153a9` · `codex-context-dock-polish-fixes`
+**feat(global-context): add Windows command with native layout scope**
+Swift: +0 added · ~3 modified · -0 deleted

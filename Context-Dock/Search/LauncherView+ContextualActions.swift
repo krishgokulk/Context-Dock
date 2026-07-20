@@ -134,6 +134,14 @@ extension LauncherView {
                 scopedBundleId: scopedBundleId, query: scopedSearchQuery)
         }
 
+        // The Quick Note command turns the scope into a capture surface: type in the
+        // input to compose (Return saves), and your saved notes render below —
+        // filtered by what you type, so the same field also searches notes.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:notepad" }) {
+            return quickNotepadScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -1260,6 +1268,84 @@ extension LauncherView {
             pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
+    }
+
+    /// Rows for the "Quick Note" (provider:notepad) scope: a Save row that captures
+    /// the current input as a note, followed by saved notes (newest first). The
+    /// outer scope filter narrows notes by the typed text, so composing and searching
+    /// share one input. Tapping a note copies it; the trailing Quit action deletes it.
+    func quickNotepadScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        var pills: [DockPill] = []
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmed.isEmpty {
+            var save = DockPill(
+                id: "notepad-save",
+                name: "Save note “\(trimmed)”",
+                icon: "square.and.pencil",
+                accentColorName: "green",
+                badge: "Return",
+                execute: {
+                    QuickNotesStore.shared.add(trimmed)
+                    searchState.query = ""
+                    clearSearchFieldEditorText()
+                    l2.focusedPillIndex = nil
+                    reclaimSearchInputFocus()
+                }
+            )
+            save.rankingKind = "systemCommand"
+            save.sourceBundleId = scopedBundleId
+            save.sourceAppName = "Quick Note"
+            save.trackingIdentifier = "notepad:save"
+            // Keyword the outer scope filter always matches so this row never drops.
+            save.searchTerms = [trimmed, "save", "note", "add"]
+            pills.append(save)
+        }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        for note in QuickNotesStore.shared.notes {
+            let when = formatter.localizedString(for: note.createdAt, relativeTo: Date())
+            var pill = DockPill(
+                id: "notepad-\(note.id.uuidString)",
+                name: note.text,
+                icon: "note.text",
+                accentColorName: "indigo",
+                badge: when,
+                execute: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(note.text, forType: .string)
+                    AppToast.show("Note copied", icon: "doc.on.doc", tint: .indigo)
+                    searchState.query = ""
+                    clearSearchFieldEditorText()
+                    l2.focusedPillIndex = nil
+                }
+            )
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = "Quick Note"
+            pill.trackingIdentifier = "notepad:\(note.id.uuidString)"
+            pill.searchTerms = [note.text, "note"]
+            pills.append(pill)
+        }
+
+        if pills.isEmpty {
+            var hint = DockPill(
+                id: "notepad-empty",
+                name: "Type a note, then press Return to save",
+                icon: "note.text",
+                accentColorName: "gray",
+                badge: nil,
+                execute: {}
+            )
+            hint.rankingKind = "systemCommand"
+            hint.sourceBundleId = scopedBundleId
+            hint.sourceAppName = "Quick Note"
+            hint.trackingIdentifier = "notepad:empty"
+            hint.searchTerms = ["note"]
+            pills.append(hint)
+        }
+        return pills
     }
 
     /// Launch (if needed) and tile. In Global Context the target app may be quit,

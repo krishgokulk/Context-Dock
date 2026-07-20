@@ -44,7 +44,8 @@ struct SystemCommand: Codable, Identifiable, Equatable {
         sliderMin: Double = 0,
         sliderMax: Double = 100,
         sliderStep: Double = 1,
-        valueScript: String = ""
+        valueScript: String = "",
+        enabled: Bool = true
     ) {
         self.id             = UUID()
         self.name           = name
@@ -53,7 +54,7 @@ struct SystemCommand: Codable, Identifiable, Equatable {
         self.scriptType     = scriptType
         self.script         = script
         self.description    = description.isEmpty ? name : description
-        self.isEnabled      = true
+        self.isEnabled      = enabled
         self.successTitle   = successTitle
         self.successMessage = successMessage
         self.undoTitle      = undoTitle
@@ -545,6 +546,16 @@ final class SystemCommandsRegistry {
             description: "Tile and arrange the frontmost window"
         ),
         SystemCommand(
+            name: "Quick Note",
+            icon: "note.text",
+            keywords: ["note", "notes", "quicknote", "notepad", "scratch", "jot", "provider:notepad"],
+            scriptType: "applescript",
+            // Enter opens the capture scope; there is no single action. The
+            // provider:notepad scope renders a Save row plus saved notes.
+            script: #"return"#,
+            description: "Capture and search quick notes"
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],
@@ -611,6 +622,41 @@ final class SystemCommandsRegistry {
             scriptType: "applescript",
             script: appleMenuClickScript("Shut Down..."),
             description: "Shut down Mac"
+        ),
+
+        // ── Example templates (disabled) ──────────────────────────────────────
+        // Shipped OFF so they don't clutter Global Context. They live in
+        // Settings → Automation → Global Commands as editable, working examples of
+        // what user-authored commands can do. Enable or duplicate to use.
+        SystemCommand(
+            name: "Ask AI",
+            icon: "sparkles",
+            keywords: ["ask", "ai", "explain", "assistant"],
+            scriptType: "aiPrompt",
+            script: "Act on the selected text. Selection:\n\n$CD_TEXT\n\nRequest: $CD_QUERY",
+            description: "Example: send your selection + query to AI",
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Open in Chrome",
+            icon: "safari",
+            keywords: ["chrome", "open in chrome", "browser"],
+            scriptType: "applescript",
+            script: #"do shell script "open -a 'Google Chrome' " & quoted form of (system attribute "CD_URL")"#,
+            description: "Example: open the current page URL in Chrome (uses $CD_URL)",
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Focus",
+            icon: "moon.circle",
+            keywords: ["focus", "dnd", "do not disturb", "presets:Work|Personal|Off"],
+            scriptType: "bash",
+            script: #"""
+            shortcuts run "Focus $CD_QUERY" 2>/dev/null \
+              || open "x-apple.systempreferences:com.apple.Focus-Settings.extension"
+            """#,
+            description: "Example: run a Focus shortcut; scope for Work / Personal / Off",
+            enabled: false
         ),
     ]
 }

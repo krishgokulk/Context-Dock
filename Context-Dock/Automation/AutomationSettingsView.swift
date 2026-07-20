@@ -6638,6 +6638,8 @@ end tell
                             Text("None").tag("none")
                             Text("Bluetooth devices").tag("bluetooth")
                             Text("Wi-Fi networks").tag("wifi")
+                            Text("Window layouts").tag("windows")
+                            Text("Quick notes").tag("notepad")
                         }
                         .pickerStyle(.menu)
                         TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
