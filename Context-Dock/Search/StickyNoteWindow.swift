@@ -8,6 +8,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class StickyNotesManager {
@@ -51,6 +52,10 @@ final class StickyNotesManager {
         panel.isReleasedWhenClosed = false
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // Native window tabs: new notes join the existing sticky as a tab rather
+        // than scattering separate floating windows.
+        panel.tabbingMode = .preferred
+        panel.tabbingIdentifier = "context-dock-sticky"
 
         let root = StickyNoteView(
             noteID: id,
@@ -74,6 +79,10 @@ final class StickyNotesManager {
         }
 
         windows[id] = panel
+        // Attach as a tab to an already-open sticky when there is one.
+        if let host = windows.first(where: { $0.key != id })?.value {
+            host.addTabbedWindow(panel, ordered: .above)
+        }
         panel.orderFrontRegardless()
     }
 
@@ -151,17 +160,30 @@ private struct StickyNoteView: View {
     /// to the selected AI provider and appends the reply into this note.
     private var composer: some View {
         HStack(spacing: 8) {
-            // Attach a file into the note (same idea as the chat composer's "+").
-            Button(action: attachFile) {
+            // Same attach menu the Quick Note scope offers.
+            Menu {
+                Button(action: attachFrontmostWindow) {
+                    Label("Attach Frontmost Window", systemImage: "macwindow")
+                }
+                Divider()
+                Button { attachFile(imagesOnly: true) } label: {
+                    Label("Upload Photo", systemImage: "photo")
+                }
+                Button { captureScreen(interactive: false) } label: {
+                    Label("Take Screenshot", systemImage: "camera.viewfinder")
+                }
+                Button { captureScreen(interactive: true) } label: {
+                    Label("Capture Area", systemImage: "crop")
+                }
+            } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .help("Attach a file reference")
-            Image(systemName: "sparkles")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Attach context")
             TextField("Ask AI…", text: $prompt)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
@@ -227,18 +249,54 @@ private struct StickyNoteView: View {
         )
     }
 
-    private func attachFile() {
+    private func append(_ text: String) {
+        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
+        store.updateText(existing.isEmpty ? text : existing + "\n" + text, for: noteID)
+    }
+
+    private func attachFile(imagesOnly: Bool) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
         panel.message = "Attach files to this note"
         guard panel.runModal() == .OK else { return }
         let lines = panel.urls.map { "\($0.lastPathComponent) — \($0.path)" }
             .joined(separator: "\n")
         guard !lines.isEmpty else { return }
-        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
-        store.updateText(existing.isEmpty ? lines : existing + "\n" + lines, for: noteID)
+        append(lines)
+    }
+
+    private func captureScreen(interactive: Bool) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
+        var args = interactive ? ["-i"] : ["-x"]
+        args.append(url.path)
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            process.arguments = args
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch { return }
+            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            await MainActor.run { append("Screenshot — \(url.path)") }
+        }
+    }
+
+    private func attachFrontmostWindow() {
+        let ctx = AXContextReader.shared.current
+        let name = ctx.appName.isEmpty ? "Frontmost app" : ctx.appName
+        var parts = ["Frontmost app: \(name)"]
+        if let title = ctx.windowTitle, !title.isEmpty { parts.append("Window: \(title)") }
+        if let url = ctx.currentURL, !url.isEmpty { parts.append("URL: \(url)") }
+        if let sel = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines), !sel.isEmpty
+        {
+            parts.append("Selected text:\n\(sel)")
+        }
+        append(parts.joined(separator: "\n"))
     }
 
     /// Follows the app's Appearance settings (Liquid Glass + Glass Darkness) so a

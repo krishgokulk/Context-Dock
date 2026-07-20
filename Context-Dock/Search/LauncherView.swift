@@ -3116,6 +3116,8 @@ struct LauncherView: View {
         if let key = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: key)
         }
+        // Leaving a compact scope re-enables the normal hide-on-focus-loss behavior.
+        AppDelegate.shared?.smartScopeActive = false
         let retainedQuery = searchState.query
         l2.terminalDismissed = false
         pendingAIMenuProposal = nil

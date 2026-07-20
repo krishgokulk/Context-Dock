@@ -1498,11 +1498,23 @@ extension LauncherView {
                                 copyClipboardEntryToPasteboard(entry)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(clipboardEntryPreviewText(entry))
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(3)
-                                        .multilineTextAlignment(.leading)
+                                    // Real content preview: image clips render their
+                                    // thumbnail, everything else shows its actual text.
+                                    if let data = entry.imageData,
+                                        let image = NSImage(data: data)
+                                    {
+                                        Image(nsImage: image)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: 112, height: 40)
+                                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                                    } else {
+                                        Text(clipboardEntryPreviewText(entry))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(3)
+                                            .multilineTextAlignment(.leading)
+                                    }
                                     Spacer(minLength: 0)
                                     if !entry.sourceAppName.isEmpty {
                                         Text(entry.sourceAppName)

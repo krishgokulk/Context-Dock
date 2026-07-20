@@ -500,3 +500,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-20 20:57 · `a2923d00` · `codex-context-dock-polish-fixes`
 **feat(sticky): attach + new-note buttons, app appearance; fix scope backspace**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 21:00 · `22278f91` · `codex-context-dock-polish-fixes`
+**feat(clipboard): split scope surface — recent rail + per-app pills**
+Swift: +0 added · ~2 modified · -0 deleted

@@ -1164,6 +1164,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !settings.alwaysFloatDock else { return }
         // Pinned via the pin button: stays floating over every app until unpinned.
         guard !settings.launcherPinned else { return }
+        // Clipboard / Notifications scopes stay put — the user opened them to work
+        // alongside another app, so focus loss must not tear them down.
+        guard !smartScopeActive else { return }
         guard Date() >= suppressHideOnResignUntil else { return }
         // A chat-approved command can briefly activate its target app (`code --status`
         // spawns VS Code's CLI and VS Code takes focus). That's not the user clicking
@@ -1665,7 +1668,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         presentSmartScope(.activateClipboardScope)
     }
 
+    /// True while a compact scope (Clipboard / Notifications) is showing, so the
+    /// launcher does not auto-hide when another app takes focus.
+    var smartScopeActive = false
+
     private func presentSmartScope(_ notificationName: Notification.Name) {
+        smartScopeActive = true
         smartScopeActivationGeneration &+= 1
         let generation = smartScopeActivationGeneration
         DispatchQueue.main.async {
