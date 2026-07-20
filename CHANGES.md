@@ -448,3 +448,7 @@ Swift: +0 added · ~5 modified · -0 deleted
 ## 2026-07-20 18:49 · `5bb0558c` · `codex-context-dock-polish-fixes`
 **feat(quick-note): drag-drop files into notes; fix app-scope pills in scope input**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 18:52 · `19367559` · `codex-context-dock-polish-fixes`
+**feat(quick-note): attach frontmost window context to AI prompt**
+Swift: +0 added · ~4 modified · -0 deleted

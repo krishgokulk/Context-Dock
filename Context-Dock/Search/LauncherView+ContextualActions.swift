@@ -1453,9 +1453,25 @@ extension LauncherView {
         notepadFrontmostLabel = appName
     }
 
+    /// Open the file picker and append the chosen images/files to the Quick Note
+    /// AI attachments.
+    func attachNotepadFiles(imagesOnly: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
+        panel.message = "Choose files to attach to your note"
+        if panel.runModal() == .OK {
+            let newURLs = panel.urls.filter { !notepadAttachments.contains($0) }
+            notepadAttachments.append(contentsOf: newURLs)
+        }
+    }
+
     func submitNotepadAIPrompt(_ prompt: String) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !notepadAIGenerating else { return }
+        let attached = notepadAttachments
+        guard !(trimmed.isEmpty && attached.isEmpty), !notepadAIGenerating else { return }
 
         let targetID: UUID
         if let id = notepadSelectedNoteID,
@@ -1467,16 +1483,21 @@ extension LauncherView {
             notepadSelectedNoteID = targetID
         }
 
+        // With only attachments and no text, ask the model to write from them.
+        let request = trimmed.isEmpty
+            ? "Write a note from the attached image(s)/file(s)."
+            : trimmed
         // Fold in the attached frontmost-window context, if any, then clear it.
         let aiQuery: String
         if let context = notepadFrontmostContext {
             aiQuery =
-                "Context from the user's frontmost window:\n\(context)\n\n---\n\nRequest: \(trimmed)"
+                "Context from the user's frontmost window:\n\(context)\n\n---\n\nRequest: \(request)"
         } else {
-            aiQuery = trimmed
+            aiQuery = request
         }
         notepadFrontmostContext = nil
         notepadFrontmostLabel = nil
+        notepadAttachments = []
 
         notepadAIGenerating = true
         searchState.query = ""
@@ -1485,7 +1506,7 @@ extension LauncherView {
         Task { [weak store = QuickNotesStore.shared] in
             let reply: String
             do {
-                reply = try await sendToAIProvider(query: aiQuery)
+                reply = try await sendToAIProvider(query: aiQuery, attachments: attached)
             } catch {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }

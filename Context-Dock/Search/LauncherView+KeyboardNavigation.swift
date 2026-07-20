@@ -181,7 +181,7 @@ extension LauncherView {
                     !event.modifierFlags.contains(.shift)
                 {
                     let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !q.isEmpty {
+                    if !q.isEmpty || !self.notepadAttachments.isEmpty {
                         self.submitNotepadAIPrompt(q)
                         return nil
                     }

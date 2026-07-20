@@ -265,7 +265,22 @@ extension LauncherView {
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
                 frontmostLabel: notepadFrontmostLabel,
+                attachments: notepadAttachments,
                 onAttachFrontmost: { toggleNotepadFrontmostContext() },
+                onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
+                onTakeScreenshot: {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureArea: {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onRemoveAttachment: { url in
+                    notepadAttachments.removeAll { $0 == url }
+                },
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)
@@ -324,7 +339,22 @@ extension LauncherView {
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
                 frontmostLabel: notepadFrontmostLabel,
+                attachments: notepadAttachments,
                 onAttachFrontmost: { toggleNotepadFrontmostContext() },
+                onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
+                onTakeScreenshot: {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureArea: {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onRemoveAttachment: { url in
+                    notepadAttachments.removeAll { $0 == url }
+                },
                 onExit: {
                     if let scope = globalInlineAppScope {
                         removeGlobalInlineAppScope(scope)

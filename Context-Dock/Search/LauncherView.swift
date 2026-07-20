@@ -23,6 +23,8 @@ struct LauncherView: View {
     // Frontmost-window context attached to the next Quick Note AI prompt.
     @State var notepadFrontmostContext: String? = nil
     @State var notepadFrontmostLabel: String? = nil
+    // Image/file attachments for the next Quick Note AI prompt.
+    @State var notepadAttachments: [URL] = []
     // Max visible list height: rows beyond this scroll inside the glass card.
     let listViewVisibleHeight: CGFloat = 372
     // These are isolated from searchState so their mutations don't trigger a struct-wide re-render

@@ -15,7 +15,12 @@ struct NotepadScopeView: View {
     var isGenerating: Bool = false
     var aiProviderName: String = "AI"
     var frontmostLabel: String? = nil
+    var attachments: [URL] = []
     var onAttachFrontmost: () -> Void = {}
+    var onUploadPhoto: () -> Void = {}
+    var onTakeScreenshot: () -> Void = {}
+    var onCaptureArea: () -> Void = {}
+    var onRemoveAttachment: (URL) -> Void = { _ in }
     var onExit: () -> Void
 
     @FocusState private var editorFocused: Bool
@@ -51,14 +56,30 @@ struct NotepadScopeView: View {
                     .foregroundStyle(.tertiary)
                     .tracking(0.7)
                 Spacer()
-                // Attach the frontmost window's context to the next AI prompt.
-                Button(action: onAttachFrontmost) {
-                    Image(systemName: frontmostLabel == nil ? "plus.viewfinder" : "checkmark.circle.fill")
+                // Attach context for the next AI prompt: frontmost window, photo,
+                // full screenshot, or a captured region.
+                Menu {
+                    Button(action: onAttachFrontmost) {
+                        Label(
+                            frontmostLabel == nil
+                                ? "Attach Frontmost Window" : "Detach \(frontmostLabel!)",
+                            systemImage: "macwindow")
+                    }
+                    Divider()
+                    Button(action: onUploadPhoto) { Label("Upload Photo", systemImage: "photo") }
+                    Button(action: onTakeScreenshot) {
+                        Label("Take Screenshot", systemImage: "camera.viewfinder")
+                    }
+                    Button(action: onCaptureArea) { Label("Capture Area", systemImage: "crop") }
+                } label: {
+                    Image(systemName: "plus.circle")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(frontmostLabel == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.green))
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .help(frontmostLabel == nil ? "Attach frontmost window to AI" : "Attached: \(frontmostLabel!)")
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Attach context for AI")
                 Button {
                     let id = store.create()
                     selectedNoteID = id
@@ -93,6 +114,34 @@ struct NotepadScopeView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(Color.green.opacity(0.10))
+            }
+
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(attachments, id: \.self) { url in
+                            HStack(spacing: 4) {
+                                Image(systemName: "paperclip")
+                                    .font(.system(size: 9))
+                                Text(url.lastPathComponent)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 90)
+                                Button { onRemoveAttachment(url) } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 7, weight: .bold))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.12), in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
             }
 
             Divider()

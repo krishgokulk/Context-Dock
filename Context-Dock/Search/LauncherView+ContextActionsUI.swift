@@ -55,29 +55,34 @@ extension LauncherView {
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
 
-            // Attach file/photo button
-            Button {
-                let panel = NSOpenPanel()
-                panel.canChooseFiles = true
-                panel.canChooseDirectories = false
-                panel.allowsMultipleSelection = true
-                panel.allowedContentTypes = [.image, .pdf, .plainText, .data]
-                panel.message = "Choose files to attach to your message"
-                if panel.runModal() == .OK {
-                    withAnimation {
-                        let newURLs = panel.urls.filter { url in
-                            !aiMode.attachments.contains(url)
-                        }
-                        aiMode.attachments.append(contentsOf: newURLs)
+            // Attach menu: file / photo / screenshot / capture area
+            Menu {
+                Button {
+                    attachAIFiles(imagesOnly: false)
+                } label: { Label("Upload File", systemImage: "doc") }
+                Button {
+                    attachAIFiles(imagesOnly: true)
+                } label: { Label("Upload Photo", systemImage: "photo") }
+                Divider()
+                Button {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        withAnimation { aiMode.attachments.append(url) }
                     }
-                }
+                } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
+                Button {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        withAnimation { aiMode.attachments.append(url) }
+                    }
+                } label: { Label("Capture Area", systemImage: "crop") }
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary.opacity(aiMode.attachments.isEmpty ? 0.6 : 0.9))
             }
-            .buttonStyle(.plain)
-            .help("Attach file or image")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Attach file, photo, or screenshot")
 
             // Clear chat button
             if !aiMode.messages.isEmpty {
@@ -105,6 +110,50 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+    }
+
+    /// Open the file picker and append the chosen files to the AI chat attachments.
+    func attachAIFiles(imagesOnly: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
+        panel.message = "Choose files to attach to your message"
+        if panel.runModal() == .OK {
+            withAnimation {
+                let newURLs = panel.urls.filter { !aiMode.attachments.contains($0) }
+                aiMode.attachments.append(contentsOf: newURLs)
+            }
+        }
+    }
+
+    /// Capture a screenshot via `screencapture` — full screen (`-x`) or an
+    /// interactive region (`-i`) — and hand the PNG to `append` on the main actor.
+    /// Requires Screen Recording permission; a denied capture simply writes nothing.
+    func captureScreenshotToAttachments(
+        interactive: Bool, append: @escaping (URL) -> Void
+    ) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
+        var args = interactive ? ["-i"] : ["-x"]
+        args.append(url.path)
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            process.arguments = args
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                return
+            }
+            if FileManager.default.fileExists(atPath: url.path),
+                (try? Data(contentsOf: url))?.isEmpty == false
+            {
+                await MainActor.run { append(url) }
+            }
+        }
     }
 
     var providerColor: SwiftUI.Color {
