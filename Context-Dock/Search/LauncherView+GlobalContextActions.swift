@@ -3554,7 +3554,11 @@ extension LauncherView {
             l2.targetApp == nil,
             lockedSubmenuParent == nil,
             lockedFindToken == nil,
-            !suppressGlobalInlineAppScopeDetection
+            !suppressGlobalInlineAppScopeDetection,
+            // Inside a System Command provider scope (Quick Note, Windows, …) the input
+            // is a prompt/filter, not a scope-building query — never convert typed words
+            // like "apple notes app" into app-scope chips.
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)

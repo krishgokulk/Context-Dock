@@ -6,6 +6,7 @@
 // right — type to edit or update the selected note, saved as you go.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct NotepadScopeView: View {
     @ObservedObject var store = QuickNotesStore.shared
@@ -146,6 +147,10 @@ struct NotepadScopeView: View {
                     .scrollContentBackground(.hidden)
                     .padding(12)
                     .background(Color.clear)
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                        handleDrop(providers, into: id)
+                        return true
+                    }
                 if isGenerating {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -179,6 +184,22 @@ struct NotepadScopeView: View {
             get: { store.notes.first(where: { $0.id == id })?.text ?? "" },
             set: { store.updateText($0, for: id) }
         )
+    }
+
+    /// Dropped files are appended to the note as `name — path` lines, so the note
+    /// keeps a reference you can click or feed to AI.
+    private func handleDrop(_ providers: [NSItemProvider], into id: UUID) {
+        for provider in providers where provider.canLoadObject(ofClass: URL.self) {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.isFileURL else { return }
+                let line = "\(url.lastPathComponent) — \(url.path)"
+                DispatchQueue.main.async {
+                    let existing = store.notes.first(where: { $0.id == id })?.text ?? ""
+                    let joined = existing.isEmpty ? line : existing + "\n" + line
+                    store.updateText(joined, for: id)
+                }
+            }
+        }
     }
 
     // MARK: - Helpers
