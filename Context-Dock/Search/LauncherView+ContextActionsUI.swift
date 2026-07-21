@@ -88,78 +88,55 @@ extension LauncherView {
             Button {
                 isShowingChatFocusAppPicker.toggle()
             } label: {
-                ZStack {
-                    if let bundleId = chatFocusApps.last?.bundleId,
-                        let icon = chatFocusAppIcon(bundleId: bundleId)
-                    {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 18, height: 18)
-                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            .opacity(isHoveringChatFocusAppIcon ? 0.22 : 1)
-                    } else {
-                        Image(systemName: "app.badge")
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary.opacity(0.6))
-                    }
-
-                    if !chatFocusApps.isEmpty, isHoveringChatFocusAppIcon {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.primary)
-                    }
-                }
+                Image(systemName: "app.badge")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary.opacity(0.6))
                 .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
-            .help(chatFocusApps.isEmpty ? "Ask about running apps" : "Focused: \(chatFocusApps.map(\.name).joined(separator: ", "))")
+            .help("Add running apps")
             .popover(isPresented: $isShowingChatFocusAppPicker, arrowEdge: .top) {
                 chatFocusAppPicker
             }
-            .onHover { hovering in
-                isHoveringChatFocusAppIcon = hovering
-            }
-            .overlay {
-                if !chatFocusApps.isEmpty, isHoveringChatFocusAppIcon {
-                    Button {
-                        chatFocusApps.removeAll()
-                        isHoveringChatFocusAppIcon = false
-                    } label: {
-                        Color.clear
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Remove focused app")
-                }
-            }
 
-            if let focusedApp = chatFocusApps.first {
-                HStack(spacing: 4) {
-                    AppBundleIconView(
-                        bundleId: focusedApp.bundleId,
-                        fallbackSymbol: "app.dashed",
-                        size: 11,
-                        cornerRadius: 2
-                    )
-                    Text(focusedApp.name)
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                    if chatFocusApps.count > 1 {
-                        Text("+\(chatFocusApps.count - 1)")
-                            .font(.system(size: 9, weight: .bold))
+            if !chatFocusApps.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(chatFocusApps) { focusedApp in
+                        Button {
+                            chatFocusApps.removeAll { $0.bundleId == focusedApp.bundleId }
+                        } label: {
+                            ZStack {
+                                AppBundleIconView(
+                                    bundleId: focusedApp.bundleId,
+                                    fallbackSymbol: "app.dashed",
+                                    size: 18,
+                                    cornerRadius: 4
+                                )
+                                .opacity(
+                                    hoveredChatFocusBundleId == focusedApp.bundleId ? 0.22 : 1
+                                )
+
+                                if hoveredChatFocusBundleId == focusedApp.bundleId {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.primary)
+                                }
+                            }
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove \(focusedApp.name)")
+                        .onHover { hovering in
+                            withAnimation(.easeOut(duration: 0.1)) {
+                                hoveredChatFocusBundleId = hovering
+                                    ? focusedApp.bundleId : nil
+                            }
+                        }
                     }
-                    Button {
-                        chatFocusApps.removeAll()
-                    } label: {
-                        Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
-                    }
-                    .buttonStyle(.plain)
                 }
-                .foregroundStyle(Color.accentColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
                 .background(Color.accentColor.opacity(0.12), in: Capsule())
             }
 
@@ -268,16 +245,6 @@ extension LauncherView {
                 return (name, bundleId, icon)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    func chatFocusAppIcon(bundleId: String) -> NSImage? {
-        if let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == bundleId && !$0.isTerminated
-        }) {
-            return resolvedRunningAppIcon(for: app) ?? app.icon
-        }
-        let appName = chatFocusApps.first(where: { $0.bundleId == bundleId })?.name
-        return resolvedApplicationIcon(bundleIdentifier: bundleId, appName: appName)
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.

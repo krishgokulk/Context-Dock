@@ -37,7 +37,6 @@ struct LauncherView: View {
     @State var clipboardSourcePillFocusIndex: Int? = nil
     // Running apps explicitly shared with General AI chat from the app picker.
     @State var chatFocusApps: [GeneralChatFocusApp] = []
-    @State var isHoveringChatFocusAppIcon = false
     @State var isShowingChatFocusAppPicker = false
     @State var hoveredChatFocusBundleId: String? = nil
     // Max visible list height: rows beyond this scroll inside the glass card.
