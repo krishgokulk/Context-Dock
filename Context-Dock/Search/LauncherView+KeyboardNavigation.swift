@@ -542,7 +542,9 @@ extension LauncherView {
                 q.isEmpty,
                 event.keyCode == 124,
                 self.focusedAppPillIndex == nil,
-                self.l2.focusedPillIndex == nil
+                self.l2.focusedPillIndex == nil,
+                self.currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
+                self.currentGlobalScopedBundleID?.hasPrefix("cli://") != true
             {
                 _ = self.cycleGlobalContextAppScope(direction: 1)
                 self.focusedAppPillIndex = nil

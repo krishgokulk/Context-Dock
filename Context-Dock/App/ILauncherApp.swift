@@ -74,6 +74,14 @@ class KeyableWindow: NSPanel {
 
     // Make window draggable by background with smooth tracking
     override func mouseDragged(with event: NSEvent) {
+        // The launcher window can be taller than its currently rendered card while an
+        // animated result-sheet resize settles. Never let that transparent remainder act
+        // as a drag handle: a drag started below the visible sheet must pass through
+        // without translating the launcher.
+        guard isMovableByWindowBackground else {
+            super.mouseDragged(with: event)
+            return
+        }
         guard let initialMouse = initialMouseLocation,
             let initialOrigin = initialWindowOrigin
         else {
@@ -985,7 +993,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
         launcherWindow?.level = windowLevel
         launcherWindow?.collectionBehavior = currentDockCollectionBehavior()
-        launcherWindow?.isMovableByWindowBackground = true
+        // This borderless panel previously treated transparent space below a result sheet
+        // as draggable window background. That made clicks/drags outside the visible card
+        // move the entire launcher. The shared dock shell is intentionally position-stable.
+        launcherWindow?.isMovableByWindowBackground = false
         // No window shadow: on a tight transparent window it renders as a hard dark
         // edge that fights the glass rim (double outline). A soft shadow needs window
         // margin around the card — handled in SwiftUI instead.
