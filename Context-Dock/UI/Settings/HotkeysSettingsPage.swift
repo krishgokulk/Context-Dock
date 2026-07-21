@@ -35,20 +35,64 @@ struct HotkeysSettingsPage: View {
                 }
 
                 CardSection(title: "Custom Shortcuts", systemImage: "keyboard") {
-                    ClipboardHotkeyRecorderRow(
-                        icon: "doc.on.clipboard", iconColor: .orange,
-                        title: "Clipboard Scope",
-                        subtitle: "Open clipboard history as a chat-ready scope from anywhere",
-                        displayString: settings.clipboardScopeHotkeyDisplayString,
-                        onClear: {
-                            settings.clipboardScopeHotkeyKeyCode = 0
-                            settings.clipboardScopeHotkeyModifiers = 0
+                    VStack(spacing: 0) {
+                        ClipboardHotkeyRecorderRow(
+                            icon: "doc.on.clipboard", iconColor: .orange,
+                            title: "Clipboard Scope",
+                            subtitle: "Open clipboard history as a chat-ready scope from anywhere",
+                            displayString: settings.clipboardScopeHotkeyDisplayString,
+                            onClear: {
+                                settings.clipboardScopeHotkeyKeyCode = 0
+                                settings.clipboardScopeHotkeyModifiers = 0
+                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                            }
+                        ) { kc, mod in
+                            settings.clipboardScopeHotkeyKeyCode = kc
+                            settings.clipboardScopeHotkeyModifiers = mod
                             NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
                         }
-                    ) { kc, mod in
-                        settings.clipboardScopeHotkeyKeyCode = kc
-                        settings.clipboardScopeHotkeyModifiers = mod
-                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                        Divider()
+                        captureHotkeyRow(
+                            icon: "text.viewfinder", color: .blue,
+                            title: "Capture Text",
+                            subtitle: "Select text on screen, OCR it, and save it to Clipboard",
+                            display: settings.captureTextHotkeyDisplayString,
+                            clear: {
+                                settings.captureTextHotkeyKeyCode = 0
+                                settings.captureTextHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.captureTextHotkeyKeyCode = $0
+                                settings.captureTextHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
+                            icon: "crop", color: .purple,
+                            title: "Capture Area",
+                            subtitle: "Select a screen region and save its image to Clipboard",
+                            display: settings.captureAreaHotkeyDisplayString,
+                            clear: {
+                                settings.captureAreaHotkeyKeyCode = 0
+                                settings.captureAreaHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.captureAreaHotkeyKeyCode = $0
+                                settings.captureAreaHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
+                            icon: "camera.viewfinder", color: .green,
+                            title: "Screenshot",
+                            subtitle: "Capture the full screen and save its image to Clipboard",
+                            display: settings.captureScreenshotHotkeyDisplayString,
+                            clear: {
+                                settings.captureScreenshotHotkeyKeyCode = 0
+                                settings.captureScreenshotHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.captureScreenshotHotkeyKeyCode = $0
+                                settings.captureScreenshotHotkeyModifiers = $1
+                            })
                     }
                     .padding(.vertical, 4)
                 }
@@ -78,6 +122,25 @@ struct HotkeysSettingsPage: View {
             }
             .padding(28)
         }
+    }
+
+    private func captureHotkeyRow(
+        icon: String, color: Color, title: String, subtitle: String, display: String,
+        clear: @escaping () -> Void,
+        apply: @escaping (UInt32, UInt32) -> Void
+    ) -> some View {
+        ClipboardHotkeyRecorderRow(
+            icon: icon, iconColor: color, title: title, subtitle: subtitle,
+            displayString: display,
+            onClear: {
+                clear()
+                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+            }
+        ) { keyCode, modifiers in
+            apply(keyCode, modifiers)
+            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+        }
+        .padding(.vertical, 4)
     }
 }
 

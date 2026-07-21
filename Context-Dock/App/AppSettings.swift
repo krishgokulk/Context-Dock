@@ -847,6 +847,12 @@ class AppSettings: ObservableObject {
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
     @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
+    @AppStorage("captureTextHotkeyKeyCode") private var _captureTextHotkeyKeyCode: Int = 0
+    @AppStorage("captureTextHotkeyModifiers") private var _captureTextHotkeyModifiers: Int = 0
+    @AppStorage("captureAreaHotkeyKeyCode") private var _captureAreaHotkeyKeyCode: Int = 0
+    @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
+    @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
+    @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()
@@ -1619,6 +1625,31 @@ class AppSettings: ObservableObject {
     }
     var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
 
+    var captureTextHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureTextHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureTextHotkeyKeyCode = Int(newValue) }
+    }
+    var captureTextHotkeyModifiers: UInt32 {
+        get { UInt32(_captureTextHotkeyModifiers) }
+        set { objectWillChange.send(); _captureTextHotkeyModifiers = Int(newValue) }
+    }
+    var captureAreaHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureAreaHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureAreaHotkeyKeyCode = Int(newValue) }
+    }
+    var captureAreaHotkeyModifiers: UInt32 {
+        get { UInt32(_captureAreaHotkeyModifiers) }
+        set { objectWillChange.send(); _captureAreaHotkeyModifiers = Int(newValue) }
+    }
+    var captureScreenshotHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureScreenshotHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureScreenshotHotkeyKeyCode = Int(newValue) }
+    }
+    var captureScreenshotHotkeyModifiers: UInt32 {
+        get { UInt32(_captureScreenshotHotkeyModifiers) }
+        set { objectWillChange.send(); _captureScreenshotHotkeyModifiers = Int(newValue) }
+    }
+
     init() {
         migrateAIKeysToKeychain()
         loadPinnedApps()
@@ -2308,6 +2339,17 @@ class AppSettings: ObservableObject {
     var clipboardScopeHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: clipboardScopeHotkeyKeyCode, modifiers: clipboardScopeHotkeyModifiers)
+    }
+    var captureTextHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: captureTextHotkeyKeyCode, modifiers: captureTextHotkeyModifiers)
+    }
+    var captureAreaHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: captureAreaHotkeyKeyCode, modifiers: captureAreaHotkeyModifiers)
+    }
+    var captureScreenshotHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: captureScreenshotHotkeyKeyCode,
+            modifiers: captureScreenshotHotkeyModifiers)
     }
 
     // Computed property to get hotkey display string

@@ -249,6 +249,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var contextDockEventHandlerRef: EventHandlerRef?   // stored so re-register removes old handler
     var clipboardScopeHotKeyRef: EventHotKeyRef?
     var clipboardScopeEventHandlerRef: EventHandlerRef? // stored so re-register removes old handler
+    var captureTextHotKeyRef: EventHotKeyRef?
+    var captureAreaHotKeyRef: EventHotKeyRef?
+    var captureScreenshotHotKeyRef: EventHotKeyRef?
+    var captureHotkeyEventHandlerRef: EventHandlerRef?
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
     var suppressHideOnResignUntil: Date = .distantPast
@@ -423,6 +427,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerCaptureHotkeys()
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -618,6 +623,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerCaptureHotkeys()
     }
 
     func setupApplicationMenu() {
@@ -689,6 +695,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerCaptureHotkeys()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
     }
@@ -1239,6 +1246,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             UnregisterEventHotKey(ref)
             clipboardScopeHotKeyRef = nil
         }
+        unregisterCaptureHotkeys()
 
         if let eventHandler = eventHandler {
             RemoveEventHandler(eventHandler)
@@ -1333,6 +1341,71 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RegisterEventHotKey(
             settings.clipboardScopeHotkeyKeyCode, settings.clipboardScopeHotkeyModifiers,
             hotKeyID, GetApplicationEventTarget(), 0, &clipboardScopeHotKeyRef)
+    }
+
+    func unregisterCaptureHotkeys() {
+        if let ref = captureHotkeyEventHandlerRef {
+            RemoveEventHandler(ref)
+            captureHotkeyEventHandlerRef = nil
+        }
+        for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef] {
+            if let ref { UnregisterEventHotKey(ref) }
+        }
+        captureTextHotKeyRef = nil
+        captureAreaHotKeyRef = nil
+        captureScreenshotHotKeyRef = nil
+    }
+
+    func registerCaptureHotkeys() {
+        unregisterCaptureHotkeys()
+        let configured = [
+            settings.captureTextHotkeyKeyCode,
+            settings.captureAreaHotkeyKeyCode,
+            settings.captureScreenshotHotkeyKeyCode,
+        ].contains { $0 != 0 }
+        guard configured else { return }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { _, event, _ in
+            guard let event else { return noErr }
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+            guard status == noErr else { return status }
+            switch hotKeyID.id {
+            case 41: ScreenCaptureService.shared.capture(.text)
+            case 42: ScreenCaptureService.shared.capture(.area)
+            case 43: ScreenCaptureService.shared.capture(.screenshot)
+            default: break
+            }
+            return noErr
+        }
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, nil,
+            &captureHotkeyEventHandlerRef)
+
+        let signature = FourCharCode(bitPattern: 0x494C_6370) // 'ILcp'
+        if settings.captureTextHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 41)
+            RegisterEventHotKey(
+                settings.captureTextHotkeyKeyCode, settings.captureTextHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &captureTextHotKeyRef)
+        }
+        if settings.captureAreaHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 42)
+            RegisterEventHotKey(
+                settings.captureAreaHotkeyKeyCode, settings.captureAreaHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &captureAreaHotKeyRef)
+        }
+        if settings.captureScreenshotHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 43)
+            RegisterEventHotKey(
+                settings.captureScreenshotHotkeyKeyCode,
+                settings.captureScreenshotHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &captureScreenshotHotKeyRef)
+        }
     }
 
     func registerDoubleOptionMonitor() {
