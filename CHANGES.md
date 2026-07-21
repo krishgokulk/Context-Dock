@@ -600,3 +600,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-21 22:22 · `cd3eb355` · `codex-context-dock-polish-fixes`
 **fix: crash in cleanResponse + API keys wiped on launch**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 22:47 · `745ee93a` · `codex-context-dock-polish-fixes`
+**fix(ai): built-in MCPs reachable live and in scoped chat**
+Swift: +0 added · ~3 modified · -0 deleted

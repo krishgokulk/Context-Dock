@@ -4828,6 +4828,8 @@ extension LauncherView {
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
         async throws -> String
     {
+        // Pick up MCPs toggled on this session so scoped chat sees them without relaunch.
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
         let scopedForRead = currentContextDockChatScope
         let isMessagesScope = scopedForRead.bundleId.caseInsensitiveCompare(
             "com.apple.MobileSMS") == .orderedSame
