@@ -596,3 +596,7 @@ Swift: +1 added · ~8 modified · -0 deleted
 ## 2026-07-21 19:31 · `1ace7d12` · `codex-context-dock-polish-fixes`
 **fix(perf): stop 100% CPU loop when browser history is unreadable**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 22:22 · `cd3eb355` · `codex-context-dock-polish-fixes`
+**fix: crash in cleanResponse + API keys wiped on launch**
+Swift: +0 added · ~2 modified · -0 deleted

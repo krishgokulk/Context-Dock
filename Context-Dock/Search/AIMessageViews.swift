@@ -261,10 +261,12 @@ struct ExtensionProposalData: Codable {
     static func cleanResponse(_ text: String) -> String {
         guard let s = text.range(of: markerStart),
             let e = text.range(of: markerEnd),
-            e.upperBound <= text.endIndex
+            s.lowerBound <= e.upperBound
         else { return text }
         var result = text
-        result.removeSubrange(s.lowerBound...e.upperBound)
+        // Half-open range: a closed `...e.upperBound` traps when the marker ends at
+        // endIndex (no index after endIndex) — the SIGTRAP seen in the wild.
+        result.removeSubrange(s.lowerBound..<e.upperBound)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
