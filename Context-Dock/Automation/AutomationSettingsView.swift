@@ -791,9 +791,9 @@ struct AutomationSettingsView: View {
                     isEnabled: cmd.isEnabled
                 )
                 .tag(cmd.id)
-                .onTapGesture {
-                    selectedPackageID = nil
-                }
+                // No .onTapGesture here: it competes with List(selection:)'s own tap
+                // recognizer and makes selection feel laggy / need a second click.
+                // selectedPackageID is already cleared by onChange(of: selectedSystemCommandID).
             }
             .onDelete { idx in
                 let toRemove = idx.map { cmds[$0] }
@@ -2897,7 +2897,7 @@ struct SkillEditorSheet: View {
                             .frame(minHeight: 200)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     }
-                    Label("Skills add reusable context to scoped AI chat for this app. They never run commands or grant permissions.",
+                    Label("Skills guide scoped chat to the right linked tool. They can request a CLI command, but never grant execution permission.",
                         systemImage: "info.circle")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
@@ -2948,11 +2948,111 @@ struct AutomationAdapterDetailView: View {
     @State private var isFetchingSkillURL = false
     @State private var expandedActionGroups: Set<String> = []
     @State private var detailTab: AdapterDetailTab = .overview
-    @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = false
-    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = false
-    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = false
-    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = false
+    @AppStorage("noteMCPEnabled") private var noteMCPEnabled: Bool = true
+    @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = true
+    @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = true
+    @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = true
+    @AppStorage("messagesMCPEnabled") private var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
+
+    private var packActionItems: [String] {
+        currentAdapter.visibleActions.map { action in
+            let kind = action.type == .pageJS ? "Browser extension" : action.type.displayName
+            return "\(action.name) · \(kind)"
+        }
+    }
+
+    private var packToolItems: [String] {
+        var items = linkedCLITools.map {
+            "\($0.name) · \($0.command) · \($0.isInstalled ? "installed" : "not installed")"
+        }
+        items += skillStore.skills(for: currentAdapter.bundleId).map {
+            "\($0.name) · Skill v\($0.version)\($0.isEnabled ? "" : " · disabled")"
+        }
+        items += linkedShortcuts.map { "\($0.name) · Shortcut" }
+        items += apiStore.connections(for: currentAdapter.bundleId).map { "\($0.name) · API" }
+        items += linkedMCPServers.map { "\($0.name) · MCP (\($0.transport))" }
+        if hasBuiltInIntegration {
+            items.append("Context Dock native data tools · built in\(hasEnabledBuiltInIntegration ? " · enabled" : " · available")")
+        }
+        items += currentAdapter.contextReaders.map { "\($0.name) · Context reader (\($0.type))" }
+        return items
+    }
+
+    @ViewBuilder
+    private func packInventorySection(
+        _ title: String, icon: String, items: [String], emptyText: String
+    ) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 7) {
+                if items.isEmpty {
+                    Text(emptyText).foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                        Label(item, systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .font(.system(size: 10))
+            .padding(.top, 8)
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Text("\(items.count)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+            }
+        }
+    }
+
+    private var adapterPackInventory: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("COMPLETE ADAPTER PACK")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Everything scoped chat can inspect, select, or request for this app.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Text(currentAdapter.isBuiltIn ? "Built in" : "Installed")
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.teal.opacity(0.12), in: Capsule())
+                    .foregroundStyle(.teal)
+            }
+            packInventorySection(
+                "Actions and extensions", icon: "bolt.fill", items: packActionItems,
+                emptyText: "No actions or browser extensions in this pack."
+            )
+            Divider()
+            packInventorySection(
+                "Tools, skills and readers", icon: "shippingbox.fill", items: packToolItems,
+                emptyText: "No executable tools are linked; the app-aware skill still uses live context."
+            )
+            Divider()
+            Label(
+                "Read-only tools can be requested directly. Commands that write, delete, install, send, publish, or change remote state require approval.",
+                systemImage: "checkmark.shield"
+            )
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("View Actions") { detailTab = .actions }
+                Button("View Tools & Skills") { detailTab = .tools }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+    }
 
     /// Plugin-style summary for the Overview tab — feels alive even with no actions.
     @ViewBuilder
@@ -2974,6 +3074,7 @@ struct AutomationAdapterDetailView: View {
                     Text(a.bundleId).font(.system(size: 12, design: .monospaced))
                 }
             }
+            adapterPackInventory
             HStack(spacing: 8) {
                 Button(action: importAdapterPack) {
                     Label("Import Adapter…", systemImage: "square.and.arrow.down")
@@ -3233,6 +3334,7 @@ struct AutomationAdapterDetailView: View {
         case "com.apple.iCal": return calendarMCPEnabled
         case "com.apple.AddressBook": return contactsMCPEnabled
         case "com.apple.reminders": return remindersMCPEnabled
+        case "com.apple.MobileSMS": return messagesMCPEnabled
         case "com.github.GitHubClient": return githubMCPEnabled
         default: return false
         }
@@ -3257,7 +3359,7 @@ struct AutomationAdapterDetailView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("DoraX Notes MCP")
+                        Text("DoraX Apple MCP · Notes")
                             .font(.system(size: 12, weight: .medium))
                         Text("built-in")
                             .font(.system(size: 9, weight: .medium))
@@ -3299,6 +3401,7 @@ struct AutomationAdapterDetailView: View {
     /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
     private var hasBuiltInIntegration: Bool {
         ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
+         "com.apple.MobileSMS",
          "com.github.GitHubClient"].contains(currentAdapter.bundleId)
     }
 
@@ -3373,7 +3476,7 @@ struct AutomationAdapterDetailView: View {
         switch currentAdapter.bundleId {
         case "com.apple.iCal":
             builtInIntegrationRow(
-                title: "DoraX Calendar",
+                title: "DoraX Apple MCP · Calendar",
                 capabilities: "today · list upcoming · search · create event",
                 icon: "calendar", tint: .red,
                 isOn: liveRegisteringBinding($calendarMCPEnabled) {
@@ -3382,7 +3485,7 @@ struct AutomationAdapterDetailView: View {
             )
         case "com.apple.AddressBook":
             builtInIntegrationRow(
-                title: "DoraX Contacts",
+                title: "DoraX Apple MCP · Contacts",
                 capabilities: "search · contact details",
                 icon: "person.crop.circle", tint: .brown,
                 isOn: liveRegisteringBinding($contactsMCPEnabled) {
@@ -3391,11 +3494,20 @@ struct AutomationAdapterDetailView: View {
             )
         case "com.apple.reminders":
             builtInIntegrationRow(
-                title: "DoraX Reminders",
+                title: "DoraX Apple MCP · Reminders",
                 capabilities: "today · list · create reminder",
                 icon: "checklist", tint: .orange,
                 isOn: liveRegisteringBinding($remindersMCPEnabled) {
                     AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
+                }
+            )
+        case "com.apple.MobileSMS":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Messages",
+                capabilities: "recent conversations · search · compose for review",
+                icon: "message.fill", tint: .green,
+                isOn: liveRegisteringBinding($messagesMCPEnabled) {
+                    AppleMessagesMCPCapabilities.register(in: CapabilityRegistry.shared)
                 }
             )
         case "com.github.GitHubClient":
@@ -3872,7 +3984,7 @@ struct AutomationAdapterDetailView: View {
                     }
                     let skills = skillStore.skills(for: currentAdapter.bundleId)
                     if skills.isEmpty {
-                        Text("Skills are reusable instructions (prompts, workflows) that scoped chat uses for this app. They add context — they never run commands.")
+                        Text("Skills guide scoped chat toward linked actions, CLI, MCP, APIs, Shortcuts and extensions. They may request a command, but execution still follows approval policy.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .padding(12)
@@ -6429,6 +6541,10 @@ struct SystemCommandCreateSheet: View {
     @State private var undoTitle = "Undo"
     @State private var undoScriptType = "applescript"
     @State private var undoScript = ""
+    @State private var interaction = SystemCommandInteraction.none.rawValue
+    @State private var valueScript = ""
+    @State private var scopeProvider = "none"
+    @State private var scopeItems = ""
     @State private var script = """
 tell application "Finder"
     empty trash
@@ -6511,6 +6627,35 @@ end tell
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
+                    labeledField("Scoped Experience") {
+                        Picker("Control", selection: $interaction) {
+                            ForEach(SystemCommandInteraction.allCases) { kind in
+                                Text(kind.label).tag(kind.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Picker("Dynamic list", selection: $scopeProvider) {
+                            Text("None").tag("none")
+                            Text("Bluetooth devices").tag("bluetooth")
+                            Text("Wi-Fi networks").tag("wifi")
+                            Text("Window layouts").tag("windows")
+                            Text("Quick notes").tag("notepad")
+                        }
+                        .pickerStyle(.menu)
+                        TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
+                            .textFieldStyle(.roundedBorder)
+                        if interaction != SystemCommandInteraction.none.rawValue {
+                            TextEditor(text: $valueScript)
+                                .font(.system(size: 12, design: .monospaced))
+                                .frame(minHeight: 70)
+                                .scrollContentBackground(.hidden)
+                                .background(Color(NSColor.textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Text("Value script prints the current number or on/off state. Dynamic lists and custom rows appear below the control while scoped.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
                     labeledField("Dock Completion") {
                         TextField("Empty Bin done", text: $successTitle)
                             .textFieldStyle(.roundedBorder)
@@ -6554,14 +6699,20 @@ end tell
                 Button("Cancel") { dismiss() }
                 Spacer()
                 Button("Add Command") {
+                    var commandKeywords = keywords.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if scopeProvider != "none" { commandKeywords.append("provider:\(scopeProvider)") }
+                    let customItems = scopeItems.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if !customItems.isEmpty { commandKeywords.append("presets:\(customItems.joined(separator: "|"))") }
                     let command = SystemCommand(
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                         icon: icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? "command"
                             : icon.trimmingCharacters(in: .whitespacesAndNewlines),
-                        keywords: keywords.components(separatedBy: ",")
-                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                            .filter { !$0.isEmpty },
+                        keywords: commandKeywords,
                         scriptType: scriptType,
                         script: script,
                         description: description.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -6569,7 +6720,9 @@ end tell
                         successMessage: successMessage.trimmingCharacters(in: .whitespacesAndNewlines),
                         undoTitle: undoTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                         undoScriptType: undoScriptType,
-                        undoScript: undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        undoScript: undoScript.trimmingCharacters(in: .whitespacesAndNewlines),
+                        interaction: interaction,
+                        valueScript: valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
                     )
                     onCreate(command)
                     dismiss()
@@ -6660,6 +6813,8 @@ struct SystemCommandEditorView: View {
     @State private var sliderMax: String
     @State private var sliderStep: String
     @State private var valueScript: String
+    @State private var scopeProvider: String
+    @State private var scopeItems: String
 
     init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
         self.command  = command
@@ -6682,6 +6837,8 @@ struct SystemCommandEditorView: View {
         _sliderMax   = State(initialValue: String(Int(command.sliderMax)))
         _sliderStep  = State(initialValue: String(Int(command.sliderStep)))
         _valueScript = State(initialValue: command.valueScript)
+        _scopeProvider = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
+        _scopeItems = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
     }
 
     private var hasChanges: Bool {
@@ -6697,6 +6854,8 @@ struct SystemCommandEditorView: View {
             || sliderMax != String(Int(command.sliderMax))
             || sliderStep != String(Int(command.sliderStep))
             || valueScript != command.valueScript
+            || scopeProvider != (command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
+            || scopeItems != (command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
     }
 
     private var actionType: SystemCommandActionType {
@@ -6835,6 +6994,20 @@ struct SystemCommandEditorView: View {
                     }
                 }
 
+                labeledField("Scoped Results") {
+                    Picker("Dynamic list", selection: $scopeProvider) {
+                        Text("None").tag("none")
+                        Text("Bluetooth devices").tag("bluetooth")
+                        Text("Wi-Fi networks").tag("wifi")
+                    }
+                    .pickerStyle(.menu)
+                    TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
+                        .textFieldStyle(.roundedBorder)
+                    Text("When this command is scoped, its control stays at the top and these dynamic or custom rows remain searchable below it.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+
                 labeledField("Dock Completion") {
                     TextField("Shown after success", text: $successTitle)
                         .textFieldStyle(.roundedBorder)
@@ -6879,7 +7052,14 @@ struct SystemCommandEditorView: View {
                             updated.name        = name.trimmingCharacters(in: .whitespaces)
                             updated.description = description.trimmingCharacters(in: .whitespaces)
                             updated.icon        = icon.trimmingCharacters(in: .whitespaces)
-                            updated.keywords    = keywords.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                            updated.keywords = keywords.components(separatedBy: ",")
+                                .map { $0.trimmingCharacters(in: .whitespaces) }
+                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") }
+                            if scopeProvider != "none" { updated.keywords.append("provider:\(scopeProvider)") }
+                            let customItems = scopeItems.components(separatedBy: ",")
+                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                .filter { !$0.isEmpty }
+                            if !customItems.isEmpty { updated.keywords.append("presets:\(customItems.joined(separator: "|"))") }
                             updated.scriptType  = scriptType
                             updated.script      = script
                             updated.successTitle = successTitle.trimmingCharacters(in: .whitespaces)
@@ -6947,6 +7127,24 @@ struct AddMCPServerSheet: View {
                 Spacer()
             }
 
+            if isSafariBundle, let safariDriver = safariMCPDriverPath {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        mode = .manual
+                        name = "safari"
+                        command = safariDriver
+                        argsText = "--mcp"
+                    } label: {
+                        Label("Use Safari Technology Preview MCP", systemImage: "safari")
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Requires Safari Technology Preview 247+. Enable Safari → Settings → Developer → “Enable remote automation and external agents”, then Add.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -6998,6 +7196,17 @@ struct AddMCPServerSheet: View {
             ? !jsonText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             : !name.trimmingCharacters(in: .whitespaces).isEmpty
                 && !command.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var isSafariBundle: Bool {
+        bundleId == "com.apple.Safari" || bundleId == "com.apple.SafariTechnologyPreview"
+    }
+
+    /// Path to Safari Technology Preview's bundled safaridriver (which serves the MCP), or
+    /// nil when STP isn't installed.
+    private var safariMCPDriverPath: String? {
+        let stp = "/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver"
+        return FileManager.default.isExecutableFile(atPath: stp) ? stp : nil
     }
 
     private func addServer() {

@@ -19,6 +19,17 @@ extension LauncherView {
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
+        if showContextInDock,
+            !isGlobalContextActive,
+            mode == .contextDock,
+            reason.isTypingOrContentRefresh,
+            !presetChanged,
+            !modeChanged,
+            !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return
+        }
+
         if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged
             && !modeChanged
         {
@@ -46,7 +57,12 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Global context app search
         if shouldUsePureGlobalAppSearch && !q.isEmpty {
-            return currentGlobalAppMatches(for: q)
+            let state = visibleGlobalGroupedListNavigationState(for: q)
+            let visibleRows =
+                state.appResults.isEmpty
+                ? currentGlobalAppMatches(for: q)
+                : state.appResults
+            return visibleRows
                 .map {
                     result -> (execute: () -> Void, quit: (() -> Void)?, remove: (() -> Void)?) in
                     let runningApp = runningApplication(forGlobalResult: result)
@@ -137,9 +153,62 @@ extension LauncherView {
 
     func setupDockPillKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
+            // Handled here because the field editor swallows Backspace before SwiftUI's
+            // .onKeyPress ever sees it.
+            if event.keyCode == 51,
+                self.searchState.activeSmartQueryKey != nil,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                self.clearSearchContext()
+                self.isSearchFieldFocused = true
+                self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                self.requestWindowSizeUpdate(reason: .modeChanged)
+                return nil
+            }
+
             let routingMode = self.keyRoutingMode
             if let routedEvent = self.handleTopLevelKeyRouting(event, mode: routingMode) {
                 return routedEvent
+            }
+
+            // The Quick Note split editor owns the keyboard: yield every key to the
+            // focused TextEditor / list so the user types freely. Escape exits the
+            // scope; ⌘N starts a new note.
+            if self.activeNotepadScopeCommand != nil {
+                if event.keyCode == 53 {  // Escape
+                    if let scope = self.globalInlineAppScope {
+                        self.removeGlobalInlineAppScope(scope)
+                    }
+                    self.notepadSelectedNoteID = nil
+                    return nil
+                }
+                if event.keyCode == 45, event.modifierFlags.contains(.command) {  // ⌘N
+                    self.notepadSelectedNoteID = QuickNotesStore.shared.create()
+                    return nil
+                }
+                // Up/Down navigate the notes list while the input field is focused;
+                // in the editor they stay normal cursor movement.
+                if (event.keyCode == 125 || event.keyCode == 126), self.isSearchFieldFocused {
+                    self.navigateNotepadSelection(delta: event.keyCode == 125 ? 1 : -1)
+                    return nil
+                }
+                // Return in the top input field = ask the selected AI provider and
+                // insert its reply into the open note. Return in the editor (input not
+                // focused), or Shift+Return, stays a plain newline.
+                if event.keyCode == 36,
+                    self.isSearchFieldFocused,
+                    !event.modifierFlags.contains(.shift)
+                {
+                    let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !q.isEmpty || !self.notepadAttachments.isEmpty
+                        || self.notepadCapturedText?.isEmpty == false
+                    {
+                        self.submitNotepadAIPrompt(q)
+                        return nil
+                    }
+                }
+                return event
             }
 
             // Only context/global dock modes can consume dock navigation keys.
@@ -223,6 +292,18 @@ extension LauncherView {
                 return nil
             }
 
+            if event.keyCode == 51, self.dismissSelectionScopeFromEmptyBackspaceIfNeeded() {
+                return nil
+            }
+
+            if event.keyCode == 51, self.isGlobalContextActive,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                self.l2.targetApp != nil
+            {
+                self.exitGlobalAppScopeToGlobalContext()
+                return nil
+            }
+
             if event.keyCode == 51, self.isGlobalContextActive,
                 let scope = self.trailingGlobalInlineAppScopeForBackspace()
             {
@@ -261,6 +342,11 @@ extension LauncherView {
                 case 124, 48:  // Right / Tab — ghost completion FIRST, then expansion
                     if event.keyCode == 124,
                         self.acceptTopGlobalAppGhostCompletionIfPossible()
+                    {
+                        return nil
+                    }
+                    if event.keyCode == 124,
+                        self.activateFocusedGlobalAppScopeIfPossible()
                     {
                         return nil
                     }
@@ -433,6 +519,15 @@ extension LauncherView {
             let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
 
+            if event.keyCode == 36, self.aiMode.isActive {
+                self.submitAIQuery()
+                return nil
+            }
+
+            if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
+                return nil
+            }
+
             if event.keyCode == 36,
                 self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed,
                 q.isEmpty
@@ -441,20 +536,17 @@ extension LauncherView {
                 return nil
             }
 
-            if event.keyCode == 36, self.executeScopedRunningAppIfIdle() {
-                return nil
-            }
-
-            // Cycle the running-app scope on ←/→ with an empty query — in Global Context
-            // AND in an app scope already entered from it (l2.targetApp set), so the user
-            // can right-arrow from one scoped app to the next.
+            // Right Arrow cycles the running-app scope. Empty-field Left Arrow is reserved
+            // consistently for entering General Chat from Global Context or Context Dock.
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
-                event.keyCode == 123 || event.keyCode == 124,
+                event.keyCode == 124,
                 self.focusedAppPillIndex == nil,
-                self.l2.focusedPillIndex == nil
+                self.l2.focusedPillIndex == nil,
+                self.currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
+                self.currentGlobalScopedBundleID?.hasPrefix("cli://") != true
             {
-                _ = self.cycleGlobalContextAppScope(direction: event.keyCode == 124 ? 1 : -1)
+                _ = self.cycleGlobalContextAppScope(direction: 1)
                 self.focusedAppPillIndex = nil
                 self.l2.focusedPillIndex = nil
                 return nil
@@ -464,7 +556,9 @@ extension LauncherView {
             // That view is shown when: app matches exist, OR frontmost has no matching menus
             // (cross-app or empty). When frontmost HAS menus (preferFrontmostMenuResults=true),
             // view shows dockPillListView instead — Block 3 handles it with full-pills indices.
-            if self.shouldUsePureGlobalAppSearch && !q.isEmpty {
+            if (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope())
+                && !q.isEmpty
+            {
                 let state = self.visibleGlobalGroupedListNavigationState(for: q)
                 if state.totalCount == 0 {
                     // Nothing matched apps/commands/menus — ↓ still goes through the
@@ -525,11 +619,8 @@ extension LauncherView {
                     return event
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
-                case 51:  // Delete/Backspace — quit focused running app row, else clear focus
+                case 51:  // Delete/Backspace — clear focus only (never quit apps)
                     if self.currentGlobalGroupedFocusIndex(state: state) != nil {
-                        if self.quitFocusedGlobalAppResultIfPossible(state: state) {
-                            return nil
-                        }
                         self.setGlobalGroupedFocus(nil, state: state)
                         return nil
                     }
@@ -555,17 +646,26 @@ extension LauncherView {
                 q.isEmpty
                 && self.l2.targetApp == nil
                 && (actionPills.isEmpty || (self.isGlobalContextActive && !hasActiveContextSel))
+            let globalGroupedRowCount =
+                (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope())
+                ? self.visibleGlobalGroupedListNavigationState(for: q).totalCount
+                : 0
             let hasGlobalAppMatches =
-                self.isGlobalContextActive && !q.isEmpty
-                && (!self.currentGlobalAppMatches(for: q).isEmpty
-                    || self.pendingGlobalAppQuery == q)
+                self.isGlobalContextActive
+                && (!q.isEmpty || self.currentGlobalScopedBundleID != nil)
+                && (globalGroupedRowCount > 0
+                    || (!self.isActiveGlobalRunningAppMenuScope()
+                        && (!self.currentGlobalAppMatches(for: q).isEmpty
+                            || self.pendingGlobalAppQuery == q)))
             let showGlobalAppSearch =
-                self.shouldUsePureGlobalAppSearch && !q.isEmpty && hasGlobalAppMatches
+                self.shouldUsePureGlobalAppSearch
+                && (!q.isEmpty || self.currentGlobalScopedBundleID != nil)
+                && hasGlobalAppMatches
             let isAppPillRowActive = showPinnedRow || showGlobalAppSearch
 
             if isAppPillRowActive {
                 let appPills = self.currentAppPillActions()
-                guard !appPills.isEmpty else { return event }
+                guard !appPills.isEmpty || globalGroupedRowCount > 0 else { return event }
 
                 switch event.keyCode {
                 case 48:  // Tab — enter/exit app pill navigation; never let macOS Full Keyboard Navigation take over
@@ -596,23 +696,12 @@ extension LauncherView {
                 case 124:  // Right — vertical list: scope the focused app into a pill.
                     //          Horizontal pill row: move focus right / wrap to input.
                     if self.usesVerticalListDockLayout {
+                        guard self.currentGlobalScopedBundleID == nil else { return event }
                         if self.searchInputHasHighlightedText() { return event }
                         let qq = self.searchState.query
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !qq.isEmpty else { return event }
-                        let matches = self.currentOrImmediateGlobalAppMatches(for: qq)
-                        // Render-default highlights row 0 even when focusedAppPillIndex is nil.
-                        let targetIdx = self.focusedAppPillIndex ?? 0
-                        guard targetIdx >= 0, targetIdx < matches.count else { return event }
-                        let result = matches[targetIdx]
-                        guard result.type == .application,
-                            let bundleId = self.bundleIdentifier(forApplicationResult: result),
-                            !bundleId.isEmpty
-                        else { return event }
-                        let activated = self.activateGlobalInlineScope(
-                            result: result,
-                            bundleID: bundleId
-                        )
+                        let activated = self.scopeFocusedGlobalGroupedListRow()
                         guard activated else { return event }
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil
@@ -666,6 +755,13 @@ extension LauncherView {
                     self.switchDockLayer(.up)
                     return nil
                 case 36:  // Enter — launch/activate
+                    if (self.shouldUsePureGlobalAppSearch || self.isActiveGlobalRunningAppMenuScope()),
+                        globalGroupedRowCount > 0,
+                        self.executeFocusedGlobalGroupedListRow()
+                    {
+                        self.hideLauncherAfterResultExecution()
+                        return nil
+                    }
                     if let idx = self.focusedAppPillIndex, idx < appPills.count {
                         appPills[idx].execute()
                         self.searchState.query = ""
@@ -686,24 +782,8 @@ extension LauncherView {
                         return nil
                     }
                     return event
-                case 51:  // Delete/Backspace — quit focused running app, else clear focus
-                    if let idx = self.focusedAppPillIndex {
-                        if idx < appPills.count, let quit = appPills[idx].quit {
-                            let preservedQuery = self.searchState.query
-                            quit()
-                            self.searchState.query = preservedQuery
-                            self.focusedAppPillIndex = nil
-                            self.l2.pillNavViaKeyboard = false
-                            self.scheduleGlobalAppMatchRebuild(
-                                query: preservedQuery,
-                                delayNanoseconds: 0
-                            )
-                            self.scheduleGlobalGroupedListRebuild(
-                                query: preservedQuery,
-                                delayNanoseconds: 0
-                            )
-                            return nil
-                        }
+                case 51:  // Delete/Backspace — clear focus, return to input (never quit apps)
+                    if self.focusedAppPillIndex != nil {
                         self.focusedAppPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
                         DispatchQueue.main.async { self.reclaimSearchInputFocus() }
@@ -867,6 +947,14 @@ extension LauncherView {
                 }
                 if self.l2.focusedPillIndex != nil, self.executeFocusedOrDirectAppPillIfNeeded() {
                     return nil
+                }
+
+                // Finder desktop scope is FILE SEARCH — Enter opens the highlighted file/folder
+                // result (Spotlight-like), never launches a typed app match. Falling through to
+                // launchTypedAppMatchIfNeeded here would fuzzy-launch e.g. "applica" → App Store.
+                if self.isFinderDesktopOnlyMode {
+                    if self.executeFirstVisibleFinderDesktopPillIfNeeded() { return nil }
+                    return event
                 }
 
                 if self.executeFirstMatchingFinderFolderPillIfNeeded() {
@@ -1059,6 +1147,13 @@ extension LauncherView {
                 return
             }
             guard window.isVisible else { return }
+            // Bottom dock mode is removed. A stale KeyableWindow.anchorAtBottom flag
+            // rewrites setFrame(_:) to keep the bottom edge fixed, which makes the
+            // input pill slide down when a short result sheet shrinks. Force top
+            // anchoring here so only the result area changes height.
+            if let keyableWindow = window as? KeyableWindow {
+                keyableWindow.anchorAtBottom = false
+            }
 
             let heightSignpost = SearchPerformanceLog.shared.beginInterval(
                 "window.heightUpdate",
@@ -1117,32 +1212,55 @@ extension LauncherView {
 
             _ = spaceBelow
             _ = spaceAbove
+            var effectiveHeight = newHeight
             let newY: CGFloat
             if settings.effectiveDockAtBottom {
                 // Bottom-anchored: grow upward, keep bottom edge fixed
                 newY = currentFrame.minY
             } else {
-                // Spotlight model for every top-anchored mode: keep the TOP edge fixed and grow
-                // downward, clamped to the screen. Anchoring the bottom (the old global/context
-                // branch) made the window jump upward while typing as results/inline-scope pills
-                // changed the height. One rule → no jump, consistent with the chat surfaces.
-                newY = max(visibleFrame.minY, currentFrame.maxY - newHeight)
+                // Spotlight model: keep the TOP edge fixed at the window's PINNED top (set once on
+                // open/drag), never derived from the live frame. CRUCIAL: cap the height to the
+                // space below that top so the window never extends past the screen bottom —
+                // otherwise the setFrame chokepoint pins the top off-screen, macOS constrains the
+                // panel back onto the screen, and THAT repositioning is the input-bar jump. A
+                // longer result list scrolls inside its own panel instead of growing the window.
+                let keyableWindow = window as? KeyableWindow
+                let topAnchor = keyableWindow?.pinnedTopY ?? currentFrame.maxY
+                keyableWindow?.pinnedTopY = topAnchor
+                let available = topAnchor - visibleFrame.minY - 8
+                effectiveHeight = min(newHeight, max(heightPreset.minimumHeight, available))
+                newY = topAnchor - effectiveHeight
             }
 
-            let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: newHeight)
+            let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: effectiveHeight)
 
-            let shouldAnimateFrame = animated || heightDelta > 80 || widthChanged
-            if shouldAnimateFrame {
-                // Animate visible sheet expand/collapse. Small result churn is filtered before
-                // this path, so typing stays steady while meaningful shape changes glide.
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = heightDelta > 260 ? 0.26 : 0.20
-                NSAnimationContext.current.timingFunction = CAMediaTimingFunction(
-                    controlPoints: 0.18, 0.92, 0.22, 1.0)
-                window.animator().setFrame(newFrame, display: false)
-                NSAnimationContext.endGrouping()
+            let visibleStartHeight = self.renderedDockHeight ?? currentFrame.height
+            let shouldAnimateVisibleShell = animated && abs(visibleStartHeight - effectiveHeight) > 1
+            self.renderedDockHeight = visibleStartHeight
+
+            if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
+                // Expansion: give the transparent host its final capacity first. On the next
+                // runloop turn, reveal only the top-aligned SwiftUI shell beneath the input.
+                window.setFrame(newFrame, display: true)
+                if shouldAnimateVisibleShell {
+                    DispatchQueue.main.async {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                            self.renderedDockHeight = effectiveHeight
+                        }
+                    }
+                } else {
+                    self.renderedDockHeight = effectiveHeight
+                }
             } else {
-                window.setFrame(newFrame, display: false)
+                // Collapse: hide the visible shell first while the larger transparent host still
+                // provides room, then shrink the host after the animation. This is the inverse of
+                // expansion and prevents either edge from clipping the persistent input.
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                    self.renderedDockHeight = effectiveHeight
+                }
+                try? await Task.sleep(nanoseconds: 230_000_000)
+                guard !Task.isCancelled else { return }
+                window.setFrame(newFrame, display: true)
             }
             // Transparent window: recompute the macOS drop-shadow for the new glass
             // shape, otherwise it lags / keeps the old outline as the dock resizes.
@@ -1235,6 +1353,8 @@ extension LauncherView {
                 onClose()
             }
             .onKeyPress(.upArrow) {
+                // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1255,6 +1375,12 @@ extension LauncherView {
                 if searchState.activeSmartQueryKey == "clipboard" {
                     if NSEvent.modifierFlags.contains(.command) {
                         extendClipboardSelection(direction: -1)
+                        return .handled
+                    }
+                    if clipboardSourcePillFocusIndex != nil {
+                        clipboardSourcePillFocusIndex = nil
+                        isKeyboardNavigation = false
+                        isSearchFieldFocused = true
                         return .handled
                     }
                     navigateClipboardScope(direction: -1)
@@ -1280,6 +1406,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
+                // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1326,6 +1454,16 @@ extension LauncherView {
                         extendClipboardSelection(direction: 1)
                         return .handled
                     }
+                    if clipboardSourcePillFocusIndex == nil,
+                        focusedClipboardEntryIndex == nil,
+                        searchState.selectedIndex == nil
+                    {
+                        focusFirstClipboardSourcePill()
+                        return .handled
+                    }
+                    if clipboardSourcePillFocusIndex != nil {
+                        clipboardSourcePillFocusIndex = nil
+                    }
                     navigateClipboardScope(direction: 1)
                     return .handled
                 }
@@ -1340,6 +1478,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.space) {
+                // Quick Note editor: space is text — never steal it back to the input.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
                     searchState.query.append(" ")
                     reclaimSearchInputFocus()
@@ -1385,6 +1525,8 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.return) {
+                // Quick Note editor: Return / Shift+Return insert a newline.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if !showFolderPreview {
                     if executeScopedRunningAppIfIdle() {
                         return .handled
@@ -1419,6 +1561,11 @@ extension LauncherView {
                     if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
                         return .handled
                     }
+                    // Finder desktop scope never launches a typed app — file search only.
+                    if isFinderDesktopOnlyMode {
+                        if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
+                        return .handled
+                    }
                     if launchTypedAppMatchIfNeeded() {
                         return .handled
                     }
@@ -1447,6 +1594,12 @@ extension LauncherView {
                         let trimmed = searchState.query.trimmingCharacters(
                             in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return .handled }
+                        if shouldShowSelectionCompactAIAction
+                            || shouldShowContextDockAIQueryFallback
+                        {
+                            runCompactAIActionFromInput()
+                            return .handled
+                        }
                         // Send when arming the chat (first message, before the sheet opens) AND when a
                         // conversation is already open — otherwise once showChatPopover is true every
                         // follow-up Enter fell through to `.handled` below and was silently dropped.
@@ -1475,6 +1628,7 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.tab) {
+                if activeNotepadScopeCommand != nil { return .ignored }
                 if isL2ContextActive && !isGlobalContextActive {
                     return .handled
                 }
@@ -1633,8 +1787,20 @@ extension LauncherView {
                 return .handled
             }
             .onKeyPress(.delete) {
+                // Quick Note editor: Backspace deletes characters in the note.
+                if activeNotepadScopeCommand != nil { return .ignored }
                 let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
+                    // Backspace on an empty field leaves a compact scope (Clipboard,
+                    // Notifications) — same step-out gesture the other surfaces use.
+                    if searchState.activeSmartQueryKey != nil {
+                        clearSearchContext()
+                        isSearchFieldFocused = true
+                        scheduleDockPillRebuild(
+                            query: "", delayNanoseconds: 0, refreshContext: false)
+                        requestWindowSizeUpdate(reason: .modeChanged)
+                        return .handled
+                    }
                     // Exit inline Share Sheet first
                     if inlineShareActive {
                         inlineShareActive = false
@@ -1701,15 +1867,42 @@ extension LauncherView {
                 }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
-            // Right Arrow: focus visible Global app result, otherwise accept ghost text.
+            // Left Arrow on an empty field (no scope chips) → standalone General AI
+            // chat. With text or a scope chip present it stays a normal cursor/scope key.
+            .onKeyPress(.leftArrow) {
+                if searchState.activeSmartQueryKey == "clipboard",
+                    clipboardSourcePillFocusIndex != nil
+                {
+                    return retreatClipboardSourcePill() ? .handled : .ignored
+                }
+                guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    allGlobalInlineAppScopes.isEmpty,
+                    activeNotepadScopeCommand == nil,
+                    isGlobalContextActive || showContextInDock,
+                    !aiMode.isActive,
+                    !showMediaLayer,
+                    !isCompactSmartScope,
+                    settings.enableAIMode
+                else { return .ignored }
+                enterGeneralChatPreservingLayer()
+                return .handled
+            }
+            // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
+            // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
+                if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "clipboard",
+                    clipboardSourcePillFocusIndex != nil
+                {
+                    return advanceClipboardSourcePill() ? .handled : .ignored
+                }
+                if acceptTopGlobalAppGhostCompletionIfPossible() {
+                    return .handled
+                }
                 if activateSelectedApplicationScopeFromRightArrowIfPossible() {
                     return .handled
                 }
                 if activateFocusedGlobalAppScopeIfPossible() {
-                    return .handled
-                }
-                if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

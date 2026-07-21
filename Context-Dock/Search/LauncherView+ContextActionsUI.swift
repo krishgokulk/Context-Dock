@@ -55,29 +55,98 @@ extension LauncherView {
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
 
-            // Attach file/photo button
-            Button {
-                let panel = NSOpenPanel()
-                panel.canChooseFiles = true
-                panel.canChooseDirectories = false
-                panel.allowsMultipleSelection = true
-                panel.allowedContentTypes = [.image, .pdf, .plainText, .data]
-                panel.message = "Choose files to attach to your message"
-                if panel.runModal() == .OK {
-                    withAnimation {
-                        let newURLs = panel.urls.filter { url in
-                            !aiMode.attachments.contains(url)
-                        }
-                        aiMode.attachments.append(contentsOf: newURLs)
+            // Attach menu: file / photo / screenshot / capture area
+            Menu {
+                Button {
+                    attachAIFiles(imagesOnly: false)
+                } label: { Label("Upload File", systemImage: "doc") }
+                Button {
+                    attachAIFiles(imagesOnly: true)
+                } label: { Label("Upload Photo", systemImage: "photo") }
+                Divider()
+                Button {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        withAnimation { aiMode.attachments.append(url) }
                     }
-                }
+                } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
+                Button {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        withAnimation { aiMode.attachments.append(url) }
+                    }
+                } label: { Label("Capture Area", systemImage: "crop") }
+                Button {
+                    captureScreenText { text in
+                        let existing = aiMode.selectionText?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        aiMode.selectionText = existing.isEmpty
+                            ? text : existing + "\n\n" + text
+                    }
+                } label: { Label("Capture Text", systemImage: "text.viewfinder") }
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary.opacity(aiMode.attachments.isEmpty ? 0.6 : 0.9))
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Attach file, photo, or screenshot")
+
+            // App icon: compact, independently scrollable picker for chat focus.
+            Button {
+                isShowingChatFocusAppPicker.toggle()
+            } label: {
+                Image(systemName: "app.badge")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary.opacity(0.6))
+                .frame(width: 22, height: 22)
+            }
             .buttonStyle(.plain)
-            .help("Attach file or image")
+            .help("Add running apps")
+            .popover(isPresented: $isShowingChatFocusAppPicker, arrowEdge: .top) {
+                chatFocusAppPicker
+            }
+
+            if !chatFocusApps.isEmpty {
+                HStack(spacing: 5) {
+                    ForEach(chatFocusApps) { focusedApp in
+                        Button {
+                            chatFocusApps.removeAll { $0.bundleId == focusedApp.bundleId }
+                        } label: {
+                            ZStack {
+                                AppBundleIconView(
+                                    bundleId: focusedApp.bundleId,
+                                    fallbackSymbol: "app.dashed",
+                                    size: 18,
+                                    cornerRadius: 4
+                                )
+                                .opacity(
+                                    hoveredChatFocusBundleId == focusedApp.bundleId ? 0.22 : 1
+                                )
+
+                                if hoveredChatFocusBundleId == focusedApp.bundleId {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.primary)
+                                }
+                            }
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove \(focusedApp.name)")
+                        .onHover { hovering in
+                            withAnimation(.easeOut(duration: 0.1)) {
+                                hoveredChatFocusBundleId = hovering
+                                    ? focusedApp.bundleId : nil
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
 
             // Clear chat button
             if !aiMode.messages.isEmpty {
@@ -105,6 +174,158 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+    }
+
+    @ViewBuilder
+    var chatFocusAppPicker: some View {
+        let apps = runningAppsForChatFocus()
+        ScrollView(.vertical, showsIndicators: apps.count > 4) {
+            LazyVStack(spacing: 2) {
+                ForEach(apps, id: \.bundleId) { app in
+                    Button {
+                        if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
+                            chatFocusApps.removeAll { $0.bundleId == app.bundleId }
+                        } else {
+                            chatFocusApps.append(.init(name: app.name, bundleId: app.bundleId))
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(nsImage: app.icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            Text(app.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 9)
+                        .frame(height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(
+                                    hoveredChatFocusBundleId == app.bundleId
+                                        ? Color.accentColor.opacity(0.22)
+                                        : Color.clear
+                                )
+                                .shadow(
+                                    color: hoveredChatFocusBundleId == app.bundleId
+                                        ? Color.accentColor.opacity(0.38) : .clear,
+                                    radius: 7
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            hoveredChatFocusBundleId = hovering ? app.bundleId : nil
+                        }
+                    }
+                }
+            }
+            .padding(4)
+        }
+        .frame(width: 176, height: CGFloat(min(max(apps.count, 1), 4)) * 34 + 8)
+    }
+
+    /// Regular (user-visible) running apps for the chat focus picker, excluding
+    /// Context-Dock itself, sorted by name.
+    func runningAppsForChatFocus() -> [(name: String, bundleId: String, icon: NSImage)] {
+        NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            .compactMap { app -> (name: String, bundleId: String, icon: NSImage)? in
+                guard let name = app.localizedName, let bundleId = app.bundleIdentifier else {
+                    return nil
+                }
+                let icon = resolvedRunningAppIcon(for: app) ?? app.icon
+                    ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
+                return (name, bundleId, icon)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Open the file picker and append the chosen files to the AI chat attachments.
+    func attachAIFiles(imagesOnly: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
+        panel.message = "Choose files to attach to your message"
+        if panel.runModal() == .OK {
+            withAnimation {
+                let newURLs = panel.urls.filter { !aiMode.attachments.contains($0) }
+                aiMode.attachments.append(contentsOf: newURLs)
+            }
+        }
+    }
+
+    /// Capture a screenshot via `screencapture` — full screen (`-x`) or an
+    /// interactive region (`-i`) — and hand the PNG to `append` on the main actor.
+    /// Requires Screen Recording permission; a denied capture simply writes nothing.
+    func captureScreenshotToAttachments(
+        interactive: Bool, append: @escaping (URL) -> Void
+    ) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
+        var args = interactive ? ["-i"] : ["-x"]
+        args.append(url.path)
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            process.arguments = args
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                return
+            }
+            if FileManager.default.fileExists(atPath: url.path),
+                (try? Data(contentsOf: url))?.isEmpty == false
+            {
+                await MainActor.run { append(url) }
+            }
+        }
+    }
+
+    /// Select a screen region, recognize its text locally with Vision, copy the
+    /// result to the clipboard, and return it to the active AI surface.
+    func captureScreenText(append: @escaping (String) -> Void) {
+        captureScreenshotToAttachments(interactive: true) { url in
+            Task.detached(priority: .userInitiated) {
+                defer { try? FileManager.default.removeItem(at: url) }
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                do {
+                    try VNImageRequestHandler(url: url, options: [:]).perform([request])
+                    let text = (request.results ?? [])
+                        .compactMap { $0.topCandidates(1).first?.string }
+                        .joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
+                    await MainActor.run {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(text, forType: .string)
+                        append(text)
+                    }
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
     var providerColor: SwiftUI.Color {
@@ -355,7 +576,7 @@ extension LauncherView {
                             AIChatMessageView(message: message)
                         }
                     }
-                    if l2.isLoading { AILoadingView() }
+                    if l2.isLoading { AILoadingView(status: l2.loadingStatus) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -553,7 +774,9 @@ extension LauncherView {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.2, dampingFraction: 0.75), value: addedCount)
-        .help(addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Tabs — add current page (→)")
+        .help(
+            addedCount > 0 ? "\(addedCount) tab(s) added to context" : "Tabs — add current page (→)"
+        )
         .popover(isPresented: showSafariTabPickerBinding, arrowEdge: .top) {
             safariTabPickerPopover
         }
@@ -812,7 +1035,7 @@ extension LauncherView {
             }
         }
         Task {
-            let result = await TerminalAIBridge.shared.runPreApprovedCommand(command)
+            let result = await TerminalCommandExecutor.shared.runPreApproved(command)
             let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             await MainActor.run {
                 let body = output.isEmpty ? "(no output)" : output
@@ -932,7 +1155,8 @@ extension LauncherView {
                         // whose loop already ended/timed out) → run through the reliable
                         // pre-approved executor directly and surface the output.
                         if !isDockCommand,
-                            terminalBridge.pendingApproval?.command == command {
+                            terminalBridge.pendingApproval?.command == command
+                        {
                             TerminalAIBridge.shared.approveCommand(command)
                         } else {
                             let originalQuestion =
@@ -1013,8 +1237,7 @@ extension LauncherView {
         return (builtIns + custom).filter { seen.insert($0.name).inserted }
     }
 
-    func sortedAppScopeShortcuts(_ shortcuts: [AppShortcut], query: String) -> [AppShortcut]
-    {
+    func sortedAppScopeShortcuts(_ shortcuts: [AppShortcut], query: String) -> [AppShortcut] {
         let normalizedQuery = normalizedScopeIntentText(query)
         guard !normalizedQuery.isEmpty else { return shortcuts }
         let ranked = shortcuts.map { shortcut -> (AppShortcut, Double) in

@@ -100,6 +100,32 @@ final class AppUsageLearner {
         globalAppScores[bundleID] ?? 0
     }
 
+    /// Learned score for a concrete action key. Blends global habit with app-local habit.
+    func actionScore(_ action: String, inBundleID bundleID: String?) -> Double {
+        let key = action.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return 0 }
+        var score = perAppActions["_global"]?[key] ?? 0
+        if let bid = bundleID, let local = perAppActions[bid]?[key] {
+            score += local * 2.5
+        }
+        return score
+    }
+
+    /// Menu-like rows have both a stable tracking key and a visible title.
+    func blendedActionScore(
+        trackingKey: String,
+        visibleAction: String,
+        inBundleID bundleID: String?
+    ) -> Double {
+        let visible = visibleAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        var score = actionScore(trackingKey, inBundleID: bundleID)
+        if !visible.isEmpty, visible != trackingKey {
+            score += actionScore(visible, inBundleID: bundleID) * 1.5
+            score += actionScore(visible, inBundleID: nil) * 0.75
+        }
+        return score
+    }
+
     /// Top actions for a given app context, blended with global actions.
     func rankedActions(inBundleID bundleID: String?, limit: Int = 12) -> [String] {
         var merged: [String: Double] = perAppActions["_global"] ?? [:]

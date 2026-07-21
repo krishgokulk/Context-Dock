@@ -1,5 +1,46 @@
 import AppKit
+import Combine
 import Foundation
+
+@MainActor
+final class GlobalSearchIndexStatus: ObservableObject {
+    static let shared = GlobalSearchIndexStatus()
+
+    @Published var isIndexing = false
+    @Published var progress: Double = 1
+    @Published var message = "Ready"
+    @Published var documentCount = 0
+    @Published var lastIndexedAt: Date?
+
+    private init() {}
+
+    func begin(message: String) {
+        isIndexing = true
+        progress = 0
+        self.message = message
+    }
+
+    func update(progress: Double, message: String) {
+        self.progress = min(max(progress, 0), 1)
+        self.message = message
+    }
+
+    func finish(documentCount: Int) {
+        self.documentCount = documentCount
+        isIndexing = false
+        progress = 1
+        lastIndexedAt = Date()
+        message = "Indexed \(documentCount) items"
+    }
+
+    func sync(documentCount: Int) {
+        guard !isIndexing else { return }
+        self.documentCount = documentCount
+        if documentCount > 0, lastIndexedAt == nil {
+            message = "Indexed \(documentCount) items"
+        }
+    }
+}
 
 // Hot in-memory search index for global context.
 // Pre-computes normalized text, acronyms, and aliases at index-build time so the
@@ -18,7 +59,9 @@ final class GlobalSearchService {
         case recent = 1_200
         case cli = 900
         case runningMenu = 850
+        case browserURL = 820
         case systemCommand = 700
+        case cachedMenu = 650
         case installed = 400
     }
 
@@ -29,6 +72,7 @@ final class GlobalSearchService {
         case cliScope(command: String, displayName: String)
         case systemCommandScope(commandKey: String)
         case cachedMenu(bundleId: String, appName: String, path: [String], shortcutChar: String?, shortcutModifiers: Int)
+        case browserURL(url: URL, browserBundleId: String, browserName: String, kind: String, domain: String)
     }
 
     struct SearchDocument {
@@ -44,6 +88,7 @@ final class GlobalSearchService {
         let aliasWords: [[String]]       // aliases split once; query path must not allocate
         let sourceKind: SourceKind
         let rankingBoost: Double
+        var learnedBoost: Double = 0
         let icon: NSImage?
         let usageTrackingKey: String
         let action: ActionSpec
@@ -75,9 +120,14 @@ final class GlobalSearchService {
     // MARK: - Build
 
     func rebuild(with docs: [SearchDocument]) {
+        var preparedDocs = docs
+        for index in preparedDocs.indices {
+            preparedDocs[index].learnedBoost = learnedUsageBoost(for: preparedDocs[index])
+        }
+
         var grams: [String: [Int]] = [:]
         var bundle: [String: [Int]] = [:]
-        for (i, doc) in docs.enumerated() {
+        for (i, doc) in preparedDocs.enumerated() {
             var keys = Set<String>()
             keys.formUnion(Self.grams(doc.normalizedTitle))
             if !doc.acronym.isEmpty { keys.formUnion(Self.grams(doc.acronym)) }
@@ -87,7 +137,7 @@ final class GlobalSearchService {
         }
 
         lock.lock()
-        documents = docs
+        documents = preparedDocs
         gramIndex = grams
         bundleIndex = bundle
         revision &+= 1
@@ -120,8 +170,15 @@ final class GlobalSearchService {
         for index in candidates {
             guard index < docs.count else { continue }
             let doc = docs[index]
-            if !includeCachedMenus, case .cachedMenu = doc.action {
-                guard includeRunningCachedMenus, doc.sourceKind == .runningMenu else { continue }
+            if !includeCachedMenus {
+                switch doc.action {
+                case .cachedMenu:
+                    guard includeRunningCachedMenus, doc.sourceKind == .runningMenu else { continue }
+                case .browserURL:
+                    continue
+                default:
+                    break
+                }
             }
             guard let score = matchScore(query: q, doc: doc) else { continue }
             insertRanked((doc, score), into: &results, limit: limit)
@@ -266,7 +323,7 @@ final class GlobalSearchService {
     // MARK: - Scoring (pure string ops, no MainActor access)
 
     nonisolated private func matchScore(query q: String, doc: SearchDocument) -> Double? {
-        let base = doc.sourceKind.rawValue + doc.rankingBoost
+        let base = doc.sourceKind.rawValue + doc.rankingBoost + doc.learnedBoost
         var best: Double?
 
         func keep(_ s: Double) {
@@ -312,6 +369,33 @@ final class GlobalSearchService {
             }
         }
 
+        let queryWords = q.split(separator: " ").map(String.init)
+        if queryWords.count >= 2 {
+            let searchableWords = Set(doc.titleWords + doc.aliasWords.flatMap { $0 })
+            func wordMatches(_ word: String) -> Bool {
+                searchableWords.contains(word)
+                    || searchableWords.contains { candidate in
+                        candidate.hasPrefix(word) || word.hasPrefix(candidate)
+                    }
+            }
+
+            if queryWords.allSatisfy(wordMatches) {
+                keep(11_250 + base + Double(queryWords.count * 180) - min(Double(t.count), 48))
+            } else {
+                let ignorable: Set<String> = [
+                    "file", "files", "message", "messages", "window", "tab", "note", "notes",
+                    "task", "tasks", "reminder", "reminders", "document", "documents"
+                ]
+                let requiredWords = queryWords.filter { !ignorable.contains($0) }
+                if !requiredWords.isEmpty, requiredWords.allSatisfy(wordMatches) {
+                    keep(
+                        9_250 + base + Double(requiredWords.count * 120)
+                            - min(Double(t.count), 48)
+                    )
+                }
+            }
+        }
+
         // Substring (only for queries >= 2 chars)
         if q.count >= 2 {
             if let range = t.range(of: q) {
@@ -327,6 +411,55 @@ final class GlobalSearchService {
         }
 
         return best
+    }
+
+    private func learnedUsageBoost(for doc: SearchDocument) -> Double {
+        let bundleId = doc.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let appBundleId =
+            bundleId.isEmpty || bundleId.hasPrefix("cli://") || bundleId.hasPrefix("syscmd://")
+            ? nil
+            : bundleId
+
+        var boost = min(UsageTracker.shared.getScore(for: doc.usageTrackingKey) * 7.0, 420)
+
+        switch doc.action {
+        case .cachedMenu(let bundleId, _, let path, _, _):
+            let visible = path.last ?? doc.title
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: visible,
+                    inBundleID: bundleId.isEmpty ? appBundleId : bundleId
+                ) * 95.0,
+                760
+            )
+        case .systemCommandScope:
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: nil
+                ) * 85.0,
+                680
+            )
+        case .activatePID, .launchPath, .launchBundleId:
+            if let bid = appBundleId {
+                boost += min(AppUsageLearner.shared.score(forBundleID: bid) * 75.0, 520)
+            }
+        case .cliScope:
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: bundleId
+                ) * 70.0,
+                520
+            )
+        case .browserURL:
+            boost += min(UsageTracker.shared.getScore(for: doc.usageTrackingKey) * 4.0, 220)
+        }
+
+        return min(boost, 1_050)
     }
 
     nonisolated private func insertRanked(
@@ -495,12 +628,45 @@ extension GlobalSearchService.SearchDocument {
         )
     }
 
+    init(
+        systemCommand command: SystemCommand,
+        icon: NSImage?
+    ) {
+        let norm = AppMenuCapabilityCache.normalize(command.name)
+        var aliases = command.keywords
+            .map(AppMenuCapabilityCache.normalize)
+            .filter { !$0.isEmpty && $0 != norm }
+        let description = AppMenuCapabilityCache.normalize(command.description)
+        if !description.isEmpty, description != norm {
+            aliases.append(description)
+        }
+        aliases = Array(Set(aliases))
+        self.init(
+            id: "syscmd://\(command.id.uuidString)",
+            title: command.name,
+            subtitle: "syscmd://\(command.id.uuidString)",
+            bundleId: "syscmd://\(command.id.uuidString)",
+            filePath: nil,
+            normalizedTitle: norm,
+            titleWords: norm.split(separator: " ").map(String.init),
+            acronym: Self.acronym(from: norm),
+            aliases: aliases,
+            aliasWords: Self.words(fromAliases: aliases),
+            sourceKind: .systemCommand,
+            rankingBoost: 0,
+            icon: icon,
+            usageTrackingKey: "syscmd:\(command.id.uuidString)",
+            action: .systemCommandScope(commandKey: command.id.uuidString)
+        )
+    }
+
     init?(
         menuItem item: AXMenuItem,
         appName: String,
         bundleId: String,
         processIdentifier: pid_t,
-        icon: NSImage?
+        icon: NSImage?,
+        sourceKind: GlobalSearchService.SourceKind = .runningMenu
     ) {
         let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let path = item.path
@@ -532,7 +698,7 @@ extension GlobalSearchService.SearchDocument {
             acronym: Self.acronym(from: norm),
             aliases: aliases,
             aliasWords: Self.words(fromAliases: aliases),
-            sourceKind: .runningMenu,
+            sourceKind: sourceKind,
             rankingBoost: 0,
             icon: icon,
             usageTrackingKey: "menu:\(bundleId):\(path.joined(separator: ">"))",
@@ -542,6 +708,58 @@ extension GlobalSearchService.SearchDocument {
                 path: path,
                 shortcutChar: item.shortcutChar,
                 shortcutModifiers: item.shortcutModifiers
+            )
+        )
+    }
+
+    init(browserURL entry: BrowserURLLibraryEntry, icon: NSImage?) {
+        let title = entry.title.isEmpty ? entry.url.absoluteString : entry.title
+        let norm = AppMenuCapabilityCache.normalize(title)
+        let browserNorm = AppMenuCapabilityCache.normalize(entry.browserName)
+        let kindNorm = AppMenuCapabilityCache.normalize(entry.kind.rawValue)
+        let domainNorm = AppMenuCapabilityCache.normalize(entry.domain)
+        let urlNorm = AppMenuCapabilityCache.normalize(entry.url.absoluteString)
+        var aliases = Set<String>()
+        for value in [
+            browserNorm,
+            kindNorm,
+            domainNorm,
+            urlNorm,
+            "\(browserNorm) \(kindNorm)",
+            "\(kindNorm) \(browserNorm)",
+            "\(browserNorm) url",
+            "\(browserNorm) recent",
+            "\(browserNorm) recents",
+            "\(browserNorm) bookmark",
+            "\(browserNorm) bookmarks",
+            "\(browserNorm) history",
+            "history \(browserNorm)",
+            "bookmark \(browserNorm)",
+        ] {
+            let normalized = AppMenuCapabilityCache.normalize(value)
+            if !normalized.isEmpty, normalized != norm { aliases.insert(normalized) }
+        }
+        self.init(
+            id: "browser-url:\(entry.id)",
+            title: title,
+            subtitle: entry.domain,
+            bundleId: entry.browserBundleId,
+            filePath: nil,
+            normalizedTitle: norm,
+            titleWords: norm.split(separator: " ").map(String.init),
+            acronym: Self.acronym(from: norm),
+            aliases: Array(aliases),
+            aliasWords: Self.words(fromAliases: Array(aliases)),
+            sourceKind: .browserURL,
+            rankingBoost: entry.kind == .history ? 180 : 120,
+            icon: icon,
+            usageTrackingKey: "browser-url:\(entry.id)",
+            action: .browserURL(
+                url: entry.url,
+                browserBundleId: entry.browserBundleId,
+                browserName: entry.browserName,
+                kind: entry.kind.rawValue,
+                domain: entry.domain
             )
         )
     }

@@ -63,14 +63,29 @@ extension LauncherView {
         let pillQuery = finderSearchPopoverActive ? "" : q
         // Selection Scope always shows its pills (Ask AI + actions + share), even with an empty
         // query — so the result sheet is visible the moment the launcher opens with a selection.
-        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
+        let inSelectionScope = hasSelectionScopeSurface
         // A scoped app (running-app scope in Global Context) must show its menus on an
         // empty query, just like Context Dock — otherwise the scoped dock stays empty
         // until a keypress. Only the unscoped global/empty state collapses to no pills.
-        let pills =
-            (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil
-            ? []
+        let globalFinderFileScope =
+            isGlobalContextActive
+            && currentGlobalScopedBundleID == "com.apple.finder"
+            && isFinderDesktopOnlyMode
+        let scopedGlobalAppMode =
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !globalFinderFileScope
+        let visibleDockPills =
+            scopedGlobalAppMode
+            ? stableVisibleDockPills(for: pillQuery)
             : contextDockViewModel.visiblePills
+        let pills: [DockPill] = {
+            if globalFinderFileScope {
+                return visibleDockPills
+            }
+            if (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil {
+                return []
+            }
+            return visibleDockPills
+        }()
         let explicitAppTarget =
             pillQuery.isEmpty ? nil : L2AppActionRouter.shared.appScopeTarget(for: pillQuery)
         let hasActiveContextSelection = hasSelectionScopeSurface
@@ -79,17 +94,16 @@ extension LauncherView {
             || (showGlobalClipboardPill && !globalClipboardText.isEmpty)
         let preliminaryGlobalNavState: GlobalGroupedListNavigationState? =
             (pureGlobalAppSearch && !q.isEmpty)
-            ? globalGroupedListNavigationState(for: q) : nil
+            ? visibleGlobalGroupedListNavigationState(for: q) : nil
         let globalAppMatches =
             pureGlobalAppSearch
             ? (
                 preliminaryGlobalNavState?.appResults.isEmpty == false
                 ? (preliminaryGlobalNavState?.appResults ?? [])
-                : (
-                    globalContextViewModel.typingSnapshot.phase == .expanded
-                    ? matchDockIconRowsForExpandedSheet(query: q)
-                    : []
-                )
+                // Preload already-published lightweight rows while the compact shell displays
+                // its spinner. The persistent list remains clipped until expansion, so this does
+                // not interrupt typing but guarantees the first revealed frame has content.
+                : currentGlobalAppMatches(for: q)
             )
             : currentOrImmediateGlobalAppMatches(for: q)
         let genericAppListQuery = isGenericApplicationListQuery(q)
@@ -108,21 +122,26 @@ extension LauncherView {
             isGlobalContextActive && !hasActiveContextSelection && l2.targetApp == nil
             ? activeGlobalInlineDockScope(for: q)
             : nil
-        let effectiveAppScope = inlineGlobalScope?.isExplicitAppScope == true
+        let scopedGlobalMenuState =
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !globalFinderFileScope
+            ? visibleGlobalScopedMenuNavigationState(for: q)
+            : nil
+        let effectiveAppScope =
+            !globalFinderFileScope
+            && (scopedGlobalMenuState != nil || inlineGlobalScope?.isExplicitAppScope == true)
         let transientScopedMenuState =
-            effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil
+            scopedGlobalMenuState ?? (effectiveAppScope ? visibleGlobalScopedMenuNavigationState(for: q) : nil)
         let displayedGlobalAppMatches = effectiveAppScope ? [] : globalAppMatches
         let scopedMenuListContext: (appName: String, actionQuery: String)? = {
+            if let target = l2.targetApp {
+                return (target.name, q)
+            }
             guard let scope = inlineGlobalScope, scope.isExplicitAppScope else { return nil }
             return (scope.scopedAppName, scope.scopedSearchQuery)
         }()
         let globalNavState: GlobalGroupedListNavigationState? =
             effectiveAppScope
-            ? (
-                transientScopedMenuState == nil
-                ? globalGroupedListNavigationState(for: q)
-                : transientScopedMenuState
-            )
+            ? (transientScopedMenuState ?? emptyGlobalGroupedListNavigationState())
             : preliminaryGlobalNavState
         let globalNavIsScopedAppMenus: Bool = {
             guard let s = globalNavState else { return false }
@@ -132,8 +151,10 @@ extension LauncherView {
             globalNavIsScopedAppMenus ? [] : (globalNavState?.menuGroups.flatMap(\.allPills) ?? [])
         let globalCrossAppGroups = globalNavState?.appMenuGroups ?? []
         let showGlobalAppSearch =
-            (pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
+            !globalFinderFileScope
+            && ((pureGlobalAppSearch && !q.isEmpty && !preferFrontmostMenuResults)
             || effectiveAppScope
+            )
         let scopedAppLaunchHint: (bundleId: String, appName: String, appPath: String?)? = {
             let (bundleId, appName): (String, String) = {
                 if let scope = inlineGlobalScope, scope.isExplicitAppScope {
@@ -157,8 +178,14 @@ extension LauncherView {
             return (bundleId, appName, path)
         }()
         let globalSearchLoading =
-            showGlobalAppSearch && !q.isEmpty && scopedAppLaunchHint == nil
-            && searchState.isLoadingApps && globalNavState == nil
+            showGlobalAppSearch
+            && (
+                (currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                    || currentGlobalScopedBundleID?.hasPrefix("cli://") == true)
+                    && (globalNavState?.totalCount ?? 0) == 0
+                || (!q.isEmpty && scopedAppLaunchHint == nil
+                    && searchState.isLoadingApps && globalNavState == nil)
+            )
 
         return L2DockRowPresentation(
             query: q,
@@ -178,7 +205,8 @@ extension LauncherView {
                 launchHint: scopedAppLaunchHint,
                 scopedMenuAppName: scopedMenuListContext?.appName,
                 scopedMenuActionQuery: scopedMenuListContext?.actionQuery ?? "",
-                isLoading: globalSearchLoading
+                isLoading: globalSearchLoading,
+                menuFirst: globalNavState?.menuFirst ?? false
             )
         )
     }
@@ -227,12 +255,60 @@ extension LauncherView {
 
     @ViewBuilder
     func l2GlobalSearchContent(_ presentation: L2GlobalSearchPresentation) -> some View {
+        // The Quick Note scope owns its whole surface (split list + editor), so it
+        // pre-empts the grouped results list this scope would otherwise render.
+        if activeNotepadScopeCommand != nil {
+            NotepadScopeView(
+                selectedNoteID: $notepadSelectedNoteID,
+                isDark: isEffectiveDark,
+                isGenerating: notepadAIGenerating,
+                aiProviderName: settings.selectedAIProvider.shortName,
+                frontmostLabel: notepadFrontmostLabel,
+                hasCapturedText: notepadCapturedText != nil,
+                attachments: notepadAttachments,
+                onAttachFrontmost: { toggleNotepadFrontmostContext() },
+                onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
+                onTakeScreenshot: {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureArea: {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureText: {
+                    captureScreenText { text in notepadCapturedText = text }
+                },
+                onRemoveCapturedText: { notepadCapturedText = nil },
+                onRemoveAttachment: { url in
+                    notepadAttachments.removeAll { $0 == url }
+                },
+                onExit: {
+                    if let scope = globalInlineAppScope {
+                        removeGlobalInlineAppScope(scope)
+                    }
+                }
+            )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                updateMeasuredGlobalListHeight(height)
+            }
+        } else {
+            l2GlobalSearchListContent(presentation)
+        }
+    }
+
+    @ViewBuilder
+    func l2GlobalSearchListContent(_ presentation: L2GlobalSearchPresentation) -> some View {
         // PERSISTENT hierarchy: the results container is ALWAYS in the tree and
         // reveals by clipped height. Conditional creation (`if expanded { list }`)
         // rebuilt the view identity on ↓, so the expansion could never animate
         // continuously from the first key press.
+        let scopedGlobalMenuActive =
+            isGlobalContextActive && currentGlobalScopedBundleID != nil && !isFinderDesktopOnlyMode
         let expanded =
-            isGlobalContextActive && shouldUsePureGlobalAppSearch && globalInlineAppScope == nil
+            isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive
             ? hasExpandedGlobalContextResults
             : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
                 && !isDeferredMenuOnlyPresentation(presentation))
@@ -245,20 +321,74 @@ extension LauncherView {
             scopedMenuAppName: presentation.scopedMenuAppName,
             scopedMenuActionQuery: presentation.scopedMenuActionQuery,
             isLoading: presentation.isLoading,
-            menuFirst: false
+            menuFirst: presentation.menuFirst
         )
         .frame(maxHeight: expanded ? nil : 0, alignment: .top)
         .opacity(expanded ? 1 : 0)
         .clipped()
         .allowsHitTesting(expanded)
-        .animation(.easeInOut(duration: 0.18), value: expanded)
+        // The NSPanel frame is the single owner of sheet expansion animation. Animating this
+        // clipped subtree at the same time made the glass list fade/reveal inside a second,
+        // independently changing viewport, which presented as a flash/flicker in every mode.
+        // Keeping the hierarchy persistent still preserves row identity; the window animation
+        // now reveals the already-laid-out content continuously.
     }
 
     @ViewBuilder
     func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
-        if !presentation.showsGlobalSearch {
+        if activeNotepadScopeCommand != nil {
+            NotepadScopeView(
+                selectedNoteID: $notepadSelectedNoteID,
+                isDark: isEffectiveDark,
+                isGenerating: notepadAIGenerating,
+                aiProviderName: settings.selectedAIProvider.shortName,
+                frontmostLabel: notepadFrontmostLabel,
+                hasCapturedText: notepadCapturedText != nil,
+                attachments: notepadAttachments,
+                onAttachFrontmost: { toggleNotepadFrontmostContext() },
+                onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
+                onTakeScreenshot: {
+                    captureScreenshotToAttachments(interactive: false) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureArea: {
+                    captureScreenshotToAttachments(interactive: true) { url in
+                        notepadAttachments.append(url)
+                    }
+                },
+                onCaptureText: {
+                    captureScreenText { text in notepadCapturedText = text }
+                },
+                onRemoveCapturedText: { notepadCapturedText = nil },
+                onRemoveAttachment: { url in
+                    notepadAttachments.removeAll { $0 == url }
+                },
+                onExit: {
+                    if let scope = globalInlineAppScope {
+                        removeGlobalInlineAppScope(scope)
+                    }
+                }
+            )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                updateMeasuredGlobalListHeight(height)
+            }
+        } else if !presentation.showsGlobalSearch {
             dockPillListView(pills: presentation.pills)
         }
+    }
+
+    /// The scoped SystemCommand when the user is inside a provider:notepad scope,
+    /// else nil. Drives the Quick Note split editor surface.
+    var activeNotepadScopeCommand: SystemCommand? {
+        guard isGlobalContextActive,
+            let bundle = currentGlobalScopedBundleID,
+            bundle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(bundle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.keywords.contains(where: { $0.lowercased() == "provider:notepad" })
+        else { return nil }
+        return command
     }
 
     func handleL2PillQueryChange(_ newQuery: String) {
@@ -276,15 +406,15 @@ extension LauncherView {
         if shouldUsePureGlobalAppSearch {
             l2.appCompletion = nil
             l2.showResultsPopover = false
-            if globalInlineAppScope == nil {
-                updateGlobalContextTypingSnapshot(query: newQuery)
-            } else {
+            if currentGlobalScopedBundleID != nil || globalInlineAppScope != nil {
                 scheduleGlobalGroupedListRebuild(query: newQuery)
+            } else {
+                updateGlobalContextTypingSnapshot(query: newQuery)
             }
             return
         }
         if isFinderDesktopOnlyMode {
-            commitFinderDesktopModeSnapshot(query: newQuery, preserveFocus: true)
+            scheduleFinderDesktopFastMatch(query: newQuery, preserveFocus: true)
             scheduleFinderDesktopSearchEnrichment(query: newQuery)
             return
         }
@@ -342,6 +472,10 @@ extension LauncherView {
         } else {
             contextDockViewModel.finderDesktopSearchTask?.cancel()
             contextDockViewModel.finderDesktopSearchTask = nil
+            contextDockViewModel.finderDesktopFastMatchTask?.cancel()
+            contextDockViewModel.finderDesktopFastMatchTask = nil
+            contextDockViewModel.finderDesktopSearchRecords = []
+            contextDockViewModel.finderDesktopPillsByPath = [:]
             finderDesktopRecentPills = []
             finderDesktopSearchPills = []
             finderDesktopSearchQuery = ""

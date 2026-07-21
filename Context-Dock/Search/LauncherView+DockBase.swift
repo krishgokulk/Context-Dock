@@ -6,10 +6,11 @@ extension LauncherView {
     func openAICapabilityApprovalWindow(
         pending: AICapabilityApprovalCenter.PendingApproval
     ) {
+        let presentation = pending.approvalPresentation
         AICapabilityApprovalWindowHost.close()
         let controller = NSHostingController(rootView: AICapabilityApprovalView(pending: pending))
         let window = NSWindow(contentViewController: controller)
-        window.title = "AI Action Approval"
+        window.title = presentation.title
         window.styleMask = [.titled, .closable]
         window.level = .floating
         window.setContentSize(NSSize(width: 500, height: 340))
@@ -22,10 +23,11 @@ extension LauncherView {
     }
 
     func openAIPrivacyApprovalWindow(pending: AIPrivacyApprovalCenter.PendingApproval) {
+        let presentation = pending.approvalPresentation
         AIPrivacyApprovalWindowHost.close()
         let controller = NSHostingController(rootView: AIPrivacyApprovalView(pending: pending))
         let window = NSWindow(contentViewController: controller)
-        window.title = "AI Privacy Approval"
+        window.title = presentation.title
         window.styleMask = [.titled, .closable]
         window.level = .floating
         window.setContentSize(NSSize(width: 500, height: 280))
@@ -38,6 +40,7 @@ extension LauncherView {
     }
 
     func openCommandApprovalWindow(pending: TerminalAIBridge.PendingCommand) {
+        let presentation = pending.approvalPresentation
         CommandApprovalWindowHost.close()
         let view = CommandApprovalView(
             command: pending.command,
@@ -52,7 +55,7 @@ extension LauncherView {
         )
         let controller = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: controller)
-        win.title = "Terminal Command Approval"
+        win.title = presentation.title
         win.styleMask = [.titled, .closable]
         win.level = .floating
         let isCritical = pending.classification.riskLevel == .critical
@@ -67,9 +70,10 @@ extension LauncherView {
     }
 
     func openAdapterApprovalWindow(request: AdapterActionRequest) {
+        let presentation = request.approvalPresentation
         AdapterApprovalWindowHost.close()
 
-        let size = NSSize(width: 460, height: 252)
+        let size = NSSize(width: 460, height: presentation.preview?.isEmpty == false ? 280 : 252)
         let view = AdapterApprovalPopupView(request: request)
         let controller = NSHostingController(rootView: view)
         let panel = AdapterApprovalPanel(

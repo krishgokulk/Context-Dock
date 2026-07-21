@@ -188,10 +188,20 @@ class ContextDetector {
                 fileSize = "Folder"
             }
 
-            // For text files, read content (up to 5000 chars)
+            // Prefer MarkItDown for structured documents. This single ingestion path feeds
+            // AI Assistant attachments, Finder/Selection Scope, Preview scope, and app chat.
             var content: String? = nil
+            if !isDirectory.boolValue, fileType != "image",
+                let converted = MarkItDownService.convert(url, characterBudget: 5_000)
+            {
+                content = converted.markdown
+            }
+
+            // Native fallbacks keep DoraX useful before MarkItDown is installed.
             if ["txt", "md", "markdown", "swift", "py", "js", "java", "cpp", "c", "h", "json", "xml"].contains(fileExtension) {
-                if let fileContent = try? String(contentsOf: url, encoding: .utf8) {
+                if content == nil,
+                    let fileContent = try? String(contentsOf: url, encoding: .utf8)
+                {
                     if fileContent.count > 5000 {
                         content = String(fileContent.prefix(5000)) + "\n... (file truncated)"
                     } else {
@@ -201,7 +211,7 @@ class ContextDetector {
             }
 
             // For PDF files, extract text content
-            if fileExtension == "pdf" {
+            if fileExtension == "pdf", content == nil {
                 #if DEBUG
                 print("📄 [ContextDetector] Attempting to extract text from PDF: \(url.lastPathComponent)")
                 #endif

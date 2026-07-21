@@ -16,6 +16,7 @@ final class GeneralChatCapabilityHub {
 
     private var cachedBlock: String?
     private var cachedAt: Date = .distantPast
+    private var cachedAllowlistFingerprint = ""
     private let cacheTTL: TimeInterval = 300
     private let chatPanelKeyPrefix = "dock_app_"
 
@@ -24,6 +25,7 @@ final class GeneralChatCapabilityHub {
     func invalidate() {
         cachedBlock = nil
         cachedAt = .distantPast
+        cachedAllowlistFingerprint = ""
     }
 
     // MARK: - Prompt block
@@ -31,14 +33,30 @@ final class GeneralChatCapabilityHub {
     /// System-prompt section listing all app tools General Chat may call.
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
-    func capabilityPromptBlock(compact: Bool = false) async -> String {
+    func capabilityPromptBlock(
+        compact: Bool = false,
+        query: String = "",
+        scope: AIConversationScope = .general
+    ) async -> String {
+        let discovery = await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         let builtinLines = builtInCapabilityLines()
+        let allowlistFingerprint = AppAdapterManager.shared.adapters
+            .filter(\.isEnabled)
+            .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
+            .sorted()
+            .joined(separator: "|")
         let inventoryLines = appInventoryLines()
-        if let cachedBlock, Date().timeIntervalSince(cachedAt) < cacheTTL {
+            + discoveryLines
+            + targetedSkillLines(query: query, scope: scope)
+        if let cachedBlock,
+            cachedAllowlistFingerprint == allowlistFingerprint,
+            Date().timeIntervalSince(cachedAt) < cacheTTL
+        {
             let block = withInventory(
-                joinedBlock(cachedBlock, builtinLines: builtinLines),
+                cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
                 inventoryLines: inventoryLines
             )
             return compact ? compacted(block) : block
@@ -49,7 +67,13 @@ final class GeneralChatCapabilityHub {
         // fan-out / "which app?" targets for broad discovery questions that name no app.
         var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
         let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
-        let adapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
+        let enabledAdapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
+        let normalizedQuery = query.lowercased()
+        let explicitlyNamed = enabledAdapters.filter {
+            normalizedQuery.contains($0.appName.lowercased())
+                || normalizedQuery.contains($0.bundleId.lowercased())
+        }
+        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
         for adapter in adapters {
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
                 continue
@@ -82,6 +106,7 @@ final class GeneralChatCapabilityHub {
         else {
             cachedBlock = ""
             cachedAt = Date()
+            cachedAllowlistFingerprint = allowlistFingerprint
             return ""
         }
 
@@ -102,10 +127,11 @@ final class GeneralChatCapabilityHub {
             "If the user asks \"how many\", count the items in the result.",
             "",
             "Planning rules:",
-            "- Prefer real DoraX routes over generic advice: app adapter actions, built-in capabilities, MCP tools, native share, cached app menus, CLI, then launch/activate.",
+            "- Prefer real DoraX routes over generic advice: app adapter/native actions, built-in capabilities, MCP tools, API/Shortcuts, native share, cached app menus, then CLI fallback, then launch/activate.",
+            "- Terminal/CLI is fallback-only. If an app has an adapter/native capability, MCP tool, API connection, Shortcut, or verified menu route that fits, use that instead of terminal_call.",
             "- If a request names or implies an app, check the installed/running/app-adapter/menu inventory below before answering.",
             "- If execution is needed, explain the route and let DoraX approval run it; do not pretend the task is complete before approval/executor success.",
-            "- If the user asks about selected files, selected text, the current page, or the frontmost app, say DoraX can inspect local Accessibility/Vision context and ask before using it unless explicit chat attachments/context are already provided.",
+            "- Never ask for Accessibility, Vision, current-page, or app-context permission in chat text. DoraX presents native approval UI before verified context is supplied. If context is absent, state which detail was unavailable.",
             "- If the user asks to share/send to an app, use native macOS sharing or the app adapter route; do not invent a manual copy/paste workflow.",
             "- DISCOVERY queries that name NO app (\"do any of my apps have X\", \"where did I save Y\", \"any links stored anywhere\"): NEVER answer that you lack access, and NEVER suggest grep / the current working directory / shell — you are DoraX, not a coding agent. Instead call the query tool of each relevant app under \"Searchable apps\" below and combine the results. If several apps could match and fanning out is too broad, first ask the user which of those specific apps to search (name them).",
         ]
@@ -131,8 +157,9 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
+        cachedAllowlistFingerprint = allowlistFingerprint
         let full = withInventory(
-            joinedBlock(block, builtinLines: builtinLines),
+            cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
             inventoryLines: inventoryLines
         )
         return compact ? compacted(full) : full
@@ -148,11 +175,15 @@ final class GeneralChatCapabilityHub {
             ("calendar.", "Calendar", "calendarMCPEnabled"),
             ("contacts.", "Contacts", "contactsMCPEnabled"),
             ("reminders.", "Reminders", "remindersMCPEnabled"),
+            ("messages.", "Messages", "messagesMCPEnabled"),
             ("github.", "GitHub (gh CLI)", "githubMCPEnabled"),
         ]
         let prefixes = families.map(\.prefix)
         let caps = CapabilityRegistry.shared.all.filter { cap in
             prefixes.contains(where: cap.id.hasPrefix)
+                && cap.appBundleID.map {
+                    AppAdapterManager.shared.adapter(for: $0) != nil
+                } == true
         }
         let disabledNames = families
             .filter { family in !caps.contains { $0.id.hasPrefix(family.prefix) } }
@@ -198,6 +229,9 @@ final class GeneralChatCapabilityHub {
             server.bundleIds.map { (bundleId: $0, server: server) }
         }, by: \.bundleId).mapValues(\.count)
 
+        // Inventory is broader than authority: running/frontmost apps and cached menus help
+        // General AI understand what the user means and which DoraX routes exist. An enabled
+        // App Adapter remains the hard gate for app reads and execution.
         var importantBundleIds = Set<String>()
         importantBundleIds.formUnion(runningBundleIds)
         importantBundleIds.formUnion(adapterByBundle.keys)
@@ -233,13 +267,16 @@ final class GeneralChatCapabilityHub {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         var lines: [String] = [
-            "- Installed apps indexed: \(installed.count). Running apps indexed: \(runningBundleIds.count).",
-            "- Native share routes available for selected files/text/current URL: Messages, Mail, AirDrop, and system share sheet.",
-            "- AX/Vision deeper inspection is available only after user approval; ask before reading screen, frontmost UI, selected files, selected text, or page contents unless already attached.",
+            "- App access is allowlisted by enabled App Adapters: \(adapterByBundle.count) app(s) available.",
+            "- Inventory entries without an enabled adapter are awareness-only: never read their private data or execute their routes; explain that the app must be added in Settings → App Adapters.",
+            "- AX/Vision inspection is available only for allowlisted apps and only after user approval unless content was explicitly attached.",
         ]
         if let frontmostBundleId,
            let frontmost = ordered.first(where: { $0.bundleId == frontmostBundleId }) {
-            lines.append("- Frontmost app now: \(frontmost.name) (\(frontmost.bundleId)).")
+            let access = adapterByBundle[frontmostBundleId] == nil
+                ? "awareness only; not added to App Adapters"
+                : "available through App Adapters"
+            lines.append("- Frontmost app now: \(frontmost.name) (\(frontmost.bundleId)); \(access).")
         }
 
         lines.append("Running app status snapshot:")
@@ -247,6 +284,9 @@ final class GeneralChatCapabilityHub {
             var bits: [String] = []
             if app.bundleId == frontmostBundleId { bits.append("frontmost") }
             if runningBundleIds.contains(app.bundleId) { bits.append("running") }
+            if adapterByBundle[app.bundleId] == nil {
+                bits.append("awareness only — not added to App Adapters")
+            }
             if let adapter = adapterByBundle[app.bundleId] {
                 let actions = adapter.visibleActions.count
                 bits.append("\(actions) adapter action\(actions == 1 ? "" : "s")")
@@ -284,6 +324,43 @@ final class GeneralChatCapabilityHub {
             lines.append("- \(app.name) (\(app.bundleId)): \(bits.joined(separator: "; ")).")
         }
         return lines
+    }
+
+    /// Skills are executable guidance only for the app explicitly named by the user. Never
+    /// dump every imported skill into the system-wide prompt: that creates cross-app prompt
+    /// bleed and lets an unrelated adapter steer a selection-only conversation.
+    private func targetedSkillLines(query: String, scope: AIConversationScope) -> [String] {
+        let normalized = query.lowercased()
+        let targets = AppAdapterManager.shared.adapters.filter {
+            $0.isEnabled && (normalized.contains($0.appName.lowercased())
+                || normalized.contains($0.bundleId.lowercased()))
+        }
+        guard !targets.isEmpty else { return [] }
+        let heading: String
+        if case .selection = scope {
+            heading = "Selection-safe targeted app skills (instructions only; transform only explicit selected payload; never read app state or grant tool permission):"
+        } else {
+            heading = "Targeted app skills (instructions only; never grant tool permission):"
+        }
+        var lines = [heading]
+        for adapter in targets.prefix(3) {
+            let block = SkillStore.shared.instructionsBlock(for: adapter.bundleId)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !block.isEmpty else { continue }
+            lines.append("<app-skill bundle=\"\(adapter.bundleId)\">")
+            lines.append(String(block.prefix(4_000)))
+            lines.append("</app-skill>")
+        }
+        return lines.count == 1 ? [] : lines
+    }
+
+    private func cacheFreshnessLine() -> String {
+        let age = max(0, Date().timeIntervalSince(cachedAt))
+        if cachedAt == .distantPast || age < 1 {
+            return "Capability cache freshness: fresh now; live toggles and built-ins are read every message."
+        }
+        let remaining = max(0, cacheTTL - age)
+        return "Capability cache freshness: \(Int(age))s old; refreshes in \(Int(remaining))s; live toggles and built-ins are read every message."
     }
 
     private func joinedBlock(_ base: String, builtinLines: [String]) -> String {
@@ -330,34 +407,48 @@ final class GeneralChatCapabilityHub {
     /// Dispatch a tool command the model emitted through the tool loop.
     /// Returns handled=false when the command is not an app tool call (caller falls back
     /// to the terminal bridge or treats the text as the final answer).
-    func execute(_ command: String) async -> ToolCallResult {
-        if let call = extractJSONObject(containing: "\"mcp_call\"", in: command),
-           let mcp = call["mcp_call"] as? [String: Any],
-           let tool = mcp["tool"] as? String {
-            let server = (mcp["server"] as? String) ?? ""
-            let arguments = (mcp["arguments"] as? [String: Any]) ?? [:]
-            let appRef = (mcp["app"] as? String) ?? (mcp["bundleId"] as? String) ?? ""
+    func execute(_ command: String, scope: AIConversationScope) async -> ToolCallResult {
+        guard let invocation = AITypedInvocationResolver.invocation(from: command) else {
+            return ToolCallResult(handled: false, success: false, output: "", label: "")
+        }
+
+        switch invocation.kind {
+        case .mcp:
+            let tool = invocation.capabilityID
+            let server = invocation.arguments["server"] ?? ""
+            let arguments = decodeInvocationArguments(invocation)
+            let appRef = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
             // Built-in capability ids (notes.search, calendar.today, …) win over MCP
             // server tools — there is no overlap in practice.
             if CapabilityRegistry.shared.capability(id: tool) != nil {
-                let input = arguments.mapValues { value -> String in
-                    if let s = value as? String { return s }
-                    return "\(value)"
+                if let appBundleID = CapabilityRegistry.shared.capability(id: tool)?.appBundleID,
+                    AppAdapterManager.shared.adapter(for: appBundleID) == nil
+                {
+                    return ToolCallResult(
+                        handled: true, success: false,
+                        output: "That app isn’t added to App Adapters, so General AI cannot use \(tool).",
+                        label: "\(tool) blocked")
                 }
+                let input = arguments.mapValues { value in String(describing: value) }
                 let plan = AIActionPlan(
                     capability: tool, input: input, explanation: "Requested from AI chat")
                 do {
-                    let result = try await AIExecutionEngine.shared.executeWithApproval(
-                        plan, context: .none)
-                    return ToolCallResult(
-                        handled: true, success: true, output: result.output,
-                        label: "\(tool) via built-in")
+                    try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
                 } catch {
                     return ToolCallResult(
                         handled: true, success: false,
-                        output: "Tool \(tool) failed: \(error.localizedDescription)",
-                        label: "\(tool) via built-in")
+                        output: error.localizedDescription,
+                        label: "\(tool) blocked")
                 }
+                let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(
+                    plan, context: .none)
+                return ToolCallResult(
+                    handled: true,
+                    success: result.success,
+                    output: result.success
+                        ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                        : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
+                    label: "\(tool) via built-in")
             }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {
                 return ToolCallResult(
@@ -365,9 +456,31 @@ final class GeneralChatCapabilityHub {
                     output: "No app adapter matches \"\(appRef)\" / server \"\(server)\".",
                     label: tool)
             }
+            var resolvedArguments = invocation.arguments
+            resolvedArguments["bundleId"] = bundleId
+            let resolvedInvocation = AITypedInvocation(
+                kind: invocation.kind,
+                capabilityID: invocation.capabilityID,
+                arguments: resolvedArguments,
+                requiresApproval: invocation.requiresApproval
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(resolvedInvocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "\(tool) blocked")
+            }
+            guard MCPToolSafety.isClearlyReadOnly(name: tool) else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "MCP tool \(tool) is classified as write/unknown risk. Provider-authored MCP mutations require a deterministic app capability with user approval.",
+                    label: "\(tool) blocked")
+            }
             let label = "\(tool) via \(displayName(forBundleId: bundleId))"
             do {
-                let result = try await MCPRuntime.shared.callTool(
+                let result = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleId, server: server, tool: tool, arguments: arguments)
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
@@ -376,18 +489,91 @@ final class GeneralChatCapabilityHub {
                     output: "MCP tool \(tool) failed: \(error.localizedDescription)",
                     label: label)
             }
-        }
 
-        if let call = extractJSONObject(containing: "\"app_chat_history\"", in: command),
-           let historyCall = call["app_chat_history"] as? [String: Any],
-           let appRef = (historyCall["app"] as? String) ?? (historyCall["bundleId"] as? String) {
+        case .capability where invocation.capabilityID == "app.chatHistory.read":
+            let appRef = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
+            let bundleId = resolveChatHistoryBundleId(appRef: appRef) ?? appRef
+            var resolvedArguments = invocation.arguments
+            resolvedArguments["bundleId"] = bundleId
+            let resolvedInvocation = AITypedInvocation(
+                kind: invocation.kind,
+                capabilityID: invocation.capabilityID,
+                arguments: resolvedArguments,
+                requiresApproval: invocation.requiresApproval
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(resolvedInvocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "chat history blocked")
+            }
             return ToolCallResult(
                 handled: true, success: true,
-                output: chatHistoryText(for: appRef),
-                label: "chat history: \(appRef)")
-        }
+                output: chatHistoryText(for: bundleId),
+                label: "chat history: \(displayName(forBundleId: bundleId))")
 
-        return ToolCallResult(handled: false, success: false, output: "", label: "")
+        case .capability:
+            let plan = AIActionPlan(
+                capability: invocation.capabilityID,
+                input: invocation.arguments,
+                explanation: "Requested from AI chat"
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+                try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "\(invocation.capabilityID) blocked")
+            }
+            let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(plan, context: .none)
+            return ToolCallResult(
+                handled: true,
+                success: result.success,
+                output: result.success
+                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
+                label: invocation.capabilityID)
+
+        case .terminal:
+            let plan = AIActionPlan(
+                capability: "terminal.runCommand",
+                input: invocation.arguments,
+                explanation: "Requested from AI chat"
+            )
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+                try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "terminal blocked")
+            }
+            let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(plan, context: .none)
+            return ToolCallResult(
+                handled: true,
+                success: result.success,
+                output: result.success
+                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    : "Terminal command failed: \(result.error ?? "Unknown error")",
+                label: "Terminal")
+
+        case .share:
+            do {
+                try CapabilityAuthorizationGate.validateInvocation(invocation, scope: scope)
+            } catch {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: error.localizedDescription,
+                    label: "share blocked")
+            }
+            return ToolCallResult(
+                handled: false, success: false, output: "", label: "")
+        }
     }
 
     // MARK: - Chat history
@@ -401,12 +587,16 @@ final class GeneralChatCapabilityHub {
         AppPanelChatStore.shared.allPanelKeys()
             .filter { $0.hasPrefix(chatPanelKeyPrefix) }
             .map { String($0.dropFirst(chatPanelKeyPrefix.count)) }
+            .filter { AppAdapterManager.shared.adapter(for: $0) != nil }
             .map { SavedChatApp(bundleId: $0, appName: displayName(forBundleId: $0)) }
     }
 
     private func chatHistoryText(for appRef: String) -> String {
         guard let bundleId = resolveChatHistoryBundleId(appRef: appRef) else {
             return "No saved chat history found for \"\(appRef)\"."
+        }
+        guard AppAdapterManager.shared.adapter(for: bundleId) != nil else {
+            return "That app isn’t added to App Adapters, so General AI cannot read its saved app chat."
         }
         let messages = AppPanelChatStore.shared.load(for: chatPanelKeyPrefix + bundleId)
         guard !messages.isEmpty else {
@@ -487,32 +677,11 @@ final class GeneralChatCapabilityHub {
         return bundleId.components(separatedBy: ".").last ?? bundleId
     }
 
-    // MARK: - JSON extraction
-
-    /// Balance-matched extraction of the JSON object that contains `key`, tolerant of the
-    /// model wrapping it in prose or code fences (same approach as parseMCPCall).
-    private func extractJSONObject(containing key: String, in text: String) -> [String: Any]? {
-        guard let keyRange = text.range(of: key) else { return nil }
-        guard let open = text[..<keyRange.lowerBound].lastIndex(of: "{") else { return nil }
-        var depth = 0
-        var end: String.Index?
-        var i = open
-        while i < text.endIndex {
-            switch text[i] {
-            case "{": depth += 1
-            case "}":
-                depth -= 1
-                if depth == 0 { end = text.index(after: i) }
-            default: break
-            }
-            if end != nil { break }
-            i = text.index(after: i)
-        }
-        guard let endIdx = end else { return nil }
-        let slice = String(text[open..<endIdx])
-        guard let data = slice.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return root
+    private func decodeInvocationArguments(_ invocation: AITypedInvocation) -> [String: Any] {
+        guard let json = invocation.arguments["argumentsJSON"],
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return object
     }
 }

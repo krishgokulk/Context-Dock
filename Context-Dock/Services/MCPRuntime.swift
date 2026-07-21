@@ -5,6 +5,38 @@
 
 import Foundation
 
+/// Conservative governance for free-form provider tool loops. Registered/deterministic
+/// MCP routes already have approval; provider-authored calls may auto-run only tools whose
+/// names are unambiguously read-only. Unknown and mutating tools must use an approved route.
+enum MCPToolSafety {
+    enum Risk: String, Sendable {
+        case read
+        case write
+        case unknown
+
+        var requiresApproval: Bool { self != .read }
+    }
+
+    nonisolated static func classify(name: String) -> Risk {
+        let value = name.lowercased()
+        let mutations = [
+            "create", "add", "append", "update", "edit", "write", "set", "send",
+            "post", "publish", "delete", "remove", "move", "rename", "upload",
+            "execute", "run", "install", "uninstall", "enable", "disable", "archive",
+        ]
+        if mutations.contains(where: value.contains) { return .write }
+        let reads = [
+            "read", "get", "list", "search", "find", "query", "lookup", "fetch",
+            "count", "status", "history", "recent", "inspect", "describe", "show",
+        ]
+        return reads.contains(where: value.contains) ? .read : .unknown
+    }
+
+    nonisolated static func isClearlyReadOnly(name: String) -> Bool {
+        classify(name: name) == .read
+    }
+}
+
 actor MCPRuntime {
     static let shared = MCPRuntime()
 
@@ -24,6 +56,21 @@ actor MCPRuntime {
             guard let client else { continue }
             let toolList = await client.tools
             for t in toolList { out.append((config.name, config.id, t)) }
+        }
+        return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
+    }
+
+    /// Tools from ALREADY-CONNECTED servers only — never opens a new connection. Safe to
+    /// call on the hot resolve path (no network/latency): returns empty until a server has
+    /// been warmed (e.g. by scoped chat), so the deterministic resolver stays fast.
+    func cachedTools(forBundleId bundleId: String) async
+        -> [(server: String, serverId: UUID, tool: MCPTool)]
+    {
+        let configs = await MainActor.run { MCPServerManager.shared.servers(forBundleId: bundleId) }
+        var out: [(String, UUID, MCPTool)] = []
+        for config in configs {
+            guard let client = clients[config.id], await client.isConnected else { continue }
+            for t in await client.tools { out.append((config.name, config.id, t)) }
         }
         return out.map { (server: $0.0, serverId: $0.1, tool: $0.2) }
     }
@@ -59,6 +106,18 @@ actor MCPRuntime {
             throw MCPClientError.notConnected
         }
         return try await client.callTool(name: tool, arguments: arguments)
+    }
+
+    func callProviderReadOnlyTool(
+        bundleId: String, server: String, tool: String, arguments: [String: Any]
+    ) async throws -> String {
+        guard MCPToolSafety.isClearlyReadOnly(name: tool) else {
+            throw AICapabilityError.blocked(
+                "MCP tool \(tool) is not clearly read-only. Use an approval-backed adapter "
+                    + "action or deterministic MCP capability.")
+        }
+        return try await callTool(
+            bundleId: bundleId, server: server, tool: tool, arguments: arguments)
     }
 
     private func connectedClient(for config: MCPServerConfig) async -> MCPClient? {

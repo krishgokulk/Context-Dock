@@ -6,14 +6,29 @@ import UniformTypeIdentifiers
 extension LauncherView {
     var shouldShowSelectionTrailingButton: Bool {
         !showMediaLayer
-            && currentDockSurfaceMode != .generalChat
             && !isCompactSmartScope
-            && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
-            && !(isGlobalContextActive && hasSelectionScopeSurface)
+            && !hasSelectionScopeSurface
             && (liveDockSelectionPreviewText != nil
                 || currentSelectionActivationSnapshot(refresh: false) != nil)
+    }
+
+    /// Selection icon for a single selected item. A selected FOLDER must read as a folder —
+    /// fileIcon(for:) sees an empty extension and returns the generic "doc". Two independent
+    /// directory checks: resourceValues can fail (sandbox / unresolved path) and silently fall
+    /// back to "doc", which shows up as a folder↔doc flicker.
+    func selectionSymbol(for url: URL) -> String {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            return "folder.fill"
+        }
+        if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            return "folder.fill"
+        }
+        // Extension-less items that still resolve as containers (e.g. .app-less bundles).
+        if url.hasDirectoryPath { return "folder.fill" }
+        return fileIcon(for: url.pathExtension.lowercased())
     }
 
     func currentSelectionActivationSnapshot(refresh: Bool = false) -> GlobalContextActivation? {
@@ -38,7 +53,7 @@ extension LauncherView {
                 : "\(axFiles.count) files selected"
             let icon =
                 axFiles.count == 1
-                ? fileIcon(for: axFiles[0].pathExtension.lowercased())
+                ? selectionSymbol(for: axFiles[0])
                 : "doc.on.doc.fill"
             return GlobalContextActivation(
                 autoActivated: false,
@@ -55,6 +70,7 @@ extension LauncherView {
             return GlobalContextActivation(
                 autoActivated: false,
                 frozenText: String(text.prefix(120)),
+                frozenFullText: text,
                 frozenIcon: "text.cursor",
                 sourceBundleId: frontmost.bundleID
             )
@@ -66,7 +82,7 @@ extension LauncherView {
                 urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files selected"
             let icon =
                 urls.count == 1
-                ? fileIcon(for: urls[0].pathExtension.lowercased())
+                ? selectionSymbol(for: urls[0])
                 : "doc.on.doc.fill"
             return GlobalContextActivation(
                 autoActivated: false,
@@ -81,6 +97,7 @@ extension LauncherView {
             return GlobalContextActivation(
                 autoActivated: false,
                 frozenText: String(trimmed.prefix(120)),
+                frozenFullText: trimmed,
                 frozenIcon: "text.cursor",
                 sourceBundleId: frontmost.bundleID
             )
@@ -105,7 +122,7 @@ extension LauncherView {
                     urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files selected"
                 let icon =
                     urls.count == 1
-                    ? fileIcon(for: urls[0].pathExtension.lowercased())
+                    ? selectionSymbol(for: urls[0])
                     : "doc.on.doc.fill"
                 currentContext = .filesSelected(urls)
                 return GlobalContextActivation(
@@ -122,6 +139,7 @@ extension LauncherView {
                 return GlobalContextActivation(
                     autoActivated: false,
                     frozenText: String(trimmed.prefix(120)),
+                    frozenFullText: trimmed,
                     frozenIcon: "text.cursor",
                     sourceBundleId: app.bundleIdentifier ?? frontmost.bundleID
                 )
@@ -174,12 +192,29 @@ extension LauncherView {
         return true
     }
 
+    func openSelectionScopeFromClipboardPeekIfNeeded() {
+        guard activeSelection == nil, frozenSelectionText == nil,
+            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        peekSelectionViaClipboard { text in
+            guard let text, self.activeSelection == nil, self.frozenSelectionText == nil else {
+                return
+            }
+            self.currentContext = .textSelected(text)
+            if self.openInSelectionScopeIfSelectionPresent() {
+                self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+                self.requestWindowSizeUpdate(reason: .modeChanged)
+            }
+        }
+    }
+
     func openSelectionContextFromTrailingButton() {
-        let activation =
-            currentSelectionActivationSnapshot(refresh: true)
-            ?? GlobalContextActivation(autoActivated: false)
+        guard let payload = currentSelectionActivationSnapshot(refresh: true) else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-            globalContextActivation = activation
+            // Enter Selection Scope IN PLACE — assigning globalContextActivation here used to
+            // yank the user out of Context Dock into Global Context. The selection came from the
+            // frontmost app, so the scope stays on whichever surface they're already on.
+            selectionScopePayload = payload
             aiMode.isActive = false
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
@@ -198,6 +233,21 @@ extension LauncherView {
         prewarmFinderContextualActionsForSelection()
     }
 
+    @discardableResult
+    func dismissSelectionScopeFromEmptyBackspaceIfNeeded() -> Bool {
+        // No isGlobalContextActive gate: Selection Scope now lives on either surface, so
+        // backspace must exit it from Context Dock too.
+        guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        // Only exit when actually IN Selection Scope. The live selection survives the exit now,
+        // so keying off hasActiveDockContextSelection would swallow every later backspace.
+        guard globalContextActivationHasFrozenPayload else { return false }
+        dismissSelectionAndStayInGlobalContext()
+        isSearchFieldFocused = true
+        return true
+    }
+
     @ViewBuilder
     var selectionTrailingButton: some View {
         if let selectionIcon = activeSelectionIcon
@@ -212,6 +262,30 @@ extension LauncherView {
             .buttonStyle(.plain)
             .help("Open selection context")
         }
+    }
+
+    var clipboardTrailingButton: some View {
+        Button {
+            activateClipboardScope()
+        } label: {
+            Image(systemName: "doc.on.clipboard")
+                .foregroundStyle(Color.indigo.opacity(0.78))
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .help("Open clipboard")
+    }
+
+    var compactAIActionButton: some View {
+        Button(action: runCompactAIActionFromInput) {
+            Image(systemName: shouldShowSelectionCompactAIAction ? "sparkles" : "bubble.left.and.text.bubble.right")
+                .foregroundStyle(Color.purple.opacity(0.9))
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .help(shouldShowSelectionCompactAIAction ? "Ask AI about selection" : "Ask frontmost app chat")
     }
 
     @ViewBuilder
@@ -235,7 +309,7 @@ extension LauncherView {
         // context dock, general chat, context-dock chat, media, clipboard and notification scopes
         // all render through the same container + same search input, so switching only swaps the
         // inner content in place — no surface recreation, no jump. Constant, instant, Spotlight-feel.
-        unifiedSearchPanelSurface(inDockMode: settings.effectiveDockAtBottom)
+        unifiedSearchPanelSurface(inDockMode: false)
     }
 
     var shouldShowUnifiedDockModeContent: Bool {
@@ -253,7 +327,7 @@ extension LauncherView {
         case .globalContext:
             return false
         case .contextDock:
-            return hasResultsToShow
+            return shouldShowContextDockUnifiedSearchContent
         case .mediaDock:
             return false
         }
@@ -276,6 +350,11 @@ extension LauncherView {
 
     var unifiedSearchContentHeight: CGFloat {
         if shouldSuppressIdleBottomResultsPanel {
+            return 0
+        }
+        if showContextInDock && currentDockSurfaceMode == .contextDock
+            && !shouldShowContextDockUnifiedSearchContent
+        {
             return 0
         }
         if shouldShowContextDockAppPanel {
@@ -325,10 +404,15 @@ extension LauncherView {
         case .generalChat:
             return aiMode.messages.isEmpty && !aiMode.isLoading && aiMode.streamingId == nil
         case .contextDockChat:
+            if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
+                return true
+            }
             return l2.chatMessages.isEmpty && !l2.isLoading
         case .globalContext:
+            if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
+                return true
+            }
             if shouldUsePureGlobalAppSearch,
-                globalInlineAppScope == nil,
                 globalContextViewModel.typingSnapshot.phase != .expanded
             {
                 return true
@@ -338,7 +422,20 @@ extension LauncherView {
                 && !shouldShowUnifiedDockModeContent
                 && !usesVerticalListDockLayout
                 && !hasResultsToShow
-        case .contextDock, .mediaDock:
+        case .contextDock:
+            // Auto-arm shows the compact idle pill ONLY when there are no menu results. If a
+            // stale auto-arm flag stayed set once the query started matching menus, returning
+            // idle here rendered the input pill AND the results card together — the "two
+            // sheets" overlap (input floating mid-card, results detached). Gate on no results.
+            if (shouldShowContextDockAIQueryFallback || l2.chatAutoArmedForNoMenuMatch),
+                !hasResultsToShow {
+                return true
+            }
+            return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !shouldShowUnifiedDockModeContent
+                && !usesVerticalListDockLayout
+                && !hasResultsToShow
+        case .mediaDock:
             return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !shouldShowUnifiedDockModeContent
                 && !usesVerticalListDockLayout
@@ -355,7 +452,7 @@ extension LauncherView {
         // instant via .animation(nil, value: idle) so the card and the input-glow never cross-fade
         // (that overlap was the "two sheets"). Matches the compact pill look of chat/media.
         let idle = isIdleDockBar
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             Color.clear
                 .frame(width: resultsPanelLeadingInset)
             VStack(spacing: 0) {
@@ -665,6 +762,13 @@ extension LauncherView {
                                             .clipShape(
                                                 RoundedRectangle(
                                                     cornerRadius: 6, style: .continuous))
+                                            // Glow tinted to the app's own dominant color (not
+                                            // a flat white rim) — reads more premium.
+                                            .shadow(
+                                                color: topMatch.icon.dominantSwiftUIColor
+                                                    .opacity(
+                                                        systemColorScheme == .dark ? 0.55 : 0.40),
+                                                radius: 8, x: 0, y: 1)
                                             .opacity(isHoveringSearchIcon ? 1.0 : 0.92)
                                             .transition(
                                                 .scale(scale: 0.8).combined(with: .opacity))
@@ -734,11 +838,32 @@ extension LauncherView {
                                             || previewGlobalAppResult != nil || l2.targetApp != nil
                                             || typedAppIcon != nil
                                     )
+                                    // Selection Scope owns the left icon on EITHER surface — it
+                                    // lives in Context Dock too now, and this check used to sit
+                                    // inside the Global-Context-only branch below, so the icon
+                                    // never appeared there.
+                                    if hasSelectionScopeSurface,
+                                        feedbackAppIcon == nil,
+                                        let selIcon = frozenSelectionIcon ?? activeSelectionIcon
+                                    {
+                                        Image(systemName: selIcon)
+                                            .foregroundStyle(
+                                                Color.purple.opacity(
+                                                    isHoveringSearchIcon ? 1.0 : 0.88)
+                                            )
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .frame(width: 24, height: 24)
+                                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                                            .id(selIcon)
+                                            .animation(
+                                                .spring(response: 0.22, dampingFraction: 0.75),
+                                                value: selIcon)
+                                    }
                                     // Pure Global Context: the left icon is ALWAYS the
                                     // DoraX glyph — matching-app icons belong to the
                                     // match dock on the right and the result rows, never
                                     // the header. (Explicit app scopes keep their icon.)
-                                    if isGlobalContextActive
+                                    else if isGlobalContextActive
                                         && l2.targetApp == nil
                                         && globalInlineAppScope == nil
                                     {
@@ -756,8 +881,8 @@ extension LauncherView {
                                                 .transition(
                                                     .scale(scale: 0.8).combined(with: .opacity))
                                                 .id("feedback-\(displayIconIdentity ?? "app")")
-                                        } else if let selIcon = frozenSelectionIcon
-                                            ?? activeSelectionIcon
+                                        } else if hasSelectionScopeSurface,
+                                            let selIcon = frozenSelectionIcon ?? activeSelectionIcon
                                         {
                                             // Active selection: icon mirrors the content type (file, text, link, clipboard)
                                             Image(systemName: selIcon)
@@ -857,6 +982,15 @@ extension LauncherView {
                                                 RoundedRectangle(
                                                     cornerRadius: showContextInDock ? 7 : 4)
                                             )
+                                            // App-color glow (not a flat white rim). Layered
+                                            // twice so it reads even against the glass bar and
+                                            // isn't washed out by the surrounding rim light.
+                                            .shadow(
+                                                color: appIcon.dominantSwiftUIColor.opacity(0.9),
+                                                radius: 6, x: 0, y: 0)
+                                            .shadow(
+                                                color: appIcon.dominantSwiftUIColor.opacity(0.6),
+                                                radius: 12, x: 0, y: 0)
                                             .opacity(isHoveringSearchIcon ? 1.0 : 0.9)
                                             .transition(.scale(scale: 0.7).combined(with: .opacity))
                                             .id(displayIconIdentity)
@@ -892,19 +1026,14 @@ extension LauncherView {
                             )
                             // Hide standalone icon when a context/scope chip owns the left slot.
                             .opacity(
-                                isSearchBarExpanded
-                                    && !isGlobalContextActive
-                                    && (compactScopeKey != nil || l2.targetApp != nil
-                                        || globalInlineAppScope != nil
-                                        || shouldShowFrontmostContextChip) && showContextInDock ? 0 : 1
+                                shouldHideStandaloneLeadingIcon(
+                                    compactScopeKey: compactScopeKey
+                                ) ? 0 : 1
                             )
                             .frame(
-                                width: isSearchBarExpanded
-                                    && !isGlobalContextActive
-                                    && (compactScopeKey != nil || l2.targetApp != nil
-                                        || globalInlineAppScope != nil
-                                        || shouldShowFrontmostContextChip) && showContextInDock
-                                    ? 0 : nil)
+                                width: shouldHideStandaloneLeadingIcon(
+                                    compactScopeKey: compactScopeKey
+                                ) ? 0 : nil)
                         }
 
                         // Spotlight-style app context chip — shown after Tab/→ on app result
@@ -1021,10 +1150,12 @@ extension LauncherView {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
                             .padding(.leading, 8)
                             .padding(.trailing, isHoveringFrontmostContextChip ? 9 : 8)
                             .padding(.vertical, 4)
+                            .fixedSize(horizontal: true, vertical: false)
                             .background(.regularMaterial, in: Capsule(style: .continuous))
                             .background(
                                 accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12),
@@ -1093,6 +1224,8 @@ extension LauncherView {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .layoutPriority(2)
                                 Button {
                                     exitL2DockScope()
                                 } label: {
@@ -1112,6 +1245,8 @@ extension LauncherView {
                             .padding(.leading, 8)
                             .padding(.trailing, isHoveringL2ScopeChip ? 8 : 6)
                             .padding(.vertical, 4)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(2)
                             .background(.regularMaterial, in: Capsule(style: .continuous))
                             .background(
                                 accent.opacity(systemColorScheme == .dark ? 0.28 : 0.18),
@@ -1215,44 +1350,54 @@ extension LauncherView {
                             let aiFallbackActive =
                                 (showContextInDock && l2.chatArmed)
                                 || shouldShowContextDockAIQueryFallback
-                            let suppressScopedEmptyPreview =
-                                showContextInDock
-                                && l2.targetApp != nil
-                                && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            let suppressScopedResultPreview =
+                                (showContextInDock && currentGlobalScopedBundleID != nil)
+                                || searchState.activeSmartQueryKey != nil
                             let focusedDockPill =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? focusedDockPillForInputPreview() : nil
+                            // Compact scopes (Clipboard / Notifications) own their input —
+                            // never let a Global Context / dock completion ghost bleed in.
                             let rawQueryAllowsGhost =
-                                searchState.query
-                                == searchState.query.trimmingCharacters(
-                                    in: .whitespacesAndNewlines)
+                                searchState.activeSmartQueryKey == nil
+                                && searchState.query
+                                    == searchState.query.trimmingCharacters(
+                                        in: .whitespacesAndNewlines)
                             // Once an app is scoped (right-arrow / click), no global-app
                             // completion ghost may render — otherwise the old typed query
                             // bleeds through behind the scope pill.
                             let focusedGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && searchState.activeSmartQueryKey == nil
+                                    && !suppressScopedResultPreview
                                 ? focusedGlobalAppResultForInputPreview() : nil
                             let topGlobalAppResult =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? topGlobalAppResultForInputPreview() : nil
                             let topGlobalContextTitle =
                                 allGlobalInlineAppScopes.isEmpty && rawQueryAllowsGhost
                                     && !aiFallbackActive
                                     && l2.targetApp == nil
-                                    && !suppressScopedEmptyPreview
+                                    && !suppressScopedResultPreview
                                 ? topContextMatchDockTitleForInputPreview() : nil
                             ZStack(alignment: .leading) {
-                                if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {
+                                if !allGlobalInlineAppScopes.isEmpty,
+                                    !isGlobalContextActive
+                                        || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                {
                                     globalInlineScopeQueryOverlay
                                 }
-                                // Selected result preview (Spotlight-style: "Visual Studio Code.app — Open")
-                                if let pill = focusedDockPill {
+                                // Spotlight-style completion: the TextField owns the typed prefix;
+                                // this layer may add only the untyped suffix for a true prefix match.
+                                if allGlobalInlineAppScopes.isEmpty,
+                                    let pill = focusedDockPill
+                                {
                                     // Finder folder/file pills carry the full path as name —
                                     // ghost shows just the file/folder name, not the path.
                                     let title = inputGhostPillTitle(pill)
@@ -1269,20 +1414,29 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
-                                        if let badge = pill.badge, !badge.isEmpty {
+                                        // Finder desktop pills carry the folder PATH as their badge —
+                                        // the input bar shows the file name only, never the path.
+                                        if let badge = pill.badge, !badge.isEmpty,
+                                            !isFinderDesktopOnlyMode, isPrefixMatch
+                                        {
                                             Text("  \(badge)")
                                                 .font(.system(size: inputTextSize, weight: .regular))
                                                 .foregroundStyle(.secondary.opacity(0.25))
                                         }
-                                        Text("  — ↵")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.25))
+                                        if isPrefixMatch {
+                                            Text("  — ↵")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.25))
+                                        }
                                     }
                                 } else if let result = focusedGlobalAppResult {
                                     let title = inputFieldDisplayTitle(for: result)
@@ -1299,15 +1453,20 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
-                                        Text("  —  \(selectedResultAction(result))")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.35))
+                                        if isPrefixMatch {
+                                            Text("  —  \(selectedResultAction(result))")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.35))
+                                        }
                                     }
                                 } else if let title = topGlobalContextTitle,
                                     title.lowercased().hasPrefix(searchState.query.lowercased()),
@@ -1347,9 +1506,8 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.35))
                                     }
                                 } else if let result = selectedResult {
-                                    // Intelligent inline completion:
-                                    // • Prefix match  → show typed text (invisible spacer) + greyed remainder + action
-                                    // • Fuzzy match   → show full result name + action
+                                    // Prefix completion only. Fuzzy matches remain in the result list
+                                    // and never replace or overlap the editable query.
                                     let title = inputFieldDisplayTitle(for: result)
                                     let typed = searchState.query
                                     let isPrefixMatch = title.lowercased().hasPrefix(
@@ -1366,17 +1524,21 @@ extension LauncherView {
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
                                                 .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
-                                        } else {
-                                            // Fuzzy match — show full name in primary color
-                                            Text(title)
+                                        } else if !typed.isEmpty {
+                                            Text(typed)
                                                 .font(.system(size: inputTextSize, weight: inputTextWeight))
-                                                .foregroundStyle(.primary)
+                                                .foregroundStyle(.clear)
+                                            Text("  —  \(title)")
+                                                .font(.system(size: inputTextSize, weight: inputTextWeight))
+                                                .foregroundStyle(.secondary.opacity(0.45))
                                                 .lineLimit(1)
                                         }
                                         // Action hint
-                                        Text("  —  \(selectedResultAction(result))")
-                                            .font(.system(size: inputTextSize, weight: .regular))
-                                            .foregroundStyle(.secondary.opacity(0.35))
+                                        if isPrefixMatch {
+                                            Text("  —  \(selectedResultAction(result))")
+                                                .font(.system(size: inputTextSize, weight: .regular))
+                                                .foregroundStyle(.secondary.opacity(0.35))
+                                        }
                                     }
                                 } else if !aiFallbackActive,
                                     !shouldUsePureGlobalAppSearch,
@@ -1464,6 +1626,7 @@ extension LauncherView {
                                             .foregroundStyle(.secondary.opacity(0.2))
                                     }
                                 } else if !aiFallbackActive,
+                                    allGlobalInlineAppScopes.isEmpty,
                                     let ghost = ghostPillCompletion,
                                     rawQueryAllowsGhost,
                                     !searchState.query.isEmpty
@@ -1493,11 +1656,19 @@ extension LauncherView {
                                         Text("filter…")
                                             .foregroundStyle(.secondary.opacity(0.4))
                                             .font(.system(size: 15, weight: .regular))
+                                    } else if currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                    {
+                                        // The extension scope overlay owns this entire input
+                                        // layer. Do not render the generic "Search menus" prompt
+                                        // underneath its pill and caret.
+                                        EmptyView()
                                     } else if currentDockSurfaceMode == .generalChat {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
                                             .font(.system(size: 15, weight: .regular))
                                     } else if isGlobalContextActive,
+                                        hasSelectionScopeSurface,
                                         let prompt = activeSelectionPromptText
                                     {
                                         if searchState.contextApp == nil, l2.targetApp == nil {
@@ -1639,34 +1810,44 @@ extension LauncherView {
                                     .font(.system(size: inputTextSize, weight: inputTextWeight))
                                     .foregroundStyle(Color.primary)
                                     .lineLimit(1)
-                                    .truncationMode(.tail)
+                                    // Bound the field to the available width so the backing
+                                    // NSTextField scrolls horizontally to keep the caret visible
+                                    // for long input, instead of growing past the capsule and
+                                    // clipping under the trailing button. (No truncationMode —
+                                    // that anchors to the start and fights the editing scroll.)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     .focused($isSearchFieldFocused)
                                     .focusEffectDisabled()
                                     .background(FocusRingSuppressor())
                                     .accessibilityLabel("Search — Context Dock")
-                                    // For prefix match: TextField stays visible (shows typed text + cursor).
-                                    // For fuzzy match or empty: hide it so the full result name shows cleanly.
+                                    // The TextField owns user input. Only explicit scope overlays hide it;
+                                    // autocomplete layers never replace typed text with a fuzzy result.
                                     .opacity(
                                         {
+                                            if !allGlobalInlineAppScopes.isEmpty,
+                                                !isGlobalContextActive
+                                                    || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                                    || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                            {
+                                                return 0
+                                            }
+                                            // Global Context must paint the user's keystroke directly.
+                                            // Search/ghost state is allowed to arrive later, but it must
+                                            // never replace or temporarily hide the editable text field.
+                                            if isGlobalContextActive {
+                                                return 1
+                                            }
                                             if settings.effectiveDockAtBottom
                                                 && usesVerticalListDockLayout
                                                 && !searchState.query.isEmpty
                                             {
                                                 return 1
                                             }
-                                            if let pill = focusedDockPill {
-                                                let isPrefixMatch = pill.name.lowercased()
-                                                    .hasPrefix(
-                                                        searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if focusedDockPill != nil {
+                                                return 1
                                             }
-                                            if let result = focusedGlobalAppResult {
-                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
-                                                    .lowercased()
-                                                    .hasPrefix(searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if focusedGlobalAppResult != nil {
+                                                return 1
                                             }
                                             if let result = topGlobalAppResult {
                                                 // Only hide TextField for prefix match (ghost shows completion).
@@ -1677,12 +1858,8 @@ extension LauncherView {
                                                 return (isPrefixMatch && !searchState.query.isEmpty)
                                                     ? 1 : 1
                                             }
-                                            if let result = selectedResult {
-                                                let isPrefixMatch = inputFieldDisplayTitle(for: result)
-                                                    .lowercased()
-                                                    .hasPrefix(searchState.query.lowercased())
-                                                return (isPrefixMatch && !searchState.query.isEmpty)
-                                                    ? 1 : 0
+                                            if selectedResult != nil {
+                                                return 1
                                             }
                                             if !isGlobalContextActive && !allGlobalInlineAppScopes.isEmpty {
                                                 return 0
@@ -1706,25 +1883,98 @@ extension LauncherView {
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
                                             if globalInlineAppScope == nil {
+                                                if q.isEmpty {
+                                                    beginGlobalContextEmptyQueryTransition()
+                                                    return
+                                                }
+                                                let keepExpanded =
+                                                    globalContextViewModel.typingSnapshot.phase
+                                                        == .expanded
                                                 focusedAppPillIndex = nil
                                                 l2.focusedPillIndex = nil
                                                 cachedGlobalAppQuery = ""
                                                 cachedGlobalAppMatches = []
-                                                cachedGlobalGroupedQuery = ""
-                                                cachedGlobalGroupedState = nil
-                                                globalContextViewModel.cachedGroupedFingerprint = ""
+                                                if keepExpanded {
+                                                    // Spotlight behavior: keep the shell and
+                                                    // remove stale rows in this key event.
+                                                    immediatelyPruneExpandedGlobalContextRows(for: q)
+                                                } else {
+                                                    cachedGlobalGroupedQuery = ""
+                                                    cachedGlobalGroupedState = nil
+                                                    globalContextViewModel.cachedGroupedFingerprint = ""
+                                                }
                                                 globalAppMatchTask?.cancel()
                                                 globalGroupedTask?.cancel()
                                                 pendingGlobalAppQuery = nil
                                                 pendingGlobalGroupedQuery = nil
-                                                updateGlobalContextTypingSnapshot(query: q)
-                                            } else {
+                                                // Publish only lightweight typing state in this event.
+                                                // Resolving matches synchronously here prevents SwiftUI from
+                                                // painting the character until that work finishes. Deferring
+                                                // one main-loop turn gives the TextField the same input-first
+                                                // behavior users expect from Spotlight.
+                                                globalContextViewModel.prepareTask?.cancel()
+                                                let previousIcons =
+                                                    globalContextViewModel.typingSnapshot
+                                                    .matchDockIcons
+                                                let previousOverflow =
+                                                    globalContextViewModel.typingSnapshot
+                                                    .matchDockOverflowCount
                                                 globalContextViewModel.typingSnapshot =
-                                                    GlobalContextTypingSnapshot()
+                                                    GlobalContextTypingSnapshot(
+                                                        query: q,
+                                                        phase: q.isEmpty
+                                                            ? .idle
+                                                            : (keepExpanded ? .expanded : .typing),
+                                                        matchDockIcons: keepExpanded
+                                                            ? previousIcons : [],
+                                                        matchDockOverflowCount: keepExpanded
+                                                            ? previousOverflow : 0,
+                                                        preparedResultsVersion:
+                                                            globalContextViewModel.typingSnapshot
+                                                            .preparedResultsVersion
+                                                    )
+                                                DispatchQueue.main.async {
+                                                    guard
+                                                        self.searchState.query
+                                                            .trimmingCharacters(
+                                                                in: .whitespacesAndNewlines
+                                                            )
+                                                            .lowercased() == q,
+                                                        self.isGlobalContextActive,
+                                                        self.shouldUsePureGlobalAppSearch,
+                                                        self.globalInlineAppScope == nil
+                                                    else { return }
+                                                    self.updateGlobalContextTypingSnapshot(query: q)
+                                                }
+                                            } else {
+                                                let keepsExtensionSheet =
+                                                    globalInlineAppScope?.bundleId.hasPrefix("syscmd://") == true
+                                                    || globalInlineAppScope?.bundleId.hasPrefix("cli://") == true
+                                                globalContextViewModel.typingSnapshot =
+                                                    GlobalContextTypingSnapshot(
+                                                        query: q,
+                                                        phase: keepsExtensionSheet
+                                                            ? .expanded
+                                                            : (q.isEmpty ? .idle : .expandable),
+                                                        matchDockIcons: globalContextViewModel.typingSnapshot.matchDockIcons,
+                                                        matchDockOverflowCount: globalContextViewModel.typingSnapshot.matchDockOverflowCount,
+                                                        preparedResultsVersion: globalContextViewModel.typingSnapshot.preparedResultsVersion
+                                                    )
                                                 scheduleGlobalGroupedListRebuild(query: q)
+                                                if let scope = globalInlineAppScope,
+                                                    !isContextDockChatConnected,
+                                                    isQuestionStyleDockQuery(q)
+                                                {
+                                                    armGlobalInlineScopeChat(scope)
+                                                }
                                             }
                                         }
                                         scheduleDeferredQueryChange(from: oldValue, to: newValue)
+                                        DispatchQueue.main.async {
+                                            if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+                                                tv.scrollRangeToVisible(tv.selectedRange())
+                                            }
+                                        }
                                     }
                                     .onChange(of: isSearchFieldFocused) { oldValue, newValue in
                                         if newValue {
@@ -1798,7 +2048,20 @@ extension LauncherView {
                                                 exitContextDockChatAndScope()
                                                 return
                                             }
-                                            guard !trimmed.isEmpty else { return }
+	                                            guard !trimmed.isEmpty else { return }
+		                                            if shouldShowGlobalScopedChatPin,
+		                                                let target = currentGlobalScopedChatTarget
+		                                            {
+		                                                armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+		                                                handleL2QuerySkippingMenuRouter(trimmed)
+		                                                return
+		                                            }
+	                                            if shouldShowSelectionCompactAIAction
+	                                                || shouldShowContextDockAIQueryFallback
+	                                            {
+                                                runCompactAIActionFromInput()
+                                                return
+                                            }
                                             // Send when arming the chat OR when a conversation is
                                             // already open (chatArmed clears after the first send, so
                                             // without shouldShowContextDockChatSheet follow-up queries
@@ -1816,7 +2079,7 @@ extension LauncherView {
                                             let q = searchState.query.trimmingCharacters(
                                                 in: .whitespacesAndNewlines
                                             )
-                                            if q.count > 3 {
+                                            if !q.isEmpty {
                                                 submitAIQuery()
                                             }
                                         } else if searchState.activeSmartQueryKey == "clipboard" {
@@ -1845,22 +2108,27 @@ extension LauncherView {
                                         }
                                     }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .clipped()
+                            .layoutPriority(1)
                             .transition(
                                 .opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
 
                             if shouldShowSafariTabStrip {
                                 safariTabStrip
-                            } else if shouldShowGlobalRunningAppStrip && !isGlobalContextActive {
-                                globalRunningAppStrip
                             }
 
                             // Trailing area: a single status pill that the "+" morphs INTO during
                             // an action (spinner → ✓ / ✗), so there's never a separate tick pill
                             // next to the "+". Covers all phases; the "+" branch below only renders
                             // when there's no active feedback.
-                            if shouldShowContextMatchDock
-                            {
-                                globalContextMatchDockView
+                            if shouldShowContextMatchDock {
+                                HStack(spacing: 6) {
+                                    globalContextMatchDockView
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
+                                    }
+                                }
                             } else if let feedback = launcherViewModel.inlineDockFeedback,
                                 currentDockSurfaceMode != .generalChat
                             {
@@ -1869,7 +2137,7 @@ extension LauncherView {
                                     .transition(
                                         .scale(scale: 0.88, anchor: .trailing)
                                             .combined(with: .opacity))
-                            } else if let pill = focusedDockPill {
+                            } else if let pill = focusedDockPill ?? focusedScopedMenuPill {
                                 HStack(spacing: 8) {
                                     if let image = pill.menuItemImage {
                                         Image(nsImage: image)
@@ -1877,10 +2145,18 @@ extension LauncherView {
                                             .aspectRatio(contentMode: .fit)
                                             .frame(width: 24, height: 24)
                                     } else {
+                                        // Destructive rows (Quit/Close) mirror the row's red ✕.
+                                        let lowerName = pill.name.lowercased()
+                                        let isDestructive =
+                                            pill.icon.hasPrefix("xmark") || pill.icon == "power"
+                                            || lowerName.hasPrefix("quit")
+                                            || lowerName.hasPrefix("close")
                                         Image(systemName: pill.icon)
                                             .font(.system(size: 17, weight: .semibold))
                                             .foregroundStyle(
-                                                accentColor(for: pill.accentColorName))
+                                                isDestructive
+                                                    ? SwiftUI.Color.red.opacity(0.9)
+                                                    : accentColor(for: pill.accentColorName))
                                             .frame(width: 24, height: 24)
                                     }
                                     if !searchState.query.isEmpty {
@@ -1932,7 +2208,17 @@ extension LauncherView {
                                     }
                                 }
                             } else if currentDockSurfaceMode == .generalChat {
-                                aiModeControls
+                                HStack(spacing: 6) {
+                                    aiModeControls
+                                    if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                        clipboardTrailingButton
+                                    }
+                                    if shouldShowSelectionTrailingButton {
+                                        selectionTrailingButton
+                                    }
+                                }
+                            } else if shouldShowGlobalScopedChatPin {
+                                contextDockChatCloseButton
                             } else if searchState.isLoadingApps && searchState.results.isEmpty {
                                 GlobalInputLoadingDots()
                                     .frame(width: 26, height: 26)
@@ -1941,34 +2227,39 @@ extension LauncherView {
                                 GlobalInputLoadingDots()
                                     .frame(width: 26, height: 26)
                                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                            } else if shouldShowContextDockInputLoadingIndicator {
-                                GlobalInputLoadingDots()
-                                    .frame(width: 26, height: 26)
-                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                            } else if showContextInDock && isContextDockChatConnected {
-                                contextDockChatCloseButton
-                            } else if !searchState.query.isEmpty {
-                                Button(action: clearInputQuery) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.secondary.opacity(0.5))
-                                        .font(.system(size: 14))
+	                            } else if shouldShowContextDockInputLoadingIndicator {
+	                                ProgressView()
+	                                    .controlSize(.small)
+	                                    .scaleEffect(0.64)
+	                                    .frame(width: 26, height: 26)
+	                                    .tint(.secondary.opacity(0.78))
+	                                    .accessibilityLabel("Preparing app actions")
+	                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+		                            } else if showContextInDock && isContextDockChatConnected {
+		                                contextDockChatCloseButton
+		                            } else if !searchState.query.isEmpty {
+	                                HStack(spacing: 6) {
+                                    // Selection scope still offers the ✨ ask-AI action. The
+                                    // frontmost-app chat bubble is gone — a no-menu query now
+                                    // auto-arms the app chat instead of showing an icon.
+                                    if shouldShowSelectionCompactAIAction {
+                                        compactAIActionButton
+                                    }
+                                    Button(action: clearInputQuery) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(.secondary.opacity(0.5))
+                                            .font(.system(size: 14))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Clear")
                                 }
-                                .buttonStyle(.plain)
-                                .help("Clear")
-                            } else if showGlobalClipboardPill && !globalClipboardText.isEmpty {
-                                Button {
-                                    activateClipboardScope()
-                                } label: {
-                                    Image(systemName: "doc.on.clipboard")
-                                        .foregroundStyle(Color.indigo.opacity(0.78))
-                                        .font(.system(size: 14, weight: .semibold))
-                                }
-                                .buttonStyle(.plain)
-                                .help("Open clipboard")
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
                                         contextDockChatCloseButton
+                                    }
+                                    if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                        clipboardTrailingButton
                                     }
                                     // Live selection appears to the RIGHT of the other
                                     // trailing controls, never replacing them.
@@ -2016,10 +2307,15 @@ extension LauncherView {
                                             contextDockChatButton
                                         }
                                     }
+                                    if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                        clipboardTrailingButton
+                                    }
                                     if shouldShowSelectionTrailingButton {
                                         selectionTrailingButton
                                     }
                                 }
+                            } else if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                clipboardTrailingButton
                             } else if shouldShowSelectionTrailingButton {
                                 selectionTrailingButton
                             }
@@ -2044,8 +2340,15 @@ extension LauncherView {
                         let typedMatch =
                             hasSelectionScopeSurface || shouldUsePureGlobalAppSearch
                             ? nil : typedL2AppIcon(for: searchState.query)
+                        let scopedGlobalIcon: NSImage? = {
+                            guard isGlobalContextActive,
+                                let scopedBundleID = currentGlobalScopedBundleID
+                            else { return nil }
+                            return leadingScopedAppIcon(bundleID: scopedBundleID)
+                        }()
                         let inAppScope =
-                            (l2.targetApp != nil || typedMatch != nil) && showContextInDock
+                            ((l2.targetApp != nil || typedMatch != nil) && showContextInDock)
+                            || (isGlobalContextActive && scopedGlobalIcon != nil)
                         let compactScopeColor: SwiftUI.Color? = {
                             guard let key = searchState.activeSmartQueryKey,
                                 key == "clipboard" || key == "notifications"
@@ -2057,6 +2360,7 @@ extension LauncherView {
                             feedbackGlowColor
                             ?? compactScopeColor
                             ?? l2.targetApp?.icon?.dominantSwiftUIColor
+                            ?? scopedGlobalIcon?.dominantSwiftUIColor
                             ?? typedMatch?.icon.dominantSwiftUIColor
                             ?? frontmost.icon?.dominantSwiftUIColor
                             ?? .white
@@ -2217,11 +2521,10 @@ extension LauncherView {
                                         globalContextSurface
                                             .transition(.opacity)
                                     }
-                                } else if hasAIExtensionsToShow {
+                                } else if hasAIExtensionsToShow
+                                    && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                {
                                     aiExtensionsInDock
-                                        .transition(.opacity)
-                                } else if shouldShowL2UnifiedDockRow {
-                                    contextDockSurface
                                         .transition(.opacity)
                                 }
                             }
@@ -2559,7 +2862,9 @@ extension LauncherView {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 16, height: 16)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            Text(scope.matchedAlias)
+            Text(scope.matchedAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? scope.appName
+                : scope.matchedAlias)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(labelColor)
                 .shadow(color: .black.opacity(systemColorScheme == .dark ? 0.35 : 0.08), radius: 1, y: 0.5)
@@ -2646,7 +2951,51 @@ extension LauncherView {
             }
     }
 
+    /// The scoped-menu row the user is looking at while a running-app menu scope is active:
+    /// the keyboard-focused row, else the auto-selected FIRST row (the one the ghost text and
+    /// default highlight point at). Nil in every other surface. Drives the input's trailing
+    /// action icon so it mirrors the row without needing a down-arrow first.
+    var focusedScopedMenuPill: DockPill? {
+        guard isActiveGlobalRunningAppMenuScope() else { return nil }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let state = visibleGlobalGroupedListNavigationState(for: q)
+        let menus = state.menuPills.filter { !$0.isSeparator }
+        guard !menus.isEmpty else { return nil }
+        if let idx = l2.focusedPillIndex {
+            let sourceIndex = idx - state.appResults.count
+            if sourceIndex >= 0, sourceIndex < menus.count { return menus[sourceIndex] }
+        }
+        // No keyboard focus → the ghost/default-first row. Only claim it while the user is
+        // TYPING (non-empty query). With an empty field the trailing area belongs to the
+        // running-app cycle strip (remaining app icons), not a menu action icon.
+        guard !q.isEmpty, listViewHoveredIndex == nil else { return nil }
+        return menus.first
+    }
+
+    /// True while the ghost/default-first scoped-menu row owns the selection (no keyboard
+    /// focus). The +1 app-cycle strip yields to the row's action icon in this state, exactly
+    /// as it already does once the user presses down-arrow.
+    var hasDefaultFirstScopedMenuSelection: Bool {
+        l2.focusedPillIndex == nil && focusedScopedMenuPill != nil
+    }
+
     func scheduleDeferredQueryChange(from _: String, to newValue: String) {
+        // Pure, unscoped Global Context already publishes input state immediately and runs
+        // matching through its detached pipeline. Scheduling the generic L2 handler as well
+        // duplicated the search 85 ms later on the main actor and made fast typing/backspace
+        // feel progressively heavier. Scoped/Finder/compact modes still use this handler.
+        if isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil,
+            lockedSubmenuParent == nil,
+            lockedFindToken == nil,
+            !isCompactSmartScope
+        {
+            queryChangeGeneration &+= 1
+            queryChangeTask?.cancel()
+            queryChangeTask = nil
+            return
+        }
         queryChangeGeneration &+= 1
         let generation = queryChangeGeneration
         queryChangeTask?.cancel()
@@ -2665,6 +3014,18 @@ extension LauncherView {
     func handleDeferredQueryChange(_ newValue: String, generation: Int) {
         if searchState.activeSmartQueryKey == "clipboard" {
             focusedClipboardEntryIndex = nil
+        }
+        if l2.chatAutoArmedForNoMenuMatch,
+            !l2.showChatPopover,
+            !l2.isLoading,
+            l2.chatMessages.isEmpty
+        {
+            l2.showChatPopover = false
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
         }
         if isCompactSmartScope {
             refreshCompactScopeResults()
@@ -2727,10 +3088,19 @@ extension LauncherView {
                     resetCollapseTimer()
                     return
                 }
+                if allowMenuOrCrossAppMatching {
+                    _ = activateRunningGlobalAppScopeIfMentioned(for: newValue)
+                }
                 if globalInlineAppScope == nil {
                     updateGlobalContextTypingSnapshot(query: q)
                 } else {
                     scheduleGlobalGroupedListRebuild(query: q)
+                    if let target = currentGlobalScopedChatTarget,
+                        !isContextDockChatConnected,
+                        isQuestionStyleDockQuery(q)
+                    {
+                        armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                    }
                 }
                 resetCollapseTimer()
                 return
@@ -2790,7 +3160,14 @@ extension LauncherView {
                     for: trimmed, runningOnly: dockOnlyMode
                 )
             }
-            if allowMenuOrCrossAppMatching, let target = l2.targetApp, !trimmed.isEmpty {
+            // Auto-eject an app scope when the user types a DIFFERENT app's name (so they can
+            // re-scope it). Must NOT apply to the Finder scope: that scope is desktop FILE
+            // search, where a filename that happens to alias an app ("screenshot" → Screenshot.app)
+            // is a file query, not a request to leave for that app. Ejecting there leaked Finder
+            // scope into pure global app search.
+            if allowMenuOrCrossAppMatching, let target = l2.targetApp, !trimmed.isEmpty,
+                target.bundleId != "com.apple.finder"
+            {
                 if let otherTarget = L2AppActionRouter.shared.appScopeTarget(for: trimmed.lowercased()),
                     otherTarget.bundleId != target.bundleId
                 {
@@ -2819,42 +3196,227 @@ extension LauncherView {
     // MARK: - Separator (for smart positioning)
     /// Top-scored match while typing in Global Context — promoted to the left input
     /// icon. Same ordered source as the capsule, whose first icon is then dropped.
+    /// App icon for the currently-scoped global app (Finder inline scope OR a cycled
+    /// running-app scope). Prefers the live running-app icon, then the resolved app icon,
+    /// then the app-path icon — so it's never nil during the scope transition.
+    func leadingScopedAppIcon(bundleID: String) -> NSImage? {
+        if bundleID.hasPrefix("syscmd://") {
+            let id = String(bundleID.dropFirst("syscmd://".count))
+            if let uuid = UUID(uuidString: id),
+                let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == uuid }),
+                let icon = NSImage(
+                    systemSymbolName: command.icon,
+                    accessibilityDescription: command.name
+                )
+            {
+                return icon
+            }
+            return NSImage(systemSymbolName: "command", accessibilityDescription: "Global Command")
+        }
+        if bundleID.hasPrefix("cli://") {
+            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+        }
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }), let icon = running.icon {
+            return icon
+        }
+        if let target = transientGlobalInlineAppScopeTarget(for: searchState.query),
+            target.bundleId == bundleID
+        {
+            if FileManager.default.fileExists(atPath: target.appPath) {
+                return NSWorkspace.shared.icon(forFile: target.appPath)
+            }
+            if let icon = resolvedApplicationIcon(
+                bundleIdentifier: target.bundleId,
+                appName: target.appName
+            ) {
+                return icon
+            }
+        }
+        let name = l2.targetApp?.bundleId == bundleID
+            ? (l2.targetApp?.name ?? "")
+            : (globalInlineAppScope?.bundleId == bundleID ? (globalInlineAppScope?.appName ?? "") : "")
+        if let icon = resolvedApplicationIcon(bundleIdentifier: bundleID, appName: name) {
+            return icon
+        }
+        if let path = globalInlineAppScope?.appPath, !path.isEmpty,
+            globalInlineAppScope?.bundleId == bundleID {
+            return NSWorkspace.shared.icon(forFile: path)
+        }
+        return nil
+    }
+
     func leadingGlobalContextMatchIcon(for query: String) -> MatchDockIcon? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let focused = focusedGlobalGroupedMatchDockIcon(for: q) {
+            return focused
+        }
+        if let scopedBundleID = currentGlobalScopedBundleID,
+            let icon = leadingScopedAppIcon(bundleID: scopedBundleID)
+        {
+            let title =
+                l2.targetApp?.bundleId == scopedBundleID
+                ? (l2.targetApp?.name ?? "")
+                : (globalInlineAppScope?.bundleId == scopedBundleID
+                    ? (globalInlineAppScope?.appName ?? "")
+                    : (transientGlobalInlineAppScopeTarget(for: q)?.appName ?? "App"))
+            return MatchDockIcon(
+                id: "leading-scope:\(scopedBundleID)",
+                bundleID: scopedBundleID,
+                title: title,
+                icon: icon,
+                isRunning: NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == scopedBundleID && !$0.isTerminated
+                },
+                isExpandable: true,
+                score: 96_000,
+                isExactAppPrefix: true
+            )
+        }
         guard !q.isEmpty else { return nil }
-        return orderedGlobalContextMatchDockIcons(for: q, limit: 1).first
+        // The visible grouped order is authoritative. In particular, an exact
+        // Global Command must beat an installed app with the same name before
+        // transient app-scope heuristics get a chance to steal the leading icon.
+        if let ordered = orderedGlobalContextMatchDockIcons(for: q, limit: 1).first {
+            return ordered
+        }
+        if let target = transientGlobalInlineAppScopeTarget(for: q) {
+            let icon =
+                FileManager.default.fileExists(atPath: target.appPath)
+                ? NSWorkspace.shared.icon(forFile: target.appPath)
+                : (resolvedApplicationIcon(
+                    bundleIdentifier: target.bundleId,
+                    appName: target.appName
+                ) ?? NSWorkspace.shared.icon(forFileType: "app"))
+            return MatchDockIcon(
+                id: "leading-transient-scope:\(target.bundleId)",
+                bundleID: target.bundleId,
+                title: target.appName,
+                icon: icon,
+                isRunning: NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == target.bundleId && !$0.isTerminated
+                },
+                isExpandable: true,
+                score: 95_000,
+                isExactAppPrefix: true
+            )
+        }
+        if let scoped = globalScopedAppIcon(for: q) {
+            let title = globalScopedAppTitle(bundleID: scoped.bundleId) ?? "App"
+            return MatchDockIcon(
+                id: "leading-token-scope:\(scoped.bundleId)",
+                bundleID: scoped.bundleId,
+                title: title,
+                icon: scoped.icon,
+                isRunning: NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == scoped.bundleId && !$0.isTerminated
+                },
+                isExpandable: true,
+                score: 94_500,
+                isExactAppPrefix: true
+            )
+        }
+        return nil
+    }
+
+    func focusedGlobalGroupedMatchDockIcon(for query: String) -> MatchDockIcon? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty,
+            let state = cachedVisibleGlobalGroupedListNavigationState(for: q),
+            let focused = currentGlobalGroupedFocusIndex(state: state)
+        else { return nil }
+        return matchDockIconForGlobalGroupedRow(focused, state: state)
+    }
+
+    func globalScopedAppTitle(bundleID: String) -> String? {
+        if let runningName = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        })?.localizedName {
+            return runningName
+        }
+        if let scope = globalInlineAppScope, scope.bundleId == bundleID {
+            return scope.appName
+        }
+        if let target = transientGlobalInlineAppScopeTarget(for: searchState.query),
+            target.bundleId == bundleID {
+            return target.appName
+        }
+        return allApplications.first {
+            bundleIdentifier(forApplicationResult: $0) == bundleID
+        }?.title
+    }
+
+    func shouldHideStandaloneLeadingIcon(compactScopeKey: String?) -> Bool {
+        let inlineScopeOwnsText = globalInlineAppScope != nil
+            && (!isGlobalContextActive
+                || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true)
+        let expandedScopeOwnsLeadingSlot =
+            isSearchBarExpanded
+            && (compactScopeKey != nil
+                || l2.targetApp != nil
+                || inlineScopeOwnsText
+                || shouldShowFrontmostContextChip)
+        return expandedScopeOwnsLeadingSlot || (shouldShowFrontmostContextChip && showContextInDock)
     }
 
     @ViewBuilder
     var globalContextMatchDockView: some View {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let phase: ContextMatchDock.Phase = q.isEmpty ? .idle : .matching
+        let isSearching = !q.isEmpty && shouldShowGlobalInputLoadingIndicator
         // Fetch 4 so that after dropping the first (now the left input icon) the capsule
-        // still shows up to 3 remaining matches.
+        // still shows up to 3 remaining matches. Scoped app mode keeps its app icon in
+        // the chip, so the capsule does not drop the first menu/app row there.
         let orderedIcons = orderedGlobalContextMatchDockIcons(for: q, limit: 4)
-        // First icon is promoted to the header — capsule shows the remainder.
-        let capsuleIcons = Array(orderedIcons.dropFirst())
+        let transientScopeBundleID =
+            transientGlobalInlineAppScopeTarget(for: q)?.bundleId.lowercased()
+        let scopedMode = globalInlineAppScope != nil || l2.targetApp != nil || transientScopeBundleID != nil
+        let scopedBundleID = currentGlobalScopedBundleID?.lowercased() ?? transientScopeBundleID
+        let capsuleIcons =
+            scopedMode
+            ? Array(
+                orderedIcons
+                    .filter { $0.bundleID?.lowercased() != scopedBundleID }
+                    .prefix(3))
+            : Array(orderedIcons.dropFirst())
+        let idleIcons = scopedBundleID == nil
+            ? idleContextMatchDockIcons
+            : idleContextMatchDockIcons.filter {
+                $0.bundleID?.lowercased() != scopedBundleID
+            }
         let icons =
             q.isEmpty
-            ? idleContextMatchDockIcons
+            ? idleIcons
             : (orderedIcons.isEmpty
                 ? Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
                 : capsuleIcons)
+        let cachedState = cachedVisibleGlobalGroupedListNavigationState(for: q)
         let overflow =
             q.isEmpty
             ? 0
             : (orderedIcons.isEmpty
                 ? globalContextViewModel.typingSnapshot.matchDockOverflowCount
-                : max(0, visibleGlobalGroupedListNavigationState(for: q).totalCount
-                        - orderedIcons.count))
-        ContextMatchDock(phase: phase, icons: icons, overflowCount: overflow)
+                : max(0, (cachedState?.totalCount ?? orderedIcons.count) - orderedIcons.count))
+        ContextMatchDock(
+            phase: phase,
+            icons: isSearching ? [] : icons,
+            overflowCount: isSearching ? 0 : overflow,
+            isSearching: isSearching,
+            onSelect: { item in
+                executeMatchDockIcon(item)
+            }
+        )
     }
 
     func orderedGlobalContextMatchDockIcons(for query: String, limit: Int) -> [MatchDockIcon] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty, limit > 0 else { return [] }
 
-        let state = visibleGlobalGroupedListNavigationState(for: q)
+        guard let state = cachedVisibleGlobalGroupedListNavigationState(for: q) else {
+            return []
+        }
         let ordered = globalGroupedVisibleOrder(state: state)
         var icons: [MatchDockIcon] = []
         var seen = Set<String>()
@@ -2869,6 +3431,24 @@ extension LauncherView {
         }
 
         return icons
+    }
+
+    func cachedVisibleGlobalGroupedListNavigationState(
+        for query: String
+    ) -> GlobalGroupedListNavigationState? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if currentGlobalScopedBundleID != nil {
+            return visibleGlobalScopedMenuNavigationState(for: query)
+        }
+        guard !q.isEmpty || globalInlineAppScope != nil else { return nil }
+        let key = globalGroupedStateCacheKey(for: q)
+        guard cachedGlobalGroupedQuery == key, let state = cachedGlobalGroupedState else {
+            return nil
+        }
+        if let scopedState = visibleGlobalScopedMenuNavigationState(for: query) {
+            return scopedState
+        }
+        return state
     }
 
     func matchDockIconForGlobalGroupedRow(
@@ -2924,7 +3504,7 @@ extension LauncherView {
             globalContextViewModel.typingSnapshot.phase == .expanded
         else { return [] }
 
-        let state = visibleGlobalGroupedListNavigationState(for: q)
+        guard let state = cachedVisibleGlobalGroupedListNavigationState(for: q) else { return [] }
         let ordered = Array(globalGroupedVisibleOrder(state: state).prefix(3))
         return ordered.compactMap { index -> MatchDockIcon? in
             if index < state.appResults.count {
@@ -2972,15 +3552,41 @@ extension LauncherView {
 
     var shouldShowContextMatchDock: Bool {
         isGlobalContextActive
-            && shouldUsePureGlobalAppSearch
-            && globalInlineAppScope == nil
+            && (shouldUsePureGlobalAppSearch
+                || globalInlineAppScope != nil
+                || l2.targetApp != nil)
+            && !shouldSuppressContextMatchDockForScopedChat
+            && (!isContextDockChatConnected
+                || globalInlineAppScope != nil
+                || l2.targetApp != nil)
             && focusedAppPillIndex == nil
             && l2.focusedPillIndex == nil
             && searchState.selectedIndex == nil
             && !showMediaLayer
             && !aiMode.isActive
-            && activeSelectionLabel == nil
+            // Yield to the focused scoped-menu row's action icon (mirrors down-arrow behaviour).
+            && !hasDefaultFirstScopedMenuSelection
     }
+
+	    var shouldSuppressContextMatchDockForScopedChat: Bool {
+	        guard currentGlobalScopedChatTarget != nil else { return false }
+	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+	        guard !q.isEmpty else { return false }
+	        return shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat
+	    }
+
+	    var shouldShowGlobalScopedChatPin: Bool {
+	        guard isGlobalContextActive, currentGlobalScopedChatTarget != nil else { return false }
+	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+	        guard !q.isEmpty else { return false }
+	        guard focusedAppPillIndex == nil,
+	            l2.focusedPillIndex == nil,
+	            searchState.selectedIndex == nil,
+	            !showMediaLayer,
+	            !aiMode.isActive
+	        else { return false }
+	        return isQuestionStyleDockQuery(q)
+	    }
 
     var idleContextMatchDockIcons: [MatchDockIcon] {
         Array(globalRunningAppStripApps.prefix(4)).map { app in
@@ -2998,11 +3604,19 @@ extension LauncherView {
     }
 
     func executeMatchDockIcon(_ item: MatchDockIcon) {
-        guard !item.isExpandable, let bundleID = item.bundleID else { return }
-        if let result = currentOrImmediateGlobalAppMatches(for: searchState.query)
-            .first(where: { bundleIdentifier(forApplicationResult: $0) == bundleID })
+        guard let bundleID = item.bundleID else { return }
+        if !item.isExpandable,
+            let result = currentOrImmediateGlobalAppMatches(for: searchState.query)
+                .first(where: { bundleIdentifier(forApplicationResult: $0) == bundleID })
         {
             executeGlobalAppSearchResult(result)
+            return
+        }
+
+        if let runningApp = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }) {
+            activateRunningAppFromGlobalContext(runningApp)
         }
     }
 

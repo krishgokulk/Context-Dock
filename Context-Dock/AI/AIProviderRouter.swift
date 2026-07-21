@@ -55,7 +55,9 @@ struct AIRequest {
     var mode: AIRequestMode = .answer
     var source: AIRequestSource = .aiChat
     var liveContext: AIContextSnapshot? = nil
+    var includesWorkflowCapabilities = false
     var additionalContextPrompt = ""
+    var providerSelection: AIProviderSelection? = nil
 }
 
 typealias AIContextSnapshot = ContextSnapshot
@@ -101,6 +103,10 @@ private enum AIProviderHTTP {
         let (data, response) = try await AIProviderService.directSession.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw AIServiceError.networkError("Invalid provider response")
+        }
+        // Record live rate-limit usage from the response headers (keyed by host).
+        if let host = url.host {
+            AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
         }
         guard (200..<300).contains(http.statusCode) else {
             let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
@@ -458,22 +464,19 @@ final class AIProviderRouter {
 
     func send(_ request: AIRequest, provider providerOverride: AIProvider? = nil) async throws -> String {
         let profile = AIProfileStore.shared.profile(for: request)
-        let provider = providerOverride ?? AIProfileRouter.provider(for: profile, settings: settings)
+        // The provider visible in the UI is authoritative. Profiles decorate prompts and
+        // constrain tools, but must not silently replace the user's selected model.
+        let selection = providerOverride.map(AIProviderSelection.explicit)
+            ?? request.providerSelection
+            ?? AIProviderSelectionResolver.current(settings: settings)
+        let provider = selection.effectiveProvider
         var contextPrompt = contextBuilder.build(request: request)
         contextPrompt = AIProfileRouter.decoratedContextPrompt(contextPrompt, profile: profile, request: request)
-        do {
-            return try await sendPrepared(request: request, provider: provider, contextPrompt: contextPrompt)
-        } catch {
-            if provider == .onDevice,
-               providerOverride == nil,
-               AIProfileRouter.shouldCloudFallback(error: error, profile: profile, settings: settings)
-            {
-                let fallback = settings.selectedAIProvider
-                guard fallback != .onDevice else { throw error }
-                return try await sendPrepared(request: request, provider: fallback, contextPrompt: contextPrompt)
-            }
-            throw error
-        }
+        return try await sendPrepared(
+            request: request,
+            provider: provider,
+            contextPrompt: contextPrompt
+        )
     }
 
     func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt: String) async throws -> String {
@@ -623,9 +626,17 @@ final class AIProviderRouter {
         }
         switch provider {
         case .openAI:
-            return .init(apiKey: key, endpoint: "https://api.openai.com/v1/chat/completions", modelID: "gpt-4o-mini")
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.openai.com/v1/chat/completions",
+                modelID: settings.selectedOpenAIModel.isEmpty
+                    ? "gpt-4o-mini" : settings.selectedOpenAIModel)
         case .anthropic:
-            return .init(apiKey: key, endpoint: "https://api.anthropic.com/v1/messages", modelID: "claude-3-5-haiku-20241022")
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.anthropic.com/v1/messages",
+                modelID: settings.selectedAnthropicModel.isEmpty
+                    ? AnthropicModelCatalog.defaultModelID : settings.selectedAnthropicModel)
         case .googleGemini:
             return .init(apiKey: key, endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", modelID: "gemini-2.0-flash")
         case .ollama:

@@ -44,7 +44,8 @@ struct SystemCommand: Codable, Identifiable, Equatable {
         sliderMin: Double = 0,
         sliderMax: Double = 100,
         sliderStep: Double = 1,
-        valueScript: String = ""
+        valueScript: String = "",
+        enabled: Bool = true
     ) {
         self.id             = UUID()
         self.name           = name
@@ -53,7 +54,7 @@ struct SystemCommand: Codable, Identifiable, Equatable {
         self.scriptType     = scriptType
         self.script         = script
         self.description    = description.isEmpty ? name : description
-        self.isEnabled      = true
+        self.isEnabled      = enabled
         self.successTitle   = successTitle
         self.successMessage = successMessage
         self.undoTitle      = undoTitle
@@ -289,15 +290,54 @@ final class SystemCommandsRegistry {
         "Unmute Audio",
         "Set Volume",
         "Sleep Display",
-        "Empty Trash",
         "Take Screenshot",
         "Show Desktop",
         "Do Not Disturb",
+        // Retired built-in Global Commands — trimmed to a focused default set
+        // (Wi-Fi, Bluetooth, Volume, Keep Awake, Sleep, Restart, Shut Down). Wi-Fi
+        // Power is folded into the Wi-Fi command's inline toggle. Users can
+        // re-create any of these as their own commands.
+        "Wi-Fi Power",
+        "About This Mac",
+        "System Settings...",
+        "App Store...",
+        "Force Quit...",
+        "Lock Screen",
+        "Log Out...",
     ]
 
     private static func migratedCommands(from decoded: [SystemCommand]) -> [SystemCommand] {
         var migrated = decoded.filter { !legacyDefaultNames.contains($0.name) }
             .map { command -> SystemCommand in
+                if command.name == "Bluetooth",
+                    command.keywords.contains(where: { $0.lowercased() == "provider:bluetooth" }),
+                    let currentDefault = defaults.first(where: { $0.name == "Bluetooth" })
+                {
+                    // Keep the built-in provider implementation current. Older
+                    // persisted copies used a single brittle AX lookup that
+                    // opened Settings but skipped switches with a missing name.
+                    var enriched = command
+                    enriched.description = currentDefault.description
+                    enriched.script = currentDefault.script
+                    enriched.interaction = currentDefault.interaction
+                    enriched.valueScript = currentDefault.valueScript
+                    return enriched
+                }
+                if command.name == "Wi-Fi",
+                    command.keywords.contains(where: { $0.lowercased() == "provider:wifi" }),
+                    let currentDefault = defaults.first(where: { $0.name == "Wi-Fi" })
+                {
+                    // Fold the standalone "Wi-Fi Power" toggle into the Wi-Fi command:
+                    // refresh persisted copies so they gain the inline power toggle plus
+                    // the on/off handling in the script.
+                    var enriched = command
+                    enriched.keywords = currentDefault.keywords
+                    enriched.description = currentDefault.description
+                    enriched.script = currentDefault.script
+                    enriched.interaction = currentDefault.interaction
+                    enriched.valueScript = currentDefault.valueScript
+                    return enriched
+                }
                 guard command.name == "Sleep",
                     !command.keywords.contains(where: { $0.lowercased().hasPrefix("presets:") }),
                     command.script.contains(#"System Events" to sleep"#),
@@ -323,10 +363,14 @@ final class SystemCommandsRegistry {
         SystemCommand(
             name: "Wi-Fi",
             icon: "wifi",
-            keywords: ["wifi", "wi-fi", "wireless", "network", "networks", "provider:wifi"],
+            keywords: ["wifi", "wi-fi", "wireless", "network", "networks", "power", "airport", "provider:wifi"],
             scriptType: "applescript",
             script: #"""
             set targetNetwork to system attribute "CD_QUERY"
+            if targetNetwork is "on" or targetNetwork is "off" then
+                do shell script "dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}'); networksetup -setairportpower \"$dev\" " & quoted form of targetNetwork
+                return
+            end if
             if targetNetwork is missing value or targetNetwork is "" or targetNetwork is "settings" then
                 open location "x-apple.systempreferences:com.apple.wifi-settings-extension"
                 return
@@ -340,7 +384,11 @@ final class SystemCommandsRegistry {
                 end tell
             end tell
             """#,
-            description: "Show visible Wi-Fi networks and open selected network"
+            description: "Wi-Fi power and visible networks",
+            interaction: "toggle",
+            valueScript: #"""
+            do shell script "dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}'); networksetup -getairportpower \"$dev\" | awk '{print tolower($NF)}'"
+            """#
         ),
         SystemCommand(
             name: "Bluetooth",
@@ -349,6 +397,69 @@ final class SystemCommandsRegistry {
             scriptType: "applescript",
             script: #"""
             set targetDevice to system attribute "CD_QUERY"
+            if targetDevice is "on" or targetDevice is "off" then
+                set wantedValue to 1
+                if targetDevice is "off" then set wantedValue to 0
+                tell application "System Events"
+                    tell process "ControlCenter"
+                        set controlCenterItem to missing value
+                        repeat with menuItem in menu bar items of menu bar 1
+                            set itemName to ""
+                            set itemDescription to ""
+                            try
+                                set itemName to name of menuItem as text
+                            end try
+                            try
+                                set itemDescription to description of menuItem as text
+                            end try
+                            if itemName contains "Control Center" or itemDescription contains "Control Center" then
+                                set controlCenterItem to menuItem
+                                exit repeat
+                            end if
+                        end repeat
+                        if controlCenterItem is missing value then error "Control Center menu was not found"
+                        click controlCenterItem
+
+                        repeat 30 times
+                            if exists window 1 then
+                                repeat with candidate in entire contents of window 1
+                                    set candidateRole to ""
+                                    set candidateName to ""
+                                    set candidateDescription to ""
+                                    try
+                                        set candidateRole to role of candidate as text
+                                    end try
+                                    try
+                                        set candidateName to name of candidate as text
+                                    end try
+                                    try
+                                        set candidateDescription to description of candidate as text
+                                    end try
+                                    if (candidateRole is "AXCheckBox" or candidateRole is "AXSwitch") and (candidateName is "Bluetooth" or candidateDescription is "Bluetooth") then
+                                        set currentValue to -1
+                                        try
+                                            set currentValue to value of candidate as integer
+                                        end try
+                                        if currentValue is not wantedValue then
+                                            try
+                                                perform action "AXPress" of candidate
+                                            on error
+                                                click candidate
+                                            end try
+                                        end if
+                                        key code 53
+                                        return
+                                    end if
+                                end repeat
+                            end if
+                            delay 0.1
+                        end repeat
+                        key code 53
+                    end tell
+                end tell
+                error "Bluetooth power control was not found in Control Center"
+                return
+            end if
             if targetDevice is missing value or targetDevice is "" or targetDevice is "settings" then
                 open location "x-apple.systempreferences:com.apple.BluetoothSettings"
                 return
@@ -367,12 +478,16 @@ final class SystemCommandsRegistry {
                 end tell
             end tell
             """#,
-            description: "Show paired Bluetooth devices and open selected device"
+            description: "Bluetooth power and paired devices",
+            interaction: "toggle",
+            // Read natively by InteractiveCommandState. Retained as a portable
+            // fallback for imported/exported command configurations.
+            valueScript: #"do shell script "ioreg -r -c IOBluetoothHCIController -l | grep -q '\"CurrentPowerState\"=3' && echo on || echo off""#
         ),
         SystemCommand(
             name: "Volume",
             icon: "speaker.wave.3.fill",
-            keywords: ["volume", "sound", "audio", "speaker", "presets:10|25|30|45|50|65|75|80|95|max"],
+            keywords: ["volume", "sound", "audio", "speaker"],
             scriptType: "applescript",
             script: #"""
             set rawValue to system attribute "CD_QUERY"
@@ -386,7 +501,7 @@ final class SystemCommandsRegistry {
             if targetVolume > 100 then set targetVolume to 100
             set volume output volume targetVolume
             """#,
-            description: "Set Mac output volume",
+            description: "Adjust Mac output volume",
             interaction: "slider",
             sliderMin: 0,
             sliderMax: 100,
@@ -394,52 +509,50 @@ final class SystemCommandsRegistry {
             valueScript: "output volume of (get volume settings)"
         ),
         SystemCommand(
-            name: "Wi-Fi Power",
-            icon: "wifi.circle",
-            keywords: ["wifi", "wi-fi", "wireless", "power", "toggle", "airport"],
-            scriptType: "bash",
+            name: "Appearance",
+            icon: "circle.lefthalf.filled",
+            keywords: ["appearance", "theme", "dark", "light", "mode", "presets:Light|Dark|Auto"],
+            scriptType: "applescript",
             script: #"""
-            dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}')
-            networksetup -setairportpower "$dev" "$CD_QUERY"
+            set rawValue to system attribute "CD_QUERY"
+            if rawValue is missing value then set rawValue to ""
+            set q to do shell script "printf %s " & quoted form of (rawValue as text) & " | tr '[:upper:]' '[:lower:]'"
+            if q is "" then return
+            if q is "auto" then
+                do shell script "defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool true"
+                return
+            end if
+            set wantDark to false
+            if q is "on" or q is "dark" then set wantDark to true
+            do shell script "defaults delete -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null; true"
+            tell application "System Events"
+                tell appearance preferences to set dark mode to wantDark
+            end tell
             """#,
-            description: "Turn Wi-Fi on or off",
+            description: "Light / Dark / Auto appearance",
             interaction: "toggle",
-            valueScript: #"""
-            dev=$(networksetup -listallhardwareports | awk '/Wi-Fi|AirPort/{getline; print $2; exit}')
-            networksetup -getairportpower "$dev" | awk '{print tolower($NF)}'
-            """#
+            valueScript: #"tell application "System Events" to tell appearance preferences to get dark mode"#
         ),
         SystemCommand(
-            name: "About This Mac",
-            icon: "laptopcomputer",
-            keywords: ["about", "mac", "about this mac", "system info"],
+            name: "Windows",
+            icon: "macwindow.on.rectangle",
+            keywords: ["windows", "window", "layout", "tile", "arrange", "snap", "resize", "halves", "quarters", "provider:windows"],
             scriptType: "applescript",
-            script: appleMenuClickScript("About This Mac"),
-            description: "Open About This Mac from Apple menu"
+            // Enter opens the scoped layout picker; there is no single action. The
+            // provider:windows scope renders native window-management tiles that act
+            // on the app you were in before opening Context-Dock.
+            script: #"return"#,
+            description: "Tile and arrange the frontmost window"
         ),
         SystemCommand(
-            name: "System Settings...",
-            icon: "gearshape",
-            keywords: ["settings", "system settings", "preferences", "system preferences"],
+            name: "Quick Note",
+            icon: "note.text",
+            keywords: ["note", "notes", "quicknote", "notepad", "scratch", "jot", "provider:notepad"],
             scriptType: "applescript",
-            script: #"tell application "System Settings" to activate"#,
-            description: "Open System Settings"
-        ),
-        SystemCommand(
-            name: "App Store...",
-            icon: "app.badge",
-            keywords: ["app store", "updates", "software", "apps"],
-            scriptType: "applescript",
-            script: #"tell application "App Store" to activate"#,
-            description: "Open App Store"
-        ),
-        SystemCommand(
-            name: "Force Quit...",
-            icon: "exclamationmark.octagon",
-            keywords: ["force quit", "quit app", "force", "applications"],
-            scriptType: "applescript",
-            script: appleMenuClickScript("Force Quit..."),
-            description: "Open Force Quit Applications"
+            // Enter opens the capture scope; there is no single action. The
+            // provider:notepad scope renders a Save row plus saved notes.
+            script: #"return"#,
+            description: "Capture and search quick notes"
         ),
         SystemCommand(
             name: "Keep Awake",
@@ -510,20 +623,47 @@ final class SystemCommandsRegistry {
             description: "Shut down Mac"
         ),
         SystemCommand(
-            name: "Lock Screen",
-            icon: "lock",
-            keywords: ["lock", "lock screen", "secure", "password"],
+            name: "Empty Trash",
+            icon: "trash",
+            keywords: ["empty trash", "trash", "bin", "empty bin", "clear trash"],
             scriptType: "applescript",
-            script: #"tell application "System Events" to keystroke "q" using {control down, command down}"#,
-            description: "Lock screen"
+            script: #"tell application "Finder" to empty trash"#,
+            description: "Empty the Trash"
+        ),
+
+        // ── Example templates (disabled) ──────────────────────────────────────
+        // Shipped OFF so they don't clutter Global Context. They live in
+        // Settings → Automation → Global Commands as editable, working examples of
+        // what user-authored commands can do. Enable or duplicate to use.
+        SystemCommand(
+            name: "Ask AI",
+            icon: "sparkles",
+            keywords: ["ask", "ai", "explain", "assistant"],
+            scriptType: "aiPrompt",
+            script: "Act on the selected text. Selection:\n\n$CD_TEXT\n\nRequest: $CD_QUERY",
+            description: "Example: send your selection + query to AI",
+            enabled: false
         ),
         SystemCommand(
-            name: "Log Out...",
-            icon: "rectangle.portrait.and.arrow.right",
-            keywords: ["log out", "logout", "sign out"],
+            name: "Open in Chrome",
+            icon: "safari",
+            keywords: ["chrome", "open in chrome", "browser"],
             scriptType: "applescript",
-            script: appleMenuClickScript("Log Out..."),
-            description: "Log out current user"
+            script: #"do shell script "open -a 'Google Chrome' " & quoted form of (system attribute "CD_URL")"#,
+            description: "Example: open the current page URL in Chrome (uses $CD_URL)",
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Focus",
+            icon: "moon.circle",
+            keywords: ["focus", "dnd", "do not disturb", "presets:Work|Personal|Off"],
+            scriptType: "bash",
+            script: #"""
+            shortcuts run "Focus $CD_QUERY" 2>/dev/null \
+              || open "x-apple.systempreferences:com.apple.Focus-Settings.extension"
+            """#,
+            description: "Example: run a Focus shortcut; scope for Work / Personal / Off",
+            enabled: false
         ),
     ]
 }

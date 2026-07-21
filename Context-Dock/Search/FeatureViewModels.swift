@@ -64,6 +64,9 @@ final class LauncherViewModel: ObservableObject {
     @Published var lastKnownBrowserURL = ""
     @Published var accumulatedSwipeDeltaY: CGFloat = 0
     @Published var accumulatedSwipeDeltaX: CGFloat = 0
+    /// One physical trackpad gesture may emit both finger and momentum endings. Once a
+    /// layer switch fires, ignore the remaining events until the next finger-down gesture.
+    var didSwitchLayerInCurrentSwipe = false
     @Published var isHoveringDockArea = false
     @Published var hoveredDockAppKey: String?
     @Published var hoveredAppPillIndex: Int?
@@ -114,6 +117,7 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var clipboardText = ""
     @Published var showClipboardPill = false
     @Published var lastCheckedPasteboardCount = -1
+    @Published var suppressClipboardImportUntilChangeCount: Int?
     @Published var clipboardHistory: [LauncherView.ClipboardEntry] = []
     @Published var showClipboardHistory = false
     @Published var clipboardHistoryExpanded = false
@@ -131,12 +135,17 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
     @Published var typingSnapshot = GlobalContextTypingSnapshot()
     @Published var preparedResults: GlobalContextPreparedResults?
+    @Published var isResolvingFastMatches = false
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0
     var groupedTask: Task<Void, Never>?
     var groupedGeneration = 0
     var prepareTask: Task<Void, Never>?
+    var fastMatchTask: Task<Void, Never>?
+    var expandWhenFastMatchesResolve = false
+    var autoExpandTask: Task<Void, Never>?
+    var idleCollapseTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
 }
@@ -174,7 +183,7 @@ final class ContextDockViewModel: ObservableObject {
     @Published var showFindTokenMenu = false
     var crossAppMenuTargetPID: pid_t = 0
     var crossAppMenuNeedsLiveLoad = false
-    var warmingMenuBundleIds: Set<String> = []
+    @Published var warmingMenuBundleIds: Set<String> = []
     @Published var hoveredDockPillIndex: Int?
     @Published var isHoveringPillRow = false
     @Published var listViewHoveredIndex: Int?
@@ -198,6 +207,10 @@ final class ContextDockViewModel: ObservableObject {
     var crossAppMenuTask: Task<Void, Never>?
     var finderDesktopSearchTask: Task<Void, Never>?
     var finderDesktopSearchGeneration = 0
+    var finderDesktopFastMatchTask: Task<Void, Never>?
+    var finderDesktopFastMatchGeneration = 0
+    var finderDesktopSearchRecords: [FinderDesktopSearchRecord] = []
+    var finderDesktopPillsByPath: [String: DockPill] = [:]
     var axContextRefreshTimer: Timer?
     var cachedPreviewPillQuery = ""
     var cachedPreviewPillSourceFingerprint = ""

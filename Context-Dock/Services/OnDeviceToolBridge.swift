@@ -86,7 +86,7 @@ struct ShellCommandTool: Tool {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No shell command provided." }
 
-        let (success, output) = await TerminalAIBridge.shared.processAICommand(
+        let (success, output) = await TerminalCommandExecutor.shared.run(
             command,
             purpose: "On-device AI shell command"
         )
@@ -122,7 +122,7 @@ struct SpawnWorkerTool: Tool {
         guard !command.isEmpty else { return "❌ No worker command provided." }
 
         let purpose = arguments.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
-        let workerID = await TerminalAIBridge.shared.spawnWorker(
+        let workerID = await TerminalCommandExecutor.shared.spawnWorker(
             command: command,
             purpose: purpose.isEmpty ? "On-device AI worker" : purpose
         )
@@ -148,7 +148,7 @@ struct SendKeysTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let keys = arguments.keys
         guard !keys.isEmpty else { return "❌ No keys provided." }
-        return await TerminalAIBridge.shared.sendKeys(keys)
+        return await TerminalCommandExecutor.shared.sendKeys(keys)
     }
 }
 
@@ -242,7 +242,7 @@ struct ListAppMenuActionsTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MainActor.run {
+        return await MainActor.run {
             if let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == bundleId && !$0.isTerminated
             }) {
@@ -381,7 +381,7 @@ private func menuCandidates(
 }
 
 @available(macOS 26.0, *)
-private func bestMenuMatch(
+func bestMenuMatch(
     intent: String,
     bundleId: String,
     appName: String,
@@ -426,7 +426,7 @@ private func bestMenuMatch(
 }
 
 @available(macOS 26.0, *)
-private func menuSuggestions(
+func menuSuggestions(
     intent: String,
     bundleId: String,
     appName: String,
@@ -501,10 +501,13 @@ struct ExecuteAppMenuPathTool: Tool {
             return "⚠️ \(appName) menu is currently disabled: \(trimmedPath.joined(separator: " > ")). Change the app state and try again."
         }
 
-        await MainActor.run {
-            AXActionResolver.shared.execute(menuPath: trimmedPath, in: targetApp)
-        }
-        return "✅ Requested \(appName) menu: \(trimmedPath.joined(separator: " > "))"
+        let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+            bundleIdentifier: bundleId,
+            path: validation.path,
+            cachedShortcutChar: validation.shortcutChar,
+            cachedShortcutModifiers: validation.shortcutModifiers
+        )
+        return result.message
     }
 }
 
@@ -571,10 +574,13 @@ struct ExecuteAppMenuIntentTool: Tool {
             return "⚠️ \(appName) menu is currently disabled: \(match.path.joined(separator: " > "))."
         }
 
-        await MainActor.run {
-            AXActionResolver.shared.execute(menuPath: match.path, in: targetApp)
-        }
-        return "✅ Mapped \"\(intent)\" to \(appName) menu: \(match.path.joined(separator: " > "))"
+        let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+            bundleIdentifier: bundleId,
+            path: match.path,
+            cachedShortcutChar: match.shortcutChar,
+            cachedShortcutModifiers: match.shortcutModifiers
+        )
+        return result.message
     }
 }
 
@@ -794,7 +800,7 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
-        let (success, output) = await TerminalAIBridge.shared.processAICommand(
+        let (success, output) = await TerminalCommandExecutor.shared.run(
             fullCommand,
             purpose: "\(cliCommand) CLI"
         )

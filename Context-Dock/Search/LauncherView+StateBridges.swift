@@ -219,6 +219,11 @@ extension LauncherView {
         nonmutating set { launcherViewModel.accumulatedSwipeDeltaX = newValue }
     }
 
+    var didSwitchLayerInCurrentSwipe: Bool {
+        get { launcherViewModel.didSwitchLayerInCurrentSwipe }
+        nonmutating set { launcherViewModel.didSwitchLayerInCurrentSwipe = newValue }
+    }
+
     var isHoveringDockArea: Bool {
         get { launcherViewModel.isHoveringDockArea }
         nonmutating set { launcherViewModel.isHoveringDockArea = newValue }
@@ -580,6 +585,11 @@ extension LauncherView {
     var lastCheckedPasteboardCount: Int {
         get { globalContextViewModel.lastCheckedPasteboardCount }
         nonmutating set { globalContextViewModel.lastCheckedPasteboardCount = newValue }
+    }
+
+    var suppressClipboardImportUntilChangeCount: Int? {
+        get { globalContextViewModel.suppressClipboardImportUntilChangeCount }
+        nonmutating set { globalContextViewModel.suppressClipboardImportUntilChangeCount = newValue }
     }
 
     var clipboardHistory: [ClipboardEntry] {

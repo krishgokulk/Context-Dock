@@ -11,7 +11,7 @@ enum TailscaleCapabilities {
                 inputSchema: .init(fields: []),
                 riskLevel: .low
             ) { _ in
-                let result = await TerminalAIBridge.shared.processAICommand(
+                let result = await TerminalCommandExecutor.shared.run(
                     "tailscale status",
                     purpose: "Inspect Tailscale connection status"
                 )
@@ -27,7 +27,7 @@ enum TailscaleCapabilities {
                 inputSchema: .init(fields: []),
                 riskLevel: .low
             ) { _ in
-                let result = await TerminalAIBridge.shared.processAICommand(
+                let result = await TerminalCommandExecutor.shared.run(
                     "tailscale netcheck",
                     purpose: "Inspect Tailscale network connectivity"
                 )

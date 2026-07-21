@@ -11,6 +11,7 @@
 import AppKit
 import Combine
 import Foundation
+import IOBluetooth
 
 // MARK: - Live value cache
 
@@ -39,7 +40,9 @@ final class InteractiveCommandState: ObservableObject {
     func refreshIfNeeded(_ command: SystemCommand, maxAge: TimeInterval = 4) {
         guard command.interactionType != .none else { return }
         let script = command.valueScript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !script.isEmpty else { return }
+        let readsBluetoothPower = command.keywords.contains("provider:bluetooth")
+        let readsWiFiPower = command.keywords.contains("provider:wifi")
+        guard readsBluetoothPower || readsWiFiPower || !script.isEmpty else { return }
         let id = command.id
         if let last = fetchedAt[id], Date().timeIntervalSince(last) < maxAge { return }
         guard inflight.insert(id).inserted else { return }
@@ -47,9 +50,17 @@ final class InteractiveCommandState: ObservableObject {
         let actionType = command.actionType
         let isToggle = command.interactionType == .toggle
         Task.detached(priority: .utility) {
-            let output = SystemCommandInteractiveRunner.runForOutput(
-                script: script, actionType: actionType
-            )
+            let output: String?
+            if readsBluetoothPower {
+                let powerState = IOBluetoothHostController.default().powerState
+                output = powerState.rawValue == 1 ? "on" : "off"
+            } else if readsWiFiPower {
+                output = WiFiNetworkProvider.isPoweredOn() ? "on" : "off"
+            } else {
+                output = SystemCommandInteractiveRunner.runForOutput(
+                    script: script, actionType: actionType
+                )
+            }
             await MainActor.run {
                 let state = InteractiveCommandState.shared
                 state.inflight.remove(id)
@@ -73,6 +84,25 @@ enum SystemCommandInteractiveRunner {
     /// Run the command's script with the control value injected as CD_QUERY.
     /// No feedback UI — interactive controls show their own state.
     static func run(_ command: SystemCommand, value: String) {
+        // The Bluetooth / Wi-Fi power switches write natively rather than through
+        // the command's AppleScript / networksetup path, which failed silently and
+        // left the radio in the wrong state. Device/network selection (any other
+        // value) still flows through the script below.
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedValue == "on" || normalizedValue == "off" {
+            if command.keywords.contains("provider:bluetooth") {
+                Task.detached(priority: .userInitiated) {
+                    BluetoothDeviceProvider.setPower(normalizedValue == "on")
+                }
+                return
+            }
+            if command.keywords.contains("provider:wifi") {
+                Task.detached(priority: .userInitiated) {
+                    WiFiNetworkProvider.setPower(normalizedValue == "on")
+                }
+                return
+            }
+        }
         let script = command.script
         let actionType = command.actionType
         Task.detached(priority: .userInitiated) {
@@ -100,6 +130,25 @@ enum SystemCommandInteractiveRunner {
             case .aiPrompt:
                 break  // not meaningful for a live control
             }
+        }
+    }
+
+    /// Run a command's script with `CD_QUERY` injected and capture stdout — used by
+    /// the AI capability so it can report what a Global Command produced.
+    nonisolated static func runForOutput(command: SystemCommand, value: String) -> String? {
+        switch command.actionType {
+        case .applescript, .url, .file:
+            return runProcess("/usr/bin/osascript", ["-e", command.script], value: value)
+        case .jxa:
+            return runProcess(
+                "/usr/bin/osascript", ["-l", "JavaScript", "-e", command.script], value: value)
+        case .bash:
+            return runProcess("/bin/zsh", ["-lc", command.script], value: value)
+        case .scriptFile:
+            let path = (command.script as NSString).expandingTildeInPath
+            return runProcess("/bin/zsh", [path], value: value)
+        case .aiPrompt:
+            return nil
         }
     }
 

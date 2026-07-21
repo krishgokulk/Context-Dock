@@ -95,7 +95,7 @@ Rules:
 - App-scoped content only.
 - No universal search takeover.
 
-## General Chat Mode
+## AI Assistant Mode
 
 Uses Unified Dock Shell.
 
@@ -103,6 +103,7 @@ Content:
 - AI messages.
 - Visible attachment chips.
 - Provider/capability state.
+- System-wide capability discovery and execution status.
 
 Rules:
 - Chat content only.

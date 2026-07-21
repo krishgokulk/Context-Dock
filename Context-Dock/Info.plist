@@ -45,7 +45,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSBackgroundOnly</key>
@@ -58,6 +58,8 @@
 	<string>Context-Dock needs accessibility access to control other applications and respond to global keyboard shortcuts.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Context-Dock uses AppleScript to integrate with Mail, Notes, Messages, Calendar, Reminders, Finder, Safari, and other Apple applications to provide AI-powered automation.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Context-Dock uses Bluetooth access only when you open the Bluetooth Global Command to show paired devices and connection status.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Context-Dock needs access to your calendars to create events and view your schedule through natural language commands.</string>
 	<key>NSCameraUsageDescription</key>

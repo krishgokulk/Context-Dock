@@ -100,10 +100,9 @@ final class AppWorkflowToolCatalog {
             }
         }
         let exact = enabled.filter { $0.bundleId == bundleID }
-        if !exact.isEmpty { return exact }
-        return enabled.sorted {
-            $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
-        }
+        // A scoped request must never inherit another app's tools. No exact adapter means
+        // no adapter capabilities for this scope; only bundle-less built-ins remain.
+        return exact
     }
 
     private func relevantAppChatHistory(query: String, liveBundleID: String?) -> [String] {

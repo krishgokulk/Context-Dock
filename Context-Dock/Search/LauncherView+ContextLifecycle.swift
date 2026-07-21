@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import OSLog
 import SwiftUI
 import Vision
 
@@ -46,15 +47,30 @@ extension LauncherView {
             // In dock mode anchor content to bottom so dock bar stays fixed while results grow upward.
             // In normal mode anchor to top so results grow downward.
             .frame(
-                height: calculatedHeight, alignment: settings.effectiveDockAtBottom ? .bottom : .top
+                height: renderedDockHeight ?? calculatedHeight,
+                alignment: settings.effectiveDockAtBottom ? .bottom : .top
             )
             .background(
                 backgroundView
                     .animation(
                         .spring(response: 0.35, dampingFraction: 0.8), value: shouldShowBackground)
             )
+            // Fill the window and pin the card to the top edge. The window height lags the
+            // content (the resize stabilizer intentionally holds it steady while typing), so
+            // without this the shorter card gets centered by the hosting view in a stale-tall
+            // window — the input visibly sinks for "fewer results". Any leftover height now
+            // falls BELOW the card instead. (Bottom-anchored dock mode keeps its bottom pin.)
+            .frame(
+                maxWidth: .infinity, maxHeight: .infinity,
+                alignment: settings.effectiveDockAtBottom ? .bottom : .top
+            )
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
+            .onAppear {
+                if renderedDockHeight == nil {
+                    renderedDockHeight = calculatedHeight
+                }
+            }
             .onChange(of: searchState.results.isEmpty) { _, isEmpty in
                 if isEmpty {
                     l1ResultsReservedHeight = 0
@@ -62,7 +78,7 @@ extension LauncherView {
                 requestWindowSizeUpdate(
                     reason: .resultsChanged,
                     animated: false,
-                    debounceNanoseconds: 110_000_000
+                    debounceNanoseconds: 0
                 )
             }
             .onChange(of: searchState.results.count) { _, newCount in
@@ -72,17 +88,18 @@ extension LauncherView {
                     requestWindowSizeUpdate(
                         reason: .resultsChanged,
                         animated: false,
-                        debounceNanoseconds: 110_000_000
+                        debounceNanoseconds: 0
                     )
                 }
             }
             .onChange(of: listViewResizeToken) { _, _ in
-                // Long debounce → the sheet SETTLES to fit after typing pauses instead
-                // of resizing on every keystroke. Animated so the settle glides.
+                // Global Context owns a fixed-height result sheet: dismiss it as soon as
+                // typing invalidates the expanded state, like Spotlight. Other variable-height
+                // surfaces still settle after typing to avoid resizing on every keystroke.
                 requestWindowSizeUpdate(
                     reason: .rowLayoutChanged,
                     animated: true,
-                    debounceNanoseconds: 260_000_000
+                    debounceNanoseconds: isGlobalContextActive ? 0 : 260_000_000
                 )
             }
             .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in
@@ -181,6 +198,10 @@ extension LauncherView {
                     // Global Context stays cache-only; Apple Menu uses static fallback pills.
                     menuLoadTask?.cancel()
                     let useCacheOnly = isGlobalContextActive
+                    let warmBundleId = activeApp?.bundleIdentifier ?? ""
+                    if !useCacheOnly, !warmBundleId.isEmpty {
+                        warmingMenuBundleIds.insert(warmBundleId)
+                    }
                     if let app = activeApp {
                         var cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
                             for: app, maxResults: 120)
@@ -200,6 +221,13 @@ extension LauncherView {
                         }
                     }
                     menuLoadTask = Task.detached(priority: .userInitiated) {
+                        defer {
+                            if !warmBundleId.isEmpty {
+                                Task { @MainActor in
+                                    self.warmingMenuBundleIds.remove(warmBundleId)
+                                }
+                            }
+                        }
                         let app = await MainActor.run { self.contextTargetApp() }
                         guard let app, !app.isTerminated else { return }
                         let pid = app.processIdentifier
@@ -230,7 +258,12 @@ extension LauncherView {
                         let resolvedItems = items
                         await MainActor.run {
                             guard self.contextTargetApp()?.processIdentifier == pid else { return }
-                            guard !resolvedItems.isEmpty else { return }
+                            guard !resolvedItems.isEmpty else {
+                                self.scheduleDockPillRebuild(
+                                    query: self.lastPillQuery, delayNanoseconds: 0,
+                                    refreshContext: false)
+                                return
+                            }
                             let visibleItems = self.menuItemsVisibleInActiveDockMode(resolvedItems)
                             self.liveMenuItems = visibleItems
                             self.menuDebugText = "\(name): \(visibleItems.count) menus, \(debug)"
@@ -508,6 +541,14 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .launcherWindowOpened)) { _ in
                 handleLauncherWindowOpened()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .globalSearchIndexRebuildRequested)) { _ in
+                rebuildGlobalSearchIndex()
+                if shouldUsePureGlobalAppSearch {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    updateGlobalContextTypingSnapshot(query: q)
+                    scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
+                }
+            }
 
             .onChange(of: searchState.results.count) { oldValue, newValue in
                 handleSearchResultsCountChanged(newValue)
@@ -604,6 +645,15 @@ extension LauncherView {
                     syncSafariTabStrip(force: true)
                 }
             }
+            // A no-menu query auto-arms the app chat instead of showing a chat-connect icon —
+            // both for Context Dock (frontmost app) and a Global Context inline app scope.
+            // ONE onChange only: extra chained SubscriptionViews on this body crash SwiftUI.
+            .onChange(of: shouldAutoArmChatForNoMenuMatch) { _, active in
+                if active {
+                    autoArmContextDockChatForNoMenuMatch()
+                    autoArmGlobalInlineScopeChatForNoMenuMatch()
+                }
+            }
             // Rebuild pills whenever the live menu content changes — catches both count changes
             // (new app) and title/enabled-state-only changes (e.g. Show→Hide Tab Bar, message
             // selected/deselected). The signature encodes titles + enabled flags so it fires on
@@ -662,11 +712,36 @@ extension LauncherView {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .launcherBackspacePressed)) { _ in
-                guard allGlobalInlineAppScopes.isEmpty else {
-                    return
-                }
                 guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else {
+                    return
+                }
+                // Compact scopes (Clipboard / Notifications) step out first — backspace
+                // on their empty field returns to the surface underneath.
+                if searchState.activeSmartQueryKey != nil {
+                    clearSearchContext()
+                    isSearchFieldFocused = true
+                    scheduleDockPillRebuild(
+                        query: "", delayNanoseconds: 0, refreshContext: false)
+                    requestWindowSizeUpdate(reason: .modeChanged)
+                    return
+                }
+                if dismissSelectionScopeFromEmptyBackspaceIfNeeded() {
+                    return
+                }
+                // System Command provider scopes (Quick Note, Windows, …) exit on
+                // backspace when the INPUT field is focused — never while editing a
+                // note's text (editor focus → isSearchFieldFocused is false).
+                if isSearchFieldFocused,
+                    currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true,
+                    let scope = globalInlineAppScope
+                {
+                    notepadSelectedNoteID = nil
+                    removeGlobalInlineAppScope(scope)
+                    isSearchFieldFocused = true
+                    return
+                }
+                guard allGlobalInlineAppScopes.isEmpty else {
                     return
                 }
                 if lockedSubmenuParent != nil {
@@ -684,29 +759,12 @@ extension LauncherView {
                     return
                 }
                 if shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                        // Backspace on an empty frontmost chat: CLEAR the conversation and
-                        // return to the app's menu search — a fresh chat next time.
-                        l2.chatMessages = []
-                        if let key = l2.activeDockSessionKey {
-                            AppPanelChatStore.shared.clear(for: key)
-                        }
-                        l2.isLoading = false
-                        l2.currentTask?.cancel()
-                        l2.currentTask = nil
-                        exitContextDockChatBackToContext()
-                    }
-                    isSearchFieldFocused = true
+                    clearAndExitContextDockChatBackToContext()
                     return
                 }
                 // Attached Finder folder and Selection Scope exit FIRST — a Finder app
                 // scope (l2.targetApp) coexists with both and must not shadow them.
                 if detachFinderFolderQueryModeFromEmptyBackspace() {
-                    isSearchFieldFocused = true
-                    return
-                }
-                if hasActiveDockContextSelection || globalContextActivationHasFrozenPayload {
-                    dismissSelectionAndStayInGlobalContext()
                     isSearchFieldFocused = true
                     return
                 }
@@ -751,10 +809,21 @@ extension LauncherView {
                     case .appFocused, .none:
                         setFrontmostAppContextOnly(reason: "dock context pre-detection")
                     }
+                    // A Space/desktop switch often keeps Finder as the frontmost bundle, so no
+                    // frontmostAppUpdates event follows this context refresh. The dock content
+                    // updates correctly, but the new Space's responder chain can drop the field
+                    // editor. Reclaim after the context mutation has rendered.
+                    if AppDelegate.shared?.launcherWindow?.isVisible == true {
+                        DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
+                    }
                     return
                 }
                 currentContext = context
             }
+            // NOT debounced: this handler clears axContext/currentContext on an app change, and
+            // delaying it made that clear land AFTER a freshly-detected selection was delivered,
+            // wiping it — launching with text/files selected stopped entering Selection Scope.
+            // Ordering here is load-bearing; fix quit-cascade flicker elsewhere.
             .onReceive(contextEnv.frontmostAppUpdates) { appInfo in
                 let appName = appInfo.name
                 let bundleID = appInfo.bundleID
@@ -790,13 +859,40 @@ extension LauncherView {
                     switchGlobalLaunchToContextDock(bundleId: bundleID, appName: appName)
                 }
 
+                // Clipboard and Notifications own their result sheet independently of the
+                // frontmost app. Let the app metadata update above land, then stop before the
+                // generic Context Dock switch path clears list measurements and rebuilds app
+                // context. That race could collapse a compact scope to only its input bar.
+                if isCompactSmartScope {
+                    AppDelegate.shared?.smartScopeActive = true
+                    showContextInDock = true
+                    isSearchBarExpanded = true
+                    refreshCompactScopeResults(resetSelection: false)
+                    requestWindowSizeUpdate(reason: .panelChanged)
+                    return
+                }
+
                 if appChanged {
                     l2.appCompletion = nil
                     l2.focusedPillIndex = nil
                     l2.pillNavViaKeyboard = false
-                    // Immediately clear stale pills so the result panel disappears
-                    // and rebuilds for the new frontmost app
+                    // Immediately clear stale pills AND cancel any in-flight rebuild.
+                    // Otherwise an older app's delayed pill build can finish after the
+                    // frontmost switch and repaint previous-app menu rows.
+                    contextDockViewModel.resetPillRenderingState(cancelBuild: true)
+                    menuLoadTask?.cancel()
+                    menuLoadTask = nil
+                    liveMenuRefreshTask?.cancel()
+                    liveMenuRefreshTask = nil
+                    menuAvailabilityRefreshTask?.cancel()
+                    menuAvailabilityRefreshTask = nil
                     cachedDockPills = []
+                    liveMenuItems = []
+                    contextMenuPills = []
+                    previousEnabledIDs = []
+                    measuredGlobalListContentHeight = 0
+                    lastLiveMenuSignature = ""
+                    lastPillQuery = ""
                     let ownId = Bundle.main.bundleIdentifier ?? ""
                     // Only exit global context when switching to a real other app
                     // (not when our own dock gains focus — that would clear the chip)
@@ -885,6 +981,16 @@ extension LauncherView {
                         }
                     }
                 }
+
+                // Switching the external app rebuilds the scoped row asynchronously. Restore
+                // focus after this handler has committed the new app so that rebuild cannot
+                // leave the visible dock with no field editor. Explicitly locked app scopes do
+                // not follow the external app and therefore need no responder reset here.
+                if appChanged, showContextInDock, !scopeLocked,
+                    AppDelegate.shared?.launcherWindow?.isVisible == true
+                {
+                    DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .servicesOpenWithFiles)) {
                 notification in
@@ -919,9 +1025,15 @@ extension LauncherView {
                 showMediaLayer = false
                 aiMode.isActive = false
                 showContextInDock = true
-                globalContextActivation = nil
+                // Never tear down a launch-time Selection Scope: the open sequence fires this
+                // notification twice while the AX selection read is still in flight.
+                if !(globalContextActivationHasFrozenPayload
+                    && Date() < launchSelectionScopeGraceUntil)
+                {
+                    globalContextActivation = nil
+                }
                 setFrontmostAppContextOnly(reason: "activate context dock")
-                _ = currentSelectionActivationSnapshot(refresh: true)
+                refreshLiveSelectionIntoDockContext()
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateGlobalContext)) { notification in
                 beginMouseDrivenInteractionGrace()
@@ -940,7 +1052,7 @@ extension LauncherView {
                 focusedAppPillIndex = nil
                 lockedSubmenuParent = nil
                 inlineShareActive = false
-                _ = currentSelectionActivationSnapshot(refresh: true)
+                refreshLiveSelectionIntoDockContext()
                 scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
                 activateSearchField()
             }
@@ -1004,6 +1116,7 @@ extension LauncherView {
         if !resumesActiveChat {
             l2.showChatPopover = false
             l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
             l2.chatDraftAppName = ""
             l2.chatDraftBundleId = ""
         }
@@ -1015,6 +1128,11 @@ extension LauncherView {
 
         let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
         globalContextActivation = nil
+        // The hotkey open posts .activateContextDock twice (immediately, then +0.05s), and each
+        // nils the activation. Selection Scope is established asynchronously once the AX read
+        // lands (which can take ~1s), so without this grace those posts race it away. Inside the
+        // window a frozen selection payload wins; after it, .activateContextDock behaves normally.
+        launchSelectionScopeGraceUntil = Date().addingTimeInterval(2.5)
 
         // Reset transient UI state unconditionally on every open
         aiMode.isActive = false
@@ -1039,10 +1157,29 @@ extension LauncherView {
         }
 
         if let app = AppDelegate.shared?.previousFrontmostApp {
-            Task.detached(priority: .utility) {
+            Task.detached(priority: .userInitiated) {
+                // SELECTION FIRST, at userInitiated. refreshLightweight used to run ahead of it
+                // and cost ~1s, so launch-time Selection Scope landed a second late — after the
+                // user had already started typing. Read the selection, enter the scope, then do
+                // the heavier lightweight pass.
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
+                let selectionCtx = await AXContextReader.shared.current
+                await MainActor.run {
+                    self.axContext = selectionCtx
+                    // Launching WITH files/text already selected opens directly in Selection
+                    // Scope: freeze the payload into the activation (that's what turns the scope
+                    // on). Selecting something while the dock is already visible — or a selection
+                    // the user dismissed — only offers the trailing button and must never hijack
+                    // the surface; neither path runs through this open handler.
+                    self.activateLaunchTimeSelectionScopeIfNeeded()
+                }
+
                 await AXContextReader.shared.refreshLightweight(from: app)
-                // Also read the live selection so Context Dock shows a clickable selection
-                // chip/button (lightweight skips it for first-paint speed).
+                // refreshLightweight SKIPS the selection for first-paint speed, so the shared
+                // context it leaves behind has no selected files/text. Re-read the selection
+                // before publishing, otherwise this assign wipes what the fast pass just found
+                // and the selection icon flickers folder → doc → folder as the live refresh
+                // restores it.
                 await AXContextReader.shared.refreshSelectionOnly(from: app)
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
@@ -1050,38 +1187,53 @@ extension LauncherView {
                     if !self.contextDockIsFrontmostApplication {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
-                    // Launched with something selected → open straight into Selection Scope
-                    // (Global Context + selection), not Context Dock — and build the pills so
-                    // the result sheet (Ask AI + actions + share) is visible immediately.
-                    if self.openInSelectionScopeIfSelectionPresent() {
-                        self.scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
-                        self.requestWindowSizeUpdate(reason: .modeChanged)
-                        return
-                    }
+                    // The lightweight pass can land after the user began typing; re-assert the
+                    // scope in case the selection read hadn't completed on the first attempt.
+                    self.activateLaunchTimeSelectionScopeIfNeeded()
                     self.scheduleDockPillRebuild(query: self.lastPillQuery, delayNanoseconds: 0)
                     self.requestWindowSizeUpdate(reason: .contentSettled)
 
-                    // AX gave no selection (e.g. Electron apps don't expose selectedText) —
-                    // fall back to a clipboard peek so a text selection still surfaces the
-                    // selection chip / scope. Only when nothing else is already active.
-                    if self.activeSelection == nil, self.frozenSelectionText == nil,
-                        self.searchState.query.isEmpty
-                    {
-                        self.peekSelectionViaClipboard { text in
-                            guard let text, self.activeSelection == nil else { return }
-                            self.currentContext = .textSelected(text)
-                            _ = self.openInSelectionScopeIfSelectionPresent()
-                            self.scheduleDockPillRebuild(
-                                query: "", delayNanoseconds: 0, refreshContext: false)
-                            self.requestWindowSizeUpdate(reason: .modeChanged)
-                        }
-                    }
+                    self.refreshLiveSelectionIntoDockContext()
                 }
             }
         }
         syncL2DockSession(force: true)
         scheduleBackgroundScanRunningAppMenusAfterOpen()
 
+    }
+
+    /// Launch-time Selection Scope: if the user had files/text selected when they opened the
+    /// dock, enter Selection Scope directly by freezing that payload into the activation.
+    /// Called only from the window-open handler — a selection made while the dock is already
+    /// visible keeps the trailing-button behaviour instead. Dismissed selections are filtered
+    /// out by currentSelectionActivationSnapshot, so exiting the scope doesn't re-enter it.
+    func activateLaunchTimeSelectionScopeIfNeeded() {
+        // Deliberately NOT gated on an empty query: the AX selection read can land after the
+        // user has already begun typing, and bailing there dropped Selection Scope for anyone
+        // who types fast. The typed query is preserved and simply filters the selection actions
+        // ("comp" → Compress).
+        // Grace-gated: the window is opened at launch and zeroed the moment the user exits the
+        // scope, so the second (post-lightweight) re-assert can't drag them back in.
+        guard Date() < launchSelectionScopeGraceUntil,
+            !globalContextActivationHasFrozenPayload,
+            l2.targetApp == nil,
+            globalInlineAppScope == nil,
+            !l2.chatArmed, !l2.showChatPopover,
+            searchState.activeSmartQueryKey == nil,
+            searchState.contextApp == nil,
+            !showMediaLayer,
+            !aiMode.isActive,
+            let snapshot = currentSelectionActivationSnapshot(refresh: false)
+        else { return }
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            // Freeze the selection only — do NOT touch globalContextActivation. The selection
+            // came from the frontmost app, so the scope opens on the surface the user launched
+            // into (Context Dock), instead of jumping them to Global Context.
+            selectionScopePayload = snapshot
+            showContextInDock = true
+            isSearchBarExpanded = true
+        }
+        requestWindowSizeUpdate(reason: .modeChanged)
     }
 
     func scheduleBackgroundScanRunningAppMenusAfterOpen() {
@@ -1243,11 +1395,12 @@ extension LauncherView {
         contextMenuPills = []
         previousEnabledIDs = []
 
+        if !useCacheOnly, !bundleId.isEmpty {
+            warmingMenuBundleIds.insert(bundleId)
+        }
+
         let cachedItems = ContextDockEngine.shared.cachedMenuItems(for: app, maxResults: 120)
         if useCacheOnly || !cachedItems.isEmpty {
-            if !useCacheOnly, !bundleId.isEmpty {
-                warmingMenuBundleIds.insert(bundleId)
-            }
             liveMenuItems = menuItemsVisibleInActiveDockMode(cachedItems)
             menuDebugText = "\(name): \(liveMenuItems.count) cached menus"
             lastLiveMenuSignature = menuSignature(for: liveMenuItems)
@@ -1261,6 +1414,13 @@ extension LauncherView {
         }
 
         menuLoadTask = Task.detached(priority: .userInitiated) {
+            defer {
+                if !bundleId.isEmpty {
+                    Task { @MainActor in
+                        self.warmingMenuBundleIds.remove(bundleId)
+                    }
+                }
+            }
             let fallbackItems = await MainActor.run {
                 AXContextReader.shared.current.menuItems.compactMap { info -> AXMenuItem? in
                     let path = info.fullPath
@@ -1293,9 +1453,6 @@ extension LauncherView {
                     )
             else {
                 await MainActor.run {
-                    if !bundleId.isEmpty {
-                        self.warmingMenuBundleIds.remove(bundleId)
-                    }
                     if cachedItems.isEmpty {
                         self.liveMenuItems = []
                         self.menuDebugText = "\(name): no menu cache yet"
@@ -1306,9 +1463,6 @@ extension LauncherView {
 
             await MainActor.run {
                 guard self.contextTargetApp()?.processIdentifier == pid else { return }
-                if !bundleId.isEmpty {
-                    self.warmingMenuBundleIds.remove(bundleId)
-                }
                 let visibleItems = self.menuItemsVisibleInActiveDockMode(refresh.items)
                 self.liveMenuItems = visibleItems
                 self.menuDebugText = "\(name): \(visibleItems.count) menus, refreshed"
@@ -1473,22 +1627,56 @@ extension LauncherView {
     /// Called from the AX selection observer AND the 0.75s live poll (some apps
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
     func refreshLiveSelectionIntoDockContext() {
-        guard showContextInDock, !contextDockIsFrontmostApplication,
-            let app = contextTargetApp()
-        else { return }
+        guard showContextInDock else { return }
+        // While OUR dock holds focus the frontmost app's selection cannot change — the user is
+        // typing here, not there. Re-reading it then only yields flaky AX results (reads of a
+        // background app intermittently come back empty, and AXContextReader.current is shared
+        // with other refresh paths), which toggled the selection icon beside the capsule. Freeze
+        // the last known selection; it resumes updating as soon as focus returns to the app.
+        guard !contextDockIsFrontmostApplication else { return }
+        let ownBundleId = Bundle.main.bundleIdentifier ?? ""
+        let previous = AppDelegate.shared?.previousFrontmostApp
+        let app =
+            previous?.bundleIdentifier == ownBundleId
+            ? contextTargetApp()
+            : (previous ?? contextTargetApp())
+        guard let app, app.bundleIdentifier != ownBundleId else { return }
         let pid = app.processIdentifier
         Task.detached(priority: .userInitiated) {
             await AXContextReader.shared.refreshSelectionOnly(from: app)
             let newCtx = await AXContextReader.shared.current
             await MainActor.run {
+                let currentTargetPID =
+                    self.contextTargetApp()?.processIdentifier
+                    ?? AppDelegate.shared?.previousFrontmostApp?.processIdentifier
                 guard self.showContextInDock,
-                    self.contextTargetApp()?.processIdentifier == pid
+                    currentTargetPID == pid
                 else { return }
                 let newText = newCtx.selectedText?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let preview = newText.isEmpty ? nil : newText
                 if self.liveDockSelectionPreviewText != preview {
                     self.liveDockSelectionPreviewText = preview
+                }
+                // Keep the live selection fields current so the selection icon tracks what the
+                // user selects in the background while the dock is open (file/folder changes
+                // never updated before — only the text preview did). Patch just the selection
+                // fields; replacing the whole context would drop menu/window data.
+                //
+                // Adopt a NON-EMPTY read only. Reading a background app's selection while our
+                // panel holds key focus intermittently comes back empty; treating that as
+                // "selection cleared" toggled the icon on and off beside the capsule. An empty
+                // result means "couldn't read it", not "nothing is selected" — the user clears a
+                // selection through the dock (backspace / "−"), not by us guessing from AX.
+                if !newCtx.selectedFilePaths.isEmpty,
+                    self.axContext.selectedFilePaths != newCtx.selectedFilePaths
+                {
+                    self.axContext.selectedFilePaths = newCtx.selectedFilePaths
+                }
+                let liveText = newCtx.selectedText?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !liveText.isEmpty, self.axContext.selectedText != newCtx.selectedText {
+                    self.axContext.selectedText = newCtx.selectedText
                 }
             }
         }
@@ -1599,7 +1787,6 @@ extension LauncherView {
 
     func refreshFinderSelectionContextFromFinder() {
         guard showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
-        guard !contextDockIsFrontmostApplication else { return }
         let now = Date()
         guard now.timeIntervalSince(lastFinderSelectionRefresh) > 0.25 else { return }
         lastFinderSelectionRefresh = now
@@ -1652,6 +1839,16 @@ extension LauncherView {
         let currentCount = pb.changeCount
         guard currentCount != lastCheckedPasteboardCount else { return }
         lastCheckedPasteboardCount = currentCount
+
+        if let suppressed = suppressClipboardImportUntilChangeCount {
+            if currentCount <= suppressed {
+                if currentCount == suppressed {
+                    suppressClipboardImportUntilChangeCount = nil
+                }
+                return
+            }
+            suppressClipboardImportUntilChangeCount = nil
+        }
 
         pruneExpiredClipboardEntries()
 
@@ -1724,8 +1921,10 @@ extension LauncherView {
         }
 
         globalClipboardText = text
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            showGlobalClipboardPill = true
+        if activeSelection == nil && frozenSelectionText == nil && liveDockSelectionPreviewText == nil {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+                showGlobalClipboardPill = true
+            }
         }
         clipboardHistoryExpanded = false
         scheduleClipboardIndicatorAutoHide()

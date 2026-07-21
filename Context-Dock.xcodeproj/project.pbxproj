@@ -323,9 +323,10 @@
 		CAFE00000000000000000007 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -358,9 +359,10 @@
 		CAFE00000000000000000008 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -524,7 +526,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = NO;
@@ -541,6 +543,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Context-Dock help to modify and view user contacts";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "iLauncher help to modify and view user contacts";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Context-Dock uses Bluetooth access only when you open the Bluetooth Global Command to show paired devices and connection status.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Context-Dock needs calendar access to manage events.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Context-Dock needs contacts access to search your address book.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -580,7 +583,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Context-Dock/ILauncher.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_APP_SANDBOX = NO;
@@ -597,6 +600,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Context-Dock help to modify and view user contacts";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "iLauncher help to modify and view user contacts";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Context-Dock uses Bluetooth access only when you open the Bluetooth Global Command to show paired devices and connection status.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Context-Dock needs calendar access to manage events.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Context-Dock needs contacts access to search your address book.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -631,7 +635,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -639,7 +643,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -654,7 +658,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -662,7 +666,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.krishgokul.ContextDock.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;

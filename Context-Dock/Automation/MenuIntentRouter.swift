@@ -169,25 +169,21 @@ final class MenuIntentRouter {
         \(list)
         """
 
-        return await withCheckedContinuation { cont in
-            AIProviderService.shared.sendPureChat(
-                message: prompt,
-                onComplete: { response in
-                    let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.lowercased() == "none" {
-                        cont.resume(returning: nil)
-                        return
-                    }
-                    if let n = Int(trimmed.components(separatedBy: .whitespaces).first ?? ""),
-                       n >= 1, n <= candidates.count {
-                        cont.resume(returning: candidates[n - 1])
-                    } else {
-                        cont.resume(returning: nil)
-                    }
-                },
-                onError: { _ in cont.resume(returning: nil) }
-            )
-        }
+        let selection = AIProviderSelectionResolver.current()
+        let request = AIRequest(
+            text: prompt,
+            context: .none,
+            source: .contextDock,
+            providerSelection: selection
+        )
+        guard let response = try? await AIProviderRouter.shared.send(request) else { return nil }
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased() != "none",
+              let number = trimmed.components(separatedBy: .whitespaces).first,
+              let index = Int(number),
+              index >= 1, index <= candidates.count
+        else { return nil }
+        return candidates[index - 1]
     }
 
     // MARK: - Click

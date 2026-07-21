@@ -17,6 +17,7 @@ struct ContextDockPillCoordinator {
         let clearCachedPills: () -> Void
         let refreshContext: () -> Void
         let buildPills: (String) -> [DockPill]
+        let canCommit: () -> Bool
         let replaceCachedPills: ([DockPill], Bool) -> Void
         let logPerformance: (Date, String) -> Void
     }
@@ -90,6 +91,7 @@ struct ContextDockPillCoordinator {
             else { return }
 
             let started = Date()
+            guard actions.canCommit() else { return }
             actions.replaceCachedPills(actions.buildPills(input.query), true)
             actions.logPerformance(started, input.query)
             viewModel.finishScheduledPillRebuild(query: input.query)

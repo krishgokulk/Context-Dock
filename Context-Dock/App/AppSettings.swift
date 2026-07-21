@@ -847,6 +847,12 @@ class AppSettings: ObservableObject {
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
     @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
+    @AppStorage("captureTextHotkeyKeyCode") private var _captureTextHotkeyKeyCode: Int = 0
+    @AppStorage("captureTextHotkeyModifiers") private var _captureTextHotkeyModifiers: Int = 0
+    @AppStorage("captureAreaHotkeyKeyCode") private var _captureAreaHotkeyKeyCode: Int = 0
+    @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
+    @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
+    @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()
@@ -892,8 +898,9 @@ class AppSettings: ObservableObject {
     @AppStorage("allowContacts") var allowContacts: Bool = true
     @AppStorage("allowAutomation") var allowAutomation: Bool = true  // AppleScript (Notes/Mail/Messages)
 
-    // Apple Notes MCP — all off by default; user must opt in explicitly
-    @AppStorage("noteMCPEnabled") var noteMCPEnabled: Bool = false
+    // First-party Apple MCP suite. Enabled by default, but macOS privacy permissions and
+    // Context Dock's risk approvals still gate data access and every write operation.
+    @AppStorage("noteMCPEnabled") var noteMCPEnabled: Bool = true
     @AppStorage("noteMCPAllowMetadataSearch") var noteMCPAllowMetadataSearch: Bool = true
     @AppStorage("noteMCPAllowPersistentFullRead") var noteMCPAllowPersistentFullRead: Bool = false
     @AppStorage("noteMCPAllowGlobalAccess") var noteMCPAllowGlobalAccess: Bool = false
@@ -902,10 +909,10 @@ class AppSettings: ObservableObject {
     @AppStorage("noteMCPPreferLocalAI") var noteMCPPreferLocalAI: Bool = true
     @AppStorage("noteMCPRequireCloudApproval") var noteMCPRequireCloudApproval: Bool = true
 
-    // Apple system apps MCP — off by default; user opts in per-app
-    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = false
-    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = false
-    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = false
+    @AppStorage("calendarMCPEnabled") var calendarMCPEnabled: Bool = true
+    @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = true
+    @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = true
+    @AppStorage("messagesMCPEnabled") var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 
     // UI Feature Toggles
@@ -973,6 +980,9 @@ class AppSettings: ObservableObject {
             )
         }
     }
+    @AppStorage("selectedOpenAIModel") var selectedOpenAIModel: String = "gpt-4o-mini"
+    @AppStorage("selectedAnthropicModel") var selectedAnthropicModel: String =
+        AnthropicModelCatalog.defaultModelID
     @AppStorage("ollamaEndpoint") var ollamaEndpoint: String = "http://localhost:11434"
     @AppStorage("selectedOllamaModel") var selectedOllamaModel: String = ""
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =
@@ -1013,6 +1023,10 @@ class AppSettings: ObservableObject {
     @AppStorage("glassBlurRadius") var glassBlurRadius: Double = 1.0  // 0.0 = no blur (opaque), 1.0 = full system blur
     @AppStorage("launcherWindowOpacity") var launcherWindowOpacity: Double = 0.95  // Launcher window transparency (0.0 = fully transparent, 1.0 = opaque)
     @AppStorage("dockLogoStyle") var dockLogoStyle: String = "d_logo"  // "d_logo", "apple"
+    @AppStorage("launcherWindowHasSavedPosition") var launcherWindowHasSavedPosition: Bool = false
+    @AppStorage("launcherWindowAnchorX") var launcherWindowAnchorX: Double = -1  // Floating launcher center X
+    @AppStorage("launcherWindowTopY") var launcherWindowTopY: Double = -1  // Floating launcher top edge
+    @AppStorage("launcherWindowScreenID") var launcherWindowScreenID: String = ""  // Last display
     @AppStorage("folderPreviewOpacity") var folderPreviewOpacity: Double = 0.98  // Folder preview window transparency
     @AppStorage("webSearchWindowOpacity") var webSearchWindowOpacity: Double = 0.98  // Web search window transparency
     @AppStorage("folderPreviewWidth") var folderPreviewWidth: Double = 800  // Folder preview window width
@@ -1610,6 +1624,31 @@ class AppSettings: ObservableObject {
         }
     }
     var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
+
+    var captureTextHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureTextHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureTextHotkeyKeyCode = Int(newValue) }
+    }
+    var captureTextHotkeyModifiers: UInt32 {
+        get { UInt32(_captureTextHotkeyModifiers) }
+        set { objectWillChange.send(); _captureTextHotkeyModifiers = Int(newValue) }
+    }
+    var captureAreaHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureAreaHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureAreaHotkeyKeyCode = Int(newValue) }
+    }
+    var captureAreaHotkeyModifiers: UInt32 {
+        get { UInt32(_captureAreaHotkeyModifiers) }
+        set { objectWillChange.send(); _captureAreaHotkeyModifiers = Int(newValue) }
+    }
+    var captureScreenshotHotkeyKeyCode: UInt32 {
+        get { UInt32(_captureScreenshotHotkeyKeyCode) }
+        set { objectWillChange.send(); _captureScreenshotHotkeyKeyCode = Int(newValue) }
+    }
+    var captureScreenshotHotkeyModifiers: UInt32 {
+        get { UInt32(_captureScreenshotHotkeyModifiers) }
+        set { objectWillChange.send(); _captureScreenshotHotkeyModifiers = Int(newValue) }
+    }
 
     init() {
         migrateAIKeysToKeychain()
@@ -2300,6 +2339,17 @@ class AppSettings: ObservableObject {
     var clipboardScopeHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: clipboardScopeHotkeyKeyCode, modifiers: clipboardScopeHotkeyModifiers)
+    }
+    var captureTextHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: captureTextHotkeyKeyCode, modifiers: captureTextHotkeyModifiers)
+    }
+    var captureAreaHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: captureAreaHotkeyKeyCode, modifiers: captureAreaHotkeyModifiers)
+    }
+    var captureScreenshotHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: captureScreenshotHotkeyKeyCode,
+            modifiers: captureScreenshotHotkeyModifiers)
     }
 
     // Computed property to get hotkey display string

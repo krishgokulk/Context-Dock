@@ -14,6 +14,7 @@ class TerminalPackageManager: ObservableObject {
 
     init() {
         loadPackages()
+        registerBuiltInMarkItDownIfAvailable()
         // Auto-add any binary that BinaryWatcherService discovers (installed via brew, curl, etc.)
         NotificationCenter.default.addObserver(
             forName: .newBinaryDiscovered, object: nil, queue: .main
@@ -23,6 +24,43 @@ class TerminalPackageManager: ObservableObject {
                   let path = note.userInfo?["toolPath"] as? String else { return }
             Task { await self.autoAddDiscoveredBinary(name: name, path: path) }
         }
+    }
+
+    private func registerBuiltInMarkItDownIfAvailable() {
+        guard let executable = MarkItDownService.executableURL?.path else { return }
+        let appScopes = [
+            "com.apple.finder", "com.apple.Preview", "com.apple.Safari",
+            "com.apple.SafariTechnologyPreview",
+        ]
+        if let index = packages.firstIndex(where: { $0.command == "markitdown" }) {
+            packages[index].installedPath = executable
+            packages[index].isEnabled = true
+            packages[index].contextAppBundleIds = Array(
+                Set(packages[index].contextAppBundleIds + appScopes)
+            ).sorted()
+        } else {
+            packages.append(
+                TerminalPackage(
+                    name: "Microsoft MarkItDown",
+                    command: "markitdown",
+                    description: "Built-in document ingestion for token-efficient AI context",
+                    installedPath: executable,
+                    keywords: [
+                        "markdown", "pdf", "document", "office", "extract", "ocr",
+                        "youtube", "epub", "spreadsheet", "presentation",
+                    ],
+                    usageExamples: [
+                        "markitdown \"<file>\"",
+                        "markitdown \"<file>\" -o \"<output>.md\"",
+                    ],
+                    helpText: "Convert PDF, Office, images, audio, HTML, ZIP, EPUB, and URLs to structured Markdown.",
+                    subcommands: [],
+                    usagePattern: "markitdown <input> [-o output.md]",
+                    taskCategories: ["documents", "conversion", "extraction", "ai-context"],
+                    contextAppBundleIds: appScopes
+                ))
+        }
+        savePackages()
     }
 
     /// Called when BinaryWatcherService detects a new binary in any monitored bin dir.

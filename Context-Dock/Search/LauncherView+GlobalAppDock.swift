@@ -313,14 +313,7 @@ extension LauncherView {
 
         let makeAction: (SearchResult) -> () -> Void = { result in
             {
-                result.action()
-                searchState.query = ""
-                focusedAppPillIndex = nil
-                let bundleId = bundleIdentifierForApplicationPath(result.filePath)
-                scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
-                if let bid = bundleId {
-                    AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
-                }
+                executeGlobalAppSearchResult(result)
             }
         }
         let makeQuitAction: (SearchResult) -> (() -> Void)? = { result in
@@ -466,9 +459,17 @@ extension LauncherView {
         let limitedMatches = Array(
             dedupeGlobalApplicationResults(rawMatches).prefix(appLimit))
         let runningLookup = runningApplicationLookup()
-        let matches =
-            limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) != nil }
-            + limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) == nil }
+        // For a TYPED query, preserve score-based relevance order. Floating running apps to
+        // the top desyncs the highlighted first row from the leading icon + ghost completion
+        // (both use score order) — e.g. "cod" highlighted ChatGPT (running) while the icon
+        // showed VS Code (exact match). Only float running-first when the query is empty (idle).
+        let matches: [SearchResult] = {
+            guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return limitedMatches
+            }
+            return limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) != nil }
+                + limitedMatches.filter { runningApplication(forGlobalResult: $0, lookup: runningLookup) == nil }
+        }()
         let indexedMatches = Array(matches.enumerated())
         // In global context, isEnabled reflects AX state of whatever app was frontmost at
         // snapshot time — meaningless here. Force enabled so no "Unavailable" badge shows.
@@ -492,6 +493,31 @@ extension LauncherView {
             "global-app-\(result.trackingIdentifier)"
         }
         let appRowIDs: [String] = matches.map(appRowID)
+        @ViewBuilder
+        func crossAppMenuGroupsView() -> some View {
+            let crossBase = matches.count + menuGroups.count
+            let groupStartIndices: [String: Int] = {
+                var d: [String: Int] = [:]
+                var offset = 0
+                for g in providedAppMenuGroups {
+                    d[g.id] = crossBase + offset
+                    offset += g.pills.count
+                }
+                return d
+            }()
+            ForEach(providedAppMenuGroups) { group in
+                let groupBase = groupStartIndices[group.id] ?? crossBase
+                resultGroupHeader(group.appName, icon: group.icon)
+                    .transition(.opacity)
+                    .contextDockBottomListFlip(settings.effectiveDockAtBottom)
+                ForEach(Array(group.pills.enumerated()), id: \.element.id) {
+                    pillIdx, pill in
+                    pillListRow(pill: pill, index: groupBase + pillIdx)
+                        .id("xapp-pill-\(group.id)-\(pill.id)")
+                        .contextDockBottomListFlip(settings.effectiveDockAtBottom)
+                }
+            }
+        }
         let showLaunchHint = launchHint != nil
             && visibleMenuPills.isEmpty
             && !(launchHint?.bundleId.hasPrefix("syscmd://") ?? false)
@@ -504,16 +530,7 @@ extension LauncherView {
             {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased()
-                result.action()
-                searchState.query = ""
-                focusedAppPillIndex = nil
-                hoveredAppPillIndex = nil
-                guard result.type == .application else { return }
-                let bundleId = bundleIdentifierForApplicationPath(result.filePath)
-                scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
-                if let bid = bundleId {
-                    AppUsageLearner.shared.recordApp(bundleID: bid, appName: result.title)
-                }
+                executeGlobalAppSearchResult(result)
                 // Teach intent: user picked an app for this query
                 if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: false) }
             }
@@ -567,6 +584,10 @@ extension LauncherView {
                         }
                     }
 
+                    if menuFirst {
+                        crossAppMenuGroupsView()
+                    }
+
                     if !indexedMatches.isEmpty {
                         resultGroupHeader(
                             indexedMatches.contains(where: { $0.element.type != .application })
@@ -586,6 +607,7 @@ extension LauncherView {
                             index: idx,
                             isCommandIcon: globalListUsesCommandIcon(for: result),
                             defaultsToFirstSelection: true,
+                            interactiveCommand: interactiveSystemCommand(forResult: result),
                             quitAction: isRunning ? makeQuitAction(result) : nil,
                             quitPhase: appQuitFeedbackPhase(bundleID: runningApp?.bundleIdentifier),
                             previewApp: runningApp,
@@ -623,29 +645,8 @@ extension LauncherView {
 
                     // Cross-app menus grouped by source app.
                     // Each group shows app icon + name header, then matching menu pills below.
-                    if !providedAppMenuGroups.isEmpty {
-                        let crossBase = matches.count + menuGroups.count
-                        let groupStartIndices: [String: Int] = {
-                            var d: [String: Int] = [:]
-                            var offset = 0
-                            for g in providedAppMenuGroups {
-                                d[g.id] = crossBase + offset
-                                offset += g.pills.count
-                            }
-                            return d
-                        }()
-                        ForEach(providedAppMenuGroups) { group in
-                            let groupBase = groupStartIndices[group.id] ?? crossBase
-                            resultGroupHeader(group.appName, icon: group.icon)
-                                .transition(.opacity)
-                                .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-                            ForEach(Array(group.pills.enumerated()), id: \.element.id) {
-                                pillIdx, pill in
-                                pillListRow(pill: pill, index: groupBase + pillIdx)
-                                    .id("xapp-pill-\(group.id)-\(pill.id)")
-                                    .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-                            }
-                        }
+                    if !menuFirst {
+                        crossAppMenuGroupsView()
                     }
 
                     // No cached menus + app not running: invite user to open it once so menus get snapshotted.
@@ -785,11 +786,23 @@ extension LauncherView {
             return groupedGlobalApplicationList(limit: limit)
         }
 
+        if GlobalSearchService.shared.documentCount > 0 {
+            let snapshot = GlobalContextSearchCoordinator.shared.snapshot(
+                query: q,
+                limit: min(max(limit, 20), 80),
+                includeCachedMenus: false,
+                includeRunningCachedMenus: false
+            )
+            let indexedRows = searchResults(from: snapshot.appDocuments, query: q)
+            if !indexedRows.isEmpty {
+                return Array(indexedRows.prefix(limit))
+            }
+        }
+
         let exactSystemCommandRows = globalSystemCommandPresetRows(
             for: normalizedDockPillText(q),
             limit: max(limit, 12)
         )
-        if !exactSystemCommandRows.isEmpty { return exactSystemCommandRows }
 
         var candidates: [(result: SearchResult, score: Double, order: Int)] = []
         var seen = Set<String>()
@@ -886,7 +899,7 @@ extension LauncherView {
                     title: name,
                     subtitle: path ?? "Running",
                     icon: resolvedRunningAppIcon(for: app),
-                    action: { activateRunningAppFromDock(app) },
+                    action: { activateRunningAppFromGlobalContext(app) },
                     type: .application,
                     filePath: path,
                     contactData: nil
@@ -974,6 +987,17 @@ extension LauncherView {
             }
         }
 
+        for result in exactSystemCommandRows + globalSystemCommandScopeMatches(for: q, limit: limit)
+        {
+            let key = globalApplicationIdentityKey(
+                for: result,
+                explicitBundleIdentifier: result.subtitle
+            )
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
+        }
+
         return Array(
             candidates
                 .sorted {
@@ -1052,7 +1076,7 @@ extension LauncherView {
                     title: name,
                     subtitle: path ?? "Running",
                     icon: resolvedRunningAppIcon(for: app),
-                    action: { activateRunningAppFromDock(app) },
+                    action: { activateRunningAppFromGlobalContext(app) },
                     type: .application,
                     filePath: path,
                     contactData: nil

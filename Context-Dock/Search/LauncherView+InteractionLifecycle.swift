@@ -3,6 +3,7 @@ import AppIntents
 import AppKit
 import Combine
 import Contacts
+import OSLog
 import Darwin
 import FoundationModels
 import PDFKit
@@ -23,6 +24,16 @@ extension LauncherView {
             // the user is scrolling inside settings, not trying to switch dock layers.
             if let settingsWindow = AppDelegate.shared?.settingsWindow,
                 event.window === settingsWindow
+            {
+                return event
+            }
+
+            // Native menus and popovers use their own transient window. A scroll inside
+            // the General Chat app picker must scroll that menu, never leak through to
+            // the dock-wide layer-switch gesture monitor.
+            if let eventWindow = event.window,
+                let launcherWindow = AppDelegate.shared?.launcherWindow,
+                eventWindow !== launcherWindow
             {
                 return event
             }
@@ -107,32 +118,59 @@ extension LauncherView {
             if event.phase == .began {
                 self.accumulatedSwipeDeltaY = 0
                 self.accumulatedSwipeDeltaX = 0
+                self.didSwitchLayerInCurrentSwipe = false
             }
 
-            if event.phase == .changed || event.phase == .began {
-                // Accumulate both deltas
+            // Accumulate through BOTH the finger-down phase and the momentum phase.
+            // A fast flick lands most of its travel in momentum (after lift), so
+            // accumulating only .changed missed it and the switch silently no-op'd.
+            if event.phase == .changed || event.phase == .began
+                || event.momentumPhase == .changed || event.momentumPhase == .began
+            {
                 self.accumulatedSwipeDeltaY += event.scrollingDeltaY
                 self.accumulatedSwipeDeltaX += event.scrollingDeltaX
             }
 
-            // When gesture ends, check if we have significant movement
-            if event.phase == .ended {
+            // Evaluate on lift AND at momentum-end — the retry lets a fast flick that
+            // was under-threshold at lift still switch once its momentum lands. The
+            // accumulators reset only after a switch fires (below), so momentum-end
+            // never double-switches a gesture that already acted.
+            if event.phase == .ended || event.momentumPhase == .ended {
+                guard !self.didSwitchLayerInCurrentSwipe else {
+                    if event.momentumPhase == .ended {
+                        self.accumulatedSwipeDeltaY = 0
+                        self.accumulatedSwipeDeltaX = 0
+                    }
+                    return event
+                }
                 let totalVertical = abs(self.accumulatedSwipeDeltaY)
                 let totalHorizontal = abs(self.accumulatedSwipeDeltaX)
+                let attempted =
+                    (totalHorizontal > 70 && totalHorizontal > totalVertical * 1.8
+                        && (self.isHoveringDockArea || self.isHoveringInputField))
+                    || (totalVertical > 55 && totalVertical > totalHorizontal * 1.15
+                        && (self.isHoveringDockArea || self.isHoveringInputField))
+                defer {
+                    if attempted {
+                        self.accumulatedSwipeDeltaY = 0
+                        self.accumulatedSwipeDeltaX = 0
+                    }
+                }
 
                 // Horizontal swipe over the input toggles AI Chat from any layer and back.
-                if totalHorizontal > 40 && totalHorizontal > totalVertical * 1.8
-                    && self.isHoveringInputField
+                if totalHorizontal > 70 && totalHorizontal > totalVertical * 1.8
+                    && (self.isHoveringDockArea || self.isHoveringInputField)
                 {
-                    guard !self.isExplicitAppScopeLocked else { return event }
                     if self.currentDockSurfaceMode == .generalChat {
                         self.exitGeneralChatRestoringLayer()
+                        self.didSwitchLayerInCurrentSwipe = true
                     } else if self.accumulatedSwipeDeltaX > 0 {
                         self.enterGeneralChatPreservingLayer()
+                        self.didSwitchLayerInCurrentSwipe = true
                     }
                 }
                 // Vertical swipe — Context Dock is home: swipe down → Global, swipe up → Media.
-                else if totalVertical > 30 && totalVertical > totalHorizontal * 0.8
+                else if totalVertical > 55 && totalVertical > totalHorizontal * 1.15
                     && (self.isHoveringDockArea || self.isHoveringInputField)
                 {
                     guard !self.isExplicitAppScopeLocked else { return event }
@@ -143,7 +181,9 @@ extension LauncherView {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 self.dismissContextAndReturnToDock()
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                         } else if !self.showMediaLayer && self.settings.enableLayer3 {
+                            self.didSwitchLayerInCurrentSwipe = true
                             // Context Dock → Media Dock
                             Task {
                                 await self.mediaObserver.refreshNowPlaying()
@@ -163,12 +203,14 @@ extension LauncherView {
                         if self.currentDockSurfaceMode == .generalChat {
                             // AI chat → previous layer
                             self.exitGeneralChatRestoringLayer()
+                            self.didSwitchLayerInCurrentSwipe = true
                         } else if self.showMediaLayer {
                             // Media Dock → Context Dock
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 self.showMediaLayer = false
                                 self.showContextInDock = true
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                             if self.searchState.query.isEmpty && !self.isSearchFieldFocused {
                                 self.startCollapseTimer()
                             }
@@ -179,6 +221,7 @@ extension LauncherView {
                                 self.globalContextActivation = GlobalContextActivation(
                                     autoActivated: false)
                             }
+                            self.didSwitchLayerInCurrentSwipe = true
                             self.replaceCachedDockPills(
                                 self.buildDockPills(query: self.lastPillQuery),
                                 preserveFocus: true
@@ -260,14 +303,21 @@ extension LauncherView {
     func toggleGlobalContextPreservingQuery() {
         guard !isExplicitAppScopeLocked else { return }
         guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
+        let wasGlobalContextActive = isGlobalContextActive
 
         withAnimation(.spring(response: 0.25, dampingFraction: 0.80)) {
             showMediaLayer = false
             showContextInDock = true
             globalContextActivation =
-                globalContextActivation == nil
-                ? GlobalContextActivation(autoActivated: false)
-                : nil
+                wasGlobalContextActive ? nil : GlobalContextActivation(autoActivated: false)
+            l2.targetApp = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil
             l2.pillNavViaKeyboard = false
@@ -283,12 +333,23 @@ extension LauncherView {
     func handleCommandKeyContextScopeToggle() {
         guard settings.singleCommandTogglesContextScope else { return }
         guard !isCompactSmartScope else { return }
-        guard showContextInDock, currentDockSurfaceMode != .generalChat else { return }
-        // Cmd only switches Global Context ↔ Context Dock. Inside an explicit app scope it is
-        // inert — leave the scope with Backspace/Escape, not Cmd. (Previously Cmd here cleared
-        // globalContextActivation and was the accidental "fix" for the old hybrid scope.)
-        guard l2.targetApp == nil else { return }
+        guard showContextInDock else { return }
         guard Date() >= suppressCommandScopeToggleUntil else { return }
+
+        // In an app scope ENTERED FROM Global Context with an empty field, Cmd steps back to
+        // Global Context (same as Backspace/Escape) — the "global key" the user expects.
+        let emptyQuery = searchState.query
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if emptyQuery, l2.targetApp != nil || globalInlineAppScope != nil {
+            exitGlobalAppScopeToGlobalContext()
+            return
+        }
+
+        guard currentDockSurfaceMode != .generalChat else { return }
+
+        // Otherwise Cmd only switches Global Context ↔ Context Dock. Inside an explicit
+        // (non-global) app scope it stays inert — leave that scope with Backspace/Escape.
+        guard l2.targetApp == nil else { return }
 
         if !isSearchBarExpanded {
             beginMouseDrivenInteractionGrace(0.55)
@@ -297,6 +358,28 @@ extension LauncherView {
         }
 
         toggleGlobalContextPreservingQuery()
+    }
+
+    /// Step out of an app scope entered from Global Context, back to plain Global Context
+    /// (keep globalContextActivation; just drop the app scope). Triggered by Cmd on an empty
+    /// field, matching Backspace/Escape.
+    func exitGlobalAppScopeToGlobalContext() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            l2.targetApp = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
+        focusedAppPillIndex = nil
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        syncL2DockSession(force: true)
+        scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
+        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
     }
 
     func toggleAIModePreservingLayer() {
@@ -309,8 +392,10 @@ extension LauncherView {
 
     func enterGeneralChatPreservingLayer() {
         guard settings.enableAIMode else { return }
-        guard !isExplicitAppScopeLocked else { return }
         guard currentDockSurfaceMode != .generalChat else { return }
+
+        // Refresh so any Global Commands the user added this session are callable.
+        CapabilityRegistry.shared.refreshGlobalCommands()
 
         searchState.results = []
         searchState.selectedIndex = nil

@@ -258,7 +258,7 @@ final class GitHubToolManager: ObservableObject {
         let purpose = "Install \(tool.name) from GitHub (\(tool.fullName))"
 
         // This will show approval dialog via TerminalAIBridge
-        let (success, output) = await TerminalAIBridge.shared.processAICommand(
+        let (success, output) = await TerminalCommandExecutor.shared.run(
             command,
             purpose: purpose
         )

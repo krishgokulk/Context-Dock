@@ -20,6 +20,11 @@ import Foundation
 
 /// One executable route DoraX found for a General Chat request.
 struct DoraXActionCandidate: Identifiable, Codable, Hashable {
+    enum Operation: String, Codable {
+        case read
+        case execute
+    }
+
     enum Source: String, Codable {
         case appAdapter
         case cachedMenu
@@ -46,6 +51,20 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
         case automation       // app automation service (Messages compose, …)
     }
 
+    enum SemanticType: String, Codable {
+        case history
+        case recent
+        case recentFiles
+        case recentDocuments
+        case recentProjects
+        case downloads
+        case bookmarks
+        case playlist
+        case currentItem
+        case status
+        case unknown
+    }
+
     let id: String
     let title: String
     let appName: String?
@@ -68,6 +87,13 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
     var adapterActionID: String? = nil
     /// Honest limitation surfaced with the result ("couldn't automate the Automation tab").
     var caveat: String? = nil
+    /// Unified capability operation. Existing routes default to execute; read candidates
+    /// are grounded data only and must never trigger menu/API execution.
+    var operation: Operation = .execute
+    var semanticType: SemanticType? = nil
+    var readValues: [String] = []
+    var readContext: String? = nil
+    var readSourceLabel: String? = nil
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
@@ -84,11 +110,38 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
             let display = MenuShortcutFormatter.display(
                 char: shortcutChar, modifiers: shortcutModifiers) ?? ""
             return display.isEmpty ? "keyboard shortcut" : "shortcut \(display)"
-        case .verifiedMenu: return "verified menu"
+        case .verifiedMenu: return "cached menu click"
         case .axFallback: return "accessibility action"
         case .appLaunch: return "app launch"
         case .automation: return "app automation"
         }
+    }
+}
+
+extension DoraXActionCandidate.SemanticType {
+    var displayName: String {
+        switch self {
+        case .history: return "History"
+        case .recent: return "Recent"
+        case .recentFiles: return "Recent Files"
+        case .recentDocuments: return "Recent Documents"
+        case .recentProjects: return "Recent Projects"
+        case .downloads: return "Downloads"
+        case .bookmarks: return "Bookmarks"
+        case .playlist: return "Playlist"
+        case .currentItem: return "Current Item"
+        case .status: return "Status"
+        case .unknown: return "Read Context"
+        }
+    }
+}
+
+extension DoraXActionCandidate {
+    /// Stable key for failure-driven availability tracking.
+    var availabilityKey: String {
+        CapabilityAvailabilityStore.key(
+            route: route.rawValue, bundleID: bundleID ?? "",
+            capabilityID: capabilityID ?? "", id: id)
     }
 }
 
@@ -102,6 +155,9 @@ enum GeneralAIActionResolution {
     case explain(String)
     /// Ranked executable routes, best first.
     case candidates([DoraXActionCandidate])
+    /// An ordered multi-step plan against one app ("save and quit vscode" → [save, quit]).
+    /// Each step resolves independently through the normal candidate path at execution time.
+    case compound(appName: String, bundleID: String, steps: [String])
 }
 
 // MARK: - Resolver
@@ -113,6 +169,12 @@ final class GeneralAIActionResolver {
     /// Per-app capability routers — consulted BEFORE the generic ranking so each app
     /// can pick its most deterministic route (Safari: bridge/history-cache/CLI over menus).
     private let appRouters: [String: any AppCapabilityRouting]
+    private struct PendingClarification {
+        let originalQuery: String
+        let options: [String]
+        let expiresAt: Date
+    }
+    private var pendingClarification: PendingClarification?
 
     private init() {
         let routers: [any AppCapabilityRouting] = [
@@ -125,6 +187,21 @@ final class GeneralAIActionResolver {
 
     func resolve(query: String) async -> GeneralAIActionResolution {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let pending = pendingClarification {
+            if Date() > pending.expiresAt {
+                pendingClarification = nil
+            } else if let option = pending.options.first(where: {
+                $0.caseInsensitiveCompare(trimmed) == .orderedSame
+                    || trimmed.lowercased().contains($0.lowercased())
+            }) {
+                pendingClarification = nil
+                return await resolve(query: pending.originalQuery + " using " + option)
+            } else if !trimmed.isEmpty {
+                // A non-option response starts a new request rather than trapping the user
+                // in stale clarification state.
+                pendingClarification = nil
+            }
+        }
         guard isLikelyExecutable(trimmed) else { return .none }
         let lowered = trimmed.lowercased()
 
@@ -147,27 +224,55 @@ final class GeneralAIActionResolver {
         if let fileCreation = resolveCreateFileIntent(lowered) {
             return fileCreation
         }
+        if let screenshot = resolveScreenshotIntent(lowered, original: trimmed) {
+            return screenshot
+        }
 
         // Generic app-scoped action: "open safari new private window", "quit music", …
         if let target = resolveTargetApp(in: lowered) {
+            guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
+                return .explain(
+                    "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
+                    + "Add it in Settings → App Adapters → Choose App, then ask again.")
+            }
+            // Compound "save and quit" style requests → an ordered plan, each step resolved
+            // independently. Checked before single-action routing so we don't hunt for one
+            // combined "save and quit" menu that doesn't exist.
+            if let steps = compoundSteps(in: target.remainingPhrase) {
+                return .compound(
+                    appName: target.name, bundleID: target.bundleId, steps: steps)
+            }
             // Per-app router first — it knows the best route for that app's tasks.
             if let router = appRouters[target.bundleId],
                let routed = await router.route(
                    actionPhrase: target.remainingPhrase, original: trimmed) {
                 return routed
             }
-            return resolveAppScopedAction(
+            let base = resolveAppScopedAction(
                 appName: target.name,
                 bundleID: target.bundleId,
                 actionPhrase: target.remainingPhrase,
                 original: trimmed
             )
+            // Fold in MCP tools the app exposes so they compete in the same ranked list.
+            return await augmentWithMCPCandidates(
+                base, appName: target.name, bundleID: target.bundleId,
+                actionPhrase: target.remainingPhrase, intentKey: Self.normalizedIntentKey(trimmed))
         }
 
         // Browser action with no browser named ("new private window") — ask which one
         // when several browsers are installed instead of guessing.
         if let browserResolution = await resolveUnscopedBrowserAction(lowered, original: trimmed) {
             return browserResolution
+        }
+
+        // App-less tool routes (yt-dlp, docker, battery/network reads) — only reached when
+        // no app/domain owned the request, so app actions always win.
+        if let cli = resolveCLIToolAction(lowered: lowered, original: trimmed) {
+            return cli
+        }
+        if let api = resolveAPIToolAction(lowered: lowered) {
+            return api
         }
 
         return .none
@@ -199,6 +304,9 @@ final class GeneralAIActionResolver {
         if installed.count > 1 {
             let names = installed.map(\.name)
             let list = names.dropLast().joined(separator: ", ")
+            pendingClarification = PendingClarification(
+                originalQuery: original, options: names,
+                expiresAt: Date().addingTimeInterval(120))
             return .clarify(
                 question: "Do you want \(names.count == 2 ? names.joined(separator: " or ") : "\(list), or \(names.last!)")?",
                 options: names)
@@ -227,10 +335,34 @@ final class GeneralAIActionResolver {
     /// Cheap local check: does this look like a command rather than a question?
     /// Runs only on submit (never while typing) and uses no AX or provider calls.
     private func isLikelyExecutable(_ query: String) -> Bool {
-        let lowered = query.lowercased()
+        var lowered = query.lowercased()
         guard !lowered.isEmpty, lowered.count < 160 else { return false }
+        // Treat polite assistant requests as commands while preserving real questions:
+        // “can you take a screenshot?” becomes “take a screenshot”, but “can you explain”
+        // becomes “explain” and is rejected by the conversational prefixes below.
+        for prefix in ["please ", "can you please ", "could you please ", "would you please ",
+                       "can you ", "could you ", "would you "] where lowered.hasPrefix(prefix) {
+            lowered = String(lowered.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+        if lowered.hasSuffix("?") {
+            lowered.removeLast()
+            lowered = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // Compact launcher-style noun phrases are commands even without an explicit verb.
+        // Keep this allowlist narrow so ordinary topic phrases remain normal conversation.
+        let implicitLaunchIntents: Set<String> = [
+            "calculator",
+            "basic calculator",
+            "scientific calculator",
+            "programmer calculator",
+            "calculator basic",
+            "calculator scientific",
+            "calculator programmer",
+        ]
+        if implicitLaunchIntents.contains(lowered) { return true }
         // Questions and explanations stay in normal chat.
-        if lowered.hasSuffix("?") { return false }
         // Page-grounded browser tasks are executable even though they start like
         // a chat request ("summarize this safari page" → Safari router).
         if (lowered.contains("summarize") || lowered.contains("summarise"))
@@ -246,11 +378,13 @@ final class GeneralAIActionResolver {
 
         let verbs = [
             "open ", "launch ", "start ", "create ", "new ", "add ", "make ",
+            "take ", "capture ", "snap ",
             "quit ", "close ", "show ", "hide ", "toggle ", "enable ", "disable ",
             "turn ", "mute ", "unmute ", "minimize ", "maximize ", "empty ",
             "run ", "activate ", "switch ", "remind ", "schedule ", "send ",
             "compose ", "email ", "text ", "play ", "pause ", "paste ",
             "share ", "save ", "export ", "bookmark ", "download ",
+            "print", "settings", "preferences", "extensions", "history", "bookmarks",
         ]
         return verbs.contains(where: lowered.hasPrefix)
             // "safari new private window" — app name first, verb inside.
@@ -260,6 +394,103 @@ final class GeneralAIActionResolver {
     /// Public gate for callers (AppleScript-model fallback) that only want to act on
     /// automation-shaped requests, never plain Q&A.
     func looksExecutable(_ query: String) -> Bool { isLikelyExecutable(query) }
+
+    /// Native macOS capture is a system-wide capability. A specifically named app still
+    /// routes through its adapter, so requests such as “capture with CleanShot” keep the
+    /// user's chosen workflow instead of being swallowed by this built-in fallback.
+    private func resolveScreenshotIntent(
+        _ lowered: String, original: String
+    ) -> GeneralAIActionResolution? {
+        let mentionsCapture = lowered.contains("screenshot")
+            || lowered.contains("screen shot")
+            || lowered.contains("capture the screen")
+            || lowered.contains("capture my screen")
+        guard mentionsCapture, resolveTargetApp(in: lowered) == nil else { return nil }
+
+        let mode: String
+        if lowered.contains("window") { mode = "window" }
+        else if lowered.contains("region") || lowered.contains("area")
+            || lowered.contains("portion") || lowered.contains("selection") {
+            mode = "region"
+        } else { mode = "screen" }
+
+        let destination = lowered.contains("clipboard") ? "clipboard" : "file"
+        let modeTitle: String
+        switch mode {
+        case "window": modeTitle = "window"
+        case "region": modeTitle = "selected region"
+        default: modeTitle = "screen"
+        }
+        var candidate = DoraXActionCandidate(
+            id: "system.captureScreenshot.\(mode).\(destination)",
+            title: "Capture \(modeTitle)\(destination == "clipboard" ? " to clipboard" : "")",
+            appName: "macOS Screenshot",
+            bundleID: nil,
+            source: .system,
+            route: .adapter,
+            capabilityID: "system.captureScreenshot",
+            requiredInputs: ["mode", "destination"],
+            riskLevel: .medium,
+            confidence: 0.98,
+            permissionKey: "generalAI.execute.system.captureScreenshot.\(mode).\(destination)",
+            debugReason: "native macOS screenshot capability for: \(original)")
+        candidate.inputValues = ["mode": mode, "destination": destination]
+        return .candidates([candidate])
+    }
+
+    /// Public read-intent gate for General Chat. This is still local and cheap: no AX,
+    /// no provider, no app launch.
+    func looksReadOnly(_ query: String) -> Bool { isLikelyReadOnly(query) }
+
+    /// Discover local read capabilities for General Chat. This is the read half of the
+    /// same capability model used for execution: app adapter readers, cached menu
+    /// knowledge, MCP/API/CLI metadata already discovered elsewhere. It never scans live
+    /// menus and never executes a menu command.
+    func resolveReadCandidates(query: String) async -> [DoraXActionCandidate] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isLikelyReadOnly(trimmed) else { return [] }
+        let lowered = trimmed.lowercased()
+        let intentKey = Self.normalizedIntentKey(trimmed)
+
+        var candidates: [DoraXActionCandidate] = []
+        if let target = resolveTargetApp(in: lowered) {
+            let app = (name: target.name, bundleId: target.bundleId)
+            candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
+            candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
+            candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
+            candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+        } else {
+            for app in readDiscoveryApps(for: trimmed).prefix(10) {
+                candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
+                candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
+                candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
+                candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+            }
+        }
+
+        let available = candidates.filter {
+            $0.operation == .read && CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
+        }
+        return rankedWithPreferences(available, intentKey: intentKey)
+    }
+
+    private func isLikelyReadOnly(_ query: String) -> Bool {
+        let lowered = query.lowercased()
+        guard !lowered.isEmpty, lowered.count < 240 else { return false }
+        let executeStarts = [
+            "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
+            "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
+            "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
+        ]
+        if executeStarts.contains(where: lowered.hasPrefix) { return false }
+        let readSignals = [
+            "what", "when", "where", "who", "which", "show", "list", "tell me",
+            "latest", "last", "recent", "history", "watched", "played", "viewed",
+            "opened", "bookmarks", "downloads", "playlist", "current", "status",
+            "do i have", "did i", "how many", "what was", "what is", "what's", "whats",
+        ]
+        return readSignals.contains(where: lowered.contains)
+    }
 
     // MARK: - App name resolution
 
@@ -291,6 +522,7 @@ final class GeneralAIActionResolver {
         "maps": "com.apple.Maps",
         "facetime": "com.apple.FaceTime",
         "preview": "com.apple.Preview",
+        "calculator": "com.apple.calculator",
         "xcode": "com.apple.dt.Xcode",
         "vs code": "com.microsoft.VSCode",
         "vscode": "com.microsoft.VSCode",
@@ -382,14 +614,18 @@ final class GeneralAIActionResolver {
             return .candidates([paste])
         }
 
-        // 1. App adapter actions (native registered capability).
+        // 1. App adapter actions (native registered capability). Exclude `.aiPrompt` actions
+        // ("Ask AI about Safari") — those are knowledge/Q&A, not executable, and must never
+        // outrank a real executable route for an executable intent.
         let adapterActions = AppAdapterManager.shared.actions(for: bundleID, query: actionPhrase)
+            .filter { $0.type != .aiPrompt }
         if let action = adapterActions.first {
             candidates.append(adapterCandidate(
                 action: action, appName: appName, bundleID: bundleID, confidence: 0.88))
         }
 
-        // 2. Cached menu commands — index-backed read, no live AX scan.
+        // 2. Cached menu commands — product fallback when no app adapter/MCP/API route fits.
+        // Execution still launches the app and live-verifies the menu item before clicking.
         let menuMatches = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID, appName: appName, query: actionPhrase, maxResults: 6)
         if let match = bestMenuMatch(menuMatches, actionPhrase: actionPhrase) {
@@ -432,6 +668,16 @@ final class GeneralAIActionResolver {
                 shortcutName: shortcut.name))
         }
 
+        // 5. App-linked CLI tools. Product policy keeps these fallback-only: if an adapter,
+        // MCP/API, Shortcut, cached menu, or keyboard shortcut exists for the same app,
+        // productRouteFiltered(_:) removes CLI before ranking.
+        candidates.append(contentsOf: appLinkedCLICandidates(
+            appName: appName,
+            bundleID: bundleID,
+            actionPhrase: actionPhrase,
+            original: original
+        ))
+
         guard !candidates.isEmpty else {
             // Executable request against a real app, but no verified route — launch the app
             // and say honestly what could not be automated. Never fake success.
@@ -443,13 +689,60 @@ final class GeneralAIActionResolver {
             return .candidates([launch])
         }
 
-        candidates.sort { rank($0) < rank($1) }
-        return .candidates(candidates)
+        let intentKey = Self.normalizedIntentKey(original)
+        return .candidates(rankedWithPreferences(candidates, intentKey: intentKey))
     }
 
-    /// Route ranking per the DoraX Action Chat spec: adapter > MCP/API > CLI >
-    /// shortcutRunner > keyboardShortcut > verifiedMenu > axFallback > launch.
-    private func rank(_ c: DoraXActionCandidate) -> Int {
+    /// Split a compound action phrase ("save and quit", "save all then quit") into ordered
+    /// simple steps, each normalized to a known verb. Returns nil unless ≥2 known steps are
+    /// present, so single actions ("quit", "save") stay on the normal path.
+    private func compoundSteps(in phrase: String) -> [String]? {
+        let connectors = [" and then ", " then ", " and ", " & ", ","]
+        var parts = [phrase.lowercased()]
+        for connector in connectors {
+            parts = parts.flatMap { $0.components(separatedBy: connector) }
+        }
+        // Longest verbs first so "save all" wins over "save".
+        let verbs = ["save all", "save", "quit", "exit", "close"]
+        var steps: [String] = []
+        for raw in parts {
+            let part = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !part.isEmpty else { continue }
+            guard let verb = verbs.first(where: { part == $0 || part.contains($0) }) else {
+                continue
+            }
+            steps.append(verb == "exit" ? "quit" : verb)
+        }
+        return steps.count >= 2 ? steps : nil
+    }
+
+    /// Ranked executable candidates for a single compound step, excluding the honest
+    /// "couldn't automate" launch fallback (a caller decides whether to warm + retry).
+    func rankedStepCandidates(appName: String, bundleID: String, actionPhrase: String)
+        -> [DoraXActionCandidate]
+    {
+        let resolution = resolveAppScopedAction(
+            appName: appName, bundleID: bundleID, actionPhrase: actionPhrase, original: actionPhrase)
+        guard case .candidates(let candidates) = resolution else { return [] }
+        return candidates.filter { !($0.route == .appLaunch && $0.caveat != nil) }
+    }
+
+    /// Hard route tier per the DoraX Action Chat spec: adapter > MCP/API > CLI >
+    /// shortcutRunner > keyboardShortcut > verifiedMenu > axFallback > launch. Tiers are
+    /// spaced 100 apart so learned adjustments (±40) can reorder WITHIN a tier but never
+    /// cross one — AX can never outrank a native/adapter route.
+    private func routeTier(_ c: DoraXActionCandidate) -> Int {
+        if c.operation == .read {
+            switch c.source {
+            case .appAdapter: return 0
+            case .api, .system: return 1
+            case .mcp: return 2
+            case .cachedMenu: return 4
+            case .cli: return 5
+            case .skill: return 6
+            default: return 7
+            }
+        }
         switch c.route {
         case .adapter: return 0
         case .mcp: return 1
@@ -462,6 +755,698 @@ final class GeneralAIActionResolver {
         case .axFallback: return 8
         case .appLaunch: return 9
         }
+    }
+
+    /// Combined learned + explicit-preference adjustment, clamped below 50 so the ±budget
+    /// can never span the 100-wide tier gap. Guarantees a preference/learning signal can
+    /// reorder routes WITHIN a class but never lets AX outrank a native/adapter/MCP/CLI route.
+    private static let maxCombinedAdjustment = 45
+
+    /// Final rank = hard tier (×100) plus a clamped learned+preference adjustment. Lower is
+    /// better. An explicit "preferred" pins the route to the top of its tier; "avoid" to the
+    /// bottom; learning nudges within that.
+    private func rankScore(_ c: DoraXActionCandidate, intentKey: String) -> Int {
+        let learned = RouteConfidenceStore.shared.adjustment(
+            intentKey: intentKey,
+            bundleID: c.bundleID ?? "",
+            route: c.route.rawValue,
+            capabilityID: c.capabilityID ?? "")
+        let prefRaw: Int
+        switch RoutePreferenceStore.shared.strength(
+            intentKey: intentKey, bundleID: c.bundleID ?? "", route: c.route.rawValue) {
+        case .preferred: prefRaw = -1000
+        case .avoid: prefRaw = 1000
+        case nil: prefRaw = 0
+        }
+        let combined = max(
+            -Self.maxCombinedAdjustment, min(Self.maxCombinedAdjustment, learned + prefRaw))
+        return routeTier(c) * 100 + combined
+    }
+
+    /// Sort candidates by rankScore, and DROP any the user explicitly said to avoid when a
+    /// non-avoided alternative exists (so "avoid AX for Safari" blocks the AX route rather
+    /// than merely demoting it). Never returns an empty list.
+    private func rankedWithPreferences(
+        _ candidates: [DoraXActionCandidate], intentKey: String
+    ) -> [DoraXActionCandidate] {
+        let candidates = productRouteFiltered(candidates)
+        let avoided = candidates.filter {
+            RoutePreferenceStore.shared.strength(
+                intentKey: intentKey, bundleID: $0.bundleID ?? "", route: $0.route.rawValue)
+                == .avoid
+        }
+        // Routes that failed recently are skipped until their cooldown elapses.
+        let unavailable = candidates.filter {
+            !CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
+        }
+        var list = candidates
+        let dropIDs = Set((avoided + unavailable).map(\.id))
+        if !dropIDs.isEmpty, dropIDs.count < candidates.count {
+            list.removeAll { dropIDs.contains($0.id) }
+        }
+        list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
+        return list
+    }
+
+    /// Product rule: terminal/CLI is fallback-only for app workflows. If DoraX has a real
+    /// app capability for the same target (adapter/native, MCP, API, shortcut, cached menu,
+    /// or keyboard shortcut), remove CLI candidates before ranking. This prevents a model or
+    /// learned preference from choosing shell when the user added a better app integration.
+    func productRouteFiltered(_ candidates: [DoraXActionCandidate]) -> [DoraXActionCandidate] {
+        let capableTargets = Set(candidates.compactMap { candidate -> String? in
+            guard candidate.route != .cli,
+                  candidate.source != .cli,
+                  candidate.route != .appLaunch,
+                  candidate.route != .axFallback
+            else { return nil }
+            return candidate.bundleID ?? "__system__"
+        })
+        guard !capableTargets.isEmpty else { return candidates }
+        let filtered = candidates.filter { candidate in
+            guard candidate.route == .cli || candidate.source == .cli else { return true }
+            return !capableTargets.contains(candidate.bundleID ?? "__system__")
+        }
+        return filtered.isEmpty ? candidates : filtered
+    }
+
+    // MARK: - Read capability candidates
+
+    private struct MenuReadSemantic {
+        let type: DoraXActionCandidate.SemanticType
+        let queryWords: [String]
+        let valueHints: [String]
+    }
+
+    private let menuReadSemantics: [MenuReadSemantic] = [
+        .init(type: .history,
+              queryWords: ["history", "watched", "viewed", "played", "last video", "recent video"],
+              valueHints: ["history", "watched", "viewed", "played"]),
+        .init(type: .recentFiles,
+              queryWords: ["recent files", "recent file", "open recent", "opened file"],
+              valueHints: ["recent files", "open recent", "recent"]),
+        .init(type: .recentDocuments,
+              queryWords: ["recent documents", "recent document", "open recent"],
+              valueHints: ["recent documents", "open recent", "recent"]),
+        .init(type: .recentProjects,
+              queryWords: ["recent projects", "recent project", "open recent"],
+              valueHints: ["recent projects", "open recent", "recent"]),
+        .init(type: .downloads,
+              queryWords: ["downloads", "downloaded", "download"],
+              valueHints: ["downloads", "download"]),
+        .init(type: .bookmarks,
+              queryWords: ["bookmarks", "bookmark", "favorites", "favourites"],
+              valueHints: ["bookmarks", "bookmark", "favorites", "favourites"]),
+        .init(type: .playlist,
+              queryWords: ["playlist", "queue", "current playlist", "now playing"],
+              valueHints: ["playlist", "queue", "up next", "now playing"]),
+        .init(type: .recent,
+              queryWords: ["recent", "latest", "last", "opened"],
+              valueHints: ["recent", "open recent", "latest", "last"]),
+    ]
+
+    private func readDiscoveryApps(for query: String) -> [(name: String, bundleId: String)] {
+        let runningBundleIds = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let frontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let adapters = AppAdapterManager.shared.adapters.filter(\.isEnabled)
+        let adapterByBundle = Dictionary(uniqueKeysWithValues: adapters.map { ($0.bundleId, $0) })
+        let summaries = AppMenuCapabilityCache.shared.summaries()
+        let summaryByBundle = Dictionary(uniqueKeysWithValues: summaries.map { ($0.bundleIdentifier, $0) })
+        let q = query.lowercased()
+        let semanticTypes = readSemanticTypes(for: q)
+
+        var bundleIds = Set<String>()
+        bundleIds.formUnion(adapterByBundle.keys)
+        bundleIds.formUnion(summaryByBundle.keys)
+        bundleIds.formUnion(runningBundleIds)
+        if let frontmostBundleId { bundleIds.insert(frontmostBundleId) }
+
+        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+        let installedByBundle = Dictionary(uniqueKeysWithValues: installed.map { ($0.bundleId, $0) })
+        let named = bundleIds.compactMap { bundleId -> (name: String, bundleId: String)? in
+            if let adapter = adapterByBundle[bundleId] { return (adapter.appName, bundleId) }
+            if let summary = summaryByBundle[bundleId] { return (summary.appName, bundleId) }
+            if let entry = installedByBundle[bundleId] { return (entry.name, bundleId) }
+            if let name = installedAppName(bundleId: bundleId) { return (name, bundleId) }
+            return nil
+        }
+
+        return named.sorted { lhs, rhs in
+            func score(_ app: (name: String, bundleId: String)) -> Int {
+                var s = 0
+                if app.bundleId == frontmostBundleId { s -= 100 }
+                if runningBundleIds.contains(app.bundleId) { s -= 40 }
+                if let adapter = adapterByBundle[app.bundleId] {
+                    if !adapter.contextReaders.isEmpty { s -= 30 }
+                    if !adapter.actions.isEmpty { s -= 5 }
+                }
+                if let summary = summaryByBundle[app.bundleId] {
+                    s -= min(20, summary.recordCount / 20)
+                    let samples = summary.samplePaths.joined(separator: " ").lowercased()
+                    if semanticTypes.contains(where: { semantic in
+                        menuReadSemantics.first(where: { $0.type == semantic })?.valueHints
+                            .contains(where: samples.contains) ?? false
+                    }) { s -= 30 }
+                }
+                return s
+            }
+            let ls = score(lhs)
+            let rs = score(rhs)
+            if ls != rs { return ls < rs }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func adapterReadCandidates(
+        app: (name: String, bundleId: String),
+        query: String
+    ) -> [DoraXActionCandidate] {
+        guard let adapter = AppAdapterManager.shared.adapter(for: app.bundleId),
+              !adapter.contextReaders.isEmpty
+        else { return [] }
+        let qTokens = readTokens(query)
+        return adapter.contextReaders.compactMap { reader in
+            let readerTokens = readTokens(reader.name + " " + reader.id + " " + reader.type)
+            let score = readerTokens.intersection(qTokens).count
+            let genericStatus = qTokens.contains("status") || qTokens.contains("current")
+                || qTokens.contains("what")
+            guard score > 0 || genericStatus else { return nil }
+            var candidate = DoraXActionCandidate(
+                id: "read.adapter.\(app.bundleId).\(stableKey(reader.id))",
+                title: "Read \(reader.name) from \(app.name)",
+                appName: app.name,
+                bundleID: app.bundleId,
+                source: .appAdapter,
+                route: .adapter,
+                capabilityID: reader.id,
+                requiredInputs: [],
+                riskLevel: .low,
+                confidence: 0.88,
+                permissionKey: "generalAI.read.\(app.bundleId).adapter.\(stableKey(reader.id))",
+                debugReason: "app adapter context reader \(reader.id)")
+            candidate.operation = .read
+            candidate.semanticType = .status
+            candidate.readSourceLabel = "App Adapter"
+            return candidate
+        }
+    }
+
+    private func menuCacheReadCandidates(
+        app: (name: String, bundleId: String),
+        query: String
+    ) -> [DoraXActionCandidate] {
+        // Cached menus are discovery metadata, not timeless app state. Old snapshots may
+        // still route execution (which is live-verified), but must not be quoted as a read.
+        let maximumReadAge: TimeInterval = 15 * 60
+        guard let age = AppMenuCapabilityCache.shared.snapshotAge(
+            bundleIdentifier: app.bundleId), age <= maximumReadAge else { return [] }
+        let semantics = readSemanticTypes(for: query)
+        guard !semantics.isEmpty else { return [] }
+        var candidates: [DoraXActionCandidate] = []
+        for semantic in semantics {
+            guard let spec = menuReadSemantics.first(where: { $0.type == semantic }) else { continue }
+            var values: [String] = []
+            for queryWord in spec.valueHints + spec.queryWords {
+                let items = AppMenuCapabilityCache.shared.menuItems(
+                    bundleIdentifier: app.bundleId,
+                    appName: app.name,
+                    query: queryWord,
+                    maxResults: 24
+                )
+                values.append(contentsOf: readableMenuValues(from: items, semantic: spec))
+            }
+            let unique = stableUnique(values).prefix(12)
+            guard !unique.isEmpty else { continue }
+            var candidate = DoraXActionCandidate(
+                id: "read.menuCache.\(app.bundleId).\(semantic.rawValue)",
+                title: "Read \(semantic.displayName) from \(app.name)",
+                appName: app.name,
+                bundleID: app.bundleId,
+                source: .cachedMenu,
+                route: .verifiedMenu,
+                capabilityID: semantic.rawValue,
+                requiredInputs: [],
+                riskLevel: .low,
+                confidence: 0.78,
+                permissionKey: "generalAI.read.\(app.bundleId).menuCache.\(semantic.rawValue)",
+                debugReason: "cached menu semantic group \(semantic.rawValue)")
+            candidate.operation = .read
+            candidate.semanticType = semantic
+            candidate.readValues = Array(unique)
+            let ageMinutes = max(0, Int(age / 60))
+            candidate.readSourceLabel = "Menu Cache (fresh, \(ageMinutes)m old)"
+            candidate.readContext = Array(unique).enumerated()
+                .map { "\($0.offset + 1). \($0.element)" }
+                .joined(separator: "\n")
+            candidates.append(candidate)
+        }
+        return candidates
+    }
+
+    private func mcpReadCandidates(
+        app: (name: String, bundleId: String),
+        query: String
+    ) async -> [DoraXActionCandidate] {
+        let tools = await MCPRuntime.shared.cachedTools(forBundleId: app.bundleId)
+        guard !tools.isEmpty else { return [] }
+        let readWords: Set<String> = ["read", "get", "list", "search", "find", "query", "lookup", "fetch", "status", "history", "recent"]
+        let qTokens = readTokens(query)
+        return tools.compactMap { entry in
+            let nameTokens = readTokens(entry.tool.name + " " + entry.tool.description)
+            guard !nameTokens.isDisjoint(with: readWords),
+                  !nameTokens.isDisjoint(with: qTokens) || qTokens.contains("what")
+            else { return nil }
+            let required = (entry.tool.inputSchema["required"] as? [String]) ?? []
+            guard required.isEmpty else { return nil }
+            var candidate = DoraXActionCandidate(
+                id: "read.mcp.\(app.bundleId).\(stableKey(entry.server)).\(stableKey(entry.tool.name))",
+                title: "Read \(entry.tool.name.replacingOccurrences(of: "_", with: " ")) from \(app.name)",
+                appName: app.name,
+                bundleID: app.bundleId,
+                source: .mcp,
+                route: .mcp,
+                capabilityID: entry.tool.name,
+                requiredInputs: [],
+                riskLevel: .low,
+                confidence: 0.84,
+                permissionKey: "generalAI.read.\(app.bundleId).mcp.\(stableKey(entry.tool.name))",
+                debugReason: "connected MCP read-style tool \(entry.tool.name)")
+            candidate.operation = .read
+            candidate.semanticType = .unknown
+            candidate.readSourceLabel = "MCP"
+            candidate.inputValues = [
+                "mcpServer": entry.server,
+                "mcpTool": entry.tool.name,
+                "mcpArguments": "{}",
+            ]
+            return candidate
+        }
+    }
+
+    private func cliReadCandidates(
+        app: (name: String, bundleId: String),
+        query: String
+    ) -> [DoraXActionCandidate] {
+        let packages = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.isAssociated(with: app.bundleId)
+        }
+        guard !packages.isEmpty else { return [] }
+        let qTokens = semanticCLITokens(query)
+        guard !qTokens.isDisjoint(with: ["status", "info", "list", "show", "get", "current", "what"]) else {
+            return []
+        }
+        return packages.compactMap { package in
+            let command: String
+            if let manifest = ToolManifestDB.shared.manifest(for: package.command),
+               let chosen = manifest.commands
+                   .map({ semantic, template in
+                       (semantic: semantic, template: template,
+                        score: semanticCLITokens(semantic + " " + template).intersection(qTokens).count)
+                   })
+                   .filter({ $0.score > 0 && Self.templateParameters(in: $0.template).isEmpty })
+                   .sorted(by: { $0.score > $1.score })
+                   .first,
+               let built = manifest.buildCommand(chosen.semantic, params: [:]) {
+                command = built
+            } else {
+                return nil
+            }
+            var candidate = DoraXActionCandidate(
+                id: "read.cli.\(app.bundleId).\(stableKey(package.command))",
+                title: "Read \(app.name) using \(package.command)",
+                appName: app.name,
+                bundleID: app.bundleId,
+                source: .cli,
+                route: .cli,
+                capabilityID: "terminal.runCommand",
+                requiredInputs: [],
+                riskLevel: .low,
+                confidence: 0.7,
+                permissionKey: "generalAI.read.\(app.bundleId).cli.\(stableKey(package.command))",
+                debugReason: "app-linked CLI can provide read/status data")
+            candidate.operation = .read
+            candidate.semanticType = .status
+            candidate.readSourceLabel = "CLI"
+            candidate.readContext = "\(package.command): \(package.description)"
+            candidate.inputValues = ["command": command]
+            return candidate
+        }
+    }
+
+    private func readSemanticTypes(for query: String) -> [DoraXActionCandidate.SemanticType] {
+        let q = query.lowercased()
+        var out: [DoraXActionCandidate.SemanticType] = []
+        for spec in menuReadSemantics where spec.queryWords.contains(where: q.contains) {
+            out.append(spec.type)
+        }
+        if q.contains("last") || q.contains("latest") || q.contains("recent") {
+            out.append(.recent)
+        }
+        if q.contains("video") || q.contains("watched") || q.contains("played") {
+            out.append(.history)
+            out.append(.playlist)
+        }
+        return stableUnique(out)
+    }
+
+    private func readableMenuValues(from items: [AXMenuItem], semantic: MenuReadSemantic) -> [String] {
+        items.compactMap { item -> String? in
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, title != "-", !item.isAppleMenu else { return nil }
+            let haystack = (item.path + [title]).joined(separator: " ").lowercased()
+            guard semantic.valueHints.contains(where: haystack.contains) else { return nil }
+            let normalizedTitle = title.lowercased()
+            let blocked = [
+                "clear history", "show all history", "history", "downloads", "bookmarks",
+                "show bookmarks", "edit bookmarks", "open recent", "clear menu",
+                "recent files", "recent documents", "recent projects",
+            ]
+            guard !blocked.contains(normalizedTitle) else { return nil }
+            guard !normalizedTitle.hasPrefix("clear ") else { return nil }
+            if let resolved = item.resolvedFilePath, !resolved.isEmpty {
+                return "\(title) — \(resolved)"
+            }
+            return title
+        }
+    }
+
+    private func readTokens(_ text: String) -> Set<String> {
+        Set(text.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count > 1 })
+    }
+
+    private func stableUnique<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    /// Order-independent intent key for confidence learning: significant tokens (stopwords
+    /// dropped), sorted + joined, so "create a text file" and "create text file now" collapse
+    /// to the same key. Local-only, never sent to a provider.
+    static func normalizedIntentKey(_ query: String) -> String {
+        let stop: Set<String> = [
+            "a", "an", "the", "to", "in", "on", "my", "this", "that", "new", "please",
+            "now", "for", "of", "with", "some", "me", "i", "do", "have",
+        ]
+        let tokens = query.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count > 1 && !stop.contains($0) }
+            // Light plural stemming so "text files" and "text file" share a key.
+            .map { $0.count > 3 && $0.hasSuffix("s") ? String($0.dropLast()) : $0 }
+        return Set(tokens).sorted().joined(separator: "-")
+    }
+
+    // MARK: - MCP route candidates
+
+    /// Merge MCP-tool candidates into an app-scoped resolution and re-rank. MCP tools slot
+    /// just below native adapter/capability (rank 1) and above CLI, per the DoraX spec.
+    private func augmentWithMCPCandidates(
+        _ base: GeneralAIActionResolution,
+        appName: String,
+        bundleID: String,
+        actionPhrase: String,
+        intentKey: String
+    ) async -> GeneralAIActionResolution {
+        guard case .candidates(var candidates) = base else { return base }
+        let mcp = await mcpCandidates(
+            appName: appName, bundleID: bundleID, actionPhrase: actionPhrase)
+        guard !mcp.isEmpty else { return base }
+        // Drop the honest "no verified route" launch fallback if a real MCP route now exists.
+        if candidates.count == 1, candidates[0].route == .appLaunch, candidates[0].caveat != nil {
+            candidates = mcp
+        } else {
+            candidates.append(contentsOf: mcp)
+        }
+        return .candidates(rankedWithPreferences(candidates, intentKey: intentKey))
+    }
+
+    /// Build `.mcp` candidates for tools whose NAME matches the action phrase. Guards:
+    /// - only ALREADY-CONNECTED servers (no live connect on the hot path),
+    /// - only tools with NO required inputs (we never invent argument values),
+    /// - tool name must be known (never provider-invented).
+    /// Tools that need inputs are left to the provider tool-loop, which fills args safely.
+    private func mcpCandidates(
+        appName: String, bundleID: String, actionPhrase: String
+    ) async -> [DoraXActionCandidate] {
+        let phraseTokens = Set(
+            actionPhrase.split { !$0.isLetter && !$0.isNumber }.map { String($0).lowercased() })
+        guard !phraseTokens.isEmpty else { return [] }
+
+        let tools = await MCPRuntime.shared.cachedTools(forBundleId: bundleID)
+        var out: [DoraXActionCandidate] = []
+        for entry in tools {
+            let toolTokens = Set(
+                entry.tool.name
+                    .split { $0 == "_" || $0 == "-" || $0.isWhitespace }
+                    .map { String($0).lowercased() })
+            guard !toolTokens.isDisjoint(with: phraseTokens) else { continue }
+            let required = (entry.tool.inputSchema["required"] as? [String]) ?? []
+            guard required.isEmpty else { continue }
+
+            let readable = entry.tool.name.replacingOccurrences(of: "_", with: " ")
+            var candidate = DoraXActionCandidate(
+                id: "mcp.\(bundleID).\(stableKey(entry.tool.name))",
+                title: "\(appName): \(readable)",
+                appName: appName,
+                bundleID: bundleID,
+                source: .mcp,
+                route: .mcp,
+                capabilityID: nil,
+                requiredInputs: [],
+                riskLevel: .medium,
+                confidence: 0.85,
+                permissionKey: "generalAI.execute.\(bundleID).mcp.\(stableKey(entry.tool.name))",
+                debugReason: "MCP tool \(entry.tool.name) name-matches the request")
+            candidate.inputValues = [
+                "mcpServer": entry.server,
+                "mcpTool": entry.tool.name,
+                "mcpArguments": "{}",
+            ]
+            out.append(candidate)
+        }
+        return out
+    }
+
+    // MARK: - CLI tool route candidates
+
+    /// Discover a CLI route from INSTALLED tools with a saved manifest only. The command is
+    /// built from the manifest template with parameters filled from real context (a live URL
+    /// for {url}-shaped params, the query phrase for {query}). We never run a bare binary or
+    /// provider-authored shell text. Missing required parameters → clarify, never fabricate.
+    private func resolveCLIToolAction(lowered: String, original: String)
+        -> GeneralAIActionResolution?
+    {
+        guard let package = TerminalPackageManager.shared.findPackageForQuery(original),
+            package.isEnabled
+        else { return nil }
+        guard let candidate = cliCandidate(
+            package: package,
+            appName: package.command,
+            bundleID: nil,
+            actionPhrase: lowered,
+            original: original,
+            confidence: 0.84,
+            debugPrefix: "installed CLI")
+        else { return nil }
+        return .candidates([candidate])
+    }
+
+    private func appLinkedCLICandidates(
+        appName: String,
+        bundleID: String,
+        actionPhrase: String,
+        original: String
+    ) -> [DoraXActionCandidate] {
+        var packages = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.isAssociated(with: bundleID)
+        }
+        let cliActions = AppAdapterManager.shared.actions(for: bundleID)
+            .filter { $0.type == .cliTool }
+        for action in cliActions {
+            let command = (action.cliToolCommand ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !command.isEmpty,
+                !packages.contains(where: { $0.command.caseInsensitiveCompare(command) == .orderedSame })
+            else { continue }
+            packages.append(TerminalPackage(
+                name: action.name.isEmpty ? command : action.name,
+                command: command,
+                description: action.description,
+                keywords: action.triggers + [command],
+                contextAppBundleIds: [bundleID]
+            ))
+        }
+        return packages.compactMap {
+            cliCandidate(
+                package: $0,
+                appName: appName,
+                bundleID: bundleID,
+                actionPhrase: actionPhrase,
+                original: original,
+                confidence: 0.86,
+                debugPrefix: "app-linked CLI")
+        }
+    }
+
+    private func cliCandidate(
+        package: TerminalPackage,
+        appName: String,
+        bundleID: String?,
+        actionPhrase: String,
+        original: String,
+        confidence: Double,
+        debugPrefix: String
+    ) -> DoraXActionCandidate? {
+        guard let manifest = ToolManifestDB.shared.manifest(for: package.command),
+            !manifest.commands.isEmpty
+        else { return nil }
+
+        let queryTokens = semanticCLITokens(actionPhrase + " " + original)
+        var best: (semantic: String, template: String, score: Int)?
+        for (semantic, template) in manifest.commands {
+            let words = semanticCLITokens(semantic + " " + template)
+            let score = words.intersection(queryTokens).count
+            if score > (best?.score ?? 0) {
+                best = (semantic, template, score)
+            }
+        }
+        guard let chosen = best, chosen.score > 0 else { return nil }
+
+        let paramNames = Self.templateParameters(in: chosen.template)
+        var params: [String: String] = [:]
+        for name in paramNames {
+            let lname = name.lowercased()
+            if ["url", "link", "video", "page", "address"].contains(where: lname.contains) {
+                guard let url = currentContextURL(), !url.isEmpty else { return nil }
+                params[name] = "\"\(url)\""
+            } else if ["query", "search", "term", "q", "text"].contains(where: { lname == $0 }) {
+                let phrase = strippedQueryPhrase(original, toolName: package.command)
+                guard !phrase.isEmpty else { return nil }
+                params[name] = "\"\(phrase)\""
+            } else {
+                return nil
+            }
+        }
+
+        guard let command = manifest.buildCommand(chosen.semantic, params: params),
+            !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+
+        var candidate = DoraXActionCandidate(
+            id: "cli.\(package.command).\(stableKey(chosen.semantic))",
+            title: "\(package.command): \(chosen.semantic.replacingOccurrences(of: "_", with: " "))",
+            appName: appName,
+            bundleID: bundleID,
+            source: .cli,
+            route: .cli,
+            capabilityID: "terminal.runCommand",
+            requiredInputs: [],
+            riskLevel: .medium,
+            confidence: confidence,
+            permissionKey:
+                "generalAI.execute.cli.\(stableKey(package.command)).\(stableKey(chosen.semantic))",
+            debugReason: "\(debugPrefix) \(package.command) manifest command \(chosen.semantic)")
+        candidate.inputValues = ["command": command]
+        guard CapabilityAvailabilityStore.shared.isAvailable(key: candidate.availabilityKey) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private func semanticCLITokens(_ text: String) -> Set<String> {
+        var tokens = Set(
+            text.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { $0.count > 1 }
+        )
+        if tokens.contains("off") || tokens.contains("stop") || tokens.contains("disable") {
+            tokens.formUnion(["down", "stop", "disable", "disconnect", "logout"])
+        }
+        if tokens.contains("on") || tokens.contains("start") || tokens.contains("enable") {
+            tokens.formUnion(["up", "start", "enable", "connect", "login"])
+        }
+        if tokens.contains("status") || tokens.contains("state") || tokens.contains("running") {
+            tokens.formUnion(["status", "info", "list"])
+        }
+        return tokens
+    }
+
+    /// Parameter names inside a `{name}` template.
+    private static func templateParameters(in template: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: "\\{(\\w+)\\}") else { return [] }
+        let range = NSRange(template.startIndex..., in: template)
+        return regex.matches(in: template, range: range).compactMap {
+            Range($0.range(at: 1), in: template).map { String(template[$0]) }
+        }
+    }
+
+    /// A live URL from the current context for filling {url} params — browser page or an
+    /// explicit selection/clipboard URL. No new AX scan; reads already-current context.
+    private func currentContextURL() -> String? {
+        if let url = AXContextReader.shared.current.currentURL,
+            !url.trimmingCharacters(in: .whitespaces).isEmpty {
+            return url
+        }
+        if let clip = NSPasteboard.general.string(forType: .string),
+            clip.hasPrefix("http://") || clip.hasPrefix("https://") {
+            return clip.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    /// Query text with the tool name + common command verbs stripped, to use as a {query} arg.
+    private func strippedQueryPhrase(_ query: String, toolName: String) -> String {
+        var text = query.lowercased()
+        for token in [toolName.lowercased(), "download", "run", "search", "play", "using", "with"] {
+            text = text.replacingOccurrences(of: token, with: " ")
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - API tool route candidates
+
+    /// Known built-in API reads through APICommandHandler. Only real, no-arg status commands
+    /// are emitted (volume/brightness are stubs and are deliberately excluded). Never invents
+    /// an API name; the command line is a fixed, registered string.
+    private func resolveAPIToolAction(lowered: String) -> GeneralAIActionResolution? {
+        let statusSignal =
+            lowered.contains("status") || lowered.contains("level") || lowered.contains("how much")
+            || lowered.contains("what") || lowered.contains("is my") || lowered.contains("percent")
+        let apiArgs: String?
+        if lowered.contains("battery") {
+            apiArgs = lowered.contains("charg") ? "battery charging" : "battery level"
+        } else if (lowered.contains("wifi") || lowered.contains("wi-fi") || lowered.contains("ssid"))
+            && statusSignal {
+            apiArgs = "network ssid"
+        } else if lowered.contains("ip address") || (lowered.contains(" ip") && statusSignal) {
+            apiArgs = "network ip"
+        } else {
+            apiArgs = nil
+        }
+        guard let args = apiArgs else { return nil }
+
+        let key = args.replacingOccurrences(of: " ", with: ".")
+        var candidate = DoraXActionCandidate(
+            id: "api.\(key)",
+            title: "System: \(args)",
+            appName: "System",
+            bundleID: nil,
+            source: .api,
+            route: .api,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .low,
+            confidence: 0.8,
+            permissionKey: "generalAI.execute.system.api.\(stableKey(key))",
+            debugReason: "built-in API command \(args)")
+        candidate.inputValues = ["apiArgs": args]
+        guard CapabilityAvailabilityStore.shared.isAvailable(key: candidate.availabilityKey) else {
+            return nil
+        }
+        return .candidates([candidate])
     }
 
     private func bestMenuMatch(_ items: [AXMenuItem], actionPhrase: String) -> AXMenuItem? {
@@ -790,6 +1775,22 @@ final class GeneralAIActionResolver {
         if lowered.contains("textedit") || lowered.contains("text edit") { return nil }
         if lowered.contains("finder") || lowered.contains("desktop")
             || lowered.contains("vs code") || lowered.contains("vscode") { return nil }
+
+        // Honor an explicit user preference for this intent instead of asking every time.
+        let intentKey = Self.normalizedIntentKey(lowered)
+        let fileApps = [
+            (name: "TextEdit", bundleID: "com.apple.TextEdit"),
+            (name: "Finder", bundleID: "com.apple.finder"),
+            (name: "VS Code", bundleID: "com.microsoft.VSCode"),
+        ]
+        for app in fileApps
+        where RoutePreferenceStore.shared.strength(
+            intentKey: intentKey, bundleID: app.bundleID, route: "appLaunch") == .preferred {
+            return resolveAppScopedAction(
+                appName: app.name, bundleID: app.bundleID,
+                actionPhrase: "new document", original: lowered)
+        }
+
         return .clarify(
             question: "Where should I create it?",
             options: [
@@ -913,6 +1914,9 @@ final class GeneralAIActionResolver {
         candidate.menuPath = path
         candidate.shortcutChar = shortcutChar
         candidate.shortcutModifiers = shortcutModifiers
+        candidate.caveat =
+            "No better app adapter/MCP/API route matched. DoraX can launch \(appName), "
+            + "live-check this cached menu item, then click it only if it is available."
         return candidate
     }
 

@@ -88,6 +88,16 @@ enum AIAttachmentPreparer {
     }
 
     private static func text(from url: URL) -> String? {
+        // MarkItDown preserves headings, lists, tables, links, and Office-document structure.
+        // It is the preferred shared ingestion path; native readers below remain available when
+        // the managed CLI is absent or a particular conversion fails.
+        if let converted = MarkItDownService.convert(
+            url,
+            characterBudget: maxCharactersPerFile
+        ) {
+            return converted.markdown
+        }
+
         let ext = url.pathExtension.lowercased()
         let extracted: String?
         switch ext {

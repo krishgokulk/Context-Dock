@@ -224,3 +224,371 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-08 11:07 · `689c00ca` · `codex-context-dock-polish-fixes`
 **Stabilize context dock navigation**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-14 12:57 · `17f573b8` · `codex-context-dock-polish-fixes`
+**Polish global context and AI routing**
+Swift: +3 added · ~30 modified · -0 deleted
+
+## 2026-07-14 14:45 · `826a0f89` · `codex-context-dock-polish-fixes`
+**stable command input bar**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-14 14:56 · `9fd4db72` · `codex-context-dock-polish-fixes`
+**Restore global mixed results**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-15 18:08 · `0e6901f3` · `codex-context-dock-polish-fixes`
+**Polish global context search flow**
+Swift: +0 added · ~12 modified · -0 deleted
+
+## 2026-07-15 18:14 · `0770e90a` · `codex-context-dock-polish-fixes`
+**Polish global context search flow**
+Swift: +0 added · ~12 modified · -0 deleted
+
+## 2026-07-16 00:16 · `5dbab38e` · `codex-context-dock-polish-fixes`
+**fix reult panel in global context**
+Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-16 01:26 · `0f794ec0` · `codex-context-dock-polish-fixes`
+**Stabilize AI and global icon state**
+Swift: +2 added · ~6 modified · -0 deleted
+
+## 2026-07-16 01:55 · `cc1b17dc` · `codex-context-dock-polish-fixes`
+**Improve global indexed menu ranking**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 02:08 · `611f4e02` · `codex-context-dock-polish-fixes`
+**Update change log**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-16 02:36 · `86044511` · `codex-context-dock-polish-fixes`
+**Restrict Finder desktop scope to files**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-16 02:41 · `46d63db3` · `codex-context-dock-polish-fixes`
+**Update change log**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-16 08:52 · `7993d976` · `codex-context-dock-polish-fixes`
+**Fixed the Finder Global Context scope leak. What changed: Finder scoped from Global Context now uses the Finder desktop files/folders path instead of Finder menu commands. Scoped Finder menu navigation is blocked when isFinderDesktopOnlyMode is active. The unified dock row now treats Finder scope as file/folder mode, so it should behave like the working desktop Context Dock flow. Touched: [LauncherView+L2UnifiedDockRow.swift](/Users/gokulakannan/Developer/Context-Dock/Context-Dock/Search/LauncherView+L2UnifiedDockRow.swift) [LauncherView+GlobalContextActions.swift](/Users/gokulakannan/Developer/Context-Dock/Context-Dock/Search/LauncherView+GlobalContextActions.swift) Verified with ./scripts/dev-run.sh; build succeeded and relaunched the debug app. Still dirty from existing work: LauncherView+ContextDockPills.swift LauncherView.swift plus the two files I changed above.**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-16 15:27 · `cc7004c7` · `codex-context-dock-polish-fixes`
+**running app capsule fixing. partial**
+Swift: +0 added · ~9 modified · -0 deleted
+
+## 2026-07-16 16:33 · `466a7b51` · `codex-context-dock-polish-fixes`
+**Fix global-context scope leak, Finder ghost, scoped-menu execute chip**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 17:02 · `7742f0aa` · `codex-context-dock-polish-fixes`
+**Show scoped-menu action icon + matching ghost while typing in running-app scope**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 17:19 · `dea1a479` · `codex-context-dock-polish-fixes`
+**Make input focus robust on running-app scope switch**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 17:29 · `98e32df3` · `codex-context-dock-polish-fixes`
+**Stop stale AX context forcing Finder desktop file mode in Context Dock**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-16 17:55 · `424b12c1` · `codex-context-dock-polish-fixes`
+**Morph to Context Dock after running a Global Context app-menu command**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-16 18:29 · `e8f60003` · `codex-context-dock-polish-fixes`
+**Fall to Finder on empty desktop + debounce frontmost churn**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-16 19:49 · `36f220e4` · `codex-context-dock-polish-fixes`
+**Spotlight-fast Finder desktop search: split query, rank by match, group by type**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 21:37 · `b6672501` · `codex-context-dock-polish-fixes`
+**Follow menu bar for frontmost, launch into Selection Scope, drop AI from Finder mode**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-16 22:44 · `e0350e3f` · `codex-context-dock-polish-fixes`
+**Enter Selection Scope on launch: read selection first, keep typed query**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-16 23:00 · `8ae80708` · `codex-context-dock-polish-fixes`
+**Keep running-app capsule with a selection; exiting Selection Scope returns to its icon**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-17 13:08 · `98e909f8` · `codex-context-dock-polish-fixes`
+**fix(context): stabilize selection scope**
+Swift: +0 added · ~9 modified · -0 deleted
+
+## 2026-07-17 14:10 · `e6fd3535` · `codex-context-dock-polish-fixes`
+**refactor(ai): unify chat orchestration**
+Swift: +2 added · ~7 modified · -1 deleted
+
+## 2026-07-17 14:17 · `0d67dcd2` · `codex-context-dock-polish-fixes`
+**feat(adapters): add versioned app packs**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-17 14:33 · `da59b9ce` · `codex-context-dock-polish-fixes`
+**feat(adapters): expose complete pack inventory**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-18 02:46 · `ca448904` · `codex-context-dock-polish-fixes`
+**feat(ai): enforce scoped capability routing**
+Swift: +3 added · ~30 modified · -0 deleted
+
+## 2026-07-18 02:50 · `cd85386c` · `codex-context-dock-polish-fixes`
+**fix(ai): tighten capability discovery**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-18 02:50 · `9ed6ce46` · `codex-context-dock-polish-fixes`
+**docs: update change journal**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-19 01:26 · `e38bf7cc` · `codex-context-dock-polish-fixes`
+**fix(dock): stabilize result sheet reveal**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-19 01:43 · `6ed6b230` · `codex-context-dock-polish-fixes`
+**fix(search): prioritize input rendering**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 00:32 · `3923b40c` · `codex-context-dock-polish-fixes`
+**feat(ai): improve contextual orchestration**
+Swift: +4 added · ~29 modified · -0 deleted
+
+## 2026-07-20 00:50 · `35e04704` · `codex-context-dock-polish-fixes`
+**fix(chat): execute scoped app commands**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 01:08 · `bcbcb600` · `codex-context-dock-polish-fixes`
+**feat(chat): ground browser history locally**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 01:44 · `8426bd14` · `codex-context-dock-polish-fixes`
+**fix(global-context): move matching off main actor**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 01:45 · `3b91634d` · `codex-context-dock-polish-fixes`
+**fix(chat): bound browser history refresh**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 02:12 · `c07b3877` · `codex-context-dock-polish-fixes`
+**The first result sheet now immediately includes:**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 02:41 · `734dfd12` · `codex-context-dock-polish-fixes`
+**perf(finder): detach desktop matching**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 02:42 · `ca8cfd18` · `codex-context-dock-polish-fixes`
+**fix(global-context): keep result sheet stable**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 03:02 · `c6cdd522` · `codex-context-dock-polish-fixes`
+**It now:**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 10:37 · `e939498f` · `codex-context-dock-polish-fixes`
+**feat(global-context): add command scopes**
+Swift: +0 added · ~10 modified · -0 deleted
+
+## 2026-07-20 11:06 · `5d326511` · `codex-context-dock-polish-fixes`
+**fix(global-context): stabilize command scopes**
+Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 11:45 · `e7bf3725` · `codex-context-dock-polish-fixes`
+**fix(global-context): stabilize command scopes**
+Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 11:45 · `761c47e9` · `codex-context-dock-polish-fixes`
+**docs(changelog): record command scope fix**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-20 11:46 · `f24d1280` · `codex-context-dock-polish-fixes`
+**docs(changelog): record command scope fix**
+Swift: +0 added · ~0 modified · -0 deleted
+
+## 2026-07-20 16:10 · `d51278f9` · `codex-context-dock-polish-fixes`
+**feat(global-context): native radio toggles, inline controls, focused command set**
+Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-20 17:05 · `9887039e` · `codex-context-dock-polish-fixes`
+**feat(global-context): add Appearance command; fix laggy settings selection**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 17:09 · `0e6153a9` · `codex-context-dock-polish-fixes`
+**feat(global-context): add Windows command with native layout scope**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 17:19 · `ece1bbd7` · `codex-context-dock-polish-fixes`
+**feat(global-context): Quick Note provider, example templates, editor providers**
+Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-20 17:34 · `44f7e8b9` · `codex-context-dock-polish-fixes`
+**feat(windows): render layout tiles as app-in-region previews**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 17:44 · `9420d487` · `codex-context-dock-polish-fixes`
+**feat(quick-note): split editor scope with inline delete**
+Swift: +1 added · ~4 modified · -0 deleted
+
+## 2026-07-20 17:55 · `e5674505` · `codex-context-dock-polish-fixes`
+**fix(quick-note): render split editor in scope; stop arrows switching layer**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 18:04 · `07512635` · `codex-context-dock-polish-fixes`
+**fix(quick-note): give the note editor full keyboard access**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 18:34 · `79f687d6` · `codex-context-dock-polish-fixes`
+**feat(quick-note): AI prompt from the input field inserts into the open note**
+Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-20 18:49 · `5bb0558c` · `codex-context-dock-polish-fixes`
+**feat(quick-note): drag-drop files into notes; fix app-scope pills in scope input**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 18:52 · `19367559` · `codex-context-dock-polish-fixes`
+**feat(quick-note): attach frontmost window context to AI prompt**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-20 19:11 · `04e211c1` · `codex-context-dock-polish-fixes`
+**feat(ai): attach menu (file/photo/screenshot/capture) for chat and Quick Note**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-20 19:26 · `57478f6b` · `codex-context-dock-polish-fixes`
+**feat(ai+nav): global commands as AI tools; right-arrow→chat; sturdier swipe**
+Swift: +1 added · ~4 modified · -0 deleted
+
+## 2026-07-20 19:29 · `431d34b7` · `codex-context-dock-polish-fixes`
+**fix(nav): left arrow (not right) opens General AI chat**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 19:33 · `e53da466` · `codex-context-dock-polish-fixes`
+**feat(ai-chat): App Store picker to focus the chat on a running app**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 19:57 · `d85b5cf2` · `codex-context-dock-polish-fixes`
+**fix(global-context): backspace never quits apps**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 20:09 · `7038c9f8` · `codex-context-dock-polish-fixes`
+**feat: clipboard-scope hotkey in Settings; pin notes as Stickies windows**
+Swift: +1 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:19 · `73abc842` · `codex-context-dock-polish-fixes`
+**feat(notifications): live AI provider usage from rate-limit headers**
+Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-20 20:31 · `393d9c65` · `codex-context-dock-polish-fixes`
+**feat(sticky+scopes): sticky app chrome + AI composer; backspace exits scopes**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:33 · `953d7141` · `codex-context-dock-polish-fixes`
+**fix(window): seat top anchor when a smart scope opens on a visible window**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 20:48 · `fbdf664a` · `codex-context-dock-polish-fixes`
+**fix(compact-scope): backspace exits; no ghost text bleed**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 20:50 · `79eaa55e` · `codex-context-dock-polish-fixes`
+**fix(notifications): show provider usage as soon as the scope opens**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 20:57 · `a2923d00` · `codex-context-dock-polish-fixes`
+**feat(sticky): attach + new-note buttons, app appearance; fix scope backspace**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 21:00 · `22278f91` · `codex-context-dock-polish-fixes`
+**feat(clipboard): split scope surface — recent rail + per-app pills**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 21:18 · `03eba09c` · `codex-context-dock-polish-fixes`
+**feat: sticky tabs + attach menu; clipboard thumbnails; keep scopes visible**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-20 21:47 · `df2ff604` · `codex-context-dock-polish-fixes`
+**fix: sticky tab titles; keep compact scopes visible on focus loss**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-20 22:14 · `8a1ad817` · `codex-context-dock-polish-fixes`
+**fix(search): align ghost and scope navigation**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-20 22:39 · `8fc784f8` · `codex-context-dock-polish-fixes`
+**perf(clipboard): smooth scope scrolling**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-20 23:54 · `0ba01fac` · `codex-context-dock-polish-fixes`
+**feat(clipboard): persist scope navigation**
+Swift: +0 added · ~7 modified · -0 deleted
+
+## 2026-07-21 00:10 · `412f497b` · `codex-context-dock-polish-fixes`
+**feat(window-layouts): app-icon previews in Context Dock, two apps on splits**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 00:27 · `39007277` · `codex-context-dock-polish-fixes`
+**fix(dock): stabilize layer navigation**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 00:42 · `dc0175fe` · `codex-context-dock-polish-fixes`
+**fix(global): keep results open while browsing**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 00:49 · `bb542277` · `codex-context-dock-polish-fixes`
+**feat(finder): built-in local file coworker toolkit for scoped chat**
+Swift: +1 added · ~2 modified · -0 deleted
+
+## 2026-07-21 01:01 · `9f039e56` · `codex-context-dock-polish-fixes`
+**perf(global): prioritize search input**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 01:13 · `bb2943e4` · `codex-context-dock-polish-fixes`
+**perf(global): make query clearing immediate**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 01:16 · `a50465fc` · `codex-context-dock-polish-fixes`
+**feat(global-commands): add Empty Trash command**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 02:06 · `1382bd32` · `codex-context-dock-polish-fixes`
+**fix: harden app actions and usage status**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-21 02:18 · `fe07b484` · `codex-context-dock-polish-fixes`
+**fix(search): reveal only prepared result sheets**
+Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-21 02:24 · `03e31130` · `codex-context-dock-polish-fixes`
+**feat(quick-note): arrow-key note navigation; backspace exits syscmd scopes**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 02:30 · `38984380` · `codex-context-dock-polish-fixes`
+**feat(chat): add multi-app context focus**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-21 02:36 · `8271eee6` · `codex-context-dock-polish-fixes`
+**fix(chat): unify selected app capsule**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 02:41 · `54da9386` · `codex-context-dock-polish-fixes`
+**feat(ocr): add text capture to AI inputs**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 02:51 · `f823766f` · `codex-context-dock-polish-fixes`
+**feat(hotkeys): add clipboard capture shortcuts**
+Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-21 11:23 · `2d8ed763` · `codex-context-dock-polish-fixes`
+**fix(global): stabilize scoped results**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 12:14 · `5e307c63` · `codex-context-dock-polish-fixes`
+**fix(finder): retain desktop search sheet**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 13:30 · `36df5769` · `codex-context-dock-polish-fixes`
+**chore: commit pending source changes before release**
+Swift: +1 added · ~8 modified · -0 deleted

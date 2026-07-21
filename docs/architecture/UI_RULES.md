@@ -38,7 +38,7 @@ Mode content changes inside same shell. Window/material/control shell should not
 ## Chat Modes
 
 - Chat mode must look like conversation.
-- General Chat shows general context and attachments.
+- AI Assistant shows explicit context, attachments, and system-wide workflow status.
 - Context Dock Chat shows current app/tool scope.
 - Do not make chat look like menu search.
 - Do not make launcher behave like chat.
@@ -71,7 +71,7 @@ Mode content changes inside same shell. Window/material/control shell should not
 - Use product-level language:
   - Global Context
   - Context Dock
-  - General Chat
+  - AI Assistant
   - Context Dock Chat
   - Media Dock
   - Selection Shortcut Sheet

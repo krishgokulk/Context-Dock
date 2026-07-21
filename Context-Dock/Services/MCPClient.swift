@@ -53,7 +53,13 @@ actor MCPClient {
         let proc = Process()
         // Resolve via login shell so PATH-based commands (npx, uvx, node) resolve.
         proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        let argv = ([config.command] + config.args).joined(separator: " ")
+        // Single-quote any part containing spaces (e.g. "/Applications/Safari Technology
+        // Preview.app/Contents/MacOS/safaridriver") so the login shell keeps it as one word.
+        let argv = ([config.command] + config.args)
+            .map { part in
+                part.contains(" ") ? "'\(part.replacingOccurrences(of: "'", with: "'\\''"))'" : part
+            }
+            .joined(separator: " ")
         proc.arguments = ["-lc", argv]
 
         let inPipe = Pipe()

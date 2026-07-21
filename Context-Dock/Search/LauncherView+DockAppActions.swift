@@ -166,6 +166,16 @@ extension LauncherView {
         // Don't steal focus back — the activated app should remain frontmost
     }
 
+    func activateRunningAppFromGlobalContext(
+        _ app: NSRunningApplication,
+        forceHideLauncher: Bool = false
+    ) {
+        let appName = app.localizedName ?? "App"
+        AppDelegate.shared?.holdDockThroughAppLaunch()
+        activateRunningAppFromDock(app, forceHideLauncher: forceHideLauncher)
+        scheduleContextDockTransition(bundleId: app.bundleIdentifier, appName: appName)
+    }
+
     /// Called when an app is launched/activated from global context.
     /// Hides launcher immediately, then updates Context Dock state after activation.
     func scheduleContextDockTransition(bundleId: String?, appName: String) {
@@ -727,10 +737,12 @@ extension LauncherView {
             && searchState.contextApp == nil
             && searchState.selectedIndex == nil
             && !isContextDockChatConnected
-            // Show in Global Context (no active selection), AND in an explicit app scope
-            // (l2.targetApp set) so the strip stays after scoping from the strip and the user
-            // can right-arrow to the next app. Hidden only for the plain frontmost Context Dock.
-            && (isGlobalContextActive ? activeSelectionLabel == nil : l2.targetApp != nil)
+            // A live selection is ADDITIVE: it adds an icon NEXT TO this strip, it must never
+            // replace it. Hiding the strip on any selection made the running-app capsule vanish
+            // the moment the user selected a file. Shown in Global Context, and in an explicit
+            // app scope (l2.targetApp) so the strip survives scoping and right-arrow cycling.
+            // Hidden only for the plain frontmost Context Dock.
+            && (isGlobalContextActive || l2.targetApp != nil)
     }
 
     var currentGlobalScopedBundleID: String? {
@@ -751,16 +763,29 @@ extension LauncherView {
         guard shouldShowGlobalRunningAppStrip else { return [] }
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
-        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
-        let others =
-            source
-            .filter { app in
+        // Keep the stable cached ordering, but merge a fresh workspace read before cycling.
+        // Electron apps such as VS Code can become `.regular` after the original launch
+        // notification snapshot; using only a non-empty cache permanently omitted them.
+        var liveSeen = Set<String>()
+        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
+            let identity = app.bundleIdentifier
+                ?? app.bundleURL?.standardizedFileURL.path
+                ?? "pid:\(app.processIdentifier)"
+            return liveSeen.insert(identity).inserted
+        }
+        let frontmostApp = source.first { app in
+            !frontmostBundle.isEmpty
+                && frontmostBundle != "com.apple.finder"
+                && frontmostBundle != scopedBundle
+                && app.bundleIdentifier == frontmostBundle
+        }
+        let others = source.filter { app in
                 guard !app.isTerminated else { return false }
                 guard app.bundleURL != nil || app.executableURL != nil else { return false }
                 guard let bundleID = app.bundleIdentifier else { return true }
                 return bundleID != "com.apple.finder"
-                    && bundleID != frontmostBundle
                     && bundleID != scopedBundle
+                    && bundleID != frontmostBundle
             }
         // Finder leads the strip in Global Context as the entry into desktop file-search —
         // but once Finder IS the active scope it owns the chip, so drop it from the strip
@@ -771,7 +796,11 @@ extension LauncherView {
             : NSWorkspace.shared.runningApplications.first {
                 $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
             }
-        return (Array([finder].compactMap { $0 }) + others)
+        // Keep Finder as universal file scope, then show app that owned focus before
+        // Context-Dock opened. Filtering frontmost here caused exactly this stale UI:
+        // ChatGPT vanished while frontmost, then appeared after switching Spaces when
+        // Finder became frontmost. Dedupe it from `others`, but never hide it.
+        return (Array([finder, frontmostApp].compactMap { $0 }) + others)
             .prefix(5)
             .map { $0 }
     }
@@ -791,7 +820,20 @@ extension LauncherView {
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
         var seen = Set<String>()
-        let others = (runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps)
+        var cycleSourceSeen = Set<String>()
+        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
+            let identity = app.bundleIdentifier
+                ?? app.bundleURL?.standardizedFileURL.path
+                ?? "pid:\(app.processIdentifier)"
+            return cycleSourceSeen.insert(identity).inserted
+        }
+        let frontmostApp = source.first { app in
+            !frontmostBundle.isEmpty
+                && frontmostBundle != "com.apple.finder"
+                && frontmostBundle != scopedBundle
+                && app.bundleIdentifier == frontmostBundle
+        }
+        let others = source
             .filter { app in
                 guard !app.isTerminated else { return false }
                 guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return false }
@@ -806,7 +848,7 @@ extension LauncherView {
         let finder = NSWorkspace.shared.runningApplications.first {
             $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
         }
-        return Array([finder].compactMap { $0 }) + others
+        return Array([finder, frontmostApp].compactMap { $0 }) + others
     }
 
     @discardableResult
@@ -822,19 +864,18 @@ extension LauncherView {
         if bundleID == "com.apple.finder" {
             detachFinderFolderSearch()
         }
-        // FINDER stays in Global Context → Global Context Finder desktop file search (the
-        // universal "search files & folders" mode). EVERY OTHER app EXITS Global Context into
-        // a clean Context Dock app scope (preserveGlobalContext = false → activateInlineDockAppScope
-        // clears globalContextActivation) so its menus build through the Context Dock surface
-        // and Cmd is inert. The running-app strip + right-arrow cycling stay alive in both via
-        // their l2.targetApp / isGlobalContextActive-aware gates.
-        let keepGlobalForFinder = bundleID == "com.apple.finder"
+        // Running-app scopes entered from Global Context stay in Global Context. The left
+        // scoped chip shows the active app, while the right capsule keeps the remaining
+        // running apps for fast cycling. Context Dock stays a separate frontmost-app surface.
         let activated = activateInlineDockAppScope(
             bundleIdentifier: bundleID,
             appName: appName,
-            queryOverride: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "" : nil,
-            preserveGlobalContext: keepGlobalForFinder
+            // Choosing a running-app capsule consumes app identity into the scope chip.
+            // Keeping the app-name query here leaves two owners for the same text
+            // (SwiftUI binding + AppKit field editor), so async menu refresh can restore
+            // deleted text forever. Scoped action input always starts clean.
+            queryOverride: "",
+            preserveGlobalContext: true
         )
         if activated {
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -847,12 +888,10 @@ extension LauncherView {
                 scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
             }
             requestWindowSizeUpdate(reason: .panelChanged)
-            // Run AFTER activateInlineDockAppScope's own focus toggle settles, so this is
-            // the authoritative last focus claim — otherwise the racing toggles leave the
-            // field unfocused (no caret, can't type) after a right-arrow scope.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                self.reclaimSearchInputFocus()
-            }
+            // Authoritative, self-retrying focus claim after activateInlineDockAppScope's own
+            // toggle — survives the async scoped-menu load / spring animation that could
+            // otherwise leave the field unfocused (no caret) after a right-arrow scope.
+            ensureSearchInputFocusReady()
         }
         return activated
     }

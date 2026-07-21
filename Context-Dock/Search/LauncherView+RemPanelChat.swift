@@ -915,7 +915,7 @@ extension LauncherView {
                             // Ensure panel PTY exists before command fires
                             _ = self.panelTerminal(for: ck)
                         }
-                        let result = await TerminalAIBridge.shared.processAICommand(
+                        let result = await TerminalCommandExecutor.shared.run(
                             fixedCmd, purpose: purpose)
                         // Also send approved command to the panel's embedded PTY for live display
                         await MainActor.run {
@@ -1148,7 +1148,7 @@ extension LauncherView {
                 }
                 return
             }
-            let (success, output) = await TerminalAIBridge.shared.processAICommand(
+            let (success, output) = await TerminalCommandExecutor.shared.run(
                 remCmd, purpose: "rem")
             await MainActor.run {
                 let reply =

@@ -76,6 +76,7 @@ extension LauncherView {
                     }
                 }
                 .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Measure the real rendered content (section headers vary per app) so the
                 // panel hugs it instead of relying on a row-count estimate that undercounts
                 // multiple headers and clips the last row at the rounded corner.
@@ -83,8 +84,21 @@ extension LauncherView {
                     updateMeasuredGlobalListHeight(height)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contextDockBottomListFlip(settings.effectiveDockAtBottom)
-            .frame(maxHeight: listViewVisibleHeight)
+            .frame(maxWidth: .infinity, maxHeight: listViewVisibleHeight, alignment: .leading)
+            .background {
+                if settings.effectiveDockAtBottom {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.clear)
+                        .background(GlassBackground(cornerRadius: 18, isDark: isEffectiveDark))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(isEffectiveDark ? 0.12 : 0.20), lineWidth: 0.8)
+                        )
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onChange(of: l2.focusedPillIndex) { newIndex in
                 guard l2.pillNavViaKeyboard, let idx = newIndex else { return }
@@ -175,7 +189,9 @@ extension LauncherView {
             return "Applications"
         }
         if kind == "finderrecent" || kind == "spotlightsearch" {
-            return "Files & Folders"
+            // Group by type (Folders / Images / Documents / Media / Files) — the ranker clusters
+            // the pills so each header appears once, best-matching group first.
+            return finderDesktopTypeGroup(pill)
         }
         if kind.contains("finder") || badge.contains("finder") {
             return "Finder"
@@ -603,21 +619,36 @@ extension LauncherView {
         // Spotlight-style default: highlight the first action pill while typing when nothing is
         // explicitly focused/hovered. Render-only — l2.focusedPillIndex stays nil so Enter keeps
         // its context-dock semantics and the input never collapses to pill-nav mode.
+        // Running-app menu scope renders through the grouped list, so its row `index`
+        // (groupBase + pillIdx) never equals firstSelectableDockPillIndex, which is computed
+        // from contextDockViewModel.visiblePills (empty in scoped-menu mode). Match the first
+        // scoped-menu pill by IDENTITY instead — otherwise the auto-selected first row loses
+        // isActive and its trailing shortcut/⏎ execute chip never renders.
+        let isRunningAppMenuScopeDefaultFirstRow: Bool = {
+            guard isActiveGlobalRunningAppMenuScope(),
+                l2.focusedPillIndex == nil,
+                listViewHoveredIndex == nil
+            else { return false }
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let menus = visibleGlobalGroupedListNavigationState(for: q).menuPills
+            return menus.first(where: { !$0.isSeparator })?.id == pill.id
+        }()
         let isDefaultFirstRow =
-            l2.focusedPillIndex == nil
-            && listViewHoveredIndex == nil
-            && index == firstSelectableDockPillIndex
-            && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            // When the global app list already shows a default-first row (apps render
-            // above these menu rows), it owns the selection — don't ALSO highlight the
-            // first menu row, or two rows show the focus ring at once.
-            && !globalAppListOwnsDefaultFirstSelection
+            (l2.focusedPillIndex == nil
+                && listViewHoveredIndex == nil
+                && index == firstSelectableDockPillIndex
+                && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                // When the global app list already shows a default-first row (apps render
+                // above these menu rows), it owns the selection — don't ALSO highlight the
+                // first menu row, or two rows show the focus ring at once.
+                && !globalAppListOwnsDefaultFirstSelection)
+            || isRunningAppMenuScopeDefaultFirstRow
         // Keyboard focus by IDENTITY, not row index: the keyboard navigates the raw
         // pill array while this list renders a re-clustered copy — index equality
         // diverges the moment clustering reorders, breaking highlight + autoscroll.
         let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
             let source: [DockPill] = {
-                if shouldUsePureGlobalAppSearch {
+                if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                     let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased()
                     return visibleGlobalGroupedListNavigationState(for: q).menuPills
@@ -628,7 +659,7 @@ extension LauncherView {
                 return renderedOrderDockPills(for: q)
             }()
             let sourceIndex: Int = {
-                if shouldUsePureGlobalAppSearch {
+                if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                     let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased()
                     let state = visibleGlobalGroupedListNavigationState(for: q)
@@ -798,8 +829,21 @@ extension LauncherView {
     func interactiveSystemCommand(for pill: DockPill) -> SystemCommand? {
         guard pill.rankingKind == "systemCommand" else { return nil }
         let parts = pill.trackingIdentifier.split(separator: ":")
-        guard parts.count >= 2, parts[0] == "system",
+        guard parts.count >= 3, parts[0] == "system", parts.last == "interactive",
             let id = UUID(uuidString: String(parts[1])),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            command.isEnabled,
+            command.interactionType != .none
+        else { return nil }
+        return command
+    }
+
+    /// Resolves the interactive SystemCommand behind a global search result so its
+    /// live control (Bluetooth/Wi-Fi toggle, Volume slider) can render inline in the
+    /// results sheet instead of requiring the user to scope in.
+    func interactiveSystemCommand(forResult result: SearchResult) -> SystemCommand? {
+        guard result.subtitle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(result.subtitle.dropFirst("syscmd://".count))),
             let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
             command.isEnabled,
             command.interactionType != .none
@@ -812,7 +856,7 @@ extension LauncherView {
         let primary = group.primaryPill
         let accent = accentColor(for: primary.accentColorName)
         let keyboardFocusedPillID: String? = l2.focusedPillIndex.flatMap { idx in
-            if shouldUsePureGlobalAppSearch {
+            if shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope() {
                 let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased()
                 let state = visibleGlobalGroupedListNavigationState(for: q)
@@ -1002,6 +1046,7 @@ extension LauncherView {
         index: Int,
         isCommandIcon: Bool = false,
         defaultsToFirstSelection: Bool = false,
+        interactiveCommand: SystemCommand? = nil,
         quitAction: (() -> Void)? = nil,
         quitPhase: DockInlineFeedback.Phase? = nil,
         previewApp: NSRunningApplication? = nil,
@@ -1081,7 +1126,15 @@ extension LauncherView {
 
                 Spacer(minLength: 0)
 
-                if isActive {
+                // An inline live control (Bluetooth/Wi-Fi toggle, Volume slider) owns
+                // the trailing edge — reserve room for the overlay and drop the ⏎ chip.
+                // A slider needs far more width than a toggle switch.
+                if let interactiveCommand {
+                    Color.clear.frame(
+                        width: interactiveCommand.interactionType == .slider ? 200 : 52,
+                        height: 1
+                    )
+                } else if isActive {
                     HStack(spacing: 6) {
                         if let quitAction {
                             Button(role: .destructive) {
@@ -1146,6 +1199,14 @@ extension LauncherView {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Live control sits above the button so the toggle/slider receives the
+        // mouse event instead of triggering the row action (which would scope).
+        .overlay(alignment: .trailing) {
+            if let interactiveCommand {
+                SystemCommandAccessoryView(command: interactiveCommand)
+                    .padding(.trailing, 16)
+            }
+        }
         .onHover { hovering in
             guard acceptsMouseDrivenDockInteraction else { return }
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
@@ -1184,11 +1245,20 @@ extension LauncherView {
             return false
         }
         if isGlobalContextActive {
-            if q.isEmpty {
+            let hasExtensionScope =
+                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+            if q.isEmpty, !hasExtensionScope {
                 return false
             }
             if shouldUsePureGlobalAppSearch {
                 return true
+            }
+            if currentGlobalScopedBundleID != nil {
+                if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
+                    return true
+                }
+                return stableVisibleDockPills(for: q).contains { !$0.isSeparator }
             }
             let visiblePills = currentVisibleDockPills(for: q)
             if pendingDockPillQuery == q || isResolvingDockPills(for: q) {
@@ -1197,6 +1267,11 @@ extension LauncherView {
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
+        // Finder desktop search must keep its shared sheet alive while its cache and
+        // Spotlight passes exchange snapshots. The rendered list supplies either files,
+        // setup guidance, or a no-results row, so an empty intermediate array is not a
+        // reason to hide the surface.
+        if isFinderDesktopOnlyMode { return true }
         if !isGlobalContextActive {
             // Keep the row while the debounced pill build is in flight (no flicker), but
             // once the query resolves to ZERO results collapse back to the compact input

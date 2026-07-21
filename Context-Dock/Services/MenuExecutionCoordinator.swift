@@ -161,8 +161,6 @@ final class MenuExecutionCoordinator {
                 return
             }
 
-            let cachedShortcut = executableShortcutChar?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let directWindowActionHandled =
                 isWindowMenuAction
                 && Self.shouldPreferDirectWindowManagementAction(executablePath)
@@ -170,16 +168,12 @@ final class MenuExecutionCoordinator {
                     path: executablePath,
                     sourceApp: sourceApp
                 )
-            let cachedShortcutSent =
-                !directWindowActionHandled
-                && !cachedShortcut.isEmpty
-                && AXMenuReader.shared.executeShortcut(
-                    char: cachedShortcut,
-                    modifiers: executableShortcutModifiers,
-                    in: request.sourcePID
-                )
 
-            if !directWindowActionHandled, !cachedShortcutSent,
+            // Resolve the live item before execution, but do not synthesize its shortcut yet.
+            // A shortcut can be owned by an unrelated app's global hotkey (for example YouTube's
+            // ⇧⌘H "Go to Home" being intercepted by Macshot). Pressing the AX menu item targets
+            // the source PID and path directly; keyboard delivery is fallback-only below.
+            if !directWindowActionHandled,
                 let liveMatch = await Self.waitForExecutableMenuItem(
                     path: executablePath,
                     app: sourceApp,
@@ -199,22 +193,21 @@ final class MenuExecutionCoordinator {
 
             let preferredShortcut = executableShortcutChar?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let shortcutSent =
-                cachedShortcutSent
-                || (!directWindowActionHandled
-                    && !preferredShortcut.isEmpty
-                    && AXMenuReader.shared.executeShortcut(
-                        char: preferredShortcut,
-                        modifiers: executableShortcutModifiers,
-                        in: request.sourcePID
-                    ))
             let pasteMenuClicked =
-                !directWindowActionHandled && !shortcutSent
+                !directWindowActionHandled
                 && Self.isPasteMenuPath(executablePath)
                 && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
             let menuClicked =
-                !directWindowActionHandled && !shortcutSent && !pasteMenuClicked
+                !directWindowActionHandled && !pasteMenuClicked
                 && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
+            let shortcutSent =
+                !directWindowActionHandled && !pasteMenuClicked && !menuClicked
+                && !preferredShortcut.isEmpty
+                && AXMenuReader.shared.executeShortcut(
+                    char: preferredShortcut,
+                    modifiers: executableShortcutModifiers,
+                    in: request.sourcePID
+                )
 
             let fallbackWindowActionHandled =
                 !directWindowActionHandled && !shortcutSent && !menuClicked && isWindowMenuAction
@@ -317,10 +310,12 @@ final class MenuExecutionCoordinator {
         // Fastest verified strategy first: post the item's own shortcut, then AX click.
         if !shortcutChar.isEmpty,
            AXMenuReader.shared.executeShortcut(char: shortcutChar, modifiers: shortcutModifiers, in: pid) {
-            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+            let shortcut = MenuShortcutFormatter.display(
+                char: shortcutChar, modifiers: shortcutModifiers) ?? shortcutChar
+            return (true, "Opened \(app.localizedName ?? bundleIdentifier) and sent \(shortcut) for \(pathLabel).")
         }
         if AXMenuReader.shared.clickMenuItemReliably(path: liveMatch.path, in: pid) {
-            return (true, "Ran \(pathLabel) in \(app.localizedName ?? bundleIdentifier).")
+            return (true, "Opened \(app.localizedName ?? bundleIdentifier) and clicked \(pathLabel).")
         }
         return (false, "Found \(pathLabel) but the click didn't register — nothing was confirmed.")
     }

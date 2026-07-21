@@ -675,6 +675,7 @@ extension LauncherView {
                 return copy
             } ?? []
         let beforeCount = pb.changeCount
+        suppressClipboardImportUntilChangeCount = beforeCount + 2
 
         // Synthetic ⌘C posted directly to the selected app's process (postToPid), so it lands
         // there even though the dock window currently has key focus.
@@ -690,6 +691,8 @@ extension LauncherView {
         func restore() {
             pb.clearContents()
             if !saved.isEmpty { pb.writeObjects(saved) }
+            suppressClipboardImportUntilChangeCount = pb.changeCount
+            lastCheckedPasteboardCount = pb.changeCount
         }
 
         func poll(_ attempt: Int) {
@@ -701,6 +704,7 @@ extension LauncherView {
                 return
             }
             if attempt >= 10 {  // ~200ms — copy never landed (no selection)
+                suppressClipboardImportUntilChangeCount = nil
                 completion(nil)
                 return
             }
@@ -754,7 +758,7 @@ extension LauncherView {
         if searchState.activeSmartQueryKey == "clipboard",
             let index = focusedClipboardEntryIndex
         {
-            let entries = filteredClipboardEntriesForScope()
+            let entries = visibleClipboardEntriesForScope()
             if entries.indices.contains(index), let url = quickLookURL(for: entries[index]) {
                 _ = showQuickLookURL(url, toggleIfSame: false)
             }

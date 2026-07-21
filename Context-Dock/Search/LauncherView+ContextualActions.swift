@@ -126,6 +126,22 @@ extension LauncherView {
             })
         else { return [] }
 
+        // The Windows command is a native window-layout picker, not a script: its
+        // scope renders tiles that arrange the app you were in before opening the
+        // launcher. Handled before the generic script/preset path below.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:windows" }) {
+            return windowManagementScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
+        // The Quick Note command turns the scope into a capture surface: type in the
+        // input to compose (Return saves), and your saved notes render below —
+        // filtered by what you type, so the same field also searches notes.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:notepad" }) {
+            return quickNotepadScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -165,8 +181,10 @@ extension LauncherView {
             }
         }
 
-        // Interactive commands render a live control (slider/toggle) on a single
-        // pill — value presets become redundant rows.
+        var scopedRows: [DockPill] = []
+
+        // The interactive command is the scoped header. Provider and preset
+        // children are appended below it; only this row owns the live control.
         if command.interactionType != .none, !isVolume {
             var pill = DockPill(
                 id: "syscmd-\(command.id)-interactive",
@@ -194,7 +212,7 @@ extension LauncherView {
             pill.sourceAppName = command.name
             pill.trackingIdentifier = "system:\(command.id):interactive"
             pill.searchTerms = [command.name, command.description] + command.keywords
-            return [pill]
+            scopedRows.append(pill)
         }
 
         let query = scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -211,10 +229,10 @@ extension LauncherView {
                     || normalizedDockPillText($0.subtitle).contains(normalizedQuery)
             }
         if !dynamicItems.isEmpty {
-            return dynamicItems.map { item in
+            scopedRows.append(contentsOf: dynamicItems.map { item in
                 var pill = DockPill(
                     id: "syscmd-\(command.id)-\(item.value)",
-                    name: "\(command.name) \(item.title)",
+                    name: item.title,
                     icon: command.icon,
                     accentColorName: item.isActive ? "green" : "indigo",
                     badge: item.subtitle,
@@ -230,7 +248,8 @@ extension LauncherView {
                 pill.trackingIdentifier = "system:\(command.id):\(item.value)"
                 pill.searchTerms = [command.name, command.description, item.title, item.subtitle, item.value] + command.keywords
                 return pill
-            }
+            })
+            return scopedRows
         }
 
         let presetValues = systemCommandPresetValues(command, fallbackVolume: isVolume)
@@ -238,8 +257,8 @@ extension LauncherView {
             ? presetValues
             : [query]
 
-        return values.map { value in
-            let label = !value.isEmpty && !presetValues.isEmpty ? "\(command.name) \(value)" : command.name
+        scopedRows.append(contentsOf: values.map { value in
+            let label = !value.isEmpty && !presetValues.isEmpty ? value : command.name
             var pill = DockPill(
                 id: "syscmd-\(command.id)-\(value)",
                 name: label,
@@ -258,7 +277,8 @@ extension LauncherView {
             pill.trackingIdentifier = "system:\(command.id):\(value)"
             pill.searchTerms = [command.name, command.description, value] + command.keywords
             return pill
-        }
+        })
+        return scopedRows
     }
 
     func systemCommandAdapterScopeId(_ command: SystemCommand) -> String? {
@@ -329,6 +349,13 @@ extension LauncherView {
             ]
         case "bluetooth":
             let devices = BluetoothDeviceProvider.pairedDevices()
+            let connectedCount = devices.filter(\.isConnected).count
+            let summary = SystemCommandDynamicItem(
+                title: "Bluetooth Settings",
+                value: "settings",
+                subtitle: "\(connectedCount) connected · \(devices.count) paired",
+                isActive: false
+            )
             let rows = devices.map {
                 SystemCommandDynamicItem(
                     title: $0.name,
@@ -337,15 +364,7 @@ extension LauncherView {
                     isActive: $0.isConnected
                 )
             }
-            if !rows.isEmpty { return rows }
-            return [
-                SystemCommandDynamicItem(
-                    title: "Settings",
-                    value: "settings",
-                    subtitle: "Open Bluetooth Settings",
-                    isActive: false
-                )
-            ]
+            return [summary] + rows
         default:
             return []
         }
@@ -1183,6 +1202,12 @@ extension LauncherView {
             !scopedAppName.isEmpty
         else { return [] }
 
+        let scopedIcon = NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == scopedBundleId && !$0.isTerminated }?.icon
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: scopedBundleId)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let otherIcon = secondaryDesktopAppIcon(excluding: scopedBundleId)
+
         return WindowManagementService.shared.matchingCommands(query: rawScopedQuery).map {
             command in
             var pill = DockPill(
@@ -1196,6 +1221,10 @@ extension LauncherView {
                         bundleId: scopedBundleId, appName: scopedAppName, command: command)
                 }
             )
+            // Layout preview showing the scoped app (and the other desktop app for
+            // split arrangements) sitting where the layout will place it.
+            pill.menuItemImage = windowLayoutPreviewImage(
+                appIcon: scopedIcon, secondaryIcon: otherIcon, command: command)
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = scopedAppName
             pill.rankingKind = "nativeWindow"
@@ -1203,6 +1232,359 @@ extension LauncherView {
             pill.trackingIdentifier = "native-window:\(scopedBundleId):\(command.id)"
             pill.searchTerms = command.searchTerms + [scopedAppName]
             return pill
+        }
+    }
+
+    /// Native window-layout tiles for the "Windows" Global Command scope. Targets the
+    /// app that was frontmost before Context-Dock opened, so arranging works even
+    /// though the launcher itself is key. Empty query shows the full intelligent set;
+    /// typing filters via the same matcher the app-scoped window pills use.
+    func windowManagementScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        guard let app = AppDelegate.shared?.previousFrontmostApp,
+            !app.isTerminated,
+            let bundleId = app.bundleIdentifier,
+            !bundleId.isEmpty
+        else { return [] }
+        let appName = app.localizedName ?? "Window"
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let commands: [WindowManagementService.Command] =
+            trimmed.isEmpty
+            ? [
+                .fill, .left, .right, .top, .bottom,
+                .topLeft, .topRight, .bottomLeft, .bottomRight,
+                .quarters, .center, .fullScreen, .restorePreviousSize,
+            ]
+            : WindowManagementService.shared.matchingCommands(query: trimmed)
+
+        let appIcon = app.icon
+        return commands.map { command in
+            var pill = DockPill(
+                id: "syscmd-windows-\(command.id)",
+                name: command.title,
+                icon: command.icon,
+                accentColorName: "blue",
+                badge: appName,
+                execute: {
+                    launchAndApplyWindowCommand(
+                        bundleId: bundleId, appName: appName, command: command)
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
+                }
+            )
+            // Render a live layout preview: the frontmost app's icon sitting in the
+            // region the layout will move it to — instead of a generic split glyph.
+            pill.menuItemImage = windowLayoutPreviewImage(
+                appIcon: appIcon,
+                secondaryIcon: secondaryDesktopAppIcon(excluding: bundleId),
+                command: command)
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = appName
+            pill.trackingIdentifier = "syscmd-windows:\(command.id)"
+            pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
+            return pill
+        }
+    }
+
+    /// Normalized regions (top-left origin) a layout moves the window into. `nil`
+    /// means the full screen. Quarters is handled specially (four cells).
+    private func windowLayoutRegions(
+        for command: WindowManagementService.Command
+    ) -> [CGRect] {
+        switch command {
+        case .left: return [CGRect(x: 0, y: 0, width: 0.5, height: 1)]
+        case .right: return [CGRect(x: 0.5, y: 0, width: 0.5, height: 1)]
+        case .top: return [CGRect(x: 0, y: 0, width: 1, height: 0.5)]
+        case .bottom: return [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)]
+        case .topLeft: return [CGRect(x: 0, y: 0, width: 0.5, height: 0.5)]
+        case .topRight: return [CGRect(x: 0.5, y: 0, width: 0.5, height: 0.5)]
+        case .bottomLeft: return [CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5)]
+        case .bottomRight: return [CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5)]
+        case .center: return [CGRect(x: 0.18, y: 0.16, width: 0.64, height: 0.68)]
+        case .quarters:
+            return [
+                CGRect(x: 0, y: 0, width: 0.5, height: 0.5),
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 0.5),
+                CGRect(x: 0, y: 0.5, width: 0.5, height: 0.5),
+                CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5),
+            ]
+        // Two-window arrangements: first region is the scoped app, second is the
+        // other app sharing the desktop.
+        case .leftAndRight:
+            return [
+                CGRect(x: 0, y: 0, width: 0.5, height: 1),
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 1),
+            ]
+        case .rightAndLeft:
+            return [
+                CGRect(x: 0.5, y: 0, width: 0.5, height: 1),
+                CGRect(x: 0, y: 0, width: 0.5, height: 1),
+            ]
+        case .topAndBottom:
+            return [
+                CGRect(x: 0, y: 0, width: 1, height: 0.5),
+                CGRect(x: 0, y: 0.5, width: 1, height: 0.5),
+            ]
+        case .bottomAndTop:
+            return [
+                CGRect(x: 0, y: 0.5, width: 1, height: 0.5),
+                CGRect(x: 0, y: 0, width: 1, height: 0.5),
+            ]
+        default:
+            return [CGRect(x: 0, y: 0, width: 1, height: 1)]  // fill / fullscreen / restore
+        }
+    }
+
+    /// Draws a small screen with the app icon placed in the layout's target region.
+    func windowLayoutPreviewImage(
+        appIcon: NSImage?,
+        secondaryIcon: NSImage? = nil,
+        command: WindowManagementService.Command
+    ) -> NSImage {
+        let size = NSSize(width: 30, height: 22)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        let screen = NSRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+        let screenPath = NSBezierPath(roundedRect: screen, xRadius: 3, yRadius: 3)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.18).setFill()
+        screenPath.fill()
+        NSColor.secondaryLabelColor.withAlphaComponent(0.45).setStroke()
+        screenPath.lineWidth = 1
+        screenPath.stroke()
+
+        let regions = windowLayoutRegions(for: command)
+        let isQuarters = command == .quarters
+        for (index, region) in regions.enumerated() {
+            // Flip Y: layout regions use a top-left origin; AppKit draws bottom-up.
+            let rect = NSRect(
+                x: screen.minX + region.minX * screen.width,
+                y: screen.minY + (1 - region.minY - region.height) * screen.height,
+                width: region.width * screen.width,
+                height: region.height * screen.height
+            ).insetBy(dx: 0.6, dy: 0.6)
+            let tile = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+            NSColor.systemBlue.withAlphaComponent(0.85).setFill()
+            tile.fill()
+
+            // Region 0 is the scoped app; region 1 is the other app sharing the
+            // desktop (split arrangements). Quarters stays a plain grid.
+            let icon: NSImage? = isQuarters ? nil : (index == 0 ? appIcon : secondaryIcon)
+            if let icon {
+                let side = min(rect.width, rect.height) * 0.72
+                let iconRect = NSRect(
+                    x: rect.midX - side / 2,
+                    y: rect.midY - side / 2,
+                    width: side,
+                    height: side
+                )
+                icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+            }
+        }
+        return image
+    }
+
+    /// Icon of another regular app sharing the current desktop — used as the second
+    /// tile in split layout previews. `nil` when the scoped app is the only one.
+    func secondaryDesktopAppIcon(excluding bundleId: String) -> NSImage? {
+        NSWorkspace.shared.runningApplications
+            .first {
+                $0.activationPolicy == .regular
+                    && !$0.isTerminated
+                    && $0.bundleIdentifier != bundleId
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }?
+            .icon
+    }
+
+    /// Rows for the "Quick Note" (provider:notepad) scope: a Save row that captures
+    /// the current input as a note, followed by saved notes (newest first). The
+    /// outer scope filter narrows notes by the typed text, so composing and searching
+    /// share one input. Tapping a note copies it; the trailing Quit action deletes it.
+    func quickNotepadScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        var pills: [DockPill] = []
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmed.isEmpty {
+            var save = DockPill(
+                id: "notepad-save",
+                name: "Save note “\(trimmed)”",
+                icon: "square.and.pencil",
+                accentColorName: "green",
+                badge: "Return",
+                execute: {
+                    QuickNotesStore.shared.add(trimmed)
+                    searchState.query = ""
+                    clearSearchFieldEditorText()
+                    l2.focusedPillIndex = nil
+                    reclaimSearchInputFocus()
+                }
+            )
+            save.rankingKind = "systemCommand"
+            save.sourceBundleId = scopedBundleId
+            save.sourceAppName = "Quick Note"
+            save.trackingIdentifier = "notepad:save"
+            // Keyword the outer scope filter always matches so this row never drops.
+            save.searchTerms = [trimmed, "save", "note", "add"]
+            pills.append(save)
+        }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        for note in QuickNotesStore.shared.notes {
+            let when = formatter.localizedString(for: note.createdAt, relativeTo: Date())
+            var pill = DockPill(
+                id: "notepad-\(note.id.uuidString)",
+                name: note.text,
+                icon: "note.text",
+                accentColorName: "indigo",
+                badge: when,
+                execute: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(note.text, forType: .string)
+                    AppToast.show("Note copied", icon: "doc.on.doc", tint: .indigo)
+                    searchState.query = ""
+                    clearSearchFieldEditorText()
+                    l2.focusedPillIndex = nil
+                }
+            )
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = "Quick Note"
+            pill.trackingIdentifier = "notepad:\(note.id.uuidString)"
+            pill.searchTerms = [note.text, "note"]
+            pills.append(pill)
+        }
+
+        if pills.isEmpty {
+            var hint = DockPill(
+                id: "notepad-empty",
+                name: "Type a note, then press Return to save",
+                icon: "note.text",
+                accentColorName: "gray",
+                badge: nil,
+                execute: {}
+            )
+            hint.rankingKind = "systemCommand"
+            hint.sourceBundleId = scopedBundleId
+            hint.sourceAppName = "Quick Note"
+            hint.trackingIdentifier = "notepad:empty"
+            hint.searchTerms = ["note"]
+            pills.append(hint)
+        }
+        return pills
+    }
+
+    /// Quick Note AI: send the input-field prompt to the user's selected AI provider
+    /// and insert the reply into the open note (creating one if none is selected).
+    /// The provider is whatever the user picked globally — so the notepad's AI is
+    /// their AI, no extra config.
+    /// Capture the frontmost window's context (app, window title, URL, selected
+    /// text) to attach to the next Quick Note AI prompt — or clear it if already set.
+    func toggleNotepadFrontmostContext() {
+        if notepadFrontmostContext != nil {
+            notepadFrontmostContext = nil
+            notepadFrontmostLabel = nil
+            return
+        }
+        let ctx = AXContextReader.shared.current
+        let appName = ctx.appName.isEmpty
+            ? (AppDelegate.shared?.previousFrontmostApp?.localizedName ?? "Frontmost app")
+            : ctx.appName
+        var parts: [String] = ["Frontmost app: \(appName)"]
+        if let title = ctx.windowTitle, !title.isEmpty { parts.append("Window: \(title)") }
+        if let url = ctx.currentURL, !url.isEmpty { parts.append("URL: \(url)") }
+        if let selection = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !selection.isEmpty
+        {
+            parts.append("Selected text:\n\(selection)")
+        }
+        notepadFrontmostContext = parts.joined(separator: "\n")
+        notepadFrontmostLabel = appName
+    }
+
+    /// Open the file picker and append the chosen images/files to the Quick Note
+    /// AI attachments.
+    func attachNotepadFiles(imagesOnly: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
+        panel.message = "Choose files to attach to your note"
+        if panel.runModal() == .OK {
+            let newURLs = panel.urls.filter { !notepadAttachments.contains($0) }
+            notepadAttachments.append(contentsOf: newURLs)
+        }
+    }
+
+    /// Move the notepad selection up/down the notes list (newest first).
+    func navigateNotepadSelection(delta: Int) {
+        let notes = QuickNotesStore.shared.notes
+        guard !notes.isEmpty else { return }
+        let current = notepadSelectedNoteID.flatMap { id in notes.firstIndex { $0.id == id } } ?? -1
+        let next = min(max(current + delta, 0), notes.count - 1)
+        notepadSelectedNoteID = notes[next].id
+    }
+
+    func submitNotepadAIPrompt(_ prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attached = notepadAttachments
+        let capturedText = notepadCapturedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !(trimmed.isEmpty && attached.isEmpty && capturedText.isEmpty),
+            !notepadAIGenerating else { return }
+
+        let targetID: UUID
+        if let id = notepadSelectedNoteID,
+            QuickNotesStore.shared.notes.contains(where: { $0.id == id })
+        {
+            targetID = id
+        } else {
+            targetID = QuickNotesStore.shared.create()
+            notepadSelectedNoteID = targetID
+        }
+
+        // With only attachments and no text, ask the model to write from them.
+        var request = trimmed.isEmpty
+            ? "Write a note from the attached image(s), file(s), or captured text."
+            : trimmed
+        if !capturedText.isEmpty {
+            request += "\n\nCaptured screen text:\n\(capturedText)"
+        }
+        // Fold in the attached frontmost-window context, if any, then clear it.
+        let aiQuery: String
+        if let context = notepadFrontmostContext {
+            aiQuery =
+                "Context from the user's frontmost window:\n\(context)\n\n---\n\nRequest: \(request)"
+        } else {
+            aiQuery = request
+        }
+        notepadFrontmostContext = nil
+        notepadFrontmostLabel = nil
+        notepadCapturedText = nil
+        notepadAttachments = []
+
+        notepadAIGenerating = true
+        searchState.query = ""
+        clearSearchFieldEditorText()
+
+        Task { [weak store = QuickNotesStore.shared] in
+            let reply: String
+            do {
+                reply = try await sendToAIProvider(query: aiQuery, attachments: attached)
+            } catch {
+                reply = "⚠️ AI error: \(error.localizedDescription)"
+            }
+            await MainActor.run {
+                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
+                let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                let joined = existing.isEmpty ? body : existing + "\n\n" + body
+                store?.updateText(joined, for: targetID)
+                self.notepadAIGenerating = false
+            }
         }
     }
 
@@ -2978,6 +3360,17 @@ extension LauncherView {
             }
         }
 
+        if let queryOverride, queryOverride.isEmpty {
+            // NSTextField owns a separate field editor while focused. Updating only the
+            // SwiftUI binding during a scope transition can leave its old app-name string
+            // alive; later sheet rebuilds then push that stale text back onscreen.
+            queryChangeGeneration &+= 1
+            queryChangeTask?.cancel()
+            queryChangeTask = nil
+            l2.appCompletion = nil
+            clearSearchFieldEditorText()
+        }
+
         if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
@@ -3039,6 +3432,8 @@ extension LauncherView {
     }
 
     func activateClipboardScope(queryOverride: String = "") {
+        // Compact scope is up — keep the launcher visible when another app takes focus.
+        AppDelegate.shared?.smartScopeActive = true
         if let previousKey = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
@@ -3046,6 +3441,9 @@ extension LauncherView {
         remPanelIsProcessing = false
         selectedClipboardEntryIDs.removeAll()
         focusedClipboardEntryIndex = nil
+        clipboardSourcePillFocusIndex = nil
+        clipboardSourceFilterBundleId = ""
+        clipboardSourceFilterName = ""
 
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
             searchState.contextApp = nil
@@ -3082,6 +3480,8 @@ extension LauncherView {
     }
 
     func activateNotificationScope(queryOverride: String = "") {
+        // Compact scope is up — keep the launcher visible when another app takes focus.
+        AppDelegate.shared?.smartScopeActive = true
         if let previousKey = searchState.activeSmartQueryKey {
             AppPanelChatStore.shared.save(remPanelChatMessages, for: previousKey)
         }
@@ -3454,16 +3854,21 @@ extension LauncherView {
             return
         }
 
-        // Pure Global Context uses the global app-search path, not this dock-pill build.
-        // (Scoping a running app exits Global Context, so this never fires for an app scope.)
+        // Pure, unscoped Global Context uses the global app-search path. Scoped running
+        // apps stay inside Global Context now, and must still build dock/menu pills.
         if isGlobalContextActive,
             !hasSelectionScopeSurface,
+            currentGlobalScopedBundleID == nil,
             !showGlobalClipboardPill,
             !isContextDockChatConnected
         {
             contextDockViewModel.resetPillRenderingState(cancelBuild: true)
             return
         }
+
+        let scheduledQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let scheduledTargetPID = contextTargetApp()?.processIdentifier ?? -1
+        let scheduledTargetBundleID = contextTargetApp()?.bundleIdentifier ?? ""
 
         dockPillBuildTask = ContextDockPillCoordinator.schedule(
             input: ContextDockPillCoordinator.Input(
@@ -3480,7 +3885,22 @@ extension LauncherView {
                 commitPreview: { commitPendingDockPreviewPills($0) },
                 clearCachedPills: { cachedDockPills = [] },
                 refreshContext: { refreshFinderSelectionContextFromFinder() },
-                buildPills: { buildDockPills(query: $0) },
+                buildPills: { buildQuery in
+                    return buildDockPills(query: buildQuery)
+                },
+                canCommit: {
+                    let currentQuery = searchState.query
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    if !scheduledQuery.isEmpty, currentQuery != scheduledQuery {
+                        return false
+                    }
+                    let currentApp = contextTargetApp()
+                    let currentPID = currentApp?.processIdentifier ?? -1
+                    let currentBundleID = currentApp?.bundleIdentifier ?? ""
+                    return currentPID == scheduledTargetPID
+                        && currentBundleID == scheduledTargetBundleID
+                },
                 replaceCachedPills: { pills, preserveFocus in
                     replaceCachedDockPills(pills, preserveFocus: preserveFocus)
                 },
@@ -3527,6 +3947,18 @@ extension LauncherView {
             clearPillKeyboardNavigation: { l2.pillNavViaKeyboard = false }
         )
 
+        // Menu-first contract: cache/live AX results may arrive after no-menu chat was
+        // auto-armed. If a real scoped menu now matches, return routing to menu mode.
+        if isGlobalScopedNoMenuChatComposerArmed,
+            pills.contains(where: { !$0.isSeparator && !isSearchOnlyDockPill($0) })
+        {
+            l2.chatArmed = false
+            l2.chatAutoArmedForNoMenuMatch = false
+            l2.chatDismissed = true
+            l2.chatDraftAppName = ""
+            l2.chatDraftBundleId = ""
+        }
+
         guard preserveFocus, let focusedRenderedPillID else { return }
         let rendered = renderedOrderDockPills(for: q)
         if let newIndex = rendered.firstIndex(where: { $0.id == focusedRenderedPillID && !$0.isSeparator }) {
@@ -3561,7 +3993,7 @@ extension LauncherView {
         // Selection Scope FIRST — dedicated to the selection. Runs before the question-style
         // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
         // point is to ask the AI about the selection). Never empty → stable result sheet.
-        if isGlobalContextActive && hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             let finderFilePills = buildFinderFilePills(query: q)
             let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
             let macOSExtensionPills = buildMacOSExtensionActionPills(
@@ -3577,7 +4009,9 @@ extension LauncherView {
                 allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             )
             var sel: [DockPill] = finderFilePills + macOSExtensionPills + finderMenuPills
-            sel.append(selectionScopeAskAIPill(query: q))
+            if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sel.append(selectionScopeAskAIPill(query: q))
+            }
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
@@ -3661,6 +4095,7 @@ extension LauncherView {
         pills.append(contentsOf: buildShareQueryDestinationPills(query: q))
         pills.append(contentsOf: buildContextDockSelectionAIPills(query: q))
         pills.append(contentsOf: buildNativeWritingToolPills(query: q))
+        pills.append(contentsOf: buildMarkItDownPagePills(query: q))
         // Safari page-level command pills (search, click, open) — appear before AX menu items
         pills.append(contentsOf: buildSafariCommandPills(query: q))
         pills.append(contentsOf: buildSafariRecentURLPills(query: q))
@@ -3747,6 +4182,21 @@ extension LauncherView {
                 return browserContentSearchDockPill(intent)
             }
             return appContentSearchDockPill(intent)
+        }()
+        // Explicit "Chat with <App>" action so the user can jump into the frontmost-app chat
+        // even when menu commands match (auto-arm only fires when NO menu matches).
+        let chatWithAppPill: DockPill? = {
+            guard !isGlobalContextActive, !isGlobalScope, !isFinderDesktopOnlyMode else {
+                return nil
+            }
+            let bundleId = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            let appName = scopedAppName.isEmpty ? frontmost.name : scopedAppName
+            guard !bundleId.isEmpty, !appName.isEmpty,
+                bundleId != Bundle.main.bundleIdentifier
+            else { return nil }
+            return chatWithFrontmostAppDockPill(
+                appName: appName, bundleId: bundleId,
+                query: scopedSearchQuery.isEmpty ? q : scopedSearchQuery)
         }()
         let isFinderScopedDock =
             !isGlobalScope
@@ -4027,12 +4477,12 @@ extension LauncherView {
             isExplicitAppScope && !scopedBundleId.isEmpty && scopedBundleId != frontmost.bundleID
         // Selection Scope (Global Context + active selection) is dedicated to the selection —
         // share + AI actions only. Don't surface the frontmost app's menus there.
-        let inSelectionScope = isGlobalContextActive && hasSelectionScopeSurface
+        let inSelectionScope = hasSelectionScopeSurface
         let useSeededMenuPills =
             q.isEmpty && !liveMenuItems.isEmpty && !shouldSuppressMenuForContext
             && !isScopedToOtherApp && !inSelectionScope
 
-        if isGlobalContextActive && hasSelectionScopeSurface {
+        if hasSelectionScopeSurface {
             pills.append(contentsOf: crossAppPills)
         }
 
@@ -4176,8 +4626,8 @@ extension LauncherView {
             pills.append(scopedAppLaunchPill)
         }
 
-        if let appContentSearchPill {
-            pills.append(appContentSearchPill)
+        if let chatWithAppPill {
+            pills.append(chatWithAppPill)
         }
 
         if let messagesSemanticIntentPill {
@@ -4560,6 +5010,10 @@ extension LauncherView {
             return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
         }()
 
+        if visibleMenuMatches.isEmpty, let appContentSearchPill {
+            pills.append(appContentSearchPill)
+        }
+
         if !isFinderDesktopOnlyMode {
         for pill in scopedSystemCommandPills(
             scopedBundleId: scopedBundleId,
@@ -4911,7 +5365,7 @@ extension LauncherView {
             }
         }
         if !isExplicitAppScope {
-            if !(isGlobalContextActive && hasSelectionScopeSurface) {
+            if !hasSelectionScopeSurface {
                 pills += crossAppPills
             }
         }
@@ -4972,7 +5426,7 @@ extension LauncherView {
         // keep the Finder/menu surface broad. The selection state should feel like the native
         // menu bar after selecting a file: File/Edit/View/Go/Window/Help commands stay available,
         // while app launch/recent-app rows are still removed by the selection-scoped filter.
-        guard isGlobalContextActive && hasSelectionScopeSurface && !isExplicitAppScope else {
+        guard hasSelectionScopeSurface && !isExplicitAppScope else {
             return enabled
         }
         return selectionScopedDockPills(enabled)

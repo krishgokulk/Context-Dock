@@ -1,9 +1,20 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
+
+private enum ClipboardScopeRenderCache {
+    static let thumbnails = NSCache<NSString, NSImage>()
+    static let appIcons = NSCache<NSString, NSImage>()
+    static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+}
 
 extension LauncherView {
     // MARK: - Clipboard Pocket Pill
@@ -367,10 +378,19 @@ extension LauncherView {
 
     func clipboardSourceIcon(for entry: ClipboardEntry) -> NSImage? {
         if !entry.sourceBundleId.isEmpty,
+            let cached = ClipboardScopeRenderCache.appIcons.object(
+                forKey: entry.sourceBundleId as NSString)
+        {
+            return cached
+        }
+        if !entry.sourceBundleId.isEmpty,
             let url = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: entry.sourceBundleId)
         {
-            return NSWorkspace.shared.icon(forFile: url.path)
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            ClipboardScopeRenderCache.appIcons.setObject(
+                icon, forKey: entry.sourceBundleId as NSString)
+            return icon
         }
         let name = entry.sourceAppName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !name.isEmpty else { return nil }
@@ -381,10 +401,15 @@ extension LauncherView {
     }
 
     func sourceAppIcon(bundleId: String) -> NSImage? {
+        if let cached = ClipboardScopeRenderCache.appIcons.object(forKey: bundleId as NSString) {
+            return cached
+        }
         guard !bundleId.isEmpty,
             let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
         else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        ClipboardScopeRenderCache.appIcons.setObject(icon, forKey: bundleId as NSString)
+        return icon
     }
 
     func clipboardEntrySubtitle(_ entry: ClipboardEntry) -> String {
@@ -395,9 +420,8 @@ extension LauncherView {
         if entry.fileCount > 0 {
             parts.append(entry.fileCount == 1 ? "1 file" : "\(entry.fileCount) files")
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        let age = formatter.localizedString(for: entry.timestamp, relativeTo: Date())
+        let age = ClipboardScopeRenderCache.relativeDateFormatter.localizedString(
+            for: entry.timestamp, relativeTo: Date())
         parts.append(age)
         return parts.joined(separator: " • ")
     }
@@ -458,7 +482,7 @@ extension LauncherView {
     }
 
     func selectedClipboardEntriesForPaste(fallback entry: ClipboardEntry? = nil) -> [ClipboardEntry] {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         let selected = entries.filter { selectedClipboardEntryIDs.contains($0.id) }
         if !selected.isEmpty {
             return selected
@@ -475,7 +499,7 @@ extension LauncherView {
         let relevant = relevantClipboardHistory()
         let selected = relevant.filter { selectedClipboardEntryIDs.contains($0.id) }
         if !selected.isEmpty { return selected }
-        let filtered = filteredClipboardEntriesForScope()
+        let filtered = visibleClipboardEntriesForScope()
         let index = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? 0
         guard filtered.indices.contains(index) else {
             return relevant.first.map { [$0] } ?? []
@@ -831,8 +855,7 @@ extension LauncherView {
     }
 
     func clipboardSearchResults() -> [SearchResult] {
-        clipboardEntriesForScope(query: searchState.query).map { entry in
-            let previewURL = quickLookURL(for: entry)
+        visibleClipboardEntriesForScope().map { entry in
             return SearchResult(
                 title: entry.preview,
                 subtitle: clipboardEntrySubtitle(entry),
@@ -842,7 +865,9 @@ extension LauncherView {
                 },
                 score: 100,
                 type: entry.fileCount > 0 ? .file : .document,
-                filePath: previewURL?.path ?? entry.filePaths.first,
+                // Image/text preview files are created only when Quick Look is requested.
+                // Writing one file per row here blocks the main thread before scrolling.
+                filePath: entry.filePaths.first,
                 contactData: nil,
                 displayBadges: entry.ocrText.isEmpty ? [] : ["OCR"],
                 showsTypeLabel: false,
@@ -881,8 +906,28 @@ extension LauncherView {
         refreshQuickLookPreviewForCurrentFocusIfVisible()
     }
 
+    /// Provider usage rows as SearchResults so the notification scope has content
+    /// (and a correctly-sized sheet) the moment it opens, before any notification.
+    func aiUsageSearchResults() -> [SearchResult] {
+        aiUsageScopeRows().map { row in
+            SearchResult(
+                title: row.title,
+                subtitle: row.subtitle,
+                icon: NSImage(
+                    systemSymbolName: row.systemIcon, accessibilityDescription: row.title),
+                action: {},
+                type: .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                displayBadges: ["Usage"],
+                showsTypeLabel: false,
+                dismissesLauncher: false
+            )
+        }
+    }
+
     func notificationSearchResults() -> [SearchResult] {
-        filteredNotificationsForScope().map { notification in
+        aiUsageSearchResults() + filteredNotificationsForScope().map { notification in
             SearchResult(
                 title: notification.title,
                 subtitle:
@@ -1132,17 +1177,22 @@ extension LauncherView {
         }
     }
 
-    @ViewBuilder
-    var notificationScopeView: some View {
+    func notificationScopeSections() -> [SharedResultSectionModel] {
         let visible = filteredNotificationsForScope()
         let rows = visible.enumerated().map { index, notification in
             notificationSharedRow(notification, index: index)
         }
-        let sections = [
-            SharedResultSectionModel(id: "notifications", title: "Notifications", rows: rows)
+        return [
+            SharedResultSectionModel(
+                id: "usage", title: "AI Provider Usage", rows: aiUsageScopeRows()),
+            SharedResultSectionModel(id: "notifications", title: "Notifications", rows: rows),
         ]
+    }
+
+    @ViewBuilder
+    var notificationScopeView: some View {
         sharedResultSheet(
-            sections: sections,
+            sections: notificationScopeSections(),
             emptyIcon: "bell.slash",
             emptyTitle: searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "No notifications"
@@ -1152,6 +1202,50 @@ extension LauncherView {
             if searchState.activeSmartQueryKey == "notifications" {
                 refreshCompactScopeResults(resetSelection: false)
             }
+        }
+        .onReceive(usageStore.$usage) { _ in
+            if searchState.activeSmartQueryKey == "notifications" {
+                refreshCompactScopeResults(resetSelection: false)
+            }
+        }
+    }
+
+    /// Live per-provider rate-limit rows (from API response headers). Shows a hint
+    /// row until the first API-key request populates real numbers.
+    func aiUsageScopeRows() -> [SharedResultRowModel] {
+        let usage = usageStore.usage
+        guard !usage.isEmpty else {
+            return [
+                SharedResultRowModel(
+                    id: "usage-empty",
+                    title: "Usage appears after your next AI request",
+                    subtitle: "API-key providers report remaining requests/tokens; "
+                        + "subscription & bridge providers don't expose limits.",
+                    systemIcon: "gauge.with.dots.needle.bottom.50percent"
+                )
+            ]
+        }
+        return usage.map { u in
+            var parts: [String] = []
+            if let remaining = u.remainingRequests {
+                let limit = u.limitRequests.map { "/\($0)" } ?? ""
+                parts.append("requests \(remaining)\(limit)")
+            } else if let limit = u.limitRequests {
+                parts.append("request limit \(limit)")
+            }
+            if let remaining = u.remainingTokens {
+                let limit = u.limitTokens.map { "/\($0)" } ?? ""
+                parts.append("tokens \(remaining)\(limit)")
+            } else if let limit = u.limitTokens {
+                parts.append("token limit \(limit)")
+            }
+            if let reset = u.resetText { parts.append(reset) }
+            return SharedResultRowModel(
+                id: "usage-\(u.id)",
+                title: u.providerName,
+                subtitle: parts.joined(separator: " • "),
+                systemIcon: "gauge.with.dots.needle.67percent"
+            )
         }
     }
 
@@ -1318,7 +1412,26 @@ extension LauncherView {
     }
 
     func clipboardEntryImage(for entry: ClipboardEntry) -> NSImage? {
-        if let imageData = entry.imageData, let image = NSImage(data: imageData) {
+        let cacheKey = entry.id.uuidString as NSString
+        if let cached = ClipboardScopeRenderCache.thumbnails.object(forKey: cacheKey) {
+            return cached
+        }
+        if let imageData = entry.imageData,
+            let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+            let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 320,
+                    kCGImageSourceShouldCacheImmediately: true,
+                ] as CFDictionary
+            )
+        {
+            let image = NSImage(cgImage: thumbnail, size: .zero)
+            ClipboardScopeRenderCache.thumbnails.setObject(
+                image, forKey: cacheKey, cost: thumbnail.bytesPerRow * thumbnail.height)
             return image
         }
         if entry.filePaths.count == 1 {
@@ -1373,7 +1486,7 @@ extension LauncherView {
                 "clipboard",
                 "clip",
             ]
-            pill.quickLookURL = quickLookURL(for: entry)
+            pill.quickLookURL = entry.filePaths.first.map { URL(fileURLWithPath: $0) }
             pill.dragProvider = {
                 clipboardDragProvider(for: entry)
             }
@@ -1383,19 +1496,133 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// Clipboard surface with source-app pills above the vertically scrolling results.
+    /// Selecting an app pill filters the list to that app's clips; the input filters
+    /// across everything as usual.
     var clipboardScopeView: some View {
         let entries = filteredClipboardEntriesForScope()
-        let rows = entries.enumerated().map { index, entry in
+        let scoped =
+            clipboardSourceFilterBundleId.isEmpty
+            ? entries
+            : entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
+        let rows = scoped.enumerated().map { index, entry in
             clipboardSharedRow(entry, index: index)
         }
-        sharedResultSheet(
-            sections: [
-                SharedResultSectionModel(id: "clipboard", title: "Clipboard Items", rows: rows)
-            ],
-            emptyIcon: "doc.on.clipboard",
-            emptyTitle: "Clipboard is empty"
-        )
+        return VStack(spacing: 0) {
+            clipboardSourceAppPills(entries)
+            Divider().opacity(0.35)
+            sharedResultSheet(
+                sections: [
+                    SharedResultSectionModel(
+                        id: "clipboard",
+                        title: clipboardSourceFilterBundleId.isEmpty
+                            ? "Clipboard Items"
+                            : (clipboardSourceFilterName.isEmpty
+                                ? "Clipboard Items" : "\(clipboardSourceFilterName) Clips"),
+                        rows: rows)
+                ],
+                emptyIcon: "doc.on.clipboard",
+                emptyTitle: "Clipboard is empty"
+            )
+        }
     }
+
+    /// One floating pill per source app; tap to filter to its clips.
+    @ViewBuilder
+    func clipboardSourceAppPills(_ entries: [ClipboardEntry]) -> some View {
+        let groups = clipboardSourceGroups(entries)
+        if !entries.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        clipboardSourcePill(
+                            name: "All", bundleId: "", count: entries.count,
+                            isSelected: clipboardSourceFilterBundleId.isEmpty)
+                        ForEach(groups, id: \.bundleId) { group in
+                            clipboardSourcePill(
+                                name: group.name, bundleId: group.bundleId, count: group.count,
+                                isSelected: clipboardSourceFilterBundleId == group.bundleId)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .onChange(of: clipboardSourceFilterBundleId) { _, bundleId in
+                    guard clipboardSourcePillFocusIndex != nil else { return }
+                    proxy.scrollTo("clipboard-source-\(bundleId)", anchor: .center)
+                }
+            }
+        }
+    }
+
+    func clipboardSourcePill(name: String, bundleId: String, count: Int, isSelected: Bool)
+        -> some View
+    {
+        Button {
+            clipboardSourceFilterBundleId = isSelected ? "" : bundleId
+            clipboardSourceFilterName = isSelected ? "" : name
+            clipboardSourcePillFocusIndex = nil
+            refreshCompactScopeResults(resetSelection: true)
+        } label: {
+            HStack(spacing: 6) {
+                if !bundleId.isEmpty, let icon = sourceAppIcon(bundleId: bundleId) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 14, height: 14)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                } else {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(name)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
+                in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .id("clipboard-source-\(bundleId)")
+    }
+
+    func clipboardSourceGroups(_ entries: [ClipboardEntry])
+        -> [(bundleId: String, name: String, count: Int)]
+    {
+        var order: [String] = []
+        var names: [String: String] = [:]
+        var counts: [String: Int] = [:]
+        for entry in entries where !entry.sourceBundleId.isEmpty {
+            if counts[entry.sourceBundleId] == nil {
+                order.append(entry.sourceBundleId)
+                names[entry.sourceBundleId] =
+                    entry.sourceAppName.isEmpty ? entry.sourceBundleId : entry.sourceAppName
+            }
+            counts[entry.sourceBundleId, default: 0] += 1
+        }
+        return order.map {
+            (bundleId: $0, name: names[$0] ?? $0, count: counts[$0] ?? 0)
+        }
+    }
+
+    func clipboardEntryPreviewText(_ entry: ClipboardEntry) -> String {
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { return text }
+        if !entry.filePaths.isEmpty {
+            return entry.filePaths.map { ($0 as NSString).lastPathComponent }
+                .joined(separator: ", ")
+        }
+        return entry.imageData != nil ? "Image" : "Empty"
+    }
+
 
     var clipboardScopeHeader: some View {
         HStack(spacing: 8) {
@@ -1435,7 +1662,7 @@ extension LauncherView {
             badges: entry.ocrText.isEmpty ? [] : ["OCR"],
             isFocused: focusedClipboardEntryIndex == index || searchState.selectedIndex == index
                 || selectedClipboardEntryIDs.contains(entry.id),
-            quickLookURL: quickLookURL(for: entry),
+            quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
             dragProvider: { clipboardDragProvider(for: entry) },
             open: {
                 pasteClipboardEntryToFrontmost(entry, index: index)
@@ -1461,8 +1688,62 @@ extension LauncherView {
         clipboardEntriesForScope(query: searchState.query)
     }
 
-    func navigateClipboardScope(direction: Int) {
+    func visibleClipboardEntriesForScope() -> [ClipboardEntry] {
         let entries = filteredClipboardEntriesForScope()
+        guard !clipboardSourceFilterBundleId.isEmpty else { return entries }
+        return entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
+    }
+
+    func clipboardSourceChoices() -> [(bundleId: String, name: String, count: Int)] {
+        let entries = filteredClipboardEntriesForScope()
+        return [(bundleId: "", name: "All", count: entries.count)]
+            + clipboardSourceGroups(entries)
+    }
+
+    func focusFirstClipboardSourcePill() {
+        clipboardSourcePillFocusIndex = 0
+        clipboardSourceFilterBundleId = ""
+        clipboardSourceFilterName = ""
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        isKeyboardNavigation = true
+        refreshCompactScopeResults(resetSelection: true)
+    }
+
+    @discardableResult
+    func advanceClipboardSourcePill() -> Bool {
+        guard let current = clipboardSourcePillFocusIndex else { return false }
+        let choices = clipboardSourceChoices()
+        guard !choices.isEmpty else { return false }
+        let next = min(current + 1, choices.count - 1)
+        let choice = choices[next]
+        clipboardSourcePillFocusIndex = next
+        clipboardSourceFilterBundleId = choice.bundleId
+        clipboardSourceFilterName = choice.bundleId.isEmpty ? "" : choice.name
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        refreshCompactScopeResults(resetSelection: true)
+        return true
+    }
+
+    @discardableResult
+    func retreatClipboardSourcePill() -> Bool {
+        guard let current = clipboardSourcePillFocusIndex else { return false }
+        let choices = clipboardSourceChoices()
+        guard !choices.isEmpty else { return false }
+        let previous = max(current - 1, 0)
+        let choice = choices[previous]
+        clipboardSourcePillFocusIndex = previous
+        clipboardSourceFilterBundleId = choice.bundleId
+        clipboardSourceFilterName = choice.bundleId.isEmpty ? "" : choice.name
+        focusedClipboardEntryIndex = nil
+        searchState.selectedIndex = nil
+        refreshCompactScopeResults(resetSelection: true)
+        return true
+    }
+
+    func navigateClipboardScope(direction: Int) {
+        let entries = visibleClipboardEntriesForScope()
         guard !entries.isEmpty else {
             focusedClipboardEntryIndex = nil
             return
@@ -1474,12 +1755,14 @@ extension LauncherView {
 
         let current = focusedClipboardEntryIndex ?? (direction < 0 ? entries.count : -1)
         if direction < 0, current <= 0 {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
-                focusedClipboardEntryIndex = nil
-                searchState.selectedIndex = nil
-                isKeyboardNavigation = false
-                isSearchFieldFocused = true
-            }
+            focusedClipboardEntryIndex = nil
+            searchState.selectedIndex = nil
+            let choices = clipboardSourceChoices()
+            clipboardSourcePillFocusIndex = choices.firstIndex {
+                $0.bundleId == clipboardSourceFilterBundleId
+            } ?? 0
+            isKeyboardNavigation = true
+            isSearchFieldFocused = true
             refreshQuickLookPreviewForCurrentFocusIfVisible()
             return
         }
@@ -1502,7 +1785,7 @@ extension LauncherView {
     }
 
     func extendClipboardSelection(direction: Int) {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         guard !entries.isEmpty else {
             focusedClipboardEntryIndex = nil
             selectedClipboardEntryIDs.removeAll()
@@ -1520,7 +1803,7 @@ extension LauncherView {
     }
 
     func quickLookFocusedClipboardEntry() {
-        let entries = filteredClipboardEntriesForScope()
+        let entries = visibleClipboardEntriesForScope()
         let index = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? 0
         guard entries.indices.contains(index) else { return }
         focusedClipboardEntryIndex = index

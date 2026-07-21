@@ -37,6 +37,9 @@ struct L2State {
     var terminalDismissed: Bool = false
     var activeDockSessionKey: String? = nil
     var isLoading: Bool = false
+    /// Truthful, user-visible orchestration activity for Context Dock chat.
+    /// This reports app/tool work, never private model reasoning.
+    var loadingStatus: String? = nil
     var currentTask: Task<Void, Never>? = nil
     var activeRequestID: UUID? = nil
     var contextExtensions: [ExtensionDiscoveryResult] = []
@@ -52,6 +55,7 @@ struct L2State {
     var showResultsPopover: Bool = false
     var showChatPopover: Bool = false
     var chatArmed: Bool = false
+    var chatAutoArmedForNoMenuMatch: Bool = false
     var chatDismissed: Bool = false
     var chatDraftAppName: String = ""
     var chatDraftBundleId: String = ""
@@ -68,6 +72,10 @@ struct AIModeState {
     var loadingStatus: String? = nil
     /// Tool chips collected during the current request, attached to the final answer.
     var pendingToolChips: [String] = []
+    /// Minimal DoraX Action Chat execution state (planner stages + discovered routes +
+    /// chosen route). Nil when no action is in flight. Deliberately tiny — a launcher
+    /// progress strip, not an IDE "thinking" log.
+    var actionProgress: ActionProgress? = nil
     var currentTask: Task<Void, Never>? = nil
     var streamingId: UUID? = nil
     var attachments: [URL] = []
@@ -84,6 +92,32 @@ struct AIModeState {
 struct PendingSelectionShare: Equatable {
     let text: String
     let destination: String
+}
+
+/// Tiny planner-progress model for General AI Chat's DoraX Action Chat pipeline. Ordered
+/// stage labels with a completed count (first N done, the next is active); an optional
+/// discovered-route checklist under "Discovering capabilities"; and the chosen route +
+/// reason. Rendered as a compact strip, never a scrolling log.
+struct ActionProgress: Equatable {
+    var steps: [String] = []
+    var completedCount: Int = 0
+    var discovered: [String] = []
+    var selectedRoute: String? = nil
+    var selectedReason: String? = nil
+    var failed: Bool = false
+
+    /// Append a stage (if new) and mark everything up to and including the previous one done.
+    mutating func advance(to label: String) {
+        if let idx = steps.firstIndex(of: label) {
+            completedCount = idx
+        } else {
+            completedCount = steps.count
+            steps.append(label)
+        }
+    }
+
+    /// Mark every stage complete (terminal "Done").
+    mutating func finish() { completedCount = steps.count }
 }
 
 // MARK: - Frontmost App
@@ -143,6 +177,7 @@ struct AppCompletion: Equatable {
 struct GlobalContextActivation: Equatable {
     var autoActivated: Bool
     var frozenText: String?
+    var frozenFullText: String?
     var frozenIcon: String?
     var sourceBundleId: String?
     var frozenFilePaths: [String]
@@ -152,12 +187,14 @@ struct GlobalContextActivation: Equatable {
     init(
         autoActivated: Bool,
         frozenText: String? = nil,
+        frozenFullText: String? = nil,
         frozenIcon: String? = nil,
         sourceBundleId: String? = nil,
         frozenFilePaths: [String] = []
     ) {
         self.autoActivated = autoActivated
         self.frozenText = frozenText
+        self.frozenFullText = frozenFullText
         self.frozenIcon = frozenIcon
         self.sourceBundleId = sourceBundleId
         self.frozenFilePaths = frozenFilePaths

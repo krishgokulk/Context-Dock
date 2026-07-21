@@ -318,7 +318,12 @@ final class AppAdapterManager: ObservableObject {
         var errors: [(file: String, message: String)] = []
 
         for url in contents where url.pathExtension == "json" && !url.lastPathComponent.hasPrefix("_") {
-            if legacySampleFileNames.contains(url.lastPathComponent) { continue }
+            // Only skip old bundled sample files while reading the legacy ILauncher
+            // directory. User-created DoraX adapters may legitimately be named
+            // Photos.json, Obsidian.json, etc.; skipping them makes Create Adapter
+            // appear to do nothing.
+            if url.deletingLastPathComponent() == legacyAdaptersDirectory,
+               legacySampleFileNames.contains(url.lastPathComponent) { continue }
             guard let data = try? Data(contentsOf: url) else {
                 errors.append((url.lastPathComponent, "Could not read file"))
                 continue
@@ -358,25 +363,22 @@ final class AppAdapterManager: ObservableObject {
         mirrorVirtualScopeAdaptersIntoGlobalCommands(deduped)
         loadErrors = errors
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
-        await seedStarterActionsIntoEmptyAdapters()
+        await seedStarterActionsIntoAdapters()
         await AdapterIntegrationSeeder.seedIfNeeded()
         AdapterSkillSeeder.seedIfNeeded()
     }
 
-    /// One-time backfill: any existing adapter with zero actions gets its starter set,
-    /// so no adapter ever shows "No actions yet". Seeds each bundle id at most once —
-    /// a user who deletes the starter action won't see it come back.
-    private func seedStarterActionsIntoEmptyAdapters() async {
-        let empties = adapters.filter {
-            $0.actions.isEmpty
-                && !$0.bundleId.hasPrefix("scope://")
+    /// Add the current built-in pack to every adapter once per catalog version.
+    /// Existing actions win by id, preserving imports and user edits.
+    private func seedStarterActionsIntoAdapters() async {
+        let pending = adapters.filter {
+            !$0.bundleId.hasPrefix("scope://")
                 && !AdapterStarterActions.alreadySeeded($0.bundleId)
         }
-        guard !empties.isEmpty else { return }
-        for adapter in empties {
+        guard !pending.isEmpty else { return }
+        for adapter in pending {
             var updated = adapter
-            updated.actions = AdapterStarterActions.starters(
-                for: adapter.bundleId, appName: adapter.appName)
+            updated.actions.append(contentsOf: AdapterStarterActions.missingStarters(for: adapter))
             updated.isBuiltIn = false
             AdapterStarterActions.markSeeded(adapter.bundleId)
             persistAdapter(updated, to: adapter.sourceFileURL ?? adapterFileURL(for: updated))
