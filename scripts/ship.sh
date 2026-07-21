@@ -72,16 +72,13 @@ rm -rf .build
 # build, so macOS treats each update as a NEW app and drops its Accessibility /
 # Full Disk Access / Input Monitoring grants. A stable signing identity keeps the
 # TCC designated requirement constant, so permissions persist across updates.
-# Detect the local Apple Development identity and its Team ID so signing uses the
-# cert actually installed on this machine (the project's stored team may differ).
-SIGN_TEAM="$(security find-identity -v -p codesigning \
-  | sed -n 's/.*Apple Development:.*(\([A-Z0-9]*\)).*/\1/p' | head -1)"
+# Build UNSIGNED (the project's stored team has no matching cert on this machine,
+# and forcing automatic signing breaks the SPM deps). We codesign the product
+# ourselves below with the locally-installed Apple Development identity — a stable
+# signature so macOS keeps the app's permissions across updates.
 xcodebuild -project Context-Dock.xcodeproj -scheme "$APP_NAME" -configuration Release \
   -derivedDataPath .build/XcodeDerivedData -jobs 1 \
-  CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" \
-  ${SIGN_TEAM:+DEVELOPMENT_TEAM="$SIGN_TEAM"} \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
-  COMPILER_INDEX_STORE_ENABLE=NO clean build \
+  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO clean build \
   > "$BUILD_LOG" 2>&1 || true
 
 APP=".build/XcodeDerivedData/Build/Products/Release/$APP_NAME.app"
@@ -93,11 +90,30 @@ fi
 BUILT="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")"
 [ "$BUILT" = "$BUILD" ] || { restore_journal; die "Built app is build $BUILT, expected $BUILD."; }
 
+# ── Sign with the installed Apple Development identity (stable → permissions
+#    persist across updates). Sign inside-out: nested code first, app last. ──
+SIGN_HASH="$(security find-identity -v -p codesigning | awk '/Apple Development/{print $2; exit}')"
+[ -n "$SIGN_HASH" ] || { restore_journal; die "No Apple Development signing identity found."; }
+CS="codesign --force --timestamp=none --sign $SIGN_HASH"
+# Bundled frameworks / dylibs (SwiftTerm etc.) — no entitlements.
+if [ -d "$APP/Contents/Frameworks" ]; then
+  find "$APP/Contents/Frameworks" \( -name '*.framework' -o -name '*.dylib' \) -print0 \
+    | while IFS= read -r -d '' f; do $CS "$f" >/dev/null 2>&1 || true; done
+fi
+# Safari extension with its own entitlements, then the app with its entitlements.
+if [ -d "$APP/Contents/PlugIns/$APP_NAME"Extension.appex ]; then
+  $CS --entitlements Context-DockExtension/Context-DockExtension.entitlements \
+    "$APP/Contents/PlugIns/$APP_NAME"Extension.appex >/dev/null 2>&1 || true
+fi
+$CS --entitlements Context-Dock/ILauncher.entitlements "$APP" \
+  || { restore_journal; die "Signing the app failed."; }
+
 # Confirm a stable (non-ad-hoc) signature so permissions carry across updates.
 SIGN_AUTH="$(codesign -dvv "$APP" 2>&1 | awk -F'= ' '/Authority=/{print $2; exit}')"
+codesign --verify --strict "$APP" >/dev/null 2>&1 || { restore_journal; die "Signature verify failed."; }
 if [ -z "$SIGN_AUTH" ] || echo "$SIGN_AUTH" | grep -qi "adhoc"; then
   restore_journal
-  die "Release is not stably signed (Authority='${SIGN_AUTH:-none}'). Permissions would reset on every update. Check the signing identity."
+  die "Release is not stably signed (Authority='${SIGN_AUTH:-none}'). Permissions would reset on every update."
 fi
 ok "Built $APP_NAME $VERSION ($BUILD) — signed by $SIGN_AUTH"
 
