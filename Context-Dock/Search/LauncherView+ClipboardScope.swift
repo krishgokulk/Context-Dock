@@ -1230,10 +1230,14 @@ extension LauncherView {
             if let remaining = u.remainingRequests {
                 let limit = u.limitRequests.map { "/\($0)" } ?? ""
                 parts.append("requests \(remaining)\(limit)")
+            } else if let limit = u.limitRequests {
+                parts.append("request limit \(limit)")
             }
             if let remaining = u.remainingTokens {
                 let limit = u.limitTokens.map { "/\($0)" } ?? ""
                 parts.append("tokens \(remaining)\(limit)")
+            } else if let limit = u.limitTokens {
+                parts.append("token limit \(limit)")
             }
             if let reset = u.resetText { parts.append(reset) }
             return SharedResultRowModel(

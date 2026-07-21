@@ -763,7 +763,16 @@ extension LauncherView {
         guard shouldShowGlobalRunningAppStrip else { return [] }
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
-        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
+        // Keep the stable cached ordering, but merge a fresh workspace read before cycling.
+        // Electron apps such as VS Code can become `.regular` after the original launch
+        // notification snapshot; using only a non-empty cache permanently omitted them.
+        var liveSeen = Set<String>()
+        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
+            let identity = app.bundleIdentifier
+                ?? app.bundleURL?.standardizedFileURL.path
+                ?? "pid:\(app.processIdentifier)"
+            return liveSeen.insert(identity).inserted
+        }
         let frontmostApp = source.first { app in
             !frontmostBundle.isEmpty
                 && frontmostBundle != "com.apple.finder"
@@ -811,7 +820,13 @@ extension LauncherView {
         let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedBundle = currentGlobalScopedBundleID
         var seen = Set<String>()
-        let source = runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
+        var cycleSourceSeen = Set<String>()
+        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
+            let identity = app.bundleIdentifier
+                ?? app.bundleURL?.standardizedFileURL.path
+                ?? "pid:\(app.processIdentifier)"
+            return cycleSourceSeen.insert(identity).inserted
+        }
         let frontmostApp = source.first { app in
             !frontmostBundle.isEmpty
                 && frontmostBundle != "com.apple.finder"

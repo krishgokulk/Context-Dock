@@ -10,7 +10,7 @@
 import Combine
 import Foundation
 
-struct AIProviderUsage: Identifiable {
+struct AIProviderUsage: Identifiable, Codable {
     let id: String  // host
     var providerName: String
     var remainingRequests: Int?
@@ -27,13 +27,27 @@ final class AIProviderUsageStore: ObservableObject {
 
     @Published private(set) var usage: [AIProviderUsage] = []
 
-    private init() {}
+    private let persistenceKey = "AIProviderUsageStore.snapshots.v1"
+
+    private init() {
+        guard let data = UserDefaults.standard.data(forKey: persistenceKey),
+            let saved = try? JSONDecoder().decode([AIProviderUsage].self, from: data)
+        else { return }
+        usage = saved.sorted { $0.providerName < $1.providerName }
+    }
 
     /// Record rate-limit headers from a provider response, keyed by host.
     nonisolated func record(host: String, headers: [AnyHashable: Any]) {
+        // HTTP header names are case-insensitive. `HTTPURLResponse.allHeaderFields` commonly
+        // supplies title-cased keys (for example `X-RateLimit-Remaining-Requests`), while direct
+        // dictionary subscripting is case-sensitive. Normalize once before reading any quota.
+        let normalizedHeaders: [String: String] = headers.reduce(into: [:]) { result, entry in
+            let key = String(describing: entry.key).lowercased()
+            result[key] = String(describing: entry.value)
+        }
         func intValue(_ keys: [String]) -> Int? {
             for key in keys {
-                if let raw = headers[key] as? String ?? headers[key.lowercased()] as? String,
+                if let raw = normalizedHeaders[key.lowercased()],
                     let value = Int(raw.trimmingCharacters(in: .whitespaces))
                 {
                     return value
@@ -43,7 +57,7 @@ final class AIProviderUsageStore: ObservableObject {
         }
         func stringValue(_ keys: [String]) -> String? {
             for key in keys {
-                if let raw = headers[key] as? String ?? headers[key.lowercased()] as? String,
+                if let raw = normalizedHeaders[key.lowercased()],
                     !raw.isEmpty
                 {
                     return raw
@@ -70,7 +84,9 @@ final class AIProviderUsageStore: ObservableObject {
         ])
 
         // Nothing useful in these headers — skip (e.g. a local/Ollama endpoint).
-        guard remainingRequests != nil || remainingTokens != nil else { return }
+        guard remainingRequests != nil || limitRequests != nil
+            || remainingTokens != nil || limitTokens != nil
+        else { return }
 
         let snapshot = AIProviderUsage(
             id: host,
@@ -90,6 +106,9 @@ final class AIProviderUsageStore: ObservableObject {
                 self.usage.append(snapshot)
             }
             self.usage.sort { $0.providerName < $1.providerName }
+            if let data = try? JSONEncoder().encode(self.usage) {
+                UserDefaults.standard.set(data, forKey: self.persistenceKey)
+            }
         }
     }
 
