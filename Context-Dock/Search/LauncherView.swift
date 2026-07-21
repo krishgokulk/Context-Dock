@@ -540,6 +540,10 @@ struct LauncherView: View {
         if hasSelectionScopeSurface { return true }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Finder desktop-only mode is a dedicated file-search scope. Once the user types,
+        // it owns the result sheet even while its fast index or Spotlight enrichment is
+        // publishing rows; never collapse back to the input capsule between snapshots.
+        if isFinderDesktopOnlyMode && !q.isEmpty { return true }
         if shouldUsePureGlobalAppSearch {
             let hasExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
@@ -592,7 +596,11 @@ struct LauncherView: View {
             && !q.isEmpty
             && !visibleActionPills.isEmpty
             && !hasRealContextDockActionPills
-        if searchOnlyContextDockPills {
+        // Finder desktop-only mode is itself a file-search surface. Its primary file/folder
+        // rows can carry the shared `contentSearch` ranking kind, so treating them like the
+        // generic cross-app "Search …" suggestions collapses the result sheet even though
+        // Finder has real matches ready to render.
+        if searchOnlyContextDockPills && !isFinderDesktopOnlyMode {
             return false
         }
         if contextDockBuildInFlight {

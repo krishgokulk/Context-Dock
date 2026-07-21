@@ -1267,6 +1267,11 @@ extension LauncherView {
             return visiblePills.contains { !$0.isSeparator }
         }
         guard !q.isEmpty else { return false }
+        // Finder desktop search must keep its shared sheet alive while its cache and
+        // Spotlight passes exchange snapshots. The rendered list supplies either files,
+        // setup guidance, or a no-results row, so an empty intermediate array is not a
+        // reason to hide the surface.
+        if isFinderDesktopOnlyMode { return true }
         if !isGlobalContextActive {
             // Keep the row while the debounced pill build is in flight (no flicker), but
             // once the query resolves to ZERO results collapse back to the compact input

@@ -806,6 +806,8 @@ extension LauncherView {
         // Data & Storage where search directories are added.
         if finderDesktopHasNoSearchScope {
             ranked.append(finderAddSearchDirectorySuggestionPill())
+        } else if ranked.isEmpty, !q.isEmpty {
+            ranked.append(finderDesktopNoResultsPill(query: q))
         }
         replaceCachedDockPills(ranked, preserveFocus: preserveFocus)
         lastPillQuery = q
@@ -849,6 +851,11 @@ extension LauncherView {
                 guard var pill = contextDockViewModel.finderDesktopPillsByPath[pathKey] else { continue }
                 pill.rankingScore = Double(score)
                 pills.append(pill)
+            }
+            if pills.isEmpty {
+                pills = finderDesktopHasNoSearchScope
+                    ? [finderAddSearchDirectorySuggestionPill()]
+                    : [finderDesktopNoResultsPill(query: q)]
             }
             replaceCachedDockPills(pills, preserveFocus: preserveFocus)
             lastPillQuery = q
@@ -972,6 +979,21 @@ extension LauncherView {
         pill.trackingIdentifier = "finder-setup-hint"
         pill.searchTerms = ["add", "folder", "search", "directory", "settings"]
         pill.rankingScore = -1  // keep at the very end of the list
+        return pill
+    }
+
+    func finderDesktopNoResultsPill(query: String) -> DockPill {
+        var pill = DockPill(
+            id: "finder-no-results-\(query)",
+            name: "No files or folders found",
+            icon: "magnifyingglass",
+            accentColorName: "gray",
+            badge: query,
+            execute: {}
+        )
+        pill.rankingKind = "emptyState"
+        pill.trackingIdentifier = "finder-no-results"
+        pill.isEnabled = false
         return pill
     }
 
