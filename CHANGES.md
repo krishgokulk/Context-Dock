@@ -588,3 +588,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-21 12:14 · `5e307c63` · `codex-context-dock-polish-fixes`
 **fix(finder): retain desktop search sheet**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 13:30 · `36df5769` · `codex-context-dock-polish-fixes`
+**chore: commit pending source changes before release**
+Swift: +1 added · ~8 modified · -0 deleted

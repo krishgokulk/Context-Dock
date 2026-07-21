@@ -9,7 +9,8 @@
       "Bash(echo \"value-read exit=$?\")",
       "Bash(CD_QUERY=dark osascript -e 'set rawValue to system attribute \"CD_QUERY\" *)",
       "Bash(echo \"set-dark exit=$?\")",
-      "Bash(awk 'NR>=1300 && NR<=1420 && /func |enum .*{|-> .*KeyHandl|case .down|case 125/' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)"
+      "Bash(awk 'NR>=1300 && NR<=1420 && /func |enum .*{|-> .*KeyHandl|case .down|case 125/' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
+      "Bash(./scripts/ship.sh)"
     ]
   }
 }
