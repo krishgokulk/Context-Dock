@@ -542,7 +542,7 @@ final class GlobalContextSearchCoordinator {
         let snapshot = self.snapshot(
             query: rawQuery,
             limit: 48,
-            includeCachedMenus: false,
+            includeCachedMenus: true,
             includeRunningCachedMenus: true
         )
         let elapsedMS = Date().timeIntervalSince(started) * 1_000

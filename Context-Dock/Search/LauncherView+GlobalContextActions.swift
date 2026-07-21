@@ -1283,9 +1283,9 @@ extension LauncherView {
         if globalContextViewModel.isResolvingFastMatches {
             return emptyGlobalGroupedListNavigationState()
         }
-        if shouldUsePureGlobalAppSearch {
-            return instantGlobalGroupedListNavigationState(for: q)
-        }
+        // SwiftUI presentation reads this method many times per frame. Never start full
+        // indexed/grouped search work from body evaluation; only consume committed state.
+        // The detached preparation pipeline publishes the snapshot before expansion.
         return emptyGlobalGroupedListNavigationState()
     }
 
@@ -1413,7 +1413,9 @@ extension LauncherView {
             q.count >= 2 && GlobalSearchService.shared.documentCount > 0
             ? indexedGlobalDocuments(
                 for: q,
-                limit: max(32, maxListViewDockPills * 3),
+                // Match the detached preparation key so auto-expansion consumes its hot
+                // cached snapshot instead of repeating the index query on the main actor.
+                limit: 48,
                 includeCachedMenus: true,
                 includeRunningCachedMenus: true
             )
@@ -2427,6 +2429,11 @@ extension LauncherView {
         // keystroke cancels this task, so stale work cannot interrupt typing or publish
         // results over a newer query.
         globalContextViewModel.fastMatchTask = Task.detached(priority: .userInitiated) {
+            // Coalesce a rapid typing burst before entering GlobalSearchService. Its query
+            // is synchronous once started, so cancellation alone cannot stop several old
+            // keystrokes from competing for CPU with the TextField and window compositor.
+            try? await Task.sleep(nanoseconds: 24_000_000)
+            guard !Task.isCancelled else { return }
             let resolved = GlobalContextSearchCoordinator.shared.resolveFastMatchDockIcons(
                 query: q,
                 limit: 12

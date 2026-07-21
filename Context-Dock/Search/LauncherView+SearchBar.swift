@@ -2973,6 +2973,22 @@ extension LauncherView {
     }
 
     func scheduleDeferredQueryChange(from _: String, to newValue: String) {
+        // Pure, unscoped Global Context already publishes input state immediately and runs
+        // matching through its detached pipeline. Scheduling the generic L2 handler as well
+        // duplicated the search 85 ms later on the main actor and made fast typing/backspace
+        // feel progressively heavier. Scoped/Finder/compact modes still use this handler.
+        if isGlobalContextActive,
+            shouldUsePureGlobalAppSearch,
+            globalInlineAppScope == nil,
+            lockedSubmenuParent == nil,
+            lockedFindToken == nil,
+            !isCompactSmartScope
+        {
+            queryChangeGeneration &+= 1
+            queryChangeTask?.cancel()
+            queryChangeTask = nil
+            return
+        }
         queryChangeGeneration &+= 1
         let generation = queryChangeGeneration
         queryChangeTask?.cancel()
