@@ -961,19 +961,31 @@ class AppSettings: ObservableObject {
     @AppStorage("googleGeminiAPIKey") private var legacyGoogleGeminiAPIKey: String = ""
     @AppStorage("anthropicAPIKey") private var legacyAnthropicAPIKey: String = ""
     @AppStorage("openAICompatibleAPIKey") private var legacyOpenAICompatibleAPIKey: String = ""
+    // True while loading keys FROM the Keychain at launch, so the didSet writers
+    // below don't persist a transiently-empty read back over a real stored key —
+    // that wiped users' API keys after a crash/relaunch.
+    private var isLoadingAPIKeys = false
     @Published var openAIAPIKey: String = "" {
-        didSet { KeychainStore.shared.set(openAIAPIKey, for: AIProvider.openAI.rawValue) }
+        didSet {
+            guard !isLoadingAPIKeys else { return }
+            KeychainStore.shared.set(openAIAPIKey, for: AIProvider.openAI.rawValue)
+        }
     }
     @Published var googleGeminiAPIKey: String = "" {
         didSet {
+            guard !isLoadingAPIKeys else { return }
             KeychainStore.shared.set(googleGeminiAPIKey, for: AIProvider.googleGemini.rawValue)
         }
     }
     @Published var anthropicAPIKey: String = "" {
-        didSet { KeychainStore.shared.set(anthropicAPIKey, for: AIProvider.anthropic.rawValue) }
+        didSet {
+            guard !isLoadingAPIKeys else { return }
+            KeychainStore.shared.set(anthropicAPIKey, for: AIProvider.anthropic.rawValue)
+        }
     }
     @Published var openAICompatibleAPIKey: String = "" {
         didSet {
+            guard !isLoadingAPIKeys else { return }
             KeychainStore.shared.set(
                 openAICompatibleAPIKey,
                 for: AIProvider.openAICompatible.rawValue
@@ -2056,6 +2068,8 @@ class AppSettings: ObservableObject {
     }
 
     private func migrateAIKeysToKeychain() {
+        isLoadingAPIKeys = true
+        defer { isLoadingAPIKeys = false }
         openAIAPIKey = migrateAIKey(
             provider: .openAI,
             legacyValue: legacyOpenAIAPIKey
