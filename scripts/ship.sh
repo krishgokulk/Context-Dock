@@ -109,7 +109,7 @@ $CS --entitlements Context-Dock/ILauncher.entitlements "$APP" \
   || { restore_journal; die "Signing the app failed."; }
 
 # Confirm a stable (non-ad-hoc) signature so permissions carry across updates.
-SIGN_AUTH="$(codesign -dvv "$APP" 2>&1 | awk -F'= ' '/Authority=/{print $2; exit}')"
+SIGN_AUTH="$(codesign -dvv "$APP" 2>&1 | awk -F'=' '/^Authority=/{print $2; exit}')"
 codesign --verify --strict "$APP" >/dev/null 2>&1 || { restore_journal; die "Signature verify failed."; }
 if [ -z "$SIGN_AUTH" ] || echo "$SIGN_AUTH" | grep -qi "adhoc"; then
   restore_journal
