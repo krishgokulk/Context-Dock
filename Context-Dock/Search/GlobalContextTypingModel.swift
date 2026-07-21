@@ -105,15 +105,12 @@ struct ContextMatchDock: View {
     var body: some View {
         HStack(spacing: 7) {
             if isSearching {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.72))
-                Text("Searching...")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.72))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityLabel("Searching")
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.62)
+                    .frame(width: 18, height: 18)
+                    .tint(.secondary.opacity(0.78))
+                    .accessibilityLabel("Preparing results")
             } else {
                 ForEach(icons) { item in
                     matchDockIconButton(item)
@@ -136,7 +133,7 @@ struct ContextMatchDock: View {
         .padding(.horizontal, (icons.isEmpty && overflowCount == 0 && !isSearching) ? 0 : 8)
         .padding(.vertical, 4)
         .frame(height: 30, alignment: .center)
-        .frame(minWidth: isSearching ? 92 : nil)
+        .frame(minWidth: isSearching ? 30 : nil)
         .fixedSize(horizontal: true, vertical: false)
         .opacity(phase == .matching ? 0.74 : 1.0)
         .background(.regularMaterial, in: Capsule(style: .continuous))

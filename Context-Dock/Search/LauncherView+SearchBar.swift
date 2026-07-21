@@ -2228,8 +2228,12 @@ extension LauncherView {
                                     .frame(width: 26, height: 26)
                                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
 	                            } else if shouldShowContextDockInputLoadingIndicator {
-	                                GlobalInputLoadingDots()
+	                                ProgressView()
+	                                    .controlSize(.small)
+	                                    .scaleEffect(0.64)
 	                                    .frame(width: 26, height: 26)
+	                                    .tint(.secondary.opacity(0.78))
+	                                    .accessibilityLabel("Preparing app actions")
 	                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
 		                            } else if showContextInDock && isContextDockChatConnected {
 		                                contextDockChatCloseButton

@@ -551,7 +551,10 @@ struct LauncherView: View {
             if isActiveGlobalRunningAppMenuScope() { return true }
             guard !q.isEmpty else { return false }
             if pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery) {
-                return true
+                // Preview rows are already a renderable snapshot. Keep the shared sheet alive
+                // while slower menu enrichment finishes instead of deadlocking visibility on a
+                // resolver flag that can legitimately remain active across multiple passes.
+                return stableVisibleDockPills(for: pillQuery).contains { !$0.isSeparator }
             }
             return stableVisibleDockPills(for: pillQuery).contains { !$0.isSeparator }
         }
@@ -586,7 +589,9 @@ struct LauncherView: View {
             return false
         }
         if contextDockBuildInFlight {
-            return true
+            return visibleActionPills.contains { pill in
+                !pill.isSeparator && !isSearchOnlyDockPill(pill)
+            }
         }
 
         let showPinnedRow =

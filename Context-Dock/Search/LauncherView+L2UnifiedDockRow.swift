@@ -100,11 +100,10 @@ extension LauncherView {
             ? (
                 preliminaryGlobalNavState?.appResults.isEmpty == false
                 ? (preliminaryGlobalNavState?.appResults ?? [])
-                : (
-                    globalContextViewModel.typingSnapshot.phase == .expanded
-                    ? matchDockIconRowsForExpandedSheet(query: q)
-                    : []
-                )
+                // Preload already-published lightweight rows while the compact shell displays
+                // its spinner. The persistent list remains clipped until expansion, so this does
+                // not interrupt typing but guarantees the first revealed frame has content.
+                : currentGlobalAppMatches(for: q)
             )
             : currentOrImmediateGlobalAppMatches(for: q)
         let genericAppListQuery = isGenericApplicationListQuery(q)

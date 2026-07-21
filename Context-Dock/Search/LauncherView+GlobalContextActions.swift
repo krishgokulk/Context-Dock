@@ -2771,13 +2771,27 @@ extension LauncherView {
         measuredGlobalListContentHeight = min(
             max(estimatedRows * 52 + 36, 86), listViewVisibleHeight)
 
-        // 6. Flip the single expansion flag LAST. At this point every presentation and
-        // height gate sees the same non-empty committed state in its first expanded pass.
-        globalContextViewModel.typingSnapshot.phase = .expanded
-        scheduleGlobalContextIdleCollapse()
+        // 6. Let SwiftUI reconcile the committed row payload before revealing its shell. The
+        // compact dock continues showing its spinner during this single turn; the expanded
+        // sheet therefore begins with real rows instead of a header or empty half-card.
+        Task { @MainActor in
+            await Task.yield()
+            guard
+                isGlobalContextActive,
+                shouldUsePureGlobalAppSearch,
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    == q,
+                visibleGlobalGroupedListNavigationState(for: q).totalCount > 0
+                    || !currentGlobalAppMatches(for: q).isEmpty
+                    || !matchDockIconRowsForExpandedSheet(query: q).isEmpty
+            else { return }
+            globalContextViewModel.typingSnapshot.phase = .expanded
+            scheduleGlobalContextIdleCollapse()
 
-        // 7. Window follows the committed state (animated frame glide).
-        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+            // 7. Window follows the ready presentation in one smooth expansion.
+            requestWindowSizeUpdate(
+                reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+        }
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {
             SearchPerformanceLog.shared.record(
