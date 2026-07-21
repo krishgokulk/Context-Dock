@@ -15,7 +15,13 @@
       "Bash(ps -p 67722 -o %cpu,%mem,etime,rss)",
       "Bash(top -l 1 -pid 67722 -stats pid,cpu,th)",
       "Bash(sample 67722 2 -mayDie)",
-      "Bash(awk 'NR>=4996 && NR<=5120' Context-Dock/Search/LauncherView+AIChat.swift)"
+      "Bash(awk 'NR>=4996 && NR<=5120' Context-Dock/Search/LauncherView+AIChat.swift)",
+      "Bash(xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Debug -derivedDataPath .build/XcodeDerivedData build)",
+      "Bash(rm -rf ~/Library/Caches/*)",
+      "Bash(rm -rf /Users/gokulakannan/Developer/Context-Dock/.build/XcodeDerivedData/Build/Intermediates.noindex/*/Objects-normal/arm64/*_lto.o)"
+    ],
+    "additionalDirectories": [
+      "/Users/gokulakannan/Developer/Context-Dock"
     ]
   }
 }

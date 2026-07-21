@@ -782,18 +782,43 @@ extension LauncherView {
             }
             return ""
         }()
-        let snapshot = await Task.detached(priority: .userInitiated) {
-            MessagesAutomation.conversationSnapshot(contactFilter: contact, limit: 20)
+        // Modern macOS blocks Messages AppleScript reads, so use the local chat.db.
+        let wantsSentToday =
+            (lower.contains("send") || lower.contains("sent"))
+            && (lower.contains("today") || lower.contains("did i"))
+        let rows = await Task.detached(priority: .userInitiated) {
+            (
+                sent: MessagesChatDBReader.sentToday(),
+                recent: MessagesChatDBReader.recent(limit: 15, contact: contact)
+            )
         }.value
-        if lower.contains("unread") {
-            return """
-                DoraX can read recent Messages conversations, but Apple does not expose a reliable unread flag through its supported Messages automation interface. I won't guess unread status.
 
-                Recent conversation evidence:
-                \(snapshot)
-                """
+        // Nil = chat.db not readable → Full Disk Access missing.
+        if rows.sent == nil && rows.recent == nil {
+            return "I couldn’t read Messages. Grant Full Disk Access to Context-Dock in System Settings → Privacy & Security → Full Disk Access, then ask again."
         }
-        return snapshot
+
+        if wantsSentToday, let sent = rows.sent {
+            guard sent.count > 0 else { return "You haven’t sent any messages today." }
+            let who =
+                sent.recipients.isEmpty
+                ? ""
+                : " to \(sent.recipients.prefix(6).joined(separator: ", "))"
+            return "Yes — you sent \(sent.count) message\(sent.count == 1 ? "" : "s") today\(who)."
+        }
+
+        guard let recent = rows.recent, !recent.isEmpty else {
+            return contact.isEmpty
+                ? "No recent messages found." : "No recent messages with \(contact)."
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, HH:mm"
+        let lines = recent.prefix(12).map { row -> String in
+            let who = row.fromMe ? "You" : (row.handle.isEmpty ? "Them" : row.handle)
+            let body = row.text.isEmpty ? "[attachment]" : row.text
+            return "- \(formatter.string(from: row.date)) — \(who): \(body)"
+        }
+        return "Recent messages:\n" + lines.joined(separator: "\n")
     }
 
     /// First-run read approval for a personal-data source. Returns false only on Cancel.
