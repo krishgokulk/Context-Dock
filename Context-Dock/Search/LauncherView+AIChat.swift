@@ -5006,15 +5006,31 @@ extension LauncherView {
             return ChatMessage(role: role, content: content)
         }
         let lowerQuery = query.lowercased()
-        let capabilityPlanningRequested = GeneralAIActionResolver.shared.looksExecutable(query) || [
-            "run ", "execute ", "rename ", "reveal ", "open ", "close ",
-            "summarize this page", "create ", "delete ", "update ", "send ",
-            "compose ", "call ", "use ", "do ", "print", "settings", "extensions",
-            "bookmarks", "history"
-        ].contains { lowerQuery.contains($0) }
         let planningBundleID = isGlobalQueryModeActive
             ? nil
             : (l2.targetApp?.bundleId ?? AXContextReader.shared.current.bundleId)
+        // Read/data questions must reach the tools too — not just executable verbs.
+        // If the active scope (or general chat) has built-in MCP capabilities, a data
+        // question should plan a tool call instead of the model saying "no tool".
+        let mcpFamilies = ["notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."]
+        let scopeHasBuiltInMCP = CapabilityRegistry.shared
+            .capabilities(for: planningBundleID)
+            .contains { cap in mcpFamilies.contains(where: cap.id.hasPrefix) }
+        let readIntent =
+            query.hasSuffix("?")
+            || [
+                "recent", "how many", "list", "show", "find", "search",
+                "what ", "when ", "who ", "which ", "last ", "any ", "read ",
+            ].contains { lowerQuery.contains($0) }
+        let capabilityPlanningRequested =
+            GeneralAIActionResolver.shared.looksExecutable(query)
+            || [
+                "run ", "execute ", "rename ", "reveal ", "open ", "close ",
+                "summarize this page", "create ", "delete ", "update ", "send ",
+                "compose ", "call ", "use ", "do ", "print", "settings", "extensions",
+                "bookmarks", "history",
+            ].contains { lowerQuery.contains($0) }
+            || (scopeHasBuiltInMCP && readIntent)
         let request = isGlobalQueryModeActive
             ? AIRequestBuilder.globalContext(
                 text: query,

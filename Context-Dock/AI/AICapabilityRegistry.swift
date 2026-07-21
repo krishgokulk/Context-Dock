@@ -119,6 +119,37 @@ final class CapabilityRegistry {
         GlobalCommandCapabilities.register(in: self)
     }
 
+    /// Re-register the built-in Apple/GitHub MCP capabilities to match the CURRENT
+    /// enable flags. registerBuiltIns only runs once at launch, so toggling an MCP
+    /// in Settings did nothing until relaunch — call this before every chat (and on
+    /// toggle) so enabled MCPs are immediately available in both chat surfaces.
+    func refreshBuiltInMCPs() {
+        let families: [(prefix: String, enabled: Bool, register: () -> Void)] = [
+            ("notes.", AppSettings.shared.noteMCPEnabled,
+                { AppleNotesMCPCapabilities.register(in: self) }),
+            ("calendar.", AppSettings.shared.calendarMCPEnabled,
+                { AppleCalendarMCPCapabilities.register(in: self) }),
+            ("contacts.", AppSettings.shared.contactsMCPEnabled,
+                { AppleContactsMCPCapabilities.register(in: self) }),
+            ("reminders.", AppSettings.shared.remindersMCPEnabled,
+                { AppleRemindersMCPCapabilities.register(in: self) }),
+            ("messages.", AppSettings.shared.messagesMCPEnabled,
+                { AppleMessagesMCPCapabilities.register(in: self) }),
+            ("github.", AppSettings.shared.githubMCPEnabled,
+                { GitHubMCPCapabilities.register(in: self) }),
+        ]
+        for family in families {
+            let present = capabilitiesByID.keys.contains { $0.hasPrefix(family.prefix) }
+            if family.enabled, !present {
+                family.register()
+            } else if !family.enabled, present {
+                for id in capabilitiesByID.keys where id.hasPrefix(family.prefix) {
+                    capabilitiesByID.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
     private func registerBuiltIns() {
         GitCapabilities.register(in: self)
         TailscaleCapabilities.register(in: self)

@@ -394,8 +394,10 @@ extension LauncherView {
         guard settings.enableAIMode else { return }
         guard currentDockSurfaceMode != .generalChat else { return }
 
-        // Refresh so any Global Commands the user added this session are callable.
+        // Refresh so Global Commands and built-in MCPs the user enabled this session
+        // are callable without a relaunch.
         CapabilityRegistry.shared.refreshGlobalCommands()
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
 
         searchState.results = []
         searchState.selectedIndex = nil

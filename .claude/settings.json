@@ -14,7 +14,8 @@
       "Bash(awk '{print $2, $11, $12, $13, $14}')",
       "Bash(ps -p 67722 -o %cpu,%mem,etime,rss)",
       "Bash(top -l 1 -pid 67722 -stats pid,cpu,th)",
-      "Bash(sample 67722 2 -mayDie)"
+      "Bash(sample 67722 2 -mayDie)",
+      "Bash(awk 'NR>=4996 && NR<=5120' Context-Dock/Search/LauncherView+AIChat.swift)"
     ]
   }
 }
