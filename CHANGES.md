@@ -536,3 +536,15 @@ Swift: +0 added · ~6 modified · -0 deleted
 ## 2026-07-21 00:42 · `dc0175fe` · `codex-context-dock-polish-fixes`
 **fix(global): keep results open while browsing**
 Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 00:49 · `bb542277` · `codex-context-dock-polish-fixes`
+**feat(finder): built-in local file coworker toolkit for scoped chat**
+Swift: +1 added · ~2 modified · -0 deleted
+
+## 2026-07-21 01:01 · `9f039e56` · `codex-context-dock-polish-fixes`
+**perf(global): prioritize search input**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 01:13 · `bb2943e4` · `codex-context-dock-polish-fixes`
+**perf(global): make query clearing immediate**
+Swift: +0 added · ~2 modified · -0 deleted

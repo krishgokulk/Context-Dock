@@ -290,7 +290,6 @@ final class SystemCommandsRegistry {
         "Unmute Audio",
         "Set Volume",
         "Sleep Display",
-        "Empty Trash",
         "Take Screenshot",
         "Show Desktop",
         "Do Not Disturb",
@@ -622,6 +621,14 @@ final class SystemCommandsRegistry {
             scriptType: "applescript",
             script: appleMenuClickScript("Shut Down..."),
             description: "Shut down Mac"
+        ),
+        SystemCommand(
+            name: "Empty Trash",
+            icon: "trash",
+            keywords: ["empty trash", "trash", "bin", "empty bin", "clear trash"],
+            scriptType: "applescript",
+            script: #"tell application "Finder" to empty trash"#,
+            description: "Empty the Trash"
         ),
 
         // ── Example templates (disabled) ──────────────────────────────────────
