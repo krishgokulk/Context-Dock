@@ -72,9 +72,16 @@ rm -rf .build
 # build, so macOS treats each update as a NEW app and drops its Accessibility /
 # Full Disk Access / Input Monitoring grants. A stable signing identity keeps the
 # TCC designated requirement constant, so permissions persist across updates.
+# Detect the local Apple Development identity and its Team ID so signing uses the
+# cert actually installed on this machine (the project's stored team may differ).
+SIGN_TEAM="$(security find-identity -v -p codesigning \
+  | sed -n 's/.*Apple Development:.*(\([A-Z0-9]*\)).*/\1/p' | head -1)"
 xcodebuild -project Context-Dock.xcodeproj -scheme "$APP_NAME" -configuration Release \
   -derivedDataPath .build/XcodeDerivedData -jobs 1 \
-  CODE_SIGN_STYLE=Automatic COMPILER_INDEX_STORE_ENABLE=NO clean build \
+  CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development" \
+  ${SIGN_TEAM:+DEVELOPMENT_TEAM="$SIGN_TEAM"} \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+  COMPILER_INDEX_STORE_ENABLE=NO clean build \
   > "$BUILD_LOG" 2>&1 || true
 
 APP=".build/XcodeDerivedData/Build/Products/Release/$APP_NAME.app"
