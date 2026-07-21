@@ -29,6 +29,7 @@ struct LauncherView: View {
     // Frontmost-window context attached to the next Quick Note AI prompt.
     @State var notepadFrontmostContext: String? = nil
     @State var notepadFrontmostLabel: String? = nil
+    @State var notepadCapturedText: String? = nil
     // Image/file attachments for the next Quick Note AI prompt.
     @State var notepadAttachments: [URL] = []
     // Clipboard scope: selected source-app filter (empty = All).

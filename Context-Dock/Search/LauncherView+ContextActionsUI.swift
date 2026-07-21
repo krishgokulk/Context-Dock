@@ -74,6 +74,14 @@ extension LauncherView {
                         withAnimation { aiMode.attachments.append(url) }
                     }
                 } label: { Label("Capture Area", systemImage: "crop") }
+                Button {
+                    captureScreenText { text in
+                        let existing = aiMode.selectionText?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        aiMode.selectionText = existing.isEmpty
+                            ? text : existing + "\n\n" + text
+                    }
+                } label: { Label("Capture Text", systemImage: "text.viewfinder") }
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 15))
@@ -287,6 +295,35 @@ extension LauncherView {
                 (try? Data(contentsOf: url))?.isEmpty == false
             {
                 await MainActor.run { append(url) }
+            }
+        }
+    }
+
+    /// Select a screen region, recognize its text locally with Vision, copy the
+    /// result to the clipboard, and return it to the active AI surface.
+    func captureScreenText(append: @escaping (String) -> Void) {
+        captureScreenshotToAttachments(interactive: true) { url in
+            Task.detached(priority: .userInitiated) {
+                defer { try? FileManager.default.removeItem(at: url) }
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                do {
+                    try VNImageRequestHandler(url: url, options: [:]).perform([request])
+                    let text = (request.results ?? [])
+                        .compactMap { $0.topCandidates(1).first?.string }
+                        .joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
+                    await MainActor.run {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(text, forType: .string)
+                        append(text)
+                    }
+                } catch {
+                    return
+                }
             }
         }
     }

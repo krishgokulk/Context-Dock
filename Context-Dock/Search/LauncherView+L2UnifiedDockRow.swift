@@ -264,6 +264,7 @@ extension LauncherView {
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
                 frontmostLabel: notepadFrontmostLabel,
+                hasCapturedText: notepadCapturedText != nil,
                 attachments: notepadAttachments,
                 onAttachFrontmost: { toggleNotepadFrontmostContext() },
                 onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
@@ -277,6 +278,10 @@ extension LauncherView {
                         notepadAttachments.append(url)
                     }
                 },
+                onCaptureText: {
+                    captureScreenText { text in notepadCapturedText = text }
+                },
+                onRemoveCapturedText: { notepadCapturedText = nil },
                 onRemoveAttachment: { url in
                     notepadAttachments.removeAll { $0 == url }
                 },
@@ -338,6 +343,7 @@ extension LauncherView {
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
                 frontmostLabel: notepadFrontmostLabel,
+                hasCapturedText: notepadCapturedText != nil,
                 attachments: notepadAttachments,
                 onAttachFrontmost: { toggleNotepadFrontmostContext() },
                 onUploadPhoto: { attachNotepadFiles(imagesOnly: true) },
@@ -351,6 +357,10 @@ extension LauncherView {
                         notepadAttachments.append(url)
                     }
                 },
+                onCaptureText: {
+                    captureScreenText { text in notepadCapturedText = text }
+                },
+                onRemoveCapturedText: { notepadCapturedText = nil },
                 onRemoveAttachment: { url in
                     notepadAttachments.removeAll { $0 == url }
                 },

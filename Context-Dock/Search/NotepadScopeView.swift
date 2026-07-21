@@ -15,11 +15,14 @@ struct NotepadScopeView: View {
     var isGenerating: Bool = false
     var aiProviderName: String = "AI"
     var frontmostLabel: String? = nil
+    var hasCapturedText: Bool = false
     var attachments: [URL] = []
     var onAttachFrontmost: () -> Void = {}
     var onUploadPhoto: () -> Void = {}
     var onTakeScreenshot: () -> Void = {}
     var onCaptureArea: () -> Void = {}
+    var onCaptureText: () -> Void = {}
+    var onRemoveCapturedText: () -> Void = {}
     var onRemoveAttachment: (URL) -> Void = { _ in }
     var onExit: () -> Void
 
@@ -71,6 +74,9 @@ struct NotepadScopeView: View {
                         Label("Take Screenshot", systemImage: "camera.viewfinder")
                     }
                     Button(action: onCaptureArea) { Label("Capture Area", systemImage: "crop") }
+                    Button(action: onCaptureText) {
+                        Label("Capture Text", systemImage: "text.viewfinder")
+                    }
                 } label: {
                     Image(systemName: "plus.circle")
                         .font(.system(size: 13, weight: .semibold))
@@ -154,6 +160,26 @@ struct NotepadScopeView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
                 }
+            }
+
+            if hasCapturedText {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.viewfinder")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Captured text attached to next AI prompt")
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Spacer()
+                    Button(action: onRemoveCapturedText) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(.blue)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.blue.opacity(0.10))
             }
 
             Divider()

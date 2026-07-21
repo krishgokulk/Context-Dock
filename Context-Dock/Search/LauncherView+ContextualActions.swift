@@ -1532,7 +1532,10 @@ extension LauncherView {
     func submitNotepadAIPrompt(_ prompt: String) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let attached = notepadAttachments
-        guard !(trimmed.isEmpty && attached.isEmpty), !notepadAIGenerating else { return }
+        let capturedText = notepadCapturedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !(trimmed.isEmpty && attached.isEmpty && capturedText.isEmpty),
+            !notepadAIGenerating else { return }
 
         let targetID: UUID
         if let id = notepadSelectedNoteID,
@@ -1545,9 +1548,12 @@ extension LauncherView {
         }
 
         // With only attachments and no text, ask the model to write from them.
-        let request = trimmed.isEmpty
-            ? "Write a note from the attached image(s)/file(s)."
+        var request = trimmed.isEmpty
+            ? "Write a note from the attached image(s), file(s), or captured text."
             : trimmed
+        if !capturedText.isEmpty {
+            request += "\n\nCaptured screen text:\n\(capturedText)"
+        }
         // Fold in the attached frontmost-window context, if any, then clear it.
         let aiQuery: String
         if let context = notepadFrontmostContext {
@@ -1558,6 +1564,7 @@ extension LauncherView {
         }
         notepadFrontmostContext = nil
         notepadFrontmostLabel = nil
+        notepadCapturedText = nil
         notepadAttachments = []
 
         notepadAIGenerating = true
