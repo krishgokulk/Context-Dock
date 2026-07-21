@@ -45,15 +45,43 @@ actor AppleNotesMetadataIndex {
                 .map { $0 }
         }
         let lower = query.lowercased()
-        return index.values
-            .filter {
-                $0.title.lowercased().contains(lower)
-                    || $0.snippet.lowercased().contains(lower)
-                    || $0.folder.lowercased().contains(lower)
+        // Token-based scoring: a natural-language query ("contains document details")
+        // must still match "Document Detail's". Rank by how many query tokens appear
+        // in title/snippet/folder (title weighted), so partial matches surface instead
+        // of requiring the whole phrase as a literal substring.
+        let tokens = lower
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count >= 2 }
+        guard !tokens.isEmpty else {
+            return index.values
+                .filter {
+                    $0.title.lowercased().contains(lower)
+                        || $0.snippet.lowercased().contains(lower)
+                }
+                .sorted { $0.modifiedDate > $1.modifiedDate }
+                .prefix(maxResults)
+                .map { $0 }
+        }
+        let scored = index.values.compactMap { note -> (NoteMetadata, Int)? in
+            let title = note.title.lowercased()
+            let snippet = note.snippet.lowercased()
+            let folder = note.folder.lowercased()
+            var score = 0
+            if title.contains(lower) { score += 100 }  // whole-phrase title hit wins
+            for token in tokens {
+                if title.contains(token) { score += 5 }
+                if snippet.contains(token) { score += 2 }
+                if folder.contains(token) { score += 1 }
             }
-            .sorted { $0.modifiedDate > $1.modifiedDate }
+            return score > 0 ? (note, score) : nil
+        }
+        return scored
+            .sorted {
+                $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.modifiedDate > $1.0.modifiedDate
+            }
             .prefix(maxResults)
-            .map { $0 }
+            .map(\.0)
     }
 
     func note(id: String) -> NoteMetadata? { index[id] }

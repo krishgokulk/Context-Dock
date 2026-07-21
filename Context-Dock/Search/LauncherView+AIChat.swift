@@ -4768,10 +4768,18 @@ extension LauncherView {
             }.map(String.init))
             return !queryTokens.isDisjoint(with: toolTokens)
         }
-        // Explicit adapter actions retain priority. A linked CLI or MCP must not suppress an
-        // exact frontmost menu command: providers otherwise synthesize fragile shell/AX code
-        // for universal UI requests such as Minimize or Print despite a live menu shortcut.
-        guard matchingActions.isEmpty else { return nil }
+        // Tools always win: MCP, CLI, and adapter actions take priority. Menus are
+        // GUIDANCE ONLY — never executed from chat. So if any tool matches, bail and
+        // let the capability planner handle it; only fall to menu guidance when no
+        // tool matches at all.
+        // Built-in Apple MCP caps (Messages/Notes/Calendar/…) also count as tools and
+        // must win — the capability planner runs after this, so defer to it.
+        let mcpFamilies = ["notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."]
+        let hasBuiltInMCP = CapabilityRegistry.shared
+            .capabilities(for: bundleId)
+            .contains { cap in mcpFamilies.contains(where: cap.id.hasPrefix) }
+        guard matchingActions.isEmpty, matchingCLI.isEmpty, !matchingMCP, !hasBuiltInMCP
+        else { return nil }
 
         if let requestID = l2.activeRequestID {
             setL2LoadingStatus("Reading \(appName) live menus…", requestID: requestID)
@@ -4785,14 +4793,14 @@ extension LauncherView {
             AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
         }
 
+        // Menus are guidance only — return the path (and shortcut) as instructions,
+        // never click them.
         guard let match = bestMenuMatch(
             intent: query,
             bundleId: bundleId,
             appName: appName,
             processIdentifier: app.processIdentifier
         ) else {
-            // No exact live menu route: linked integrations get their normal opportunity.
-            if !matchingCLI.isEmpty || matchingMCP { return nil }
             let closest = menuSuggestions(
                 intent: query,
                 bundleId: bundleId,
@@ -4800,34 +4808,24 @@ extension LauncherView {
                 processIdentifier: app.processIdentifier
             )
             if closest.isEmpty { return nil }
-            return "I checked \(appName)’s live menus but couldn’t confidently match “\(query)”. Nothing was executed.\n\nClosest menus:\n"
+            return "I don’t have a tool that does “\(query)” in \(appName), but you can do it from the menus:\n"
                 + closest.joined(separator: "\n")
         }
-        guard match.isEnabled else {
-            return "I found \(match.path.joined(separator: " → ")) in \(appName), but it is currently disabled. Nothing was executed."
+        let path = match.path.joined(separator: " → ")
+        let shortcut = MenuShortcutFormatter.display(
+            char: match.shortcutChar, modifiers: match.shortcutModifiers)
+        let shortcutHint = shortcut.map { "  (\($0))" } ?? ""
+        if !match.isEnabled {
+            return "You can do this in \(appName) via **\(path)**\(shortcutHint) — it’s currently greyed out, so it may need a selection or different state first."
         }
-
-        if let requestID = l2.activeRequestID {
-            let shortcut = MenuShortcutFormatter.display(
-                char: match.shortcutChar,
-                modifiers: match.shortcutModifiers)
-            let route = shortcut.map { "Running \($0)…" }
-                ?? "Clicking \(match.path.joined(separator: " → "))…"
-            setL2LoadingStatus(route, requestID: requestID)
-            await Task.yield()
-        }
-        let result = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
-            bundleIdentifier: bundleId,
-            path: match.path,
-            cachedShortcutChar: match.shortcutChar,
-            cachedShortcutModifiers: match.shortcutModifiers
-        )
-        return result.message
+        return "You can do this in \(appName): **\(path)**\(shortcutHint)."
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
         async throws -> String
     {
+        // Pick up MCPs toggled on this session so scoped chat sees them without relaunch.
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
         let scopedForRead = currentContextDockChatScope
         let isMessagesScope = scopedForRead.bundleId.caseInsensitiveCompare(
             "com.apple.MobileSMS") == .orderedSame
@@ -5006,15 +5004,31 @@ extension LauncherView {
             return ChatMessage(role: role, content: content)
         }
         let lowerQuery = query.lowercased()
-        let capabilityPlanningRequested = GeneralAIActionResolver.shared.looksExecutable(query) || [
-            "run ", "execute ", "rename ", "reveal ", "open ", "close ",
-            "summarize this page", "create ", "delete ", "update ", "send ",
-            "compose ", "call ", "use ", "do ", "print", "settings", "extensions",
-            "bookmarks", "history"
-        ].contains { lowerQuery.contains($0) }
         let planningBundleID = isGlobalQueryModeActive
             ? nil
             : (l2.targetApp?.bundleId ?? AXContextReader.shared.current.bundleId)
+        // Read/data questions must reach the tools too — not just executable verbs.
+        // If the active scope (or general chat) has built-in MCP capabilities, a data
+        // question should plan a tool call instead of the model saying "no tool".
+        let mcpFamilies = ["notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."]
+        let scopeHasBuiltInMCP = CapabilityRegistry.shared
+            .capabilities(for: planningBundleID)
+            .contains { cap in mcpFamilies.contains(where: cap.id.hasPrefix) }
+        let readIntent =
+            query.hasSuffix("?")
+            || [
+                "recent", "how many", "list", "show", "find", "search",
+                "what ", "when ", "who ", "which ", "last ", "any ", "read ",
+            ].contains { lowerQuery.contains($0) }
+        let capabilityPlanningRequested =
+            GeneralAIActionResolver.shared.looksExecutable(query)
+            || [
+                "run ", "execute ", "rename ", "reveal ", "open ", "close ",
+                "summarize this page", "create ", "delete ", "update ", "send ",
+                "compose ", "call ", "use ", "do ", "print", "settings", "extensions",
+                "bookmarks", "history",
+            ].contains { lowerQuery.contains($0) }
+            || (scopeHasBuiltInMCP && readIntent)
         let request = isGlobalQueryModeActive
             ? AIRequestBuilder.globalContext(
                 text: query,

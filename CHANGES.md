@@ -600,3 +600,19 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-21 22:22 · `cd3eb355` · `codex-context-dock-polish-fixes`
 **fix: crash in cleanResponse + API keys wiped on launch**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 22:47 · `745ee93a` · `codex-context-dock-polish-fixes`
+**fix(ai): built-in MCPs reachable live and in scoped chat**
+Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 22:48 · `4c7742d9` · `codex-context-dock-polish-fixes`
+**fix(ai): refresh built-in MCPs before scoped chat too**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 23:03 · `ba475737` · `codex-context-dock-polish-fixes`
+**fix(ai): token-scored Notes search; menus become guidance, tools win**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 23:19 · `0a68f8b5` · `codex-context-dock-polish-fixes`
+**fix(messages): read from chat.db instead of dead AppleScript**
+Swift: +1 added · ~1 modified · -0 deleted
