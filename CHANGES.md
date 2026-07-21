@@ -592,3 +592,7 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-21 13:30 · `36df5769` · `codex-context-dock-polish-fixes`
 **chore: commit pending source changes before release**
 Swift: +1 added · ~8 modified · -0 deleted
+
+## 2026-07-21 19:31 · `1ace7d12` · `codex-context-dock-polish-fixes`
+**fix(perf): stop 100% CPU loop when browser history is unreadable**
+Swift: +0 added · ~1 modified · -0 deleted
