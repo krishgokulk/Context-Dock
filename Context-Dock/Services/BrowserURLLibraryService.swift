@@ -133,8 +133,12 @@ final class BrowserURLLibraryService: @unchecked Sendable {
             let entries = await task.value
             if !entries.isEmpty {
                 cached = entries
-                refreshedAt = Date()
             }
+            // Always advance the freshness stamp, even on an EMPTY read (no browser
+            // history, locked DBs, or Full Disk Access not granted). Otherwise the
+            // cache never counts as fresh, so every dock rebuild re-refreshes and the
+            // completion reschedules another rebuild — an infinite ~100% CPU loop.
+            refreshedAt = Date()
             isRefreshing = false
             completion()
         }

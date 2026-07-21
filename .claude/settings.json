@@ -10,7 +10,11 @@
       "Bash(CD_QUERY=dark osascript -e 'set rawValue to system attribute \"CD_QUERY\" *)",
       "Bash(echo \"set-dark exit=$?\")",
       "Bash(awk 'NR>=1300 && NR<=1420 && /func |enum .*{|-> .*KeyHandl|case .down|case 125/' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
-      "Bash(./scripts/ship.sh)"
+      "Bash(./scripts/ship.sh)",
+      "Bash(awk '{print $2, $11, $12, $13, $14}')",
+      "Bash(ps -p 67722 -o %cpu,%mem,etime,rss)",
+      "Bash(top -l 1 -pid 67722 -stats pid,cpu,th)",
+      "Bash(sample 67722 2 -mayDie)"
     ]
   }
 }
