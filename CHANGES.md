@@ -604,3 +604,7 @@ Swift: +0 added · ~2 modified · -0 deleted
 ## 2026-07-21 22:47 · `745ee93a` · `codex-context-dock-polish-fixes`
 **fix(ai): built-in MCPs reachable live and in scoped chat**
 Swift: +0 added · ~3 modified · -0 deleted
+
+## 2026-07-21 22:48 · `4c7742d9` · `codex-context-dock-polish-fixes`
+**fix(ai): refresh built-in MCPs before scoped chat too**
+Swift: +0 added · ~1 modified · -0 deleted
