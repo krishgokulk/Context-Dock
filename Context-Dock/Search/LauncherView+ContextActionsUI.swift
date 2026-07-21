@@ -89,7 +89,7 @@ extension LauncherView {
                 isShowingChatFocusAppPicker.toggle()
             } label: {
                 ZStack {
-                    if let bundleId = chatFocusAppBundleId,
+                    if let bundleId = chatFocusApps.last?.bundleId,
                         let icon = chatFocusAppIcon(bundleId: bundleId)
                     {
                         Image(nsImage: icon)
@@ -104,7 +104,7 @@ extension LauncherView {
                             .foregroundStyle(.secondary.opacity(0.6))
                     }
 
-                    if chatFocusAppBundleId != nil, isHoveringChatFocusAppIcon {
+                    if !chatFocusApps.isEmpty, isHoveringChatFocusAppIcon {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.primary)
@@ -113,7 +113,7 @@ extension LauncherView {
                 .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
-            .help(chatFocusAppName == nil ? "Ask about a running app" : "Focused: \(chatFocusAppName!)")
+            .help(chatFocusApps.isEmpty ? "Ask about running apps" : "Focused: \(chatFocusApps.map(\.name).joined(separator: ", "))")
             .popover(isPresented: $isShowingChatFocusAppPicker, arrowEdge: .top) {
                 chatFocusAppPicker
             }
@@ -121,10 +121,9 @@ extension LauncherView {
                 isHoveringChatFocusAppIcon = hovering
             }
             .overlay {
-                if chatFocusAppBundleId != nil, isHoveringChatFocusAppIcon {
+                if !chatFocusApps.isEmpty, isHoveringChatFocusAppIcon {
                     Button {
-                        chatFocusAppName = nil
-                        chatFocusAppBundleId = nil
+                        chatFocusApps.removeAll()
                         isHoveringChatFocusAppIcon = false
                     } label: {
                         Color.clear
@@ -136,15 +135,23 @@ extension LauncherView {
                 }
             }
 
-            if let chatFocusAppName {
+            if let focusedApp = chatFocusApps.first {
                 HStack(spacing: 4) {
-                    Image(systemName: "app.dashed").font(.system(size: 9))
-                    Text(chatFocusAppName)
+                    AppBundleIconView(
+                        bundleId: focusedApp.bundleId,
+                        fallbackSymbol: "app.dashed",
+                        size: 11,
+                        cornerRadius: 2
+                    )
+                    Text(focusedApp.name)
                         .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
+                    if chatFocusApps.count > 1 {
+                        Text("+\(chatFocusApps.count - 1)")
+                            .font(.system(size: 9, weight: .bold))
+                    }
                     Button {
-                        self.chatFocusAppName = nil
-                        chatFocusAppBundleId = nil
+                        chatFocusApps.removeAll()
                     } label: {
                         Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
                     }
@@ -191,9 +198,11 @@ extension LauncherView {
             LazyVStack(spacing: 2) {
                 ForEach(apps, id: \.bundleId) { app in
                     Button {
-                        chatFocusAppName = app.name
-                        chatFocusAppBundleId = app.bundleId
-                        isShowingChatFocusAppPicker = false
+                        if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
+                            chatFocusApps.removeAll { $0.bundleId == app.bundleId }
+                        } else {
+                            chatFocusApps.append(.init(name: app.name, bundleId: app.bundleId))
+                        }
                     } label: {
                         HStack(spacing: 8) {
                             Image(nsImage: app.icon)
@@ -205,7 +214,7 @@ extension LauncherView {
                                 .font(.system(size: 13, weight: .medium))
                                 .lineLimit(1)
                             Spacer(minLength: 8)
-                            if chatFocusAppBundleId == app.bundleId {
+                            if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(Color.accentColor)
@@ -214,8 +223,26 @@ extension LauncherView {
                         .contentShape(Rectangle())
                         .padding(.horizontal, 9)
                         .frame(height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(
+                                    hoveredChatFocusBundleId == app.bundleId
+                                        ? Color.accentColor.opacity(0.22)
+                                        : Color.clear
+                                )
+                                .shadow(
+                                    color: hoveredChatFocusBundleId == app.bundleId
+                                        ? Color.accentColor.opacity(0.38) : .clear,
+                                    radius: 7
+                                )
+                        )
                     }
                     .buttonStyle(.plain)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            hoveredChatFocusBundleId = hovering ? app.bundleId : nil
+                        }
+                    }
                 }
             }
             .padding(4)
@@ -249,7 +276,8 @@ extension LauncherView {
         }) {
             return resolvedRunningAppIcon(for: app) ?? app.icon
         }
-        return resolvedApplicationIcon(bundleIdentifier: bundleId, appName: chatFocusAppName)
+        let appName = chatFocusApps.first(where: { $0.bundleId == bundleId })?.name
+        return resolvedApplicationIcon(bundleIdentifier: bundleId, appName: appName)
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.

@@ -1119,9 +1119,20 @@ extension LauncherView {
     /// chooses the scope; the native approval card grants the first read. The provider
     /// never participates in permission handling and only receives verified context.
     func selectedGeneralChatAppContext() async -> (block: String, cancelled: Bool) {
-        guard let bundleID = chatFocusAppBundleId,
-              let appName = chatFocusAppName
-        else { return ("", false) }
+        guard !chatFocusApps.isEmpty else { return ("", false) }
+        var blocks: [String] = []
+        for app in chatFocusApps {
+            let context = await selectedGeneralChatAppContext(
+                appName: app.name, bundleID: app.bundleId)
+            if context.cancelled { return ("", true) }
+            if !context.block.isEmpty { blocks.append(context.block) }
+        }
+        return (blocks.joined(separator: "\n\n"), false)
+    }
+
+    private func selectedGeneralChatAppContext(
+        appName: String, bundleID: String
+    ) async -> (block: String, cancelled: Bool) {
 
         let permissionKey = "generalAI.read.focusedApp.\(bundleID)"
         if !GeneralAIActionApprovalStore.isAlwaysAllowed(permissionKey) {

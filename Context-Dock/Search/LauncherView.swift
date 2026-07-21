@@ -12,6 +12,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
+struct GeneralChatFocusApp: Identifiable, Hashable {
+    let name: String
+    let bundleId: String
+    var id: String { bundleId }
+}
+
 struct LauncherView: View {
     @State var searchState = SearchState()
     @State var queryChangeTask: Task<Void, Never>? = nil
@@ -29,11 +35,11 @@ struct LauncherView: View {
     @State var clipboardSourceFilterBundleId: String = ""
     @State var clipboardSourceFilterName: String = ""
     @State var clipboardSourcePillFocusIndex: Int? = nil
-    // Running app the General AI chat is focused on (from the App Store picker).
-    @State var chatFocusAppName: String? = nil
-    @State var chatFocusAppBundleId: String? = nil
+    // Running apps explicitly shared with General AI chat from the app picker.
+    @State var chatFocusApps: [GeneralChatFocusApp] = []
     @State var isHoveringChatFocusAppIcon = false
     @State var isShowingChatFocusAppPicker = false
+    @State var hoveredChatFocusBundleId: String? = nil
     // Max visible list height: rows beyond this scroll inside the glass card.
     let listViewVisibleHeight: CGFloat = 372
     // These are isolated from searchState so their mutations don't trigger a struct-wide re-render

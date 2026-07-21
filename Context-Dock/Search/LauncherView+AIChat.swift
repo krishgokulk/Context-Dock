@@ -4191,14 +4191,18 @@ extension LauncherView {
             """
         // App Store picker: the user explicitly chose a running app to focus on, so
         // ground answers on it (and treat it as allowed for this conversation).
-        if let focusName = chatFocusAppName {
-            let focusBundle = chatFocusAppBundleId ?? ""
+        if !chatFocusApps.isEmpty {
+            let focusList = chatFocusApps
+                .map { "\($0.name) (\($0.bundleId))" }
+                .joined(separator: ", ")
             sysContent += """
 
 
-            Focus app for this conversation: \(focusName)\(focusBundle.isEmpty ? "" : " (\(focusBundle))").
-            The user picked it explicitly as this conversation's scope. Ground answers on
+            Focus apps for this conversation: \(focusList).
+            The user picked them explicitly as this conversation's scopes. Ground answers on
             the verified context and DoraX adapter/menu/MCP capabilities supplied below.
+            You may reason across these apps and coordinate workflows between them, but only
+            claim actions that DoraX actually executes through its approval-backed tools.
             Never produce a conversational permission request.
             """
         }
@@ -4229,10 +4233,10 @@ extension LauncherView {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
         }
 
-        if chatFocusAppBundleId != nil {
+        if !chatFocusApps.isEmpty {
             let focusedContext = await selectedGeneralChatAppContext()
             if focusedContext.cancelled {
-                return "Cancelled — \(chatFocusAppName ?? "the selected app") context was not read."
+                return "Cancelled — selected app context was not read."
             }
             if !focusedContext.block.isEmpty {
                 sysContent += "\n\n" + focusedContext.block
@@ -4266,7 +4270,7 @@ extension LauncherView {
         // Named-app status grounding: "what's going on with vs code?" answers from
         // live app state (context readers, code --status, menu cache, MCP inventory)
         // — the same powers frontmost-app chat has — instead of provider guesses.
-        let appRuntimeBlock = currentAISelectionSnapshot.isEmpty && chatFocusAppBundleId == nil
+        let appRuntimeBlock = currentAISelectionSnapshot.isEmpty && chatFocusApps.isEmpty
             ? await generalAppRuntimeContextBlock(for: query) : ""
         if !appRuntimeBlock.isEmpty {
             sysContent += "\n\n" + appRuntimeBlock
