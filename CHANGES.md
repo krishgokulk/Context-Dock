@@ -548,3 +548,15 @@ Swift: +0 added · ~3 modified · -0 deleted
 ## 2026-07-21 01:13 · `bb2943e4` · `codex-context-dock-polish-fixes`
 **perf(global): make query clearing immediate**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 01:16 · `a50465fc` · `codex-context-dock-polish-fixes`
+**feat(global-commands): add Empty Trash command**
+Swift: +0 added · ~1 modified · -0 deleted
+
+## 2026-07-21 02:06 · `1382bd32` · `codex-context-dock-polish-fixes`
+**fix: harden app actions and usage status**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-21 02:18 · `fe07b484` · `codex-context-dock-polish-fixes`
+**fix(search): reveal only prepared result sheets**
+Swift: +0 added · ~5 modified · -0 deleted

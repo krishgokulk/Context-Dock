@@ -187,6 +187,12 @@ extension LauncherView {
                     self.notepadSelectedNoteID = QuickNotesStore.shared.create()
                     return nil
                 }
+                // Up/Down navigate the notes list while the input field is focused;
+                // in the editor they stay normal cursor movement.
+                if (event.keyCode == 125 || event.keyCode == 126), self.isSearchFieldFocused {
+                    self.navigateNotepadSelection(delta: event.keyCode == 125 ? 1 : -1)
+                    return nil
+                }
                 // Return in the top input field = ask the selected AI provider and
                 // insert its reply into the open note. Return in the editor (input not
                 // focused), or Shift+Return, stays a plain newline.

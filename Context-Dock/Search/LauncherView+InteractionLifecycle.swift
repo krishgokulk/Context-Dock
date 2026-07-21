@@ -28,6 +28,16 @@ extension LauncherView {
                 return event
             }
 
+            // Native menus and popovers use their own transient window. A scroll inside
+            // the General Chat app picker must scroll that menu, never leak through to
+            // the dock-wide layer-switch gesture monitor.
+            if let eventWindow = event.window,
+                let launcherWindow = AppDelegate.shared?.launcherWindow,
+                eventWindow !== launcherWindow
+            {
+                return event
+            }
+
             let dx = event.scrollingDeltaX
             let dy = event.scrollingDeltaY
 

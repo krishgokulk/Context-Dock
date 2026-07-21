@@ -1520,6 +1520,15 @@ extension LauncherView {
         }
     }
 
+    /// Move the notepad selection up/down the notes list (newest first).
+    func navigateNotepadSelection(delta: Int) {
+        let notes = QuickNotesStore.shared.notes
+        guard !notes.isEmpty else { return }
+        let current = notepadSelectedNoteID.flatMap { id in notes.firstIndex { $0.id == id } } ?? -1
+        let next = min(max(current + delta, 0), notes.count - 1)
+        notepadSelectedNoteID = notes[next].id
+    }
+
     func submitNotepadAIPrompt(_ prompt: String) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let attached = notepadAttachments

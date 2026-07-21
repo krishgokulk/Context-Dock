@@ -729,6 +729,18 @@ extension LauncherView {
                 if dismissSelectionScopeFromEmptyBackspaceIfNeeded() {
                     return
                 }
+                // System Command provider scopes (Quick Note, Windows, …) exit on
+                // backspace when the INPUT field is focused — never while editing a
+                // note's text (editor focus → isSearchFieldFocused is false).
+                if isSearchFieldFocused,
+                    currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true,
+                    let scope = globalInlineAppScope
+                {
+                    notepadSelectedNoteID = nil
+                    removeGlobalInlineAppScope(scope)
+                    isSearchFieldFocused = true
+                    return
+                }
                 guard allGlobalInlineAppScopes.isEmpty else {
                     return
                 }

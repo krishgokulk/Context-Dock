@@ -84,26 +84,9 @@ extension LauncherView {
             .fixedSize()
             .help("Attach file, photo, or screenshot")
 
-            // App Store icon: pick a running app to focus the conversation on.
-            Menu {
-                if chatFocusAppName != nil {
-                    Button {
-                        chatFocusAppName = nil
-                        chatFocusAppBundleId = nil
-                    } label: { Label("Clear focus app", systemImage: "xmark.circle") }
-                    Divider()
-                }
-                ForEach(runningAppsForChatFocus(), id: \.bundleId) { app in
-                    Button {
-                        chatFocusAppName = app.name
-                        chatFocusAppBundleId = app.bundleId
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(nsImage: app.icon)
-                            Text(app.name)
-                        }
-                    }
-                }
+            // App icon: compact, independently scrollable picker for chat focus.
+            Button {
+                isShowingChatFocusAppPicker.toggle()
             } label: {
                 ZStack {
                     if let bundleId = chatFocusAppBundleId,
@@ -129,10 +112,11 @@ extension LauncherView {
                 }
                 .frame(width: 22, height: 22)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.plain)
             .help(chatFocusAppName == nil ? "Ask about a running app" : "Focused: \(chatFocusAppName!)")
+            .popover(isPresented: $isShowingChatFocusAppPicker, arrowEdge: .top) {
+                chatFocusAppPicker
+            }
             .onHover { hovering in
                 isHoveringChatFocusAppIcon = hovering
             }
@@ -198,6 +182,45 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+    }
+
+    @ViewBuilder
+    var chatFocusAppPicker: some View {
+        let apps = runningAppsForChatFocus()
+        ScrollView(.vertical, showsIndicators: apps.count > 4) {
+            LazyVStack(spacing: 2) {
+                ForEach(apps, id: \.bundleId) { app in
+                    Button {
+                        chatFocusAppName = app.name
+                        chatFocusAppBundleId = app.bundleId
+                        isShowingChatFocusAppPicker = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(nsImage: app.icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            Text(app.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            if chatFocusAppBundleId == app.bundleId {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 9)
+                        .frame(height: 32)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(4)
+        }
+        .frame(width: 176, height: CGFloat(min(max(apps.count, 1), 4)) * 34 + 8)
     }
 
     /// Regular (user-visible) running apps for the chat focus picker, excluding

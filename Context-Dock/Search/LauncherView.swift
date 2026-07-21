@@ -33,6 +33,7 @@ struct LauncherView: View {
     @State var chatFocusAppName: String? = nil
     @State var chatFocusAppBundleId: String? = nil
     @State var isHoveringChatFocusAppIcon = false
+    @State var isShowingChatFocusAppPicker = false
     // Max visible list height: rows beyond this scroll inside the glass card.
     let listViewVisibleHeight: CGFloat = 372
     // These are isolated from searchState so their mutations don't trigger a struct-wide re-render
@@ -1694,8 +1695,8 @@ struct LauncherView: View {
             let scheme = url.scheme?.lowercased(),
             scheme == "http" || scheme == "https"
         {
-            if pill.sourceBundleId == "com.apple.Safari" || frontmost.bundleID == "com.apple.Safari" {
-                SafariTabManager.shared.switchToOpenTabOrOpenURL(url.absoluteString)
+            if pill.sourceBundleId == "com.apple.Safari" {
+                openURL(url, inBrowserBundleId: "com.apple.Safari")
             } else {
                 NSWorkspace.shared.open(url)
             }
