@@ -612,3 +612,7 @@ Swift: +0 added · ~1 modified · -0 deleted
 ## 2026-07-21 23:03 · `ba475737` · `codex-context-dock-polish-fixes`
 **fix(ai): token-scored Notes search; menus become guidance, tools win**
 Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 23:19 · `0a68f8b5` · `codex-context-dock-polish-fixes`
+**fix(messages): read from chat.db instead of dead AppleScript**
+Swift: +1 added · ~1 modified · -0 deleted

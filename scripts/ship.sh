@@ -66,9 +66,15 @@ BUILD_LOG="$(mktemp)"
 rm -rf .build
 # -jobs 1 avoids the new-build-system build.db race; the build can exit non-zero
 # on the harmless post-build prune step, so we verify the product instead.
+#
+# Sign with the automatic Apple Development identity (same as Debug) instead of
+# leaving the app unsigned. An unsigned app gets a fresh ad-hoc signature every
+# build, so macOS treats each update as a NEW app and drops its Accessibility /
+# Full Disk Access / Input Monitoring grants. A stable signing identity keeps the
+# TCC designated requirement constant, so permissions persist across updates.
 xcodebuild -project Context-Dock.xcodeproj -scheme "$APP_NAME" -configuration Release \
   -derivedDataPath .build/XcodeDerivedData -jobs 1 \
-  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO clean build \
+  CODE_SIGN_STYLE=Automatic COMPILER_INDEX_STORE_ENABLE=NO clean build \
   > "$BUILD_LOG" 2>&1 || true
 
 APP=".build/XcodeDerivedData/Build/Products/Release/$APP_NAME.app"
@@ -79,7 +85,14 @@ if [ ! -x "$APP/Contents/MacOS/$APP_NAME" ]; then
 fi
 BUILT="$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")"
 [ "$BUILT" = "$BUILD" ] || { restore_journal; die "Built app is build $BUILT, expected $BUILD."; }
-ok "Built $APP_NAME $VERSION ($BUILD)"
+
+# Confirm a stable (non-ad-hoc) signature so permissions carry across updates.
+SIGN_AUTH="$(codesign -dvv "$APP" 2>&1 | awk -F'= ' '/Authority=/{print $2; exit}')"
+if [ -z "$SIGN_AUTH" ] || echo "$SIGN_AUTH" | grep -qi "adhoc"; then
+  restore_journal
+  die "Release is not stably signed (Authority='${SIGN_AUTH:-none}'). Permissions would reset on every update. Check the signing identity."
+fi
+ok "Built $APP_NAME $VERSION ($BUILD) — signed by $SIGN_AUTH"
 
 # ── 3. DMG ─────────────────────────────────────────────────────────────────
 log "Creating DMG"
@@ -123,7 +136,7 @@ python3 - "$TAG" "$APP_NAME" "$VERSION" "$BUILD" > "$BODY_FILE" <<'PY'
 import json, sys
 tag, app, ver, build = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 notes = (f"Beta build {build}. Download the DMG, open it, drag {app} to "
-         f"Applications. Unsigned beta — first launch may need right-click → "
+         f"Applications. Beta signed with Apple Development — first launch may need right-click → "
          f"Open. Minimum macOS 26.1.")
 print(json.dumps({
     "tag_name": tag, "target_commitish": "main",
