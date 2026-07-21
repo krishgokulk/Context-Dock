@@ -13,6 +13,56 @@ import UniformTypeIdentifiers
 import Vision
 
 extension LauncherView {
+    /// Final Backspace/Clear is input-critical. Cancel work immediately, but leave the
+    /// rendered result snapshot alive for one display frame so AppKit can paint the empty
+    /// NSTextField before SwiftUI tears down rows and resizes the translucent NSPanel.
+    func beginGlobalContextEmptyQueryTransition() {
+        globalContextViewModel.fastMatchTask?.cancel()
+        globalContextViewModel.prepareTask?.cancel()
+        globalContextViewModel.autoExpandTask?.cancel()
+        globalContextViewModel.idleCollapseTask?.cancel()
+        globalAppMatchTask?.cancel()
+        globalGroupedTask?.cancel()
+        queryChangeTask?.cancel()
+        globalAppMatchGeneration &+= 1
+        globalGroupedGeneration &+= 1
+        queryChangeGeneration &+= 1
+        globalContextViewModel.isResolvingFastMatches = false
+        globalContextViewModel.expandWhenFastMatchesResolve = false
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
+            guard self.isGlobalContextActive,
+                self.globalInlineAppScope == nil,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+                self.globalContextViewModel.preparedResults = nil
+                self.cachedGlobalAppQuery = ""
+                self.cachedGlobalAppMatches = []
+                self.cachedGlobalGroupedQuery = ""
+                self.cachedGlobalGroupedState = nil
+                self.globalContextViewModel.cachedGroupedFingerprint = ""
+                self.pendingGlobalAppQuery = nil
+                self.pendingGlobalGroupedQuery = nil
+                self.focusedAppPillIndex = nil
+                self.l2.focusedPillIndex = nil
+                self.l2.pillNavViaKeyboard = false
+                self.measuredGlobalListContentHeight = 0
+            }
+            self.globalContextViewModel.fastMatchTask = nil
+            self.globalContextViewModel.prepareTask = nil
+            self.globalContextViewModel.autoExpandTask = nil
+            self.globalContextViewModel.idleCollapseTask = nil
+            self.globalAppMatchTask = nil
+            self.globalGroupedTask = nil
+            self.queryChangeTask = nil
+        }
+    }
+
     func currentGlobalAppMatches(for query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }

@@ -1883,9 +1883,12 @@ extension LauncherView {
                                                 .trimmingCharacters(in: .whitespacesAndNewlines)
                                                 .lowercased()
                                             if globalInlineAppScope == nil {
+                                                if q.isEmpty {
+                                                    beginGlobalContextEmptyQueryTransition()
+                                                    return
+                                                }
                                                 let keepExpanded =
-                                                    !q.isEmpty
-                                                    && globalContextViewModel.typingSnapshot.phase
+                                                    globalContextViewModel.typingSnapshot.phase
                                                         == .expanded
                                                 focusedAppPillIndex = nil
                                                 l2.focusedPillIndex = nil
