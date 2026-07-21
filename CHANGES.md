@@ -560,3 +560,31 @@ Swift: +0 added · ~4 modified · -0 deleted
 ## 2026-07-21 02:18 · `fe07b484` · `codex-context-dock-polish-fixes`
 **fix(search): reveal only prepared result sheets**
 Swift: +0 added · ~5 modified · -0 deleted
+
+## 2026-07-21 02:24 · `03e31130` · `codex-context-dock-polish-fixes`
+**feat(quick-note): arrow-key note navigation; backspace exits syscmd scopes**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 02:30 · `38984380` · `codex-context-dock-polish-fixes`
+**feat(chat): add multi-app context focus**
+Swift: +0 added · ~4 modified · -0 deleted
+
+## 2026-07-21 02:36 · `8271eee6` · `codex-context-dock-polish-fixes`
+**fix(chat): unify selected app capsule**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 02:41 · `54da9386` · `codex-context-dock-polish-fixes`
+**feat(ocr): add text capture to AI inputs**
+Swift: +0 added · ~6 modified · -0 deleted
+
+## 2026-07-21 02:51 · `f823766f` · `codex-context-dock-polish-fixes`
+**feat(hotkeys): add clipboard capture shortcuts**
+Swift: +1 added · ~3 modified · -0 deleted
+
+## 2026-07-21 11:23 · `2d8ed763` · `codex-context-dock-polish-fixes`
+**fix(global): stabilize scoped results**
+Swift: +0 added · ~2 modified · -0 deleted
+
+## 2026-07-21 12:14 · `5e307c63` · `codex-context-dock-polish-fixes`
+**fix(finder): retain desktop search sheet**
+Swift: +0 added · ~3 modified · -0 deleted

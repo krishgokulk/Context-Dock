@@ -1336,9 +1336,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_636C), id: 3)  // 'ILcl'
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
-        let handler: EventHandlerUPP = { (_, _, userData) -> OSStatus in
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_636C),
+                receivedID.id == 3
+            else { return OSStatus(eventNotHandledErr) }
             guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
-                return noErr
+                return OSStatus(eventNotHandledErr)
             }
             delegate.activateClipboardScope()
             return noErr
@@ -1379,17 +1388,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
         let handler: EventHandlerUPP = { _, event, _ in
-            guard let event else { return noErr }
+            guard let event else { return OSStatus(eventNotHandledErr) }
             var hotKeyID = EventHotKeyID()
             let status = GetEventParameter(
                 event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                 nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
             guard status == noErr else { return status }
+            guard hotKeyID.signature == FourCharCode(bitPattern: 0x494C_6370) else {
+                return OSStatus(eventNotHandledErr)
+            }
             switch hotKeyID.id {
             case 41: ScreenCaptureService.shared.capture(.text)
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
-            default: break
+            default: return OSStatus(eventNotHandledErr)
             }
             return noErr
         }

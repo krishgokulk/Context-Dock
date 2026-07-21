@@ -691,16 +691,20 @@ extension LauncherView {
         let q = query.lowercased()
         let readSignals = [
             "my ", "any ", "unread", "recent", "upcoming", "do i have", "did i",
-            "show me", "list ", "check ", "what's on", "whats on", "how many",
-            "this week", "today", "tomorrow", "latest",
+            "show ", "show me", "find ", "lookup ", "look up ", "get ", "list ",
+            "check ", "what's on", "whats on", "how many", "this week", "today",
+            "tomorrow", "latest",
         ]
         guard readSignals.contains(where: q.contains) else { return nil }
+        if looksLikeContactInfoLookup(q) {
+            return .contacts
+        }
         let map: [(ReadOnlyDataDomain, [String])] = [
             (.messages, ["message", "imessage", "text from", "texts", "unread text"]),
+            (.contacts, ["contact", "phone number", "email address of"]),
             (.mail, ["email", "mail", "inbox"]),
             (.calendar, ["calendar", "event", "meeting", "schedule", "appointment"]),
             (.reminders, ["reminder", "to-do", "todo", "task"]),
-            (.contacts, ["contact", "phone number", "email address of"]),
             (.notes, ["note about", "notes about", "my note", "my notes"]),
             (.photos, ["photo", "picture", "screenshot", "image of mine"]),
         ]
@@ -708,6 +712,28 @@ extension LauncherView {
             return domain
         }
         return nil
+    }
+
+    private func looksLikeContactInfoLookup(_ q: String) -> Bool {
+        let wantsContactField = [
+            " contact", "contacts", "phone", "number", "mobile", "email", "mail id",
+            "email id", "address book",
+        ].contains { q.contains($0) }
+        guard wantsContactField else { return false }
+
+        // Mailbox queries should stay in Mail. A person-info query like
+        // "show salmankhan email" has no mailbox noun/action, so route to Contacts.
+        let mailboxSignals = [
+            "inbox", "unread", "latest email", "recent email", "emails from",
+            "mail from", "message from", "subject", "attachment", "newsletter",
+        ]
+        if mailboxSignals.contains(where: q.contains) { return false }
+
+        let personLookupSignals = [
+            "show ", "find ", "lookup ", "look up ", "get ", "what is ", "what's ",
+            "whats ", "who is ", "contact info", "email of", "phone of",
+        ]
+        return personLookupSignals.contains(where: q.contains)
     }
 
     /// Read-only capability router. Classifies a personal-data read request, asks first-run
@@ -1041,25 +1067,15 @@ extension LauncherView {
                 + "Security → Contacts → Context-Dock, then ask again."
         }
         await MainActor.run { aiMode.loadingStatus = "Reading your Contacts…" }
-        let all = await ContactSearchManager.shared.getAllContacts()
+        let matches = await ContactSearchManager.shared.rankedContacts(matching: query, limit: 12)
         await MainActor.run { aiMode.loadingStatus = nil }
-        // Match by any significant query token against contact names.
-        let stop: Set<String> = [
-            "find", "contact", "number", "phone", "email", "address", "of", "for", "the",
-            "what", "is", "get", "me", "show", "my",
-        ]
-        let tokens = query.lowercased()
-            .split { !$0.isLetter && !$0.isNumber }
-            .map(String.init)
-            .filter { $0.count > 1 && !stop.contains($0) }
-        let matches = all.filter { contact in
-            tokens.contains { contact.fullName.lowercased().contains($0) }
-        }
         guard !matches.isEmpty else {
-            return "I couldn't find a matching contact for that."
+            return "I couldn't find a matching contact for that in your full Contacts database."
         }
         let lines = matches.prefix(8).map { c -> String in
             var parts = ["• \(c.fullName)"]
+            if !c.nickname.isEmpty { parts.append("  aka \(c.nickname)") }
+            if !c.organizationName.isEmpty { parts.append("  \(c.organizationName)") }
             if !c.primaryPhone.isEmpty { parts.append("  📞 \(c.primaryPhone)") }
             if !c.primaryEmail.isEmpty { parts.append("  ✉️ \(c.primaryEmail)") }
             return parts.joined(separator: "\n")
@@ -1356,6 +1372,14 @@ struct GeneralAIActionApprovalCard: View {
                     Text("Route: \(candidate.routeLabel)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if candidate.route == .verifiedMenu,
+                       let caveat = candidate.caveat,
+                       !caveat.isEmpty {
+                        Text(caveat)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 if let path = candidate.menuPath, !path.isEmpty {
                     Text(path.joined(separator: " → "))

@@ -335,7 +335,7 @@ extension LauncherView {
         lines.append(
             clis.isEmpty
                 ? "- CLI tools: none linked"
-                : "- CLI tools (request with typed terminal_call JSON): "
+                : "- CLI tools (fallback only; request with typed terminal_call JSON only when no adapter/MCP/API/Shortcut/menu route fits): "
                     + clis.map { "\($0.command)\($0.isInstalled ? "" : " (not installed)")" }
                         .joined(separator: ", "))
         lines.append(
@@ -353,13 +353,13 @@ extension LauncherView {
         }
         lines.append("")
         lines.append(
-            "Tool choice order: adapter action → MCP tool → linked CLI (typed terminal_call) → verified live app menu → answer from "
-            + "the live context. Never generate shell or AppleScript for an operation exposed by the scoped app's live menu. If no linked integration or menu can do what the user asks, say what "
+            "Tool choice order: adapter/native action → MCP tool → API/Shortcut → verified live app menu → linked CLI fallback → answer from "
+            + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, say what "
             + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
-            + "\(appName) (Tools tab: CLI, MCP, API, Shortcuts).")
+            + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI).")
         if !clis.isEmpty {
             lines.append(
-                "ACT, don't ask: when a linked CLI can print the information the user wants "
+                "CLI fallback rule: only when no adapter/native/MCP/API/Shortcut/menu capability fits, and a linked CLI can print the information the user wants "
                 + "(status, list, current state), emit one JSON line exactly as "
                 + "{\"terminal_call\":{\"command\":\"<command>\",\"purpose\":\"<reason>\"}} instead of "
                 + "asking the user to provide it.")
@@ -398,6 +398,40 @@ extension LauncherView {
         }
 
         return false
+    }
+
+    func scopedAppHasPreferredNonTerminalRoute(
+        bundleId: String,
+        appName: String,
+        query: String
+    ) -> Bool {
+        let trimmedBundle = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBundle.isEmpty else { return false }
+
+        if let adapter = AppAdapterManager.shared.adapter(for: trimmedBundle) {
+            if !adapter.contextReaders.isEmpty { return true }
+            if adapter.actions.contains(where: { action in
+                switch action.type {
+                case .cliTool, .shell:
+                    return false
+                default:
+                    return true
+                }
+            }) {
+                return true
+            }
+        }
+
+        if !MCPServerManager.shared.servers(forBundleId: trimmedBundle).isEmpty { return true }
+        if !APIConnectionStore.shared.connections(for: trimmedBundle).isEmpty { return true }
+
+        let menuMatches = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: trimmedBundle,
+            appName: appName,
+            query: query,
+            maxResults: 1
+        )
+        return !menuMatches.isEmpty
     }
 
     @MainActor
@@ -3306,6 +3340,17 @@ extension LauncherView {
                         }
                         await self.setL2LoadingStatus(
                             "Running linked CLI…", requestID: l2RequestID)
+                        if self.scopedAppHasPreferredNonTerminalRoute(
+                            bundleId: scopedBundleId,
+                            appName: scopedAppName.isEmpty
+                                ? (frontmostName ?? frontmost.name) : scopedAppName,
+                            query: query)
+                        {
+                            return (
+                                false,
+                                "A linked app/native/MCP/API/Shortcut/menu capability exists for this app. Use that route instead of terminal_call; terminal is fallback-only."
+                            )
+                        }
                         return await TerminalCommandExecutor.shared.run(
                             command, purpose: purpose)
                     }
@@ -3666,31 +3711,17 @@ extension LauncherView {
         if ["contact", "phone number", "email of", "number of", "call ", "phone of"]
             .contains(where: q.contains)
         {
-            // Use the longest capitalized token as the name to search.
-            let nameGuess = query.split(separator: " ").map(String.init)
-                .filter { $0.first?.isUppercase ?? false }
-                .max(by: { $0.count < $1.count }) ?? ""
-            let contacts: [[String: Any]] = await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let result =
-                        nameGuess.isEmpty
-                        ? api.getContacts(limit: 20)
-                        : api.searchContacts(query: nameGuess)
-                    continuation.resume(returning: result)
-                }
-            }
+            let contacts = await ContactSearchManager.shared.rankedContacts(matching: query, limit: 12)
             if !contacts.isEmpty {
                 let lines = contacts.prefix(10).map { c -> String in
-                    let name = (c["fullName"] as? String)?.trimmingCharacters(
-                        in: .whitespaces) ?? ""
-                    let phone = (c["phone"] as? String) ?? ""
-                    let email = (c["email"] as? String) ?? ""
-                    var parts = [name.isEmpty ? "(no name)" : name]
-                    if !phone.isEmpty { parts.append("📞 \(phone)") }
-                    if !email.isEmpty { parts.append("✉️ \(email)") }
+                    var parts = [c.fullName.isEmpty ? "(no name)" : c.fullName]
+                    if !c.nickname.isEmpty { parts.append("aka \(c.nickname)") }
+                    if !c.organizationName.isEmpty { parts.append(c.organizationName) }
+                    if !c.primaryPhone.isEmpty { parts.append("📞 \(c.primaryPhone)") }
+                    if !c.primaryEmail.isEmpty { parts.append("✉️ \(c.primaryEmail)") }
                     return "- " + parts.joined(separator: " — ")
                 }.joined(separator: "\n")
-                blocks.append("## Contacts — matches:\n\(lines)")
+                blocks.append("## Contacts — best full-database matches:\n\(lines)")
             }
         }
 
@@ -4243,6 +4274,14 @@ extension LauncherView {
             }
         }
 
+        // Read-only capability router first. Queries like "show Salman Khan email" are
+        // contact lookups, not Mail/share commands. Run this before executable routing so
+        // personal-data reads don't get misclassified as actions.
+        if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+           let readAnswer = await readOnlyCapabilityAnswer(query: query) {
+            return readAnswer
+        }
+
         // DoraX Action Chat: executable requests ("open safari new private window",
         // "add reminder to buy milk") resolve to real capability routes and execute
         // with approval instead of getting an instructional chatbot answer.
@@ -4256,15 +4295,6 @@ extension LauncherView {
         if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer
-        }
-
-        // Read-only capability router: "any unread messages?", "events next 7 days?" — ask
-        // first-run privacy approval, READ the real data locally (EventKit/Contacts), and
-        // ground the provider so it summarizes verified data instead of claiming no access.
-        // Cancel short-circuits; a grounded answer short-circuits; nil falls through.
-        if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
-           let readAnswer = await readOnlyCapabilityAnswer(query: query) {
-            return readAnswer
         }
 
         // Named-app status grounding: "what's going on with vs code?" answers from

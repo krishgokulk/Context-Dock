@@ -141,4 +141,49 @@ struct AIOrchestrationScopeTests {
         #expect(lines.contains("Ranked DoraX Capability Candidates"))
         #expect(lines.contains("system.share"))
     }
+
+    @MainActor
+    @Test func productRouteFilterDropsCLIWhenMCPExistsForSameApp() {
+        let candidates = [
+            candidate(id: "cli", source: .cli, route: .cli, bundleID: "com.example.App"),
+            candidate(id: "mcp", source: .mcp, route: .mcp, bundleID: "com.example.App"),
+        ]
+
+        let filtered = GeneralAIActionResolver.shared.productRouteFiltered(candidates)
+
+        #expect(filtered.map(\.id) == ["mcp"])
+    }
+
+    @MainActor
+    @Test func productRouteFilterKeepsCLIWhenItIsOnlyRoute() {
+        let candidates = [
+            candidate(id: "cli", source: .cli, route: .cli, bundleID: "com.example.App"),
+        ]
+
+        let filtered = GeneralAIActionResolver.shared.productRouteFiltered(candidates)
+
+        #expect(filtered.map(\.id) == ["cli"])
+    }
+
+    private func candidate(
+        id: String,
+        source: DoraXActionCandidate.Source,
+        route: DoraXActionCandidate.ExecutionRoute,
+        bundleID: String?
+    ) -> DoraXActionCandidate {
+        DoraXActionCandidate(
+            id: id,
+            title: id,
+            appName: "Example",
+            bundleID: bundleID,
+            source: source,
+            route: route,
+            capabilityID: nil,
+            requiredInputs: [],
+            riskLevel: .low,
+            confidence: 0.9,
+            permissionKey: id,
+            debugReason: "test"
+        )
+    }
 }

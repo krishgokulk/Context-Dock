@@ -318,7 +318,12 @@ final class AppAdapterManager: ObservableObject {
         var errors: [(file: String, message: String)] = []
 
         for url in contents where url.pathExtension == "json" && !url.lastPathComponent.hasPrefix("_") {
-            if legacySampleFileNames.contains(url.lastPathComponent) { continue }
+            // Only skip old bundled sample files while reading the legacy ILauncher
+            // directory. User-created DoraX adapters may legitimately be named
+            // Photos.json, Obsidian.json, etc.; skipping them makes Create Adapter
+            // appear to do nothing.
+            if url.deletingLastPathComponent() == legacyAdaptersDirectory,
+               legacySampleFileNames.contains(url.lastPathComponent) { continue }
             guard let data = try? Data(contentsOf: url) else {
                 errors.append((url.lastPathComponent, "Could not read file"))
                 continue

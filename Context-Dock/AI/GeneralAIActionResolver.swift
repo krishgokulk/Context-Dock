@@ -110,7 +110,7 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
             let display = MenuShortcutFormatter.display(
                 char: shortcutChar, modifiers: shortcutModifiers) ?? ""
             return display.isEmpty ? "keyboard shortcut" : "shortcut \(display)"
-        case .verifiedMenu: return "verified menu"
+        case .verifiedMenu: return "cached menu click"
         case .axFallback: return "accessibility action"
         case .appLaunch: return "app launch"
         case .automation: return "app automation"
@@ -624,7 +624,8 @@ final class GeneralAIActionResolver {
                 action: action, appName: appName, bundleID: bundleID, confidence: 0.88))
         }
 
-        // 2. Cached menu commands — index-backed read, no live AX scan.
+        // 2. Cached menu commands — product fallback when no app adapter/MCP/API route fits.
+        // Execution still launches the app and live-verifies the menu item before clicking.
         let menuMatches = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID, appName: appName, query: actionPhrase, maxResults: 6)
         if let match = bestMenuMatch(menuMatches, actionPhrase: actionPhrase) {
@@ -667,8 +668,9 @@ final class GeneralAIActionResolver {
                 shortcutName: shortcut.name))
         }
 
-        // 5. App-linked CLI tools. These are often the best route: no app launch,
-        // no menu warmup, deterministic output through terminal.runCommand.
+        // 5. App-linked CLI tools. Product policy keeps these fallback-only: if an adapter,
+        // MCP/API, Shortcut, cached menu, or keyboard shortcut exists for the same app,
+        // productRouteFiltered(_:) removes CLI before ranking.
         candidates.append(contentsOf: appLinkedCLICandidates(
             appName: appName,
             bundleID: bundleID,
@@ -787,6 +789,7 @@ final class GeneralAIActionResolver {
     private func rankedWithPreferences(
         _ candidates: [DoraXActionCandidate], intentKey: String
     ) -> [DoraXActionCandidate] {
+        let candidates = productRouteFiltered(candidates)
         let avoided = candidates.filter {
             RoutePreferenceStore.shared.strength(
                 intentKey: intentKey, bundleID: $0.bundleID ?? "", route: $0.route.rawValue)
@@ -803,6 +806,27 @@ final class GeneralAIActionResolver {
         }
         list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
         return list
+    }
+
+    /// Product rule: terminal/CLI is fallback-only for app workflows. If DoraX has a real
+    /// app capability for the same target (adapter/native, MCP, API, shortcut, cached menu,
+    /// or keyboard shortcut), remove CLI candidates before ranking. This prevents a model or
+    /// learned preference from choosing shell when the user added a better app integration.
+    func productRouteFiltered(_ candidates: [DoraXActionCandidate]) -> [DoraXActionCandidate] {
+        let capableTargets = Set(candidates.compactMap { candidate -> String? in
+            guard candidate.route != .cli,
+                  candidate.source != .cli,
+                  candidate.route != .appLaunch,
+                  candidate.route != .axFallback
+            else { return nil }
+            return candidate.bundleID ?? "__system__"
+        })
+        guard !capableTargets.isEmpty else { return candidates }
+        let filtered = candidates.filter { candidate in
+            guard candidate.route == .cli || candidate.source == .cli else { return true }
+            return !capableTargets.contains(candidate.bundleID ?? "__system__")
+        }
+        return filtered.isEmpty ? candidates : filtered
     }
 
     // MARK: - Read capability candidates
@@ -1890,6 +1914,9 @@ final class GeneralAIActionResolver {
         candidate.menuPath = path
         candidate.shortcutChar = shortcutChar
         candidate.shortcutModifiers = shortcutModifiers
+        candidate.caveat =
+            "No better app adapter/MCP/API route matched. DoraX can launch \(appName), "
+            + "live-check this cached menu item, then click it only if it is available."
         return candidate
     }
 
