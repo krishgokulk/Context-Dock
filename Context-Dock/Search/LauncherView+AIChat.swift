@@ -1199,7 +1199,8 @@ extension LauncherView {
                         ForEach(aiMode.messages) { message in
                             AIChatMessageView(
                                 message: message,
-                                isStreaming: message.id == aiMode.streamingId
+                                isStreaming: message.id == aiMode.streamingId,
+                                onReplaceText: selectionScopeReplaceTextAction(for: message)
                             )
                             .id(message.id)
                         }
@@ -1247,6 +1248,31 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    func selectionScopeReplaceTextAction(for message: AIChatMessage) -> (() -> Void)? {
+        guard hasSelectionScopeSurface,
+            message.role == .assistant,
+            message.id != aiMode.streamingId,
+            aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else { return nil }
+        let replacement = cleanedNativeWritingToolOutput(message.content)
+        guard !replacement.isEmpty else { return nil }
+        return {
+            replaceSelectionTextWithAIAnswer(replacement)
+        }
+    }
+
+    func replaceSelectionTextWithAIAnswer(_ text: String) {
+        guard hasSelectionScopeSurface else { return }
+        let target =
+            AppDelegate.shared?.previousFrontmostApp
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == selectionScopePayload?.sourceBundleId
+            }
+        let pid = target?.processIdentifier ?? 0
+        pasteNativeWritingToolOutput(text, sourcePID: pid)
+        DockActionFeedback.showResult("Replacement pasted", icon: "arrow.left.arrow.right", success: true)
     }
 
     var generalAISelectionContextLabel: String? {

@@ -4202,6 +4202,7 @@ extension LauncherView {
             var sel: [DockPill] = []
             sel.append(selectionScopeAskAIPill(query: q))
             sel.append(contentsOf: selectionScopeCopyPill(query: q))
+            sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: finderFilePills)
             sel.append(contentsOf: macOSExtensionPills)

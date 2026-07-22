@@ -2426,6 +2426,207 @@ extension LauncherView {
         return [pill]
     }
 
+    func selectionScopeBuiltInWorkflowPills(query q: String) -> [DockPill] {
+        guard let selection = effectiveSelectionForScope else { return [] }
+        switch selection {
+        case .text:
+            return selectionScopeTextWorkflowPills(query: q)
+        case .url:
+            return selectionScopeURLWorkflowPills(query: q)
+        case .files(let urls):
+            return selectionScopeFileWorkflowPills(query: q, urls: urls)
+        }
+    }
+
+    func selectionScopeTextWorkflowPills(query q: String) -> [DockPill] {
+        let actions: [(id: String, name: String, icon: String, prompt: String, terms: String)] = [
+            ("rewrite", "Rewrite", "pencil.and.scribble", "Rewrite this clearly. Return only the replacement text.", "rewrite improve clear professional"),
+            ("bullets", "Make bullets", "list.bullet", "Convert this into concise bullet points. Return only the replacement text.", "bullet list key points"),
+            ("fix", "Fix grammar", "checkmark.seal", "Fix grammar, spelling, and clarity. Return only the corrected replacement text.", "grammar spelling correct fix"),
+            ("shorten", "Shorten", "text.badge.minus", "Shorten this while preserving meaning. Return only the replacement text.", "shorten concise trim"),
+            ("table", "Make table", "tablecells", "Convert this into a clean Markdown table if possible. Return only the replacement text.", "table markdown format"),
+        ]
+        return actions.compactMap { selectionScopeAIPill($0, query: q, badge: "Text") }
+    }
+
+    func selectionScopeURLWorkflowPills(query q: String) -> [DockPill] {
+        let actions: [(id: String, name: String, icon: String, prompt: String, terms: String)] = [
+            ("summarize-url", "Summarize Link", "link.badge.plus", "Summarize this URL and list why it may be useful.", "url link summarize"),
+            ("extract-tasks-url", "Extract Tasks", "checklist", "Extract actionable tasks or follow-ups from this URL context.", "tasks todo follow up"),
+            ("save-note-url", "Note Summary", "note.text", "Create a short note summary for this URL.", "note summary save"),
+        ]
+        return actions.compactMap { selectionScopeAIPill($0, query: q, badge: "Link") }
+    }
+
+    func selectionScopeFileWorkflowPills(query q: String, urls: [URL]) -> [DockPill] {
+        guard !urls.isEmpty else { return [] }
+        var pills: [DockPill] = []
+        pills.append(contentsOf: selectionScopeFileUtilityPills(query: q, urls: urls))
+        pills.append(contentsOf: selectionScopeDocumentAIPills(query: q, urls: urls))
+        pills.append(contentsOf: selectionScopeMediaAIPills(query: q, urls: urls))
+        pills.append(contentsOf: selectionScopeImageTransformPills(query: q, urls: urls))
+        pills.append(contentsOf: selectionScopeArchivePills(query: q, urls: urls))
+        return pills
+    }
+
+    func selectionScopeAIPill(
+        _ action: (id: String, name: String, icon: String, prompt: String, terms: String),
+        query q: String,
+        badge: String
+    ) -> DockPill? {
+        let normalizedQuery = normalizedDockPillText(q)
+        let searchable = normalizedDockPillText("\(action.name) \(action.prompt) \(action.terms)")
+        guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+        var pill = DockPill(
+            id: "selection-workflow-ai-\(action.id)",
+            name: action.name,
+            icon: action.icon,
+            accentColorName: "purple",
+            badge: badge,
+            execute: { enterSelectionChat(initialQuery: action.prompt) }
+        )
+        pill.rankingKind = "selectionWorkflow"
+        pill.rankingScore = 94_000
+        pill.trackingIdentifier = "selection-workflow-ai:\(action.id)"
+        pill.searchTerms = [action.name, action.prompt, action.terms, "selection", "ai"]
+        return pill
+    }
+
+    func selectionScopeFileUtilityPills(query q: String, urls: [URL]) -> [DockPill] {
+        let label = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
+        let actions: [(id: String, name: String, icon: String, terms: String, run: () -> Void)] = [
+            ("open", "Open", "arrow.up.forward.app", "open launch file", {
+                urls.forEach { NSWorkspace.shared.open($0) }
+            }),
+            ("reveal", "Reveal in Finder", "folder", "reveal finder show enclosing", {
+                NSWorkspace.shared.activateFileViewerSelecting(urls)
+            }),
+            ("copy-path", "Copy Path", "point.topleft.down.curvedto.point.bottomright.up", "copy path pathname filepath", {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+                showSelectionCopyFeedback("Copied path for \(label)")
+            }),
+        ]
+        return actions.compactMap { action in
+            let normalizedQuery = normalizedDockPillText(q)
+            let searchable = normalizedDockPillText("\(action.name) \(action.terms)")
+            guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+            var pill = DockPill(
+                id: "selection-file-\(action.id)",
+                name: action.name,
+                icon: action.icon,
+                accentColorName: "blue",
+                badge: label,
+                execute: action.run
+            )
+            pill.rankingKind = "selectionWorkflow"
+            pill.rankingScore = 93_000
+            pill.trackingIdentifier = "selection-file:\(action.id)"
+            pill.searchTerms = [action.name, action.terms, "selection", "file"]
+            return pill
+        }
+    }
+
+    func selectionScopeDocumentAIPills(query q: String, urls: [URL]) -> [DockPill] {
+        let documentExts: Set<String> = ["pdf", "txt", "md", "rtf", "doc", "docx", "pages", "csv", "json", "xml", "html"]
+        guard urls.contains(where: { documentExts.contains($0.pathExtension.lowercased()) }) else { return [] }
+        let actions: [(id: String, name: String, icon: String, prompt: String, terms: String)] = [
+            ("extract-text", "Extract Text", "doc.text.viewfinder", "Extract all readable text from this document. Preserve headings and important structure.", "ocr extract text document pdf"),
+            ("make-summary", "Document Brief", "doc.richtext", "Create a concise document brief with summary, key points, and action items.", "brief summarize document"),
+            ("find-actions", "Find Action Items", "checklist", "Extract action items, owners, dates, and follow-ups from this document.", "tasks action items todo"),
+        ]
+        return actions.compactMap { selectionScopeAIPill($0, query: q, badge: "Document") }
+    }
+
+    func selectionScopeMediaAIPills(query q: String, urls: [URL]) -> [DockPill] {
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "webp", "tiff", "gif"]
+        let videoExts: Set<String> = ["mov", "mp4", "m4v", "avi", "mkv", "webm"]
+        let audioExts: Set<String> = ["mp3", "m4a", "wav", "aiff", "flac", "aac"]
+        let hasImage = urls.contains { imageExts.contains($0.pathExtension.lowercased()) }
+        let hasVideo = urls.contains { videoExts.contains($0.pathExtension.lowercased()) }
+        let hasAudio = urls.contains { audioExts.contains($0.pathExtension.lowercased()) }
+        var actions: [(id: String, name: String, icon: String, prompt: String, terms: String)] = []
+        if hasImage {
+            actions += [
+                ("describe-image", "Describe Image", "photo", "Describe this image precisely. Include visible text, objects, layout, and likely purpose.", "image photo describe"),
+                ("ocr-image", "OCR Image", "text.viewfinder", "Extract all readable text from this image. Return only the extracted text.", "ocr image text extract"),
+                ("alt-text", "Write Alt Text", "accessibility", "Write concise accessibility alt text for this image.", "alt accessibility image"),
+            ]
+        }
+        if hasVideo {
+            actions += [
+                ("video-brief", "Video Brief", "film", "Analyze this selected video file context and create a short brief: likely content, metadata, and useful next actions.", "video summarize media"),
+            ]
+            if selectionScopeExecutableExists("ffmpeg") {
+                actions += [
+                    ("extract-audio", "Extract Audio Plan", "waveform", "Give the exact safe extraction plan for this selected video using ffmpeg, including output filename.", "extract audio ffmpeg video"),
+                ]
+            }
+        }
+        if hasAudio {
+            actions += [
+                ("audio-brief", "Audio Brief", "waveform", "Analyze this selected audio file context and create a short brief with metadata and likely next actions.", "audio summarize media"),
+            ]
+        }
+        return actions.compactMap { selectionScopeAIPill($0, query: q, badge: "Media") }
+    }
+
+    func selectionScopeImageTransformPills(query q: String, urls: [URL]) -> [DockPill] {
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff"]
+        let imageURLs = urls.filter { imageExts.contains($0.pathExtension.lowercased()) }
+        guard !imageURLs.isEmpty else { return [] }
+        let actions: [(id: String, name: String, icon: String, terms: String, run: () -> Void)] = [
+            ("to-jpeg", "Convert to JPEG", "photo.badge.arrow.down", "convert jpg jpeg image", {
+                runSipsImageTransform(imageURLs, format: "jpeg", suffix: "jpeg", quality: nil)
+            }),
+            ("to-png", "Convert to PNG", "photo.badge.arrow.down", "convert png image", {
+                runSipsImageTransform(imageURLs, format: "png", suffix: "png", quality: nil)
+            }),
+            ("compress", "Compress Image", "arrow.down.right.and.arrow.up.left", "compress reduce size image", {
+                runSipsImageTransform(imageURLs, format: "jpeg", suffix: "compressed.jpg", quality: "72")
+            }),
+        ]
+        return actions.compactMap { action in
+            let normalizedQuery = normalizedDockPillText(q)
+            let searchable = normalizedDockPillText("\(action.name) \(action.terms)")
+            guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+            var pill = DockPill(
+                id: "selection-image-\(action.id)",
+                name: action.name,
+                icon: action.icon,
+                accentColorName: "pink",
+                badge: imageURLs.count == 1 ? imageURLs[0].lastPathComponent : "\(imageURLs.count) images",
+                execute: action.run
+            )
+            pill.rankingKind = "selectionMedia"
+            pill.rankingScore = 92_000
+            pill.trackingIdentifier = "selection-image:\(action.id)"
+            pill.searchTerms = [action.name, action.terms, "selection", "media", "image"]
+            return pill
+        }
+    }
+
+    func selectionScopeArchivePills(query q: String, urls: [URL]) -> [DockPill] {
+        guard !urls.isEmpty else { return [] }
+        let normalizedQuery = normalizedDockPillText(q)
+        let searchable = normalizedDockPillText("compress zip archive files folder")
+        guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return [] }
+        var pill = DockPill(
+            id: "selection-archive-zip",
+            name: urls.count == 1 ? "Compress to ZIP" : "Compress Items to ZIP",
+            icon: "archivebox",
+            accentColorName: "yellow",
+            badge: urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items",
+            execute: { runSelectionZip(urls) }
+        )
+        pill.rankingKind = "selectionWorkflow"
+        pill.rankingScore = 91_000
+        pill.trackingIdentifier = "selection-archive:zip"
+        pill.searchTerms = ["compress", "zip", "archive", "selection", "file", "folder"]
+        return [pill]
+    }
+
     func showSelectionCopyFeedback(_ title: String) {
         let id = "selection-copy-\(UUID().uuidString)"
         launcherViewModel.inlineDockFeedback = DockInlineFeedback(
@@ -2439,6 +2640,127 @@ extension LauncherView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             if launcherViewModel.inlineDockFeedback?.id == id {
                 launcherViewModel.inlineDockFeedback = nil
+            }
+        }
+    }
+
+    func selectionScopeExecutableExists(_ name: String) -> Bool {
+        let candidates = [
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
+            "/usr/bin/\(name)",
+            "/bin/\(name)",
+        ]
+        return candidates.contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    func selectionScopeExecutableURL(_ name: String) -> URL? {
+        let candidates = [
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
+            "/usr/bin/\(name)",
+            "/bin/\(name)",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+            .map(URL.init(fileURLWithPath:))
+    }
+
+    func runSipsImageTransform(_ urls: [URL], format: String, suffix: String, quality: String?) {
+        guard let sips = selectionScopeExecutableURL("sips") else {
+            DockActionFeedback.showResult("sips not available", icon: "exclamationmark.triangle", success: false)
+            return
+        }
+        DockActionFeedback.showResult("Processing images…", icon: "photo", success: true)
+        Task.detached {
+            var outputs: [URL] = []
+            var failed = 0
+            for url in urls {
+                let base = url.deletingPathExtension()
+                let output: URL
+                if suffix.contains(".") {
+                    output = base.deletingLastPathComponent()
+                        .appendingPathComponent("\(base.lastPathComponent)-\(suffix)")
+                } else {
+                    output = base.deletingLastPathComponent()
+                        .appendingPathComponent("\(base.lastPathComponent).\(suffix)")
+                }
+                let process = Process()
+                process.executableURL = sips
+                var args = ["-s", "format", format]
+                if let quality {
+                    args += ["-s", "formatOptions", quality]
+                }
+                args += [url.path, "--out", output.path]
+                process.arguments = args
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    if process.terminationStatus == 0 {
+                        outputs.append(output)
+                    } else {
+                        failed += 1
+                    }
+                } catch {
+                    failed += 1
+                }
+            }
+            let completedOutputs = outputs
+            let failedCount = failed
+            await MainActor.run {
+                if !completedOutputs.isEmpty {
+                    NSWorkspace.shared.activateFileViewerSelecting(completedOutputs)
+                    DockActionFeedback.showResult(
+                        completedOutputs.count == 1 ? "Created \(completedOutputs[0].lastPathComponent)" : "Created \(completedOutputs.count) images",
+                        icon: "checkmark.circle",
+                        success: true
+                    )
+                } else {
+                    DockActionFeedback.showResult(
+                        failedCount > 0 ? "Image transform failed" : "No images transformed",
+                        icon: "exclamationmark.triangle",
+                        success: false
+                    )
+                }
+            }
+        }
+    }
+
+    func runSelectionZip(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let parent = urls[0].deletingLastPathComponent()
+        let baseName = urls.count == 1
+            ? urls[0].deletingPathExtension().lastPathComponent
+            : "Selection-\(Date().timeIntervalSince1970.rounded())"
+        let output = parent.appendingPathComponent("\(baseName).zip")
+        let toolName = urls.count == 1 ? "ditto" : "zip"
+        guard let tool = selectionScopeExecutableURL(toolName) else {
+            DockActionFeedback.showResult("\(toolName) not available", icon: "exclamationmark.triangle", success: false)
+            return
+        }
+        DockActionFeedback.showResult("Creating ZIP…", icon: "archivebox", success: true)
+        Task.detached {
+            let process = Process()
+            process.executableURL = tool
+            process.currentDirectoryURL = parent
+            process.arguments =
+                urls.count == 1
+                ? ["-c", "-k", "--sequesterRsrc", "--keepParent", urls[0].lastPathComponent, output.path]
+                : ["-r", output.path] + urls.map(\.lastPathComponent)
+            do {
+                try process.run()
+                process.waitUntilExit()
+                await MainActor.run {
+                    if process.terminationStatus == 0 {
+                        NSWorkspace.shared.activateFileViewerSelecting([output])
+                        DockActionFeedback.showResult("Created \(output.lastPathComponent)", icon: "archivebox", success: true)
+                    } else {
+                        DockActionFeedback.showResult("ZIP failed", icon: "exclamationmark.triangle", success: false)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    DockActionFeedback.showResult(error.localizedDescription, icon: "exclamationmark.triangle", success: false)
+                }
             }
         }
     }

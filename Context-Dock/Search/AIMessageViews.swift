@@ -283,6 +283,7 @@ struct AIChatMessageView: View {
     var onInstallExtension: (() -> Void)? = nil
     var onInstallProposal: ((String) -> Void)? = nil
     var onRunOnceProposal: ((String) -> Void)? = nil
+    var onReplaceText: (() -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
@@ -447,6 +448,23 @@ struct AIChatMessageView: View {
 
                 if !message.appLaunches.isEmpty {
                     appLaunchButtons
+                }
+
+                if message.role == .assistant, let onReplaceText, !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(action: onReplaceText) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.left.arrow.right")
+                            Text("Replace text").fontWeight(.medium)
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(providerColor)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(providerColor.opacity(0.28)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Replace the original selected text with this answer")
                 }
 
                 if message.hasInstallButton, message.structuredData == nil,
