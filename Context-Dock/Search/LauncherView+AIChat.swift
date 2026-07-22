@@ -1601,27 +1601,38 @@ extension LauncherView {
         )
     }
 
-    func selectionAIContextBlock() -> String {
+    func selectionAIContextBlock(compact: Bool = false, query: String? = nil) -> String {
         let snapshot = currentAISelectionSnapshot
         guard !snapshot.isEmpty else { return "" }
         var parts: [String] = []
+        let textLimit = compact ? 4_000 : 12_000
+        let fileLimit = compact ? 5 : 20
+        let fileContentLimit = compact ? 2_500 : 5_000
         if let text = snapshot.text?.trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
         {
-            parts.append("Selected content:\n\"\"\"\n\(String(text.prefix(12_000)))\n\"\"\"")
+            let selectedText = String(text.prefix(textLimit))
+            let suffix = text.count > selectedText.count
+                ? "\n\n*(Selected text compacted for the current AI context budget)*"
+                : ""
+            parts.append("Selected content:\n\"\"\"\n\(selectedText)\(suffix)\n\"\"\"")
         }
         if let pageURL = snapshot.pageURL, !pageURL.isEmpty {
             parts.append("Selection page: \(pageURL)")
         }
         if !snapshot.files.isEmpty {
-            let blocks = ContextDetector.shared.analyzeFiles(snapshot.files).compactMap {
+            let blocks = ContextDetector.shared.analyzeFiles(Array(snapshot.files.prefix(fileLimit))).compactMap {
                 item -> String? in
                 guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
                     !content.isEmpty
                 else { return nil }
-                return "### \(item.url.lastPathComponent) (\(item.type))\n\(content)"
+                let markdown = MarkItDownService.compact(content, for: query, limit: fileContentLimit)
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(markdown)"
             }
             if !blocks.isEmpty { parts.append("Selected files:\n\n" + blocks.joined(separator: "\n\n")) }
+            if snapshot.files.count > fileLimit {
+                parts.append("Additional selected files omitted for context budget: \(snapshot.files.count - fileLimit)")
+            }
         }
         return parts.joined(separator: "\n\n")
     }
@@ -4284,7 +4295,10 @@ extension LauncherView {
             }
         }
 
-        let selectionContextBlock = selectionAIContextBlock()
+        let selectionContextBlock = selectionAIContextBlock(
+            compact: providerSelection.effectiveProvider == .onDevice,
+            query: query
+        )
         if !selectionContextBlock.isEmpty {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
         }

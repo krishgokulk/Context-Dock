@@ -76,6 +76,14 @@ private struct AppMenuCacheRowModel: Identifiable {
     var isCached: Bool { recordCount > 0 }
 }
 
+private struct SelectionScopeBuiltInAction: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let icon: String
+    let color: Color
+}
+
 // MARK: - Main View
 
 struct AutomationSettingsView: View {
@@ -547,19 +555,38 @@ struct AutomationSettingsView: View {
 
     private var triggerList: some View {
         Group {
-            if filteredTriggers.isEmpty {
+            let builtIns = filteredSelectionScopeBuiltIns
+            if filteredTriggers.isEmpty && builtIns.isEmpty {
                 listEmpty(icon: "scope", label: "No trigger rules", action: { presentCreateFlow() })
             } else {
                 List(selection: $selectedRuleID) {
-                    ForEach(filteredTriggers) { rule in
-                        AutomationRow(
-                            icon: "scope",
-                            color: .red,
-                            title: rule.name,
-                            subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s")",
-                            isEnabled: rule.isEnabled
-                        )
-                        .tag(rule.id)
+                    if settingsPage == .shortcutSheetWorkflows, !builtIns.isEmpty {
+                        Section("Built-in Actions") {
+                            ForEach(builtIns) { action in
+                                AutomationRow(
+                                    icon: action.icon,
+                                    color: action.color,
+                                    title: action.title,
+                                    subtitle: action.subtitle,
+                                    isEnabled: true
+                                )
+                            }
+                        }
+                    }
+
+                    if !filteredTriggers.isEmpty {
+                        Section(settingsPage == .shortcutSheetWorkflows ? "Custom Triggers" : "Triggers") {
+                            ForEach(filteredTriggers) { rule in
+                                AutomationRow(
+                                    icon: "scope",
+                                    color: .red,
+                                    title: rule.name,
+                                    subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s")",
+                                    isEnabled: rule.isEnabled
+                                )
+                                .tag(rule.id)
+                            }
+                        }
                     }
                 }
                 .listStyle(.inset)
@@ -870,6 +897,31 @@ struct AutomationSettingsView: View {
         let rules = settings.axTriggerRules
         guard !searchText.isEmpty else { return rules }
         return rules.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private var selectionScopeBuiltIns: [SelectionScopeBuiltInAction] {
+        [
+            .init(id: "ask-ai", title: "Ask AI", subtitle: "Ask about selected text, files, documents, images, or links.", icon: "sparkles", color: .yellow),
+            .init(id: "explain", title: "Explain", subtitle: "Explain selected content without switching to AI Assistant.", icon: "magnifyingglass.circle.fill", color: .purple),
+            .init(id: "summarize", title: "Summarize", subtitle: "Create a concise summary from selected text, documents, PDFs, or URLs.", icon: "text.alignleft", color: .indigo),
+            .init(id: "extract-text", title: "Extract Text", subtitle: "Read text from PDFs, Markdown, source, CSV, JSON, HTML, and Office files.", icon: "doc.text.magnifyingglass", color: .blue),
+            .init(id: "ocr-image", title: "OCR Image", subtitle: "Extract visible text from screenshots and selected images.", icon: "text.viewfinder", color: .pink),
+            .init(id: "copy-selection", title: "Copy Text/File/Link", subtitle: "Copy selected text, selected URLs, or selected file paths.", icon: "doc.on.doc", color: .cyan),
+            .init(id: "open-selection", title: "Open", subtitle: "Open the selected file, folder, document, image, media item, or URL.", icon: "arrow.up.right.square", color: .green),
+            .init(id: "reveal-finder", title: "Reveal in Finder", subtitle: "Reveal selected files or folders in Finder.", icon: "folder", color: .blue),
+            .init(id: "compress-zip", title: "Compress to ZIP", subtitle: "Create a ZIP archive from selected files or folders.", icon: "archivebox", color: .orange),
+            .init(id: "convert-media", title: "Convert Media", subtitle: "Convert selected images, audio, video, and PDFs using built-in macOS tools.", icon: "arrow.triangle.2.circlepath", color: .teal),
+            .init(id: "link-tasks", title: "Summarize Link / Extract Tasks", subtitle: "Summarize selected URLs and find follow-up actions.", icon: "link", color: .teal),
+        ]
+    }
+
+    private var filteredSelectionScopeBuiltIns: [SelectionScopeBuiltInAction] {
+        guard settingsPage == .shortcutSheetWorkflows else { return [] }
+        guard !searchText.isEmpty else { return selectionScopeBuiltIns }
+        return selectionScopeBuiltIns.filter {
+            $0.title.localizedCaseInsensitiveContains(searchText)
+                || $0.subtitle.localizedCaseInsensitiveContains(searchText)
+        }
     }
 
     private var filteredAdapters: [AppAdapter] {
@@ -1291,11 +1343,10 @@ struct AutomationSettingsView: View {
                     color: .purple,
                     items: [
                         ("Ask AI", "Ask any free-form question about the selected text."),
-                        ("Rewrite", "Rewrite clearly and show Replace text under the AI answer."),
-                        ("Make bullets", "Convert selected text into concise bullet points."),
-                        ("Fix grammar", "Correct spelling, grammar, and clarity."),
-                        ("Shorten", "Compress wording while preserving meaning."),
-                        ("Make table", "Format suitable text as a Markdown table."),
+                        ("Explain", "Explain what the selected text means in-place."),
+                        ("Summarize", "Create a compact summary without switching to AI Assistant."),
+                        ("Extract tasks", "Find action items, dates, owners, and follow-ups."),
+                        ("Copy selection", "Copy the selected text for use in another app."),
                     ])
 
                 selectionBuiltInGroup(
@@ -1307,6 +1358,7 @@ struct AutomationSettingsView: View {
                         ("Reveal in Finder", "Show the selected item in Finder."),
                         ("Copy Path", "Copy selected file/folder paths."),
                         ("Compress to ZIP", "Create a ZIP archive with ditto/zip and reveal it."),
+                        ("Convert with macOS tools", "Use built-in file/media conversion routes where available."),
                     ])
 
                 selectionBuiltInGroup(
