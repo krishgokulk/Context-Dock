@@ -161,8 +161,8 @@ extension LauncherView {
         return false
     }
 
-    /// If the launcher opened while text/files were selected, enter Selection Scope (Global
-    /// Context + selection) directly instead of Context Dock. Returns true when it activated.
+    /// If the launcher opened while text/files were selected, enter Selection Scope directly
+    /// from Context Dock. Selection Scope is its own mode, not Global Context + selection.
     @discardableResult
     func openInSelectionScopeIfSelectionPresent() -> Bool {
         guard let activation = currentSelectionActivationSnapshot(refresh: true),
@@ -171,7 +171,10 @@ extension LauncherView {
             return false
         }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-            globalContextActivation = activation
+            selectionScopePayload = activation
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             aiMode.isActive = false
             showMediaLayer = false
             showContextInDock = true
@@ -215,6 +218,9 @@ extension LauncherView {
             // yank the user out of Context Dock into Global Context. The selection came from the
             // frontmost app, so the scope stays on whichever surface they're already on.
             selectionScopePayload = payload
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             aiMode.isActive = false
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
@@ -750,6 +756,20 @@ extension LauncherView {
                                             .font(.system(size: 16, weight: .medium))
                                             .frame(width: 24, height: 24)
                                     }
+                                } else if hasSelectionScopeSurface,
+                                    let selIcon = frozenSelectionIcon ?? activeSelectionIcon
+                                {
+                                    Image(systemName: selIcon)
+                                        .foregroundStyle(
+                                            Color.purple.opacity(isHoveringSearchIcon ? 1.0 : 0.88)
+                                        )
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .frame(width: 24, height: 24)
+                                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                                        .id("selection-scope-\(selIcon)")
+                                        .animation(
+                                            .spring(response: 0.22, dampingFraction: 0.75),
+                                            value: selIcon)
                                 } else if isGlobalContextActive {
                                     if let topMatch = leadingGlobalContextMatchIcon(
                                         for: searchState.query)
@@ -1667,8 +1687,7 @@ extension LauncherView {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
                                             .font(.system(size: 15, weight: .regular))
-                                    } else if isGlobalContextActive,
-                                        hasSelectionScopeSurface,
+                                    } else if hasSelectionScopeSurface,
                                         let prompt = activeSelectionPromptText
                                     {
                                         if searchState.contextApp == nil, l2.targetApp == nil {
@@ -2253,6 +2272,27 @@ extension LauncherView {
                                     .buttonStyle(.plain)
                                     .help("Clear")
                                 }
+                            } else if hasSelectionScopeSurface {
+                                HStack(spacing: 6) {
+                                    if isContextDockChatConnected {
+                                        contextDockChatCloseButton
+                                    }
+                                    if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                        clipboardTrailingButton
+                                    }
+                                    Button {
+                                        dismissSelectionAndStayInGlobalContext()
+                                        isSearchFieldFocused = true
+                                    } label: {
+                                        Image(systemName: "minus")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(.secondary.opacity(0.70))
+                                            .frame(width: 22, height: 22)
+                                            .background(Color.white.opacity(0.07), in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Exit selection scope")
+                                }
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
@@ -2268,7 +2308,7 @@ extension LauncherView {
                                     }
                                     // Selection Scope active → visible exit affordance
                                     // (same action as backspace on an empty field).
-                                    if hasSelectionScopeSurface || globalContextActivationHasFrozenPayload {
+                                    if globalContextActivationHasFrozenPayload {
                                         Button {
                                             dismissSelectionAndStayInGlobalContext()
                                             isSearchFieldFocused = true

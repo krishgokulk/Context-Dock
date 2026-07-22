@@ -1156,6 +1156,14 @@ extension LauncherView {
             setFrontmostAppContextOnly(reason: "window opened")
         }
 
+        if AppDelegate.shared?.previousFrontmostApp != nil {
+            let cachedSelectionContext = AXContextReader.shared.current
+            if cachedSelectionContext.hasSelection {
+                axContext = cachedSelectionContext
+                activateLaunchTimeSelectionScopeIfNeeded()
+            }
+        }
+
         if let app = AppDelegate.shared?.previousFrontmostApp {
             Task.detached(priority: .userInitiated) {
                 // SELECTION FIRST, at userInitiated. refreshLightweight used to run ahead of it
@@ -1230,6 +1238,9 @@ extension LauncherView {
             // came from the frontmost app, so the scope opens on the surface the user launched
             // into (Context Dock), instead of jumping them to Global Context.
             selectionScopePayload = snapshot
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             showContextInDock = true
             isSearchBarExpanded = true
         }

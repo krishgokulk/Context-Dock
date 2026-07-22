@@ -2592,20 +2592,20 @@ struct LauncherView: View {
         setFrontmostAppContextOnly(reason: "dismiss context chip")
     }
 
-    /// Leaves Selection Scope but stays in Global Context. Exiting is NOT "throw the selection
-    /// away": the live selection stays readable, so its icon returns beside the running-app
-    /// capsule and one click re-enters the scope. Only the frozen payload (what makes this a
-    /// scope) is dropped. Previously this also stamped a dismissed signature and wiped
-    /// axContext/currentContext, which erased the icon entirely and made the same selection
-    /// un-selectable for the rest of the session.
+    /// Leaves Selection Scope and returns to the frontmost app Context Dock. Exiting is NOT
+    /// "throw the selection away": the live selection stays readable, so its icon returns beside
+    /// the "+" / app capsule and one click re-enters the scope. Only the frozen payload (what
+    /// makes this a scope) is dropped.
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-            // Drop ONLY the frozen selection. The surface (Context Dock or Global Context) is
-            // left exactly as it was — exiting the scope is not a surface change — and the live
-            // selection survives, so its icon parks back beside the capsule / "+".
+            // Drop ONLY the frozen selection and force the surface back to Context Dock.
+            // The live selection survives, so its icon parks back beside the capsule / "+".
             selectionScopePayload = nil
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             showContextInDock = true
             showMediaLayer = false
             aiMode.isActive = false
@@ -2625,6 +2625,7 @@ struct LauncherView: View {
         scheduleGlobalAppMatchRebuild(query: "", delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+        setFrontmostAppContextOnly(reason: "exit selection scope")
     }
 
     @ViewBuilder

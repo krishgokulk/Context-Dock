@@ -2458,8 +2458,7 @@ extension LauncherView {
         )
         let normalizedQuery = normalizedDockPillText(q)
         let shareIntentQuery =
-            isGlobalContextActive
-            && hasSelectionScopeSurface
+            hasSelectionScopeSurface
             && ["share", "send", "airdrop", "export"].contains { term in
                 normalizedQuery.isEmpty || term.hasPrefix(normalizedQuery)
                     || normalizedQuery.contains(term)
