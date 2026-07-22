@@ -630,6 +630,20 @@ final class SystemCommandsRegistry {
             script: #"tell application "Finder" to empty trash"#,
             description: "Empty the Trash"
         ),
+        SystemCommand(
+            name: "Process Monitor",
+            icon: "cpu",
+            keywords: [
+                "process", "processes", "memory", "ram", "cpu", "usage", "activity",
+                "monitor", "kill", "quit", "task", "provider:processes",
+            ],
+            // Enter opens the scoped list; there is no single action. The
+            // provider:processes scope renders live apps grouped with their helper
+            // processes (CPU% + memory), sortable, with Kill on Enter.
+            scriptType: "applescript",
+            script: #"return"#,
+            description: "Live CPU + memory usage by app; Enter to quit"
+        ),
 
         // ── Example templates (disabled) ──────────────────────────────────────
         // Shipped OFF so they don't clutter Global Context. They live in

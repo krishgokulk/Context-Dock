@@ -142,6 +142,14 @@ extension LauncherView {
                 scopedBundleId: scopedBundleId, query: scopedSearchQuery)
         }
 
+        // Process Monitor: live grouped process list (CPU% + memory) with Kill on
+        // Enter. A leading row toggles the sort column. Rows come from a single `ps`
+        // sample grouped by owning app.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:processes" }) {
+            return processMonitorScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -1285,6 +1293,95 @@ extension LauncherView {
             pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
+    }
+
+    /// Live process/memory monitor scope. First row toggles the sort column; the
+    /// remaining rows are apps (grouped with their helper processes) showing summed
+    /// CPU% and memory. Enter on an app row terminates all of its processes.
+    func processMonitorScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        let service = ProcessMonitorService.shared
+        let sort = service.sortMode
+
+        // Read ONLY the cached snapshot here — sampling runs `ps` (a blocking
+        // subprocess) and MUST NOT happen inside the view-build path. When the cache
+        // is empty/stale, kick a background refresh that rebuilds the scope on
+        // completion; while the scope stays open this yields ~2s live polling.
+        if service.isSnapshotStale {
+            service.refresh { [weak launcherViewModel] in
+                guard launcherViewModel != nil else { return }
+                self.scheduleDockPillRebuild(
+                    query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        }
+        let groups = service.cachedGroups()
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = trimmed.isEmpty
+            ? groups
+            : groups.filter { $0.name.lowercased().contains(trimmed) }
+
+        var pills: [DockPill] = []
+
+        // Sort toggle (stands in for the top-right dropdown). Enter flips Memory⇄CPU
+        // and rebuilds the list in place.
+        var sortPill = DockPill(
+            id: "syscmd-processes-sort",
+            name: "Sort: \(sort.label)",
+            icon: "arrow.up.arrow.down",
+            accentColorName: "gray",
+            badge: "\(groups.count) apps · \(groups.reduce(0) { $0 + $1.processCount }) processes",
+            execute: {
+                service.sortMode = (sort == .memory) ? .cpu : .memory
+                scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        )
+        sortPill.rankingKind = "systemCommand"
+        sortPill.sourceBundleId = scopedBundleId
+        sortPill.sourceAppName = "Process Monitor"
+        sortPill.trackingIdentifier = "syscmd-processes:sort"
+        sortPill.searchTerms = ["sort", "cpu", "memory", "process", "monitor"]
+        pills.append(sortPill)
+
+        let cap = 40
+        for group in filtered.prefix(cap) {
+            let mem = service.formattedMemory(group.memoryBytes)
+            let cpu = String(format: "%.1f%%", group.cpuPercent)
+            let countLabel = group.processCount > 1 ? " · \(group.processCount) proc" : ""
+            var pill = DockPill(
+                id: "syscmd-processes-\(group.id)",
+                name: group.name,
+                icon: "cpu",
+                accentColorName: "blue",
+                badge: "\(cpu)   \(mem)\(countLabel)",
+                execute: {
+                    let killed = service.kill(group)
+                    AppToast.show(
+                        killed > 0 ? "Quit \(group.name)" : "Couldn't quit \(group.name)",
+                        icon: killed > 0 ? "xmark.circle" : "exclamationmark.triangle",
+                        tint: killed > 0 ? .orange : .red
+                    )
+                    // Give SIGTERM a moment to land, then force a fresh sample so the
+                    // quit app drops off the list, and rebuild.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak launcherViewModel] in
+                        guard launcherViewModel != nil else { return }
+                        service.refresh {
+                            self.scheduleDockPillRebuild(
+                                query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+                        }
+                    }
+                }
+            )
+            pill.menuItemImage = service.icon(for: group)
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = "Process Monitor"
+            pill.trackingIdentifier = "syscmd-processes:\(group.id)"
+            pill.keyboardShortcutLabel = "Kill"
+            pill.searchTerms = [group.name, "process", "memory", "cpu", "kill", "activity"]
+            pills.append(pill)
+        }
+
+        return pills
     }
 
     /// Normalized regions (top-left origin) a layout moves the window into. `nil`
