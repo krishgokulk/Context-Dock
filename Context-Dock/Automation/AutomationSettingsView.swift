@@ -1212,60 +1212,203 @@ struct AutomationSettingsView: View {
         .background(Color(NSColor.controlBackgroundColor))
     }
 
+    @ViewBuilder
     private var contextTriggerEmptyDetail: some View {
+        if settingsPage == .shortcutSheetWorkflows {
+            selectionScopeBuiltInDetail
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Context Triggers", systemImage: "scope")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Rules that auto-activate the dock with relevant actions when you select text, files, or URLs in any app.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("How to create a trigger")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        onboardingStep(number: "1", title: "Click +", detail: "Add a new rule using the button at the bottom of the list.")
+                        onboardingStep(number: "2", title: "Set the condition", detail: "Match on selected text pattern, file extension, URL host, or app.")
+                        onboardingStep(number: "3", title: "Attach actions", detail: "Add scripts or shortcuts to run when the trigger fires.")
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Trigger types")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        triggerTypeRow("text.cursor", "Text selection", "Fires when selected text matches a pattern or length threshold")
+                        triggerTypeRow("doc.fill", "File selection", "Fires when a file of a given extension is selected in Finder")
+                        triggerTypeRow("link", "URL", "Fires when a URL matching a host pattern is on the clipboard")
+                        triggerTypeRow("app.fill", "App-specific", "Fires only when a specific app is frontmost")
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Available variables in trigger actions")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        variableRow("{{selection}}", "The text or file path that matched the trigger")
+                        variableRow("{{clipboard}}", "Current clipboard content")
+                        variableRow("{{url}}", "Matched URL")
+                        variableRow("{{app}}", "Name of the frontmost app when trigger fired")
+                    }
+                }
+                .padding(20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.controlBackgroundColor))
+        }
+    }
+
+    private var selectionScopeBuiltInDetail: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Context Triggers", systemImage: "scope")
+                    Label("Selection Scope Built-ins", systemImage: "command.square")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Rules that auto-activate the dock with relevant actions when you select text, files, or URLs in any app.")
+                    Text("These actions ship with Context-Dock and appear automatically based on the selected text, files, folders, URLs, documents, images, video, or audio. Use them as templates when creating your own Selection Scope triggers.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                selectionBuiltInGroup(
+                    title: "Text selection",
+                    icon: "text.cursor",
+                    color: .purple,
+                    items: [
+                        ("Ask AI", "Ask any free-form question about the selected text."),
+                        ("Rewrite", "Rewrite clearly and show Replace text under the AI answer."),
+                        ("Make bullets", "Convert selected text into concise bullet points."),
+                        ("Fix grammar", "Correct spelling, grammar, and clarity."),
+                        ("Shorten", "Compress wording while preserving meaning."),
+                        ("Make table", "Format suitable text as a Markdown table."),
+                    ])
+
+                selectionBuiltInGroup(
+                    title: "Files and folders",
+                    icon: "doc.on.doc",
+                    color: .blue,
+                    items: [
+                        ("Open", "Open the selected item with its default app."),
+                        ("Reveal in Finder", "Show the selected item in Finder."),
+                        ("Copy Path", "Copy selected file/folder paths."),
+                        ("Compress to ZIP", "Create a ZIP archive with ditto/zip and reveal it."),
+                    ])
+
+                selectionBuiltInGroup(
+                    title: "Documents and PDFs",
+                    icon: "doc.text.magnifyingglass",
+                    color: .indigo,
+                    items: [
+                        ("Extract Text", "Read text from PDFs, markdown, text, CSV, JSON, HTML, and similar docs."),
+                        ("Document Brief", "Summarize, list key points, and find action items."),
+                        ("Find Action Items", "Extract TODOs, owners, dates, and follow-ups."),
+                    ])
+
+                selectionBuiltInGroup(
+                    title: "Images and media",
+                    icon: "photo.on.rectangle",
+                    color: .pink,
+                    items: [
+                        ("Describe Image", "Describe visible content and layout."),
+                        ("OCR Image", "Extract visible text from an image."),
+                        ("Write Alt Text", "Generate concise accessibility alt text."),
+                        ("Convert to JPEG / PNG", "Use macOS sips to create converted copies."),
+                        ("Compress Image", "Use sips to create a smaller JPEG copy."),
+                        ("Video / Audio Brief", "Analyze selected media file context and useful next actions."),
+                    ])
+
+                selectionBuiltInGroup(
+                    title: "Links",
+                    icon: "link",
+                    color: .teal,
+                    items: [
+                        ("Summarize Link", "Summarize the selected URL."),
+                        ("Extract Tasks", "Find actions or follow-ups from link context."),
+                        ("Note Summary", "Create a note-ready summary."),
+                    ])
+
                 Divider()
 
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("How to create a trigger")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("How to create a matching custom trigger")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-
-                    onboardingStep(number: "1", title: "Click +", detail: "Add a new rule using the button at the bottom of the list.")
-                    onboardingStep(number: "2", title: "Set the condition", detail: "Match on selected text pattern, file extension, URL host, or app.")
-                    onboardingStep(number: "3", title: "Attach actions", detail: "Add scripts or shortcuts to run when the trigger fires.")
+                    onboardingStep(number: "1", title: "Click +", detail: "Create a Selection Scope trigger from the list toolbar.")
+                    onboardingStep(number: "2", title: "Choose the input", detail: "Match selected text, file extension, URL host, or frontmost app.")
+                    onboardingStep(number: "3", title: "Attach an action", detail: "Use a script, shortcut, app adapter, or AI prompt. Variables below are available.")
                 }
 
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Trigger types")
+                    Text("Useful variables")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-
-                    triggerTypeRow("text.cursor", "Text selection", "Fires when selected text matches a pattern or length threshold")
-                    triggerTypeRow("doc.fill", "File selection", "Fires when a file of a given extension is selected in Finder")
-                    triggerTypeRow("link", "URL", "Fires when a URL matching a host pattern is on the clipboard")
-                    triggerTypeRow("app.fill", "App-specific", "Fires only when a specific app is frontmost")
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Available variables in trigger actions")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-
-                    variableRow("{{selection}}", "The text or file path that matched the trigger")
+                    variableRow("{{selection}}", "Selected text or selected file path")
+                    variableRow("{{url}}", "Selected or detected URL")
+                    variableRow("{{app}}", "Frontmost app when Selection Scope opened")
                     variableRow("{{clipboard}}", "Current clipboard content")
-                    variableRow("{{url}}", "Matched URL")
-                    variableRow("{{app}}", "Name of the frontmost app when trigger fired")
                 }
             }
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private func selectionBuiltInGroup(
+        title: String,
+        icon: String,
+        color: Color,
+        items: [(String, String)]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 22, height: 22)
+                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.0) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(color)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.0)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(item.1)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(Color(NSColor.textBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
     }
 
     private func onboardingStep(number: String, title: String, detail: String) -> some View {
