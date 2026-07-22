@@ -555,9 +555,10 @@ struct AutomationSettingsView: View {
                 List(selection: $selectedRuleID) {
                     Section(settingsPage == .shortcutSheetWorkflows ? "Selection Scope Extensions" : "Triggers") {
                         ForEach(filteredTriggers) { rule in
+                            let displayPill = rule.pills.first
                             AutomationRow(
-                                icon: "scope",
-                                color: .red,
+                                icon: displayPill?.icon ?? "scope",
+                                color: colorForAccentName(displayPill?.accentColor) ?? .red,
                                 title: rule.name,
                                 subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s") · \(rule.pills.count) pill\(rule.pills.count == 1 ? "" : "s")",
                                 isEnabled: rule.isEnabled
@@ -1037,12 +1038,31 @@ struct AutomationSettingsView: View {
 
     private func seedSelectionScopeBuiltInsIfNeeded() {
         guard settingsPage == .shortcutSheetWorkflows else { return }
+        settings.axTriggerRules.removeAll {
+            AXTriggerRule.legacySelectionScopeBuiltInNames.contains($0.name)
+        }
         let existingNames = Set(settings.axTriggerRules.map(\.name))
         let missing = AXTriggerRule.selectionScopeBuiltInExamples.filter {
             !existingNames.contains($0.name)
         }
         guard !missing.isEmpty else { return }
         settings.axTriggerRules.append(contentsOf: missing)
+    }
+
+    private func colorForAccentName(_ name: String?) -> Color? {
+        switch name?.lowercased() {
+        case "blue": return .blue
+        case "red": return .red
+        case "green": return .green
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "purple": return .purple
+        case "indigo": return .indigo
+        case "teal": return .teal
+        case "pink": return .pink
+        case "gray", "grey": return .secondary
+        default: return nil
+        }
     }
 
     // MARK: Helpers
