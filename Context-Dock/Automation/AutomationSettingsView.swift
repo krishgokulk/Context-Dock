@@ -76,14 +76,6 @@ private struct AppMenuCacheRowModel: Identifiable {
     var isCached: Bool { recordCount > 0 }
 }
 
-private struct SelectionScopeBuiltInAction: Identifiable {
-    let id: String
-    let title: String
-    let subtitle: String
-    let icon: String
-    let color: Color
-}
-
 // MARK: - Main View
 
 struct AutomationSettingsView: View {
@@ -235,11 +227,13 @@ struct AutomationSettingsView: View {
             message: { Text(importError ?? "") })
         .onAppear {
             applySettingsPage(settingsPage)
+            seedSelectionScopeBuiltInsIfNeeded()
             pkgMgr.loadPackages()
             Task { await l2Mgr.loadExtensions() }
         }
         .onChange(of: settingsPage) { _, newValue in
             applySettingsPage(newValue)
+            seedSelectionScopeBuiltInsIfNeeded()
         }
         .task {
             guard shouldLoadAppCatalog else { return }
@@ -555,37 +549,20 @@ struct AutomationSettingsView: View {
 
     private var triggerList: some View {
         Group {
-            let builtIns = filteredSelectionScopeBuiltIns
-            if filteredTriggers.isEmpty && builtIns.isEmpty {
+            if filteredTriggers.isEmpty {
                 listEmpty(icon: "scope", label: "No trigger rules", action: { presentCreateFlow() })
             } else {
                 List(selection: $selectedRuleID) {
-                    if settingsPage == .shortcutSheetWorkflows, !builtIns.isEmpty {
-                        Section("Built-in Actions") {
-                            ForEach(builtIns) { action in
-                                AutomationRow(
-                                    icon: action.icon,
-                                    color: action.color,
-                                    title: action.title,
-                                    subtitle: action.subtitle,
-                                    isEnabled: true
-                                )
-                            }
-                        }
-                    }
-
-                    if !filteredTriggers.isEmpty {
-                        Section(settingsPage == .shortcutSheetWorkflows ? "Custom Triggers" : "Triggers") {
-                            ForEach(filteredTriggers) { rule in
-                                AutomationRow(
-                                    icon: "scope",
-                                    color: .red,
-                                    title: rule.name,
-                                    subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s")",
-                                    isEnabled: rule.isEnabled
-                                )
-                                .tag(rule.id)
-                            }
+                    Section(settingsPage == .shortcutSheetWorkflows ? "Selection Scope Extensions" : "Triggers") {
+                        ForEach(filteredTriggers) { rule in
+                            AutomationRow(
+                                icon: "scope",
+                                color: .red,
+                                title: rule.name,
+                                subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s") · \(rule.pills.count) pill\(rule.pills.count == 1 ? "" : "s")",
+                                isEnabled: rule.isEnabled
+                            )
+                            .tag(rule.id)
                         }
                     }
                 }
@@ -894,34 +871,23 @@ struct AutomationSettingsView: View {
     }
 
     private var filteredTriggers: [AXTriggerRule] {
-        let rules = settings.axTriggerRules
+        let rules: [AXTriggerRule]
+        if settingsPage == .shortcutSheetWorkflows {
+            let selectionNames = Set(AXTriggerRule.selectionScopeBuiltInExamples.map(\.name))
+            rules = settings.axTriggerRules.filter { rule in
+                selectionNames.contains(rule.name)
+                    || rule.name.localizedCaseInsensitiveContains("selection")
+                    || rule.conditions.contains { condition in
+                        condition.field == .selectedText
+                            || condition.field == .filePath
+                            || condition.field == .currentURL
+                    }
+            }
+        } else {
+            rules = settings.axTriggerRules
+        }
         guard !searchText.isEmpty else { return rules }
         return rules.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
-    }
-
-    private var selectionScopeBuiltIns: [SelectionScopeBuiltInAction] {
-        [
-            .init(id: "ask-ai", title: "Ask AI", subtitle: "Ask about selected text, files, documents, images, or links.", icon: "sparkles", color: .yellow),
-            .init(id: "explain", title: "Explain", subtitle: "Explain selected content without switching to AI Assistant.", icon: "magnifyingglass.circle.fill", color: .purple),
-            .init(id: "summarize", title: "Summarize", subtitle: "Create a concise summary from selected text, documents, PDFs, or URLs.", icon: "text.alignleft", color: .indigo),
-            .init(id: "extract-text", title: "Extract Text", subtitle: "Read text from PDFs, Markdown, source, CSV, JSON, HTML, and Office files.", icon: "doc.text.magnifyingglass", color: .blue),
-            .init(id: "ocr-image", title: "OCR Image", subtitle: "Extract visible text from screenshots and selected images.", icon: "text.viewfinder", color: .pink),
-            .init(id: "copy-selection", title: "Copy Text/File/Link", subtitle: "Copy selected text, selected URLs, or selected file paths.", icon: "doc.on.doc", color: .cyan),
-            .init(id: "open-selection", title: "Open", subtitle: "Open the selected file, folder, document, image, media item, or URL.", icon: "arrow.up.right.square", color: .green),
-            .init(id: "reveal-finder", title: "Reveal in Finder", subtitle: "Reveal selected files or folders in Finder.", icon: "folder", color: .blue),
-            .init(id: "compress-zip", title: "Compress to ZIP", subtitle: "Create a ZIP archive from selected files or folders.", icon: "archivebox", color: .orange),
-            .init(id: "convert-media", title: "Convert Media", subtitle: "Convert selected images, audio, video, and PDFs using built-in macOS tools.", icon: "arrow.triangle.2.circlepath", color: .teal),
-            .init(id: "link-tasks", title: "Summarize Link / Extract Tasks", subtitle: "Summarize selected URLs and find follow-up actions.", icon: "link", color: .teal),
-        ]
-    }
-
-    private var filteredSelectionScopeBuiltIns: [SelectionScopeBuiltInAction] {
-        guard settingsPage == .shortcutSheetWorkflows else { return [] }
-        guard !searchText.isEmpty else { return selectionScopeBuiltIns }
-        return selectionScopeBuiltIns.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText)
-                || $0.subtitle.localizedCaseInsensitiveContains(searchText)
-        }
     }
 
     private var filteredAdapters: [AppAdapter] {
@@ -1065,6 +1031,16 @@ struct AutomationSettingsView: View {
         selectedCategory = category
         showingImportPanel = false
         clearSelection()
+    }
+
+    private func seedSelectionScopeBuiltInsIfNeeded() {
+        guard settingsPage == .shortcutSheetWorkflows else { return }
+        let existingNames = Set(settings.axTriggerRules.map(\.name))
+        let missing = AXTriggerRule.selectionScopeBuiltInExamples.filter {
+            !existingNames.contains($0.name)
+        }
+        guard !missing.isEmpty else { return }
+        settings.axTriggerRules.append(contentsOf: missing)
     }
 
     // MARK: Helpers
