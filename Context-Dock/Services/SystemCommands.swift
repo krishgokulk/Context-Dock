@@ -706,5 +706,45 @@ final class SystemCommandsRegistry {
             undoScript: #"open -R "$CD_ROW_ID" 2>/dev/null || open "$(dirname "$CD_ROW_ID")""#,
             enabled: false
         ),
+        SystemCommand(
+            name: "Top CPU",
+            icon: "cpu",
+            keywords: ["top", "cpu", "processor", "busy", "hot", "provider:custom", "refresh:2"],
+            scriptType: "bash",
+            script: #"""
+            # Top CPU processes as JSON rows. id = PID (so the action can kill it).
+            ps -axo pid=,%cpu=,comm= | sort -k2 -rn | head -12 | while read pid cpu comm; do
+              name=$(basename "$comm")
+              printf '{"id":"%s","title":"%s","badge":"%s%% CPU","icon":"cpu"}\n' "$pid" "$name" "$cpu"
+            done
+            """#,
+            description:
+                "Example List Extension: busiest CPU processes. Enter quits the process (SIGTERM).",
+            undoScriptType: "bash",
+            undoScript: #"kill "$CD_ROW_ID" 2>/dev/null"#,
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Listening Ports",
+            icon: "network",
+            keywords: [
+                "ports", "port", "listening", "lsof", "server", "servers", "localhost",
+                "provider:custom", "refresh:3",
+            ],
+            scriptType: "bash",
+            script: #"""
+            # Processes listening on TCP ports. id = PID so Enter can kill the server.
+            /usr/sbin/lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
+              | awk 'NR>1 {split($9,a,":"); print $2"\t"$1"\t"a[length(a)]}' \
+              | sort -u | head -20 | while IFS=$'\t' read pid name port; do
+                printf '{"id":"%s","title":"%s","subtitle":"PID %s","badge":"port %s","icon":"network"}\n' "$pid" "$name" "$pid" "$port"
+              done
+            """#,
+            description:
+                "Example List Extension: apps listening on TCP ports. Enter kills the process — handy for freeing a stuck dev server.",
+            undoScriptType: "bash",
+            undoScript: #"kill "$CD_ROW_ID" 2>/dev/null"#,
+            enabled: false
+        ),
     ]
 }
