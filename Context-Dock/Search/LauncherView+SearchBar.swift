@@ -212,7 +212,9 @@ extension LauncherView {
     }
 
     func openSelectionContextFromTrailingButton() {
-        guard let payload = currentSelectionActivationSnapshot(refresh: true) else { return }
+        guard let payload = currentSelectionActivationSnapshot(refresh: true)
+            ?? currentSelectionActivationSnapshot(refresh: false)
+        else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
             // Enter Selection Scope IN PLACE — assigning globalContextActivation here used to
             // yank the user out of Context Dock into Global Context. The selection came from the
@@ -756,20 +758,6 @@ extension LauncherView {
                                             .font(.system(size: 16, weight: .medium))
                                             .frame(width: 24, height: 24)
                                     }
-                                } else if hasSelectionScopeSurface,
-                                    let selIcon = frozenSelectionIcon ?? activeSelectionIcon
-                                {
-                                    Image(systemName: selIcon)
-                                        .foregroundStyle(
-                                            Color.purple.opacity(isHoveringSearchIcon ? 1.0 : 0.88)
-                                        )
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .frame(width: 24, height: 24)
-                                        .transition(.scale(scale: 0.8).combined(with: .opacity))
-                                        .id("selection-scope-\(selIcon)")
-                                        .animation(
-                                            .spring(response: 0.22, dampingFraction: 0.75),
-                                            value: selIcon)
                                 } else if isGlobalContextActive {
                                     if let topMatch = leadingGlobalContextMatchIcon(
                                         for: searchState.query)

@@ -1639,12 +1639,9 @@ extension LauncherView {
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
     func refreshLiveSelectionIntoDockContext() {
         guard showContextInDock else { return }
-        // While OUR dock holds focus the frontmost app's selection cannot change — the user is
-        // typing here, not there. Re-reading it then only yields flaky AX results (reads of a
-        // background app intermittently come back empty, and AXContextReader.current is shared
-        // with other refresh paths), which toggled the selection icon beside the capsule. Freeze
-        // the last known selection; it resumes updating as soon as focus returns to the app.
-        guard !contextDockIsFrontmostApplication else { return }
+        // Even while OUR dock has key focus, the source app can still change selection by mouse
+        // click/drag behind the panel. Keep polling the remembered source app; empty AX reads are
+        // ignored below so transient background-read failures do not flicker the icon.
         let ownBundleId = Bundle.main.bundleIdentifier ?? ""
         let previous = AppDelegate.shared?.previousFrontmostApp
         let app =
@@ -1665,10 +1662,6 @@ extension LauncherView {
                 else { return }
                 let newText = newCtx.selectedText?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let preview = newText.isEmpty ? nil : newText
-                if self.liveDockSelectionPreviewText != preview {
-                    self.liveDockSelectionPreviewText = preview
-                }
                 // Keep the live selection fields current so the selection icon tracks what the
                 // user selects in the background while the dock is open (file/folder changes
                 // never updated before — only the text preview did). Patch just the selection
@@ -1682,12 +1675,20 @@ extension LauncherView {
                 if !newCtx.selectedFilePaths.isEmpty,
                     self.axContext.selectedFilePaths != newCtx.selectedFilePaths
                 {
+                    self.axContext.selectedText = nil
                     self.axContext.selectedFilePaths = newCtx.selectedFilePaths
+                    self.currentContext = .filesSelected(
+                        newCtx.selectedFilePaths.map { URL(fileURLWithPath: $0) })
+                    self.liveDockSelectionPreviewText =
+                        newCtx.selectedFilePaths.count == 1
+                        ? URL(fileURLWithPath: newCtx.selectedFilePaths[0]).lastPathComponent
+                        : "\(newCtx.selectedFilePaths.count) files selected"
                 }
-                let liveText = newCtx.selectedText?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !liveText.isEmpty, self.axContext.selectedText != newCtx.selectedText {
+                if !newText.isEmpty, self.axContext.selectedText != newCtx.selectedText {
+                    self.axContext.selectedFilePaths = []
                     self.axContext.selectedText = newCtx.selectedText
+                    self.currentContext = .textSelected(newText)
+                    self.liveDockSelectionPreviewText = newText
                 }
             }
         }
