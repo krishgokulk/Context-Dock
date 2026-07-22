@@ -163,7 +163,7 @@ struct AutomationSettingsView: View {
             }
         }
         .sheet(isPresented: $showRuleSheet) {
-            AXRuleEditSheet(rule: nil) { rule in
+            AXRuleEditSheet(rule: nil, isSelectionScope: settingsPage == .shortcutSheetWorkflows) { rule in
                 settings.addAXRule(rule)
                 focusOnRule(rule.id)
             }
@@ -1325,77 +1325,18 @@ struct AutomationSettingsView: View {
 
     private var selectionScopeBuiltInDetail: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Selection Scope Built-ins", systemImage: "command.square")
+                    Label("Create Selection Scope extensions", systemImage: "command.square")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Selection Scope is the home for anything that starts from a user selection: text, files, folders, URLs, documents, images, video, and audio. Media workflows belong here because they only make sense after the user selects media.")
+                    Text("The built-in extensions are listed on the left as real editable examples. Use this page to create workflows that run only against the user’s current selected text, file, folder, URL, document, image, video, or audio.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                selectionBuiltInGroup(
-                    title: "Text selection",
-                    icon: "text.cursor",
-                    color: .purple,
-                    items: [
-                        ("Ask AI", "Ask any free-form question about the selected text."),
-                        ("Explain", "Explain what the selected text means in-place."),
-                        ("Summarize", "Create a compact summary without switching to AI Assistant."),
-                        ("Extract tasks", "Find action items, dates, owners, and follow-ups."),
-                        ("Copy selection", "Copy the selected text for use in another app."),
-                    ])
-
-                selectionBuiltInGroup(
-                    title: "Files and folders",
-                    icon: "doc.on.doc",
-                    color: .blue,
-                    items: [
-                        ("Open", "Open the selected item with its default app."),
-                        ("Reveal in Finder", "Show the selected item in Finder."),
-                        ("Copy Path", "Copy selected file/folder paths."),
-                        ("Compress to ZIP", "Create a ZIP archive with ditto/zip and reveal it."),
-                        ("Convert with macOS tools", "Use built-in file/media conversion routes where available."),
-                    ])
-
-                selectionBuiltInGroup(
-                    title: "Documents and PDFs",
-                    icon: "doc.text.magnifyingglass",
-                    color: .indigo,
-                    items: [
-                        ("Extract Text", "Read text from PDFs, markdown, text, CSV, JSON, HTML, and similar docs."),
-                        ("Document Brief", "Summarize, list key points, and find action items."),
-                        ("Find Action Items", "Extract TODOs, owners, dates, and follow-ups."),
-                    ])
-
-                selectionBuiltInGroup(
-                    title: "Images and media",
-                    icon: "photo.on.rectangle",
-                    color: .pink,
-                    items: [
-                        ("Describe Image", "Describe visible content and layout."),
-                        ("OCR Image", "Extract visible text from an image."),
-                        ("Write Alt Text", "Generate concise accessibility alt text."),
-                        ("Convert to JPEG / PNG", "Use macOS sips to create converted copies."),
-                        ("Compress Image", "Use sips to create a smaller JPEG copy."),
-                        ("Video / Audio Brief", "Use file metadata and converted context for a compact media brief."),
-                    ])
-
-                selectionBuiltInGroup(
-                    title: "Links",
-                    icon: "link",
-                    color: .teal,
-                    items: [
-                        ("Summarize Link", "Summarize the selected URL."),
-                        ("Extract Tasks", "Find actions or follow-ups from link context."),
-                        ("Note Summary", "Create a note-ready summary."),
-                    ])
-
-                Divider()
-
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("How to create a Selection Scope extension")
+                    Text("Recommended design")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                     onboardingStep(number: "1", title: "Choose the selected input", detail: "Use selected text for writing actions, file path/extension for files and folders, URL host for links, and app name only when the workflow belongs to one app.")
@@ -1405,10 +1346,11 @@ struct AutomationSettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Copy-ready examples")
+                    Text("Useful starter actions")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    codeExample("Document text", "markitdown \"{file}\" | pbcopy")
+                    codeExample("Copy selected text", "printf '%s' \"{selectedText}\" | pbcopy")
+                    codeExample("Document to Markdown", "markitdown \"{file}\" | pbcopy")
                     codeExample("Zip selected item", "ditto -c -k --keepParent \"{file}\" \"{file}.zip\"")
                     codeExample("Convert image", "sips -s format jpeg \"{file}\" --out \"{file}.jpg\"")
                 }
