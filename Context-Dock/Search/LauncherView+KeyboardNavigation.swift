@@ -536,8 +536,11 @@ extension LauncherView {
                 return nil
             }
 
-            // Right Arrow cycles the running-app scope. Empty-field Left Arrow is reserved
-            // consistently for entering General Chat from Global Context or Context Dock.
+            // Right Arrow cycles the running-app scope forward. Left Arrow mirrors it
+            // BACKWARD — but only once a running-app scope is active. With no scope the
+            // empty-field Left Arrow stays reserved for General Chat (handled by the
+            // SwiftUI .onKeyPress(.leftArrow) below), so both start states are distinct:
+            // from the bare field Right enters the capsule, Left enters General Chat.
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 124,
@@ -547,6 +550,21 @@ extension LauncherView {
                 self.currentGlobalScopedBundleID?.hasPrefix("cli://") != true
             {
                 _ = self.cycleGlobalContextAppScope(direction: 1)
+                self.focusedAppPillIndex = nil
+                self.l2.focusedPillIndex = nil
+                return nil
+            }
+
+            if self.isGlobalContextActive || self.l2.targetApp != nil,
+                q.isEmpty,
+                event.keyCode == 123,
+                self.focusedAppPillIndex == nil,
+                self.l2.focusedPillIndex == nil,
+                let scopedBundle = self.currentGlobalScopedBundleID,
+                !scopedBundle.hasPrefix("syscmd://"),
+                !scopedBundle.hasPrefix("cli://")
+            {
+                _ = self.cycleGlobalContextAppScope(direction: -1)
                 self.focusedAppPillIndex = nil
                 self.l2.focusedPillIndex = nil
                 return nil
