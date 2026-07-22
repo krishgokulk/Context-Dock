@@ -207,9 +207,6 @@ extension LauncherView {
                 badge: "Share",
                 execute: {
                     // Resolve the payload while the source app context is still available.
-                    // NSSharingService UI must be presented after DoraX yields frontmost
-                    // status; otherwise destinations such as Notes may only activate their
-                    // host app without receiving the selected content.
                     let freshItems = liveShareItems()
                     guard !freshItems.isEmpty else {
                         AppToast.show(
@@ -219,14 +216,17 @@ extension LauncherView {
                         )
                         return
                     }
-                    forceHideLauncherAfterResultExecution()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        service.perform(withItems: freshItems)
-                        AppToast.show(
-                            "Sharing via \(title)",
-                            icon: "square.and.arrow.up",
-                            tint: .blue
-                        )
+                    // Share-EXTENSION targets (Freeform/Notes/Reminders…) render their own
+                    // compose sheet, which needs a host window to anchor to. Hiding the
+                    // launcher FIRST left the extension nothing to present into, so the app
+                    // just opened without the content. Keep the overlay as the source window
+                    // and dismiss it only once the share reports back.
+                    ShareActionCoordinator.shared.performDirectShare(
+                        service,
+                        items: freshItems,
+                        title: title
+                    ) {
+                        forceHideLauncherAfterResultExecution()
                     }
                 }
             )
