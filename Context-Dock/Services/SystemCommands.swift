@@ -679,5 +679,32 @@ final class SystemCommandsRegistry {
             description: "Example: run a Focus shortcut; scope for Work / Personal / Off",
             enabled: false
         ),
+
+        // ── List Extension example ────────────────────────────────────────────
+        // A user-authored LIVE LIST scope, the general-purpose version of the
+        // built-in Process Monitor. Marked with `provider:custom`: the Script prints
+        // one JSON row per line, and the Undo field is the per-row action (with the
+        // row exposed as $CD_ROW_ID / $CD_ROW_TITLE). `refresh:3` re-samples every
+        // 3s. Duplicate this to build your own extension (Docker containers, git
+        // branches, open ports, …). Shipped OFF so it only lives in Settings.
+        SystemCommand(
+            name: "Top Memory",
+            icon: "memorychip",
+            keywords: ["top", "memory", "ram", "hogs", "provider:custom", "refresh:3"],
+            scriptType: "bash",
+            script: #"""
+            # Print the top memory apps as JSON rows. Each line: one JSON object.
+            ps -axo rss=,comm= | sort -rn | head -12 | while read rss comm; do
+              name=$(basename "$comm")
+              mb=$(( rss / 1024 ))
+              printf '{"id":"%s","title":"%s","badge":"%s MB"}\n' "$comm" "$name" "$mb"
+            done
+            """#,
+            description:
+                "Example List Extension: top memory apps (JSON rows). Enter reveals the process in Finder. Duplicate to build your own.",
+            undoScriptType: "bash",
+            undoScript: #"open -R "$CD_ROW_ID" 2>/dev/null || open "$(dirname "$CD_ROW_ID")""#,
+            enabled: false
+        ),
     ]
 }

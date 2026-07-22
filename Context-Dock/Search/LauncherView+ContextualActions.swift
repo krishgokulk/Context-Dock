@@ -150,6 +150,13 @@ extension LauncherView {
                 scopedBundleId: scopedBundleId, query: scopedSearchQuery)
         }
 
+        // User-authored list extension: rows come from the command's own script
+        // (printed as JSON lines), Enter runs its row-action (undo) script.
+        if CustomListProviderService.isListProvider(command) {
+            return customListProviderScopePills(
+                command: command, scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -1382,6 +1389,90 @@ extension LauncherView {
         }
 
         return pills
+    }
+
+    /// Renders a user-authored list extension (`provider:custom`). Reads ONLY the
+    /// cached rows (the rows script runs off-view); kicks a background refresh when
+    /// the cache is stale and rebuilds the scope when it returns.
+    func customListProviderScopePills(
+        command: SystemCommand, scopedBundleId: String, query: String
+    ) -> [DockPill] {
+        let service = CustomListProviderService.shared
+
+        if service.isStale(command) {
+            service.refresh(command, query: query) { [weak launcherViewModel] in
+                guard launcherViewModel != nil else { return }
+                self.scheduleDockPillRebuild(
+                    query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        }
+
+        let rows = service.rows(for: command)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = trimmed.isEmpty
+            ? rows
+            : rows.filter {
+                $0.title.lowercased().contains(trimmed)
+                    || ($0.subtitle?.lowercased().contains(trimmed) ?? false)
+            }
+
+        let hasAction = !command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return filtered.enumerated().map { index, row in
+            var pill = DockPill(
+                // Index keeps the id unique even when a script emits duplicate row ids
+                // (e.g. several processes sharing one executable path) — duplicate
+                // SwiftUI ForEach ids otherwise collapse a row into a blank gap.
+                id: "syscmd-custom-\(command.id)-\(index)-\(row.id)",
+                name: row.title,
+                icon: sfSymbolName(for: row.icon) ?? command.icon,
+                accentColorName: "indigo",
+                badge: row.badge ?? row.subtitle,
+                execute: {
+                    if hasAction {
+                        service.runAction(command, row: row, query: self.searchState.query)
+                        AppToast.show("Ran \(command.name)", icon: command.icon, tint: .blue)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak launcherViewModel] in
+                        guard launcherViewModel != nil else { return }
+                        service.refresh(command, query: self.searchState.query) {
+                            self.scheduleDockPillRebuild(
+                                query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+                        }
+                    }
+                }
+            )
+            if let fileIcon = fileSystemIcon(for: row.icon) {
+                pill.menuItemImage = fileIcon
+            }
+            if row.badge != nil, let sub = row.subtitle {
+                pill.menuStatusBadge = sub
+            }
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = command.name
+            pill.trackingIdentifier = "syscmd-custom:\(command.id):\(row.id)"
+            if hasAction { pill.keyboardShortcutLabel = "Run" }
+            pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
+            return pill
+        }
+    }
+
+    /// If `icon` looks like an SF Symbol name (no slash, no dot-app), return it.
+    private func sfSymbolName(for icon: String?) -> String? {
+        guard let icon, !icon.isEmpty, !icon.contains("/"), !icon.hasSuffix(".app") else {
+            return nil
+        }
+        return icon
+    }
+
+    /// If `icon` is a file/app path, load its Finder icon.
+    private func fileSystemIcon(for icon: String?) -> NSImage? {
+        guard let icon, icon.contains("/") || icon.hasSuffix(".app") else { return nil }
+        let path = (icon as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        image.size = NSSize(width: 20, height: 20)
+        return image
     }
 
     /// Normalized regions (top-left origin) a layout moves the window into. `nil`
