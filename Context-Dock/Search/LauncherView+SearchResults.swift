@@ -1266,6 +1266,9 @@ extension LauncherView {
             }
             return visiblePills.contains { !$0.isSeparator }
         }
+        if hasSelectionScopeSurface {
+            return true
+        }
         guard !q.isEmpty else { return false }
         // Finder desktop search must keep its shared sheet alive while its cache and
         // Spotlight passes exchange snapshots. The rendered list supplies either files,

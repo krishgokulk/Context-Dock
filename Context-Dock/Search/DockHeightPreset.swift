@@ -79,6 +79,7 @@ struct DockHeightMetrics {
     var mediaHasDuration: Bool
     var contextDockChatMessageCount: Int
     var listViewDockHeight: CGFloat
+    var selectionScopeAIChat: Bool = false
     var resultCount: Int
     var loadingApps: Bool
     var l1ResultsReservedHeight: CGFloat
@@ -89,6 +90,7 @@ struct DockHeightPresetMetrics {
     var surfaceMode: DockSurfaceMode
     var usesVerticalListDockLayout: Bool
     var listViewDockHeight: CGFloat
+    var selectionScopeAIChat: Bool = false
     var showsFinderSearchResultsPanel: Bool
     var showsContextDockAppPanel: Bool
     var compactSmartScope: Bool
@@ -110,6 +112,7 @@ struct DockHeightResolver {
         case .globalContext, .contextDock:
             if metrics.usesVerticalListDockLayout
                 || metrics.listViewDockHeight > 0
+                || metrics.selectionScopeAIChat
                 || metrics.showsFinderSearchResultsPanel
                 || metrics.showsContextDockAppPanel
                 || metrics.compactSmartScope
@@ -206,6 +209,12 @@ struct DockHeightResolver {
         if metrics.finderSearchPanelHeight > 0 {
             return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
                 + metrics.finderSearchPanelHeight + 14
+        }
+
+        if metrics.selectionScopeAIChat {
+            let chatHeight = min(max(metrics.measuredChatContentHeight, 60), 450)
+            return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
+                + chatHeight + 10
         }
 
         if metrics.listViewDockHeight > 0 {
