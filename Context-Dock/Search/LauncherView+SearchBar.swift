@@ -214,6 +214,7 @@ extension LauncherView {
     func openSelectionContextFromTrailingButton() {
         guard let payload = currentSelectionActivationSnapshot(refresh: true)
             ?? currentSelectionActivationSnapshot(refresh: false)
+            ?? liveSelectionActivationFallback()
         else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
             // Enter Selection Scope IN PLACE — assigning globalContextActivation here used to
@@ -239,6 +240,56 @@ extension LauncherView {
             requestWindowSizeUpdate(reason: .modeChanged)
         }
         prewarmFinderContextualActionsForSelection()
+    }
+
+    func liveSelectionActivationFallback() -> GlobalContextActivation? {
+        if let selection = activeSelection {
+            switch selection {
+            case .files(let urls):
+                let paths = urls.map(\.path)
+                guard !paths.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: paths.count == 1 ? urls[0].lastPathComponent : "\(paths.count) selected items",
+                    frozenIcon: "doc",
+                    sourceBundleId: frontmost.bundleID,
+                    frozenFilePaths: paths
+                )
+            case .text(let text):
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: String(trimmed.prefix(120)),
+                    frozenFullText: trimmed,
+                    frozenIcon: "text.cursor",
+                    sourceBundleId: frontmost.bundleID
+                )
+            case .url(let url):
+                let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: trimmed,
+                    frozenFullText: trimmed,
+                    frozenIcon: "link",
+                    sourceBundleId: frontmost.bundleID
+                )
+            }
+        }
+
+        if let preview = liveDockSelectionPreviewText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !preview.isEmpty
+        {
+            return GlobalContextActivation(
+                autoActivated: false,
+                frozenText: String(preview.prefix(120)),
+                frozenFullText: preview,
+                frozenIcon: "text.cursor",
+                sourceBundleId: frontmost.bundleID
+            )
+        }
+        return nil
     }
 
     @discardableResult
@@ -360,6 +411,9 @@ extension LauncherView {
         if shouldSuppressIdleBottomResultsPanel {
             return 0
         }
+        if hasSelectionScopeSurface && aiMode.isActive {
+            return DockHeightResolver.chatAreaHeight(measuredContentHeight: measuredChatContentHeight)
+        }
         if showContextInDock && currentDockSurfaceMode == .contextDock
             && !shouldShowContextDockUnifiedSearchContent
         {
@@ -394,7 +448,13 @@ extension LauncherView {
             aiChatSection
         case .contextDockChat:
             l2ChatSection
-        case .globalContext, .contextDock:
+        case .contextDock:
+            if hasSelectionScopeSurface && aiMode.isActive {
+                aiChatSection
+            } else {
+                searchResultsContent
+            }
+        case .globalContext:
             searchResultsContent
         case .mediaDock:
             EmptyView()
@@ -513,9 +573,11 @@ extension LauncherView {
                 // ContentHeight) so the window fits the real conversation; search modes use the
                 // computed results height. Gate chat on message presence (not the measured height,
                 // which starts at 0) to avoid a chicken-and-egg where it never gets to render.
+                let isSelectionScopeAIChat = hasSelectionScopeSurface && aiMode.isActive
                 let isChatMode =
                     currentDockSurfaceMode == .generalChat
                     || currentDockSurfaceMode == .contextDockChat
+                    || isSelectionScopeAIChat
                 let modeContentHeight = unifiedDockModeContentHeight
                 let showsModeContent = isChatMode ? shouldShowUnifiedDockModeContent : (modeContentHeight > 0)
                 if showsModeContent {

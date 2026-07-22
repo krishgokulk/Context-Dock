@@ -437,7 +437,9 @@ struct LauncherView: View {
         if shouldShowContextDockChatSheet || isContextDockChatRoutingLocked {
             return .contextDockChat
         }
-        if aiMode.isActive { return .generalChat }
+        // Selection Scope is its own scoped surface. Its AI answers should render in-place
+        // inside the selection sheet, not promote the whole dock into system-wide AI Assistant.
+        if aiMode.isActive && !hasSelectionScopeSurface { return .generalChat }
         if isGlobalContextActive { return .globalContext }
         return .contextDock
     }
@@ -554,7 +556,9 @@ struct LauncherView: View {
 
         // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
         // an empty query — so it's visible the moment the launcher opens with a selection.
-        if hasSelectionScopeSurface { return true }
+        if hasSelectionScopeSurface {
+            return !aiMode.isActive
+        }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Finder desktop-only mode is a dedicated file-search scope. Once the user types,
@@ -2073,20 +2077,12 @@ struct LauncherView: View {
         }) {
             Group {
                 if isGlobalContextActive {
-                    if hasSelectionScopeSurface,
-                        let selIcon = frozenSelectionIcon ?? activeSelectionIcon
-                    {
-                        Image(systemName: selIcon)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.purple.opacity(0.90))
-                    } else {
-                        Image("DoraXD")
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                            .blendMode(.screen)
-                    }
+                    Image("DoraXD")
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 22, height: 22)
+                        .blendMode(.screen)
                 } else if let appIcon = l2.targetApp?.icon ?? frontmost.icon {
                     // Show frontmost app icon as the anchor
                     Image(nsImage: appIcon)
@@ -2780,6 +2776,12 @@ struct LauncherView: View {
         // every keystroke.
         if shouldShowSeparateActionList {
             return false
+        }
+        if hasSelectionScopeSurface && aiMode.isActive {
+            return hasUserSentMessageInCurrentSession
+                || !aiMode.messages.isEmpty
+                || aiMode.isLoading
+                || aiMode.streamingId != nil
         }
         if isCompactSmartScope {
             return true

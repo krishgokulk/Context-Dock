@@ -526,8 +526,7 @@ extension LauncherView {
     }
 
     var shouldShowSelectionCompactAIAction: Bool {
-        guard isGlobalContextActive,
-            hasSelectionScopeSurface,
+        guard hasSelectionScopeSurface,
             !aiMode.isActive,
             !l2.isLoading,
             lockedFindToken == nil
