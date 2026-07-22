@@ -6640,8 +6640,14 @@ end tell
                             Text("Wi-Fi networks").tag("wifi")
                             Text("Window layouts").tag("windows")
                             Text("Quick notes").tag("notepad")
+                            Text("List Extension (custom rows)").tag("custom")
                         }
                         .pickerStyle(.menu)
+                        if scopeProvider == "custom" {
+                            Text("Script above = JSON rows source. Undo field = per-row action ($CD_ROW_ID). Add keyword refresh:N for auto-refresh.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
                         TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
                             .textFieldStyle(.roundedBorder)
                         if interaction != SystemCommandInteraction.none.rawValue {
@@ -6815,6 +6821,12 @@ struct SystemCommandEditorView: View {
     @State private var valueScript: String
     @State private var scopeProvider: String
     @State private var scopeItems: String
+    @State private var refreshSeconds: String
+
+    private static func parseRefreshSeconds(_ keywords: [String]) -> String {
+        keywords.first(where: { $0.lowercased().hasPrefix("refresh:") })?
+            .split(separator: ":", maxSplits: 1).last.map(String.init) ?? "3"
+    }
 
     init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
         self.command  = command
@@ -6839,6 +6851,7 @@ struct SystemCommandEditorView: View {
         _valueScript = State(initialValue: command.valueScript)
         _scopeProvider = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
         _scopeItems = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
+        _refreshSeconds = State(initialValue: Self.parseRefreshSeconds(command.keywords))
     }
 
     private var hasChanges: Bool {
@@ -6856,6 +6869,7 @@ struct SystemCommandEditorView: View {
             || valueScript != command.valueScript
             || scopeProvider != (command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
             || scopeItems != (command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
+            || refreshSeconds != Self.parseRefreshSeconds(command.keywords)
     }
 
     private var actionType: SystemCommandActionType {
@@ -6999,6 +7013,7 @@ struct SystemCommandEditorView: View {
                         Text("None").tag("none")
                         Text("Bluetooth devices").tag("bluetooth")
                         Text("Wi-Fi networks").tag("wifi")
+                        Text("List Extension (custom rows)").tag("custom")
                     }
                     .pickerStyle(.menu)
                     TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
@@ -7006,6 +7021,41 @@ struct SystemCommandEditorView: View {
                     Text("When this command is scoped, its control stays at the top and these dynamic or custom rows remain searchable below it.")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
+                }
+
+                if scopeProvider == "custom" {
+                    labeledField("List Extension") {
+                        Text(
+                            """
+                            Build a live list scope like the built-in Process Monitor. The Script \
+                            above is the ROWS source: print one JSON object per line. The Undo field \
+                            below is the ROW ACTION, run on Enter with the row exposed as \
+                            $CD_ROW_ID / $CD_ROW_TITLE.
+                            """
+                        )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        Text(
+                            #"{"id":"1","title":"Dia","subtitle":"47 proc","badge":"6.68 GB","icon":"cpu"}"#
+                        )
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        Text("Only title (or id) is required. icon = an SF Symbol name or a file/app path. Non-JSON lines become title-only rows.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                        HStack(spacing: 8) {
+                            Text("Auto-refresh every")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            TextField("3", text: $refreshSeconds)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 50)
+                            Text("seconds")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 labeledField("Dock Completion") {
@@ -7054,8 +7104,12 @@ struct SystemCommandEditorView: View {
                             updated.icon        = icon.trimmingCharacters(in: .whitespaces)
                             updated.keywords = keywords.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") }
+                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") && !$0.lowercased().hasPrefix("refresh:") }
                             if scopeProvider != "none" { updated.keywords.append("provider:\(scopeProvider)") }
+                            if scopeProvider == "custom" {
+                                let secs = Int(refreshSeconds.trimmingCharacters(in: .whitespaces)) ?? 3
+                                updated.keywords.append("refresh:\(max(1, secs))")
+                            }
                             let customItems = scopeItems.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                                 .filter { !$0.isEmpty }
