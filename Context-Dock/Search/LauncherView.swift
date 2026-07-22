@@ -481,6 +481,23 @@ struct LauncherView: View {
         return nil
     }
 
+    /// Selection Scope freezes the payload at entry so the source app can lose focus without
+    /// losing the scope. Use this for Selection Scope UI/actions; use `activeSelection` only
+    /// when the caller truly needs the live AX state.
+    var effectiveSelectionForScope: ActiveSelection? {
+        if let payload = selectionScopePayload {
+            let files = payload.frozenFilePaths.map { URL(fileURLWithPath: $0) }
+            if !files.isEmpty { return .files(files) }
+            let fullText = payload.frozenFullText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let fullText, !fullText.isEmpty { return .text(fullText) }
+            let label = payload.frozenText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let label, !label.isEmpty, payload.frozenIcon == "text.cursor" {
+                return .text(label)
+            }
+        }
+        return activeSelection
+    }
+
     var hasActiveDockContextSelection: Bool {
         activeSelection != nil || globalContextActivationHasFrozenPayload
     }
@@ -2519,52 +2536,81 @@ struct LauncherView: View {
 
     @ViewBuilder
     var selectionContextChip: some View {
-        // Prefer live AX state (axContext) for immediate updates; fall back to currentContext
-        let axFiles =
-            isDismissedFinderSelection(axContext.selectedFilePaths)
-            ? []
-            : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
-        let axText = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if !axFiles.isEmpty {
-            let label =
-                axFiles.count == 1
-                ? axFiles[0].lastPathComponent
-                : "\(axFiles.count) files"
-            let icon =
-                axFiles.count == 1
-                ? fileIcon(for: axFiles[0].pathExtension.lowercased())
-                : "doc.on.doc.fill"
-            selectionChipView(icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
-        } else if !axText.isEmpty {
-            let snippet = String(axText.prefix(40))
-            selectionChipView(
-                icon: "text.cursor",
-                label: "\"\(snippet)\(axText.count > 40 ? "…" : "")\"",
-                onDismiss: dismissContextAndReturnToDock)
-        } else {
-            switch currentContext {
-            case .filesSelected(let urls) where !urls.isEmpty:
+        if hasSelectionScopeSurface, let scoped = effectiveSelectionForScope {
+            switch scoped {
+            case .files(let urls):
                 let label = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
                 let icon =
                     urls.count == 1
-                    ? fileIcon(for: urls[0].pathExtension.lowercased()) : "doc.on.doc.fill"
+                    ? selectionSymbol(for: urls[0])
+                    : "doc.on.doc.fill"
                 selectionChipView(
-                    icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
-            case .textSelected(let text)
-            where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+                    icon: icon,
+                    label: label,
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            case .text(let text):
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 selectionChipView(
                     icon: "text.cursor",
                     label: "\"\(String(t.prefix(40)))\(t.count > 40 ? "…" : "")\"",
-                    onDismiss: dismissContextAndReturnToDock)
-            case .url(let urlStr) where !urlStr.isEmpty:
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            case .url(let urlStr):
                 selectionChipView(
                     icon: "link",
                     label: URL(string: urlStr)?.host ?? String(urlStr.prefix(40)),
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            }
+        } else {
+            // Prefer live AX state (axContext) for immediate updates; fall back to currentContext
+            let axFiles =
+                isDismissedFinderSelection(axContext.selectedFilePaths)
+                ? []
+                : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
+            let axText = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if !axFiles.isEmpty {
+                let label =
+                    axFiles.count == 1
+                    ? axFiles[0].lastPathComponent
+                    : "\(axFiles.count) files"
+                let icon =
+                    axFiles.count == 1
+                    ? fileIcon(for: axFiles[0].pathExtension.lowercased())
+                    : "doc.on.doc.fill"
+                selectionChipView(icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
+            } else if !axText.isEmpty {
+                let snippet = String(axText.prefix(40))
+                selectionChipView(
+                    icon: "text.cursor",
+                    label: "\"\(snippet)\(axText.count > 40 ? "…" : "")\"",
                     onDismiss: dismissContextAndReturnToDock)
-            default:
-                EmptyView()
+            } else {
+                switch currentContext {
+                case .filesSelected(let urls) where !urls.isEmpty:
+                    let label = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
+                    let icon =
+                        urls.count == 1
+                        ? fileIcon(for: urls[0].pathExtension.lowercased()) : "doc.on.doc.fill"
+                    selectionChipView(
+                        icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
+                case .textSelected(let text)
+                where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    selectionChipView(
+                        icon: "text.cursor",
+                        label: "\"\(String(t.prefix(40)))\(t.count > 40 ? "…" : "")\"",
+                        onDismiss: dismissContextAndReturnToDock)
+                case .url(let urlStr) where !urlStr.isEmpty:
+                    selectionChipView(
+                        icon: "link",
+                        label: URL(string: urlStr)?.host ?? String(urlStr.prefix(40)),
+                        onDismiss: dismissContextAndReturnToDock)
+                default:
+                    EmptyView()
+                }
             }
         }
     }
@@ -2599,7 +2645,26 @@ struct LauncherView: View {
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
+        let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+            if let payload = payloadToKeepLive {
+                let files = payload.frozenFilePaths
+                if !files.isEmpty {
+                    axContext.selectedFilePaths = files
+                    currentContext = .filesSelected(files.map { URL(fileURLWithPath: $0) })
+                    liveDockSelectionPreviewText =
+                        files.count == 1
+                        ? URL(fileURLWithPath: files[0]).lastPathComponent
+                        : "\(files.count) files selected"
+                } else if let text = payload.frozenFullText ?? payload.frozenText,
+                    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    axContext.selectedText = trimmed
+                    currentContext = .textSelected(trimmed)
+                    liveDockSelectionPreviewText = trimmed
+                }
+            }
             // Drop ONLY the frozen selection and force the surface back to Context Dock.
             // The live selection survives, so its icon parks back beside the capsule / "+".
             selectionScopePayload = nil
@@ -2760,6 +2825,7 @@ struct LauncherView: View {
     var shouldShowFrontmostContextChip: Bool {
         showContextInDock
             && !isGlobalContextActive
+            && !hasSelectionScopeSurface
             && settings.enableFrontmostDetection
             && !isCompactSmartScope
             && l2.targetApp == nil

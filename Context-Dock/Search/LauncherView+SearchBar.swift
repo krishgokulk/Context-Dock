@@ -1146,6 +1146,12 @@ extension LauncherView {
                                 .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                         }
 
+                        if hasSelectionScopeSurface && showContextInDock && isSearchBarExpanded {
+                            selectionContextChip
+                                .transition(
+                                    .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
+                        }
+
                         // Soft frontmost context chip — same visual language as app scope,
                         // but not locked. Frontmost app changes still update this chip.
                         if shouldShowFrontmostContextChip,

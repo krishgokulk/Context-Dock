@@ -4199,11 +4199,13 @@ extension LauncherView {
                 excludingTitles: extensionTitleSet,
                 allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             )
-            var sel: [DockPill] = finderFilePills + macOSExtensionPills + finderMenuPills
-            if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sel.append(selectionScopeAskAIPill(query: q))
-            }
+            var sel: [DockPill] = []
+            sel.append(selectionScopeAskAIPill(query: q))
+            sel.append(contentsOf: selectionScopeCopyPill(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
+            sel.append(contentsOf: finderFilePills)
+            sel.append(contentsOf: macOSExtensionPills)
+            sel.append(contentsOf: finderMenuPills)
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
             return dedupeRankedDockPills(

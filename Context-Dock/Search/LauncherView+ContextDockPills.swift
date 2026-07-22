@@ -2140,7 +2140,7 @@ extension LauncherView {
         }
 
         let badge: String = {
-            switch activeSelection {
+            switch effectiveSelectionForScope {
             case .files(let urls):
                 return urls.count == 1 ? "File" : "\(urls.count) Items"
             case .text:
@@ -2328,7 +2328,7 @@ extension LauncherView {
     func enterSelectionChat(initialQuery: String) {
         let ctx = effectiveAXContextForConversation()
         let text: String? = {
-            if case .text(let t) = activeSelection, !t.isEmpty { return t }
+            if case .text(let t) = effectiveSelectionForScope, !t.isEmpty { return t }
             return ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
         }()
         aiMode.selectionText = (text?.isEmpty == false) ? text : nil
@@ -2377,6 +2377,72 @@ extension LauncherView {
         return pill
     }
 
+    func selectionScopeCopyPill(query q: String) -> [DockPill] {
+        guard let selection = effectiveSelectionForScope else { return [] }
+        let normalizedQuery = normalizedDockPillText(q)
+        let searchable = normalizedDockPillText("copy selection clipboard path")
+        guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return [] }
+
+        let title: String
+        let icon: String
+        switch selection {
+        case .files(let urls):
+            title = urls.count == 1 ? "Copy File" : "Copy Files"
+            icon = "doc.on.clipboard"
+        case .text:
+            title = "Copy Text"
+            icon = "doc.on.doc"
+        case .url:
+            title = "Copy Link"
+            icon = "link"
+        }
+
+        var pill = DockPill(
+            id: "selection-copy",
+            name: title,
+            icon: icon,
+            accentColorName: "teal",
+            badge: "Selection",
+            execute: {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                switch selection {
+                case .files(let urls):
+                    pasteboard.writeObjects(urls as [NSURL])
+                    showSelectionCopyFeedback("Copied \(urls.count == 1 ? "file" : "\(urls.count) files")")
+                case .text(let text):
+                    pasteboard.setString(text, forType: .string)
+                    showSelectionCopyFeedback("Copied selected text")
+                case .url(let url):
+                    pasteboard.setString(url, forType: .string)
+                    showSelectionCopyFeedback("Copied link")
+                }
+            }
+        )
+        pill.rankingKind = "payload"
+        pill.rankingScore = 95_000
+        pill.trackingIdentifier = "selection-copy"
+        pill.searchTerms = ["copy", "clipboard", "selection", "text", "file", "files", "link"]
+        return [pill]
+    }
+
+    func showSelectionCopyFeedback(_ title: String) {
+        let id = "selection-copy-\(UUID().uuidString)"
+        launcherViewModel.inlineDockFeedback = DockInlineFeedback(
+            id: id,
+            title: title,
+            icon: "doc.on.clipboard",
+            phase: .success,
+            subject: "Selection",
+            bundleID: nil
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            if launcherViewModel.inlineDockFeedback?.id == id {
+                launcherViewModel.inlineDockFeedback = nil
+            }
+        }
+    }
+
     /// Selection is additive in Context Dock: these AI actions sit beside normal app menus.
     /// Works for BOTH text and file selections (e.g. "summarize this PDF") — the selection
     /// chat injects the file content, so the same actions apply.
@@ -2385,7 +2451,7 @@ extension LauncherView {
 
         let badge: String
         let isText: Bool
-        switch activeSelection {
+        switch effectiveSelectionForScope {
         case .text(let t) where !t.isEmpty:
             badge = "Selection · \(t.count) chars"
             isText = true
@@ -2398,7 +2464,9 @@ extension LauncherView {
 
         let normalizedQuery = normalizedDockPillText(q)
         let textActions: [(name: String, icon: String, prompt: String)] = [
+            ("Summarize", "text.alignleft", "Summarize this"),
             ("Explain", "text.magnifyingglass", "Explain this"),
+            ("Key points", "list.bullet", "List the key points"),
             ("Translate", "character.book.closed", "Translate this"),
         ]
         let fileActions: [(name: String, icon: String, prompt: String)] = [
