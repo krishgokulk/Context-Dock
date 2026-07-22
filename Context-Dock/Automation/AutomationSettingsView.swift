@@ -144,7 +144,7 @@ struct AutomationSettingsView: View {
             } else {
                 // ── Column 2: Item list ──────────────────────────────
                 itemList
-                    .frame(minWidth: 280, idealWidth: 300, maxWidth: 360)
+                    .frame(minWidth: 340, idealWidth: 390, maxWidth: 480)
 
                 // ── Column 3: Detail / Editor ────────────────────────
                 detailPane
@@ -874,14 +874,16 @@ struct AutomationSettingsView: View {
         let rules: [AXTriggerRule]
         if settingsPage == .shortcutSheetWorkflows {
             let selectionNames = Set(AXTriggerRule.selectionScopeBuiltInExamples.map(\.name))
+            let genericExampleNames = Set(AXTriggerRule.builtInExamples.map(\.name))
             rules = settings.axTriggerRules.filter { rule in
-                selectionNames.contains(rule.name)
-                    || rule.name.localizedCaseInsensitiveContains("selection")
-                    || rule.conditions.contains { condition in
-                        condition.field == .selectedText
-                            || condition.field == .filePath
-                            || condition.field == .currentURL
-                    }
+                if selectionNames.contains(rule.name) { return true }
+                if genericExampleNames.contains(rule.name) { return false }
+                if rule.name.localizedCaseInsensitiveContains("selection") { return true }
+                return rule.conditions.contains { condition in
+                    condition.field == .selectedText
+                        || condition.field == .filePath
+                        || condition.field == .currentURL
+                }
             }
         } else {
             rules = settings.axTriggerRules
@@ -1307,7 +1309,7 @@ struct AutomationSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Selection Scope Built-ins", systemImage: "command.square")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("These actions ship with Context-Dock and appear automatically based on the selected text, files, folders, URLs, documents, images, video, or audio. Use them as templates when creating your own Selection Scope triggers.")
+                    Text("Selection Scope is the home for anything that starts from a user selection: text, files, folders, URLs, documents, images, video, and audio. Media workflows belong here because they only make sense after the user selects media.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1357,7 +1359,7 @@ struct AutomationSettingsView: View {
                         ("Write Alt Text", "Generate concise accessibility alt text."),
                         ("Convert to JPEG / PNG", "Use macOS sips to create converted copies."),
                         ("Compress Image", "Use sips to create a smaller JPEG copy."),
-                        ("Video / Audio Brief", "Analyze selected media file context and useful next actions."),
+                        ("Video / Audio Brief", "Use file metadata and converted context for a compact media brief."),
                     ])
 
                 selectionBuiltInGroup(
@@ -1373,12 +1375,22 @@ struct AutomationSettingsView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("How to create a matching custom trigger")
+                    Text("How to create a Selection Scope extension")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    onboardingStep(number: "1", title: "Click +", detail: "Create a Selection Scope trigger from the list toolbar.")
-                    onboardingStep(number: "2", title: "Choose the input", detail: "Match selected text, file extension, URL host, or frontmost app.")
-                    onboardingStep(number: "3", title: "Attach an action", detail: "Use a script, shortcut, app adapter, or AI prompt. Variables below are available.")
+                    onboardingStep(number: "1", title: "Choose the selected input", detail: "Use selected text for writing actions, file path/extension for files and folders, URL host for links, and app name only when the workflow belongs to one app.")
+                    onboardingStep(number: "2", title: "Pick the safest engine", detail: "Prefer built-in macOS tools first: MarkItDown for documents, Vision OCR for images, sips for image conversion, ditto/zip for archives, and AI only for reasoning.")
+                    onboardingStep(number: "3", title: "Attach one clear action", detail: "Use an AI prompt for answers in-place, a shell command for local transforms, a Shortcut for user automation, or an app adapter when the target app exposes a real capability.")
+                    onboardingStep(number: "4", title: "Respect approval and scope", detail: "Read-only actions can run immediately. Anything that writes, deletes, sends, moves, or opens another app should ask first and should only receive the selected content.")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Copy-ready examples")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    codeExample("Document text", "markitdown \"{file}\" | pbcopy")
+                    codeExample("Zip selected item", "ditto -c -k --keepParent \"{file}\" \"{file}.zip\"")
+                    codeExample("Convert image", "sips -s format jpeg \"{file}\" --out \"{file}.jpg\"")
                 }
 
                 Divider()
@@ -1387,16 +1399,39 @@ struct AutomationSettingsView: View {
                     Text("Useful variables")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    variableRow("{{selection}}", "Selected text or selected file path")
-                    variableRow("{{url}}", "Selected or detected URL")
-                    variableRow("{{app}}", "Frontmost app when Selection Scope opened")
-                    variableRow("{{clipboard}}", "Current clipboard content")
+                    variableRow("{selectedText}", "Text selected through Accessibility")
+                    variableRow("{file}", "Selected file or folder path")
+                    variableRow("{url}", "Selected or detected URL")
+                    variableRow("{appName}", "Frontmost app when Selection Scope opened")
+                    variableRow("{bundleId}", "Frontmost app bundle identifier")
+                    variableRow("{clipboard}", "Current clipboard content")
+                    variableRow("{encodedText}", "URL-encoded selected text")
+                    variableRow("{encodedURL}", "URL-encoded detected URL")
                 }
             }
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private func codeExample(_ title: String, _ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(command)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(NSColor.textBackgroundColor).opacity(0.65),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+        }
     }
 
     private func selectionBuiltInGroup(
