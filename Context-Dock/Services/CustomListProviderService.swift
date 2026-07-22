@@ -37,6 +37,7 @@ final class CustomListProviderService {
     }
 
     private var cache: [UUID: Entry] = [:]   // main-thread only
+    private var lastQuery: [UUID: String] = [:]  // last query the rows script saw (live mode)
     private let queue = DispatchQueue(
         label: "com.krishgokul.ContextDock.customListProvider", qos: .userInitiated)
 
@@ -46,8 +47,11 @@ final class CustomListProviderService {
         cache[command.id]?.rows ?? []
     }
 
-    func isStale(_ command: SystemCommand) -> Bool {
+    func isStale(_ command: SystemCommand, query: String) -> Bool {
         guard let entry = cache[command.id] else { return true }
+        // Live-query extensions re-run whenever the typed query changes, so the rows
+        // script can react to $CD_QUERY (capture-style scopes like Quick Note).
+        if Self.isLiveQuery(command), lastQuery[command.id] != query { return true }
         return Date().timeIntervalSince(entry.at) > refreshInterval(for: command)
     }
 
@@ -69,6 +73,7 @@ final class CustomListProviderService {
             let rows = Self.parseRows(output)
             DispatchQueue.main.async {
                 self?.cache[command.id] = Entry(rows: rows, at: Date(), refreshing: false)
+                self?.lastQuery[command.id] = query
                 completion()
             }
         }
@@ -90,6 +95,13 @@ final class CustomListProviderService {
     /// Whether a command is a user-authored list extension.
     static func isListProvider(_ command: SystemCommand) -> Bool {
         command.keywords.contains { $0.lowercased() == "provider:custom" }
+    }
+
+    /// Live-query extensions re-run the rows script on every keystroke (passing
+    /// $CD_QUERY) instead of client-filtering the cached rows — enables capture-style
+    /// scopes (type + Enter to save, live search, …).
+    static func isLiveQuery(_ command: SystemCommand) -> Bool {
+        command.keywords.contains { $0.lowercased() == "query:live" }
     }
 
     private func refreshInterval(for command: SystemCommand) -> TimeInterval {

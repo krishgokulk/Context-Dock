@@ -6822,10 +6822,15 @@ struct SystemCommandEditorView: View {
     @State private var scopeProvider: String
     @State private var scopeItems: String
     @State private var refreshSeconds: String
+    @State private var liveQuery: Bool
 
     private static func parseRefreshSeconds(_ keywords: [String]) -> String {
         keywords.first(where: { $0.lowercased().hasPrefix("refresh:") })?
             .split(separator: ":", maxSplits: 1).last.map(String.init) ?? "3"
+    }
+
+    private static func parseLiveQuery(_ keywords: [String]) -> Bool {
+        keywords.contains { $0.lowercased() == "query:live" }
     }
 
     init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
@@ -6852,6 +6857,7 @@ struct SystemCommandEditorView: View {
         _scopeProvider = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
         _scopeItems = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
         _refreshSeconds = State(initialValue: Self.parseRefreshSeconds(command.keywords))
+        _liveQuery = State(initialValue: Self.parseLiveQuery(command.keywords))
     }
 
     private var hasChanges: Bool {
@@ -6870,6 +6876,7 @@ struct SystemCommandEditorView: View {
             || scopeProvider != (command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
             || scopeItems != (command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
             || refreshSeconds != Self.parseRefreshSeconds(command.keywords)
+            || liveQuery != Self.parseLiveQuery(command.keywords)
     }
 
     private var actionType: SystemCommandActionType {
@@ -7055,6 +7062,13 @@ struct SystemCommandEditorView: View {
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
+                        Toggle(isOn: $liveQuery) {
+                            Text("Live query — re-run the rows script on every keystroke ($CD_QUERY)")
+                                .font(.system(size: 11))
+                        }
+                        Text("Turn on for capture-style scopes (type + Enter to save, live search). The script decides what rows to show for the current query — no client-side filtering.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
                     }
                 }
 
@@ -7104,11 +7118,12 @@ struct SystemCommandEditorView: View {
                             updated.icon        = icon.trimmingCharacters(in: .whitespaces)
                             updated.keywords = keywords.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") && !$0.lowercased().hasPrefix("refresh:") }
+                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") && !$0.lowercased().hasPrefix("refresh:") && !$0.lowercased().hasPrefix("query:") }
                             if scopeProvider != "none" { updated.keywords.append("provider:\(scopeProvider)") }
                             if scopeProvider == "custom" {
                                 let secs = Int(refreshSeconds.trimmingCharacters(in: .whitespaces)) ?? 3
                                 updated.keywords.append("refresh:\(max(1, secs))")
+                                if liveQuery { updated.keywords.append("query:live") }
                             }
                             let customItems = scopeItems.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

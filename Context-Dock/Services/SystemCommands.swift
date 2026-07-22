@@ -746,5 +746,38 @@ final class SystemCommandsRegistry {
             undoScript: #"kill "$CD_ROW_ID" 2>/dev/null"#,
             enabled: false
         ),
+        SystemCommand(
+            name: "Scratch Notes",
+            icon: "square.and.pencil",
+            keywords: ["note", "notes", "scratch", "jot", "capture", "provider:custom", "query:live", "refresh:1"],
+            scriptType: "bash",
+            script: #"""
+            # Capture-style extension (query:live re-runs this on every keystroke).
+            # When you've typed something, offer a Save row first; then list saved
+            # notes newest-first, filtered by the query.
+            store="$HOME/Library/Application Support/Context-Dock/scratch-notes.txt"
+            mkdir -p "$(dirname "$store")"; touch "$store"
+            q="$CD_QUERY"
+            if [ -n "$q" ]; then
+              printf '{"id":"__save__","title":"Save note: %s","icon":"plus.circle"}\n' "$q"
+            fi
+            tail -r "$store" 2>/dev/null | while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              case "$line" in *"$q"*) printf '{"id":"%s","title":"%s","icon":"note.text"}\n' "$line" "$line";; esac
+            done
+            """#,
+            description:
+                "Example capture extension: type a note and Enter the Save row to store it; existing notes list below and copy on Enter. Shows how query:live builds Quick Note-style scopes.",
+            undoScriptType: "bash",
+            undoScript: #"""
+            store="$HOME/Library/Application Support/Context-Dock/scratch-notes.txt"
+            if [ "$CD_ROW_ID" = "__save__" ]; then
+              printf '%s\n' "${CD_ROW_TITLE#Save note: }" >> "$store"
+            else
+              printf '%s' "$CD_ROW_ID" | pbcopy
+            fi
+            """#,
+            enabled: false
+        ),
     ]
 }

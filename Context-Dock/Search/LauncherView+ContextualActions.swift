@@ -1398,8 +1398,9 @@ extension LauncherView {
         command: SystemCommand, scopedBundleId: String, query: String
     ) -> [DockPill] {
         let service = CustomListProviderService.shared
+        let live = CustomListProviderService.isLiveQuery(command)
 
-        if service.isStale(command) {
+        if service.isStale(command, query: query) {
             service.refresh(command, query: query) { [weak launcherViewModel] in
                 guard launcherViewModel != nil else { return }
                 self.scheduleDockPillRebuild(
@@ -1409,7 +1410,9 @@ extension LauncherView {
 
         let rows = service.rows(for: command)
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = trimmed.isEmpty
+        // Live-query scripts already account for the query (via $CD_QUERY), so never
+        // client-filter their rows — that would hide a synthetic "Save: <query>" row.
+        let filtered = (trimmed.isEmpty || live)
             ? rows
             : rows.filter {
                 $0.title.lowercased().contains(trimmed)
