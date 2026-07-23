@@ -13,8 +13,113 @@ enum AppleRemindersMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerToday(registry)
+        registerOverdue(registry)
         registerList(registry)
         registerCreate(registry)
+        registerComplete(registry)
+        registerDelete(registry)
+    }
+
+    // MARK: - reminders.complete
+
+    private static func registerComplete(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.complete",
+                title: "Complete a Reminder",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part) of the reminder to mark done", required: true)
+                ]),
+                riskLevel: .medium
+            ) { request in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let done = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.completeReminder(matchingTitle: match))
+                    }
+                }
+                return .init(
+                    success: done != nil,
+                    output: done.map { "Marked '\($0)' as complete." }
+                        ?? "No open reminder matching '\(match)' found.")
+            }
+        )
+    }
+
+    // MARK: - reminders.delete
+
+    private static func registerDelete(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.delete",
+                title: "Delete a Reminder",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part) of the reminder to delete", required: true)
+                ]),
+                riskLevel: .high
+            ) { request in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let deleted = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.deleteReminder(matchingTitle: match))
+                    }
+                }
+                return .init(
+                    success: deleted != nil,
+                    output: deleted.map { "Deleted reminder '\($0)'." }
+                        ?? "No open reminder matching '\(match)' found.")
+            }
+        )
+    }
+
+    // MARK: - reminders.overdue
+
+    private static func registerOverdue(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.overdue",
+                title: "Get Overdue Reminders",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                let items = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(returning: AppleAppsAPI.shared.getOverdueReminders())
+                    }
+                }
+                if items.isEmpty {
+                    return .init(success: true, output: "Nothing overdue — you're caught up.")
+                }
+                let df = DateFormatter()
+                df.dateStyle = .medium
+                df.timeStyle = .short
+                let lines = items.prefix(30).map { r -> String in
+                    let title = r["title"] as? String ?? "Untitled"
+                    let due = (r["dueDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let dueStr = due.map { " (due \(df.string(from: $0)))" } ?? ""
+                    return "• \(title)\(dueStr)"
+                }
+                return .init(
+                    success: true,
+                    output: "Overdue reminders (\(items.count)):\n\(lines.joined(separator: "\n"))")
+            }
+        )
     }
 
     // MARK: - reminders.today

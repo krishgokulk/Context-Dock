@@ -257,18 +257,23 @@ extension LauncherView {
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
     func attachAIFiles(imagesOnly: Bool) {
+        let picked = pickFilesForChatAttachment(imagesOnly: imagesOnly)
+        guard !picked.isEmpty else { return }
+        withAnimation {
+            aiMode.attachments.append(contentsOf: picked.filter { !aiMode.attachments.contains($0) })
+        }
+    }
+
+    /// Open panel that returns the chosen file URLs — shared by the general chat and
+    /// the frontmost-app chat + menus.
+    func pickFilesForChatAttachment(imagesOnly: Bool) -> [URL] {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
         panel.message = "Choose files to attach to your message"
-        if panel.runModal() == .OK {
-            withAnimation {
-                let newURLs = panel.urls.filter { !aiMode.attachments.contains($0) }
-                aiMode.attachments.append(contentsOf: newURLs)
-            }
-        }
+        return panel.runModal() == .OK ? panel.urls : []
     }
 
     /// Capture a screenshot via `screencapture` — full screen (`-x`) or an

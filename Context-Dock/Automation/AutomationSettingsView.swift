@@ -3120,6 +3120,9 @@ struct AutomationAdapterDetailView: View {
     @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = true
     @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = true
     @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = true
+    @AppStorage("photosMCPEnabled") private var photosMCPEnabled: Bool = true
+    @AppStorage("mailMCPEnabled") private var mailMCPEnabled: Bool = true
+    @AppStorage("musicMCPEnabled") private var musicMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") private var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
@@ -3502,6 +3505,9 @@ struct AutomationAdapterDetailView: View {
         case "com.apple.iCal": return calendarMCPEnabled
         case "com.apple.AddressBook": return contactsMCPEnabled
         case "com.apple.reminders": return remindersMCPEnabled
+        case "com.apple.Photos": return photosMCPEnabled
+        case "com.apple.mail": return mailMCPEnabled
+        case "com.apple.Music": return musicMCPEnabled
         case "com.apple.MobileSMS": return messagesMCPEnabled
         case "com.github.GitHubClient": return githubMCPEnabled
         default: return false
@@ -3512,7 +3518,54 @@ struct AutomationAdapterDetailView: View {
         linkedMCPServers.count + (hasEnabledBuiltInIntegration ? 1 : 0)
     }
 
+    /// Expandable list of every tool a built-in Apple MCP exposes (title + inputs +
+    /// Ask/Auto), so users can see all its possibilities like a full MCP tool sheet.
     @ViewBuilder
+    private func builtInMCPToolsDisclosure(prefix: String, tint: Color) -> some View {
+        let tools = CapabilityRegistry.shared.all
+            .filter { $0.id.hasPrefix(prefix) }
+            .sorted { $0.title < $1.title }
+        if !tools.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(tools, id: \.id) { tool in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(tint)
+                                .frame(width: 14)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(tool.title)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                if !tool.inputSchema.fields.isEmpty {
+                                    Text(
+                                        "inputs: "
+                                            + tool.inputSchema.fields
+                                            .map { $0.name + ($0.required ? "" : "?") }
+                                            .joined(separator: ", "))
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            Spacer(minLength: 6)
+                            Text(tool.riskLevel.requiresApproval ? "Ask" : "Auto")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(tool.riskLevel.requiresApproval ? .orange : .green)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.leading, 2)
+            } label: {
+                Text("All tools · \(tools.count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 2)
+        }
+    }
+
     private var notesBuiltInMCPRow: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -3559,6 +3612,10 @@ struct AutomationAdapterDetailView: View {
             }
             .padding(.vertical, 6)
 
+            if noteMCPEnabled {
+                builtInMCPToolsDisclosure(prefix: "notes.", tint: .orange)
+            }
+
             if !linkedMCPServers.isEmpty {
                 Divider()
             }
@@ -3569,7 +3626,7 @@ struct AutomationAdapterDetailView: View {
     /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
     private var hasBuiltInIntegration: Bool {
         ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
-         "com.apple.MobileSMS",
+         "com.apple.Photos", "com.apple.mail", "com.apple.Music", "com.apple.MobileSMS",
          "com.github.GitHubClient"].contains(currentAdapter.bundleId)
     }
 
@@ -3577,7 +3634,8 @@ struct AutomationAdapterDetailView: View {
     /// Calendar / Contacts / Reminders / GitHub adapters.
     @ViewBuilder
     private func builtInIntegrationRow(
-        title: String, capabilities: String, icon: String, tint: Color, isOn: Binding<Bool>
+        title: String, capabilities: String, icon: String, tint: Color, isOn: Binding<Bool>,
+        toolPrefix: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -3617,6 +3675,10 @@ struct AutomationAdapterDetailView: View {
             }
             .padding(.vertical, 6)
 
+            if isOn.wrappedValue, let toolPrefix {
+                builtInMCPToolsDisclosure(prefix: toolPrefix, tint: tint)
+            }
+
             if !linkedMCPServers.isEmpty {
                 Divider()
             }
@@ -3649,7 +3711,8 @@ struct AutomationAdapterDetailView: View {
                 icon: "calendar", tint: .red,
                 isOn: liveRegisteringBinding($calendarMCPEnabled) {
                     AppleCalendarMCPCapabilities.register(in: CapabilityRegistry.shared)
-                }
+                },
+                toolPrefix: "calendar."
             )
         case "com.apple.AddressBook":
             builtInIntegrationRow(
@@ -3658,7 +3721,8 @@ struct AutomationAdapterDetailView: View {
                 icon: "person.crop.circle", tint: .brown,
                 isOn: liveRegisteringBinding($contactsMCPEnabled) {
                     AppleContactsMCPCapabilities.register(in: CapabilityRegistry.shared)
-                }
+                },
+                toolPrefix: "contacts."
             )
         case "com.apple.reminders":
             builtInIntegrationRow(
@@ -3667,7 +3731,38 @@ struct AutomationAdapterDetailView: View {
                 icon: "checklist", tint: .orange,
                 isOn: liveRegisteringBinding($remindersMCPEnabled) {
                     AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
-                }
+                },
+                toolPrefix: "reminders."
+            )
+        case "com.apple.Photos":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Photos",
+                capabilities: "recent photos · search library",
+                icon: "photo.on.rectangle", tint: .pink,
+                isOn: liveRegisteringBinding($photosMCPEnabled) {
+                    ApplePhotosMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "photos."
+            )
+        case "com.apple.mail":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Mail",
+                capabilities: "recent inbox messages",
+                icon: "envelope.fill", tint: .blue,
+                isOn: liveRegisteringBinding($mailMCPEnabled) {
+                    AppleMailMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "mail."
+            )
+        case "com.apple.Music":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Music",
+                capabilities: "now playing · volume",
+                icon: "music.note", tint: .pink,
+                isOn: liveRegisteringBinding($musicMCPEnabled) {
+                    AppleMusicMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "music."
             )
         case "com.apple.MobileSMS":
             builtInIntegrationRow(
@@ -3676,7 +3771,8 @@ struct AutomationAdapterDetailView: View {
                 icon: "message.fill", tint: .green,
                 isOn: liveRegisteringBinding($messagesMCPEnabled) {
                     AppleMessagesMCPCapabilities.register(in: CapabilityRegistry.shared)
-                }
+                },
+                toolPrefix: "messages."
             )
         case "com.github.GitHubClient":
             builtInIntegrationRow(
@@ -3685,7 +3781,8 @@ struct AutomationAdapterDetailView: View {
                 icon: "chevron.left.forwardslash.chevron.right", tint: .purple,
                 isOn: liveRegisteringBinding($githubMCPEnabled) {
                     GitHubMCPCapabilities.register(in: CapabilityRegistry.shared)
-                }
+                },
+                toolPrefix: "github."
             )
         default:
             EmptyView()
