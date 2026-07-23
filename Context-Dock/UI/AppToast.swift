@@ -16,7 +16,7 @@ import Combine
 struct ToastItem: Identifiable {
     let id: String
     let icon: String          // SF Symbol name
-    let message: String
+    var message: String
     let tint: Color
     let persistent: Bool      // if true, won't auto-dismiss
     var isImage: Bool = false  // use NSImage instead of SF Symbol
@@ -24,6 +24,7 @@ struct ToastItem: Identifiable {
     var centered: Bool = false // position at screen centre instead of above dock
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    var progress: Double? = nil  // 0…1 shows a determinate bar; nil = no bar
 }
 
 // MARK: - Manager
@@ -77,6 +78,43 @@ final class AppToast: ObservableObject {
 
     static func hide(id: String? = nil) {
         Task { @MainActor in shared.dismiss(animated: true) }
+    }
+
+    // MARK: - Determinate progress (downloads etc.)
+
+    /// Show a persistent progress toast with a determinate bar.
+    static func showProgress(
+        _ message: String, id: String, progress: Double = 0,
+        icon: String = "arrow.down.circle", tint: Color = .blue
+    ) {
+        Task { @MainActor in
+            shared.present(
+                ToastItem(
+                    id: id, icon: icon, message: message, tint: tint,
+                    persistent: true, progress: max(0, min(1, progress))),
+                duration: 0)
+        }
+    }
+
+    /// Update the bar in place (no re-animation) — ignored if a different toast is showing.
+    static func updateProgress(id: String, progress: Double, message: String? = nil) {
+        Task { @MainActor in
+            guard var current = shared.toast, current.id == id else { return }
+            current.progress = max(0, min(1, progress))
+            if let message { current.message = message }
+            shared.toast = current
+        }
+    }
+
+    /// Replace the progress toast with a final, auto-dismissing result.
+    static func finishProgress(
+        id: String, message: String, icon: String = "checkmark.circle", tint: Color = .green
+    ) {
+        Task { @MainActor in
+            shared.present(
+                ToastItem(id: id, icon: icon, message: message, tint: tint, persistent: false),
+                duration: 2.5)
+        }
     }
 
     // MARK: - Internal
@@ -177,37 +215,56 @@ struct ToastPillView: View {
     var body: some View {
         Group {
             if let t = mgr.toast {
-                HStack(spacing: 10) {
-                    Image(systemName: t.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(t.tint)
-                        .frame(width: 20)
+                VStack(spacing: t.progress == nil ? 0 : 7) {
+                    HStack(spacing: 10) {
+                        Image(systemName: t.icon)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(t.tint)
+                            .frame(width: 20)
 
-                    Text(t.message)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .fixedSize()
+                        Text(t.message)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .fixedSize()
 
-                    if let actionTitle = t.actionTitle, let action = t.action {
-                        Button {
-                            action()
-                        } label: {
-                            Text(actionTitle)
-                                .font(.system(size: 12, weight: .semibold))
+                        if let progress = t.progress {
+                            Text("\(Int((progress * 100).rounded()))%")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(t.tint)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(t.tint.opacity(0.12), in: Capsule())
-                                .overlay(Capsule().strokeBorder(t.tint.opacity(0.35), lineWidth: 0.8))
+                                .monospacedDigit()
                         }
-                        .buttonStyle(.plain)
+
+                        if let actionTitle = t.actionTitle, let action = t.action {
+                            Button {
+                                action()
+                            } label: {
+                                Text(actionTitle)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(t.tint)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(t.tint.opacity(0.12), in: Capsule())
+                                    .overlay(Capsule().strokeBorder(t.tint.opacity(0.35), lineWidth: 0.8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if let progress = t.progress {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.14))
+                                Capsule().fill(t.tint)
+                                    .frame(width: max(0, min(1, progress)) * geo.size.width)
+                            }
+                        }
+                        .frame(height: 4)
                     }
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
                 .background(toastBackground)
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: t.progress == nil ? 24 : 14, style: .continuous))
             }
         }
     }

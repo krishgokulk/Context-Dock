@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import SwiftUI
 import AppKit
 import Combine
 
@@ -824,7 +825,15 @@ final class AppAdapterManager: ObservableObject {
             let shellFile = action.scriptFile.flatMap { resolveScriptFile($0) }
             let inlineScript = action.script.map { inject($0, context: context, query: query) } ?? ""
             guard shellFile != nil || !inlineScript.isEmpty else { return (false, "No script defined") }
-            return await runShell(inlineScript, scriptFile: shellFile, context: context)
+            // Long-running download-style commands stream a live progress bar.
+            let lower = (inlineScript + " " + action.id).lowercased()
+            let showsProgress =
+                lower.contains("yt-dlp") || lower.contains("youtube-dl")
+                || lower.contains("wget") || lower.contains("curl -o")
+                || lower.contains("download")
+            return await runShell(
+                inlineScript, scriptFile: shellFile, context: context,
+                progressLabel: showsProgress ? action.name : nil)
 
         case .cliTool:
             guard let command = action.cliToolCommand, !command.isEmpty else {
@@ -1120,7 +1129,10 @@ final class AppAdapterManager: ObservableObject {
         }.value
     }
 
-    private func runShell(_ script: String, scriptFile: URL? = nil, context: AXContext) async -> (Bool, String) {
+    private func runShell(
+        _ script: String, scriptFile: URL? = nil, context: AXContext,
+        progressLabel: String? = nil
+    ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -1142,6 +1154,52 @@ final class AppAdapterManager: ObservableObject {
             let pipe = Pipe()
             task.standardOutput = pipe
             task.standardError  = pipe
+
+            // Progress-reporting actions (yt-dlp, curl…) stream their output; parse a
+            // trailing percentage and drive a determinate progress toast live.
+            let toastID = "adapter-progress-\(UUID().uuidString)"
+            if let label = progressLabel {
+                Task { @MainActor in
+                    AppToast.showProgress(label, id: toastID, progress: 0, tint: .blue)
+                }
+                var collected = Data()
+                pipe.fileHandleForReading.readabilityHandler = { handle in
+                    let chunk = handle.availableData
+                    guard !chunk.isEmpty else { return }
+                    collected.append(chunk)
+                    guard let text = String(data: chunk, encoding: .utf8) else { return }
+                    if let pct = Self.lastPercentage(in: text) {
+                        Task { @MainActor in
+                            AppToast.updateProgress(id: toastID, progress: pct / 100.0)
+                        }
+                    }
+                }
+                do {
+                    try task.run()
+                } catch {
+                    pipe.fileHandleForReading.readabilityHandler = nil
+                    Task { @MainActor in AppToast.hide() }
+                    return (false, error.localizedDescription)
+                }
+                task.waitUntilExit()
+                pipe.fileHandleForReading.readabilityHandler = nil
+                let ok = task.terminationStatus == 0
+                Task { @MainActor in
+                    if ok {
+                        AppToast.finishProgress(
+                            id: toastID, message: "\(label) — done",
+                            icon: "checkmark.circle", tint: .green)
+                    } else {
+                        AppToast.finishProgress(
+                            id: toastID, message: "\(label) — failed",
+                            icon: "exclamationmark.triangle", tint: .red)
+                    }
+                }
+                let out = String(data: collected, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return (ok, out.isEmpty ? "Done" : out)
+            }
+
             do {
                 try task.run()
                 task.waitUntilExit()
@@ -1152,6 +1210,18 @@ final class AppAdapterManager: ObservableObject {
                 return (false, error.localizedDescription)
             }
         }.value
+    }
+
+    /// Extract the last "NN.N%" figure from a chunk of command output (yt-dlp, curl…).
+    nonisolated private static func lastPercentage(in text: String) -> Double? {
+        var last: Double?
+        var index = text.startIndex
+        while let range = text.range(of: #"(\d{1,3}(?:\.\d+)?)%"#, options: .regularExpression, range: index..<text.endIndex) {
+            let match = text[range].dropLast()  // strip %
+            if let value = Double(match), value >= 0, value <= 100 { last = value }
+            index = range.upperBound
+        }
+        return last
     }
 
     private func runExternalScriptFile(_ rawPath: String, context: AXContext) async -> (Bool, String) {
