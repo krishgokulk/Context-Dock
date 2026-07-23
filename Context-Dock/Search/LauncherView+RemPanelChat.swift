@@ -82,6 +82,16 @@ extension LauncherView {
         let activeKey =
             searchState.activeSmartQueryKey ?? settings.autoDetectedAppKey ?? "reminders"
 
+        // Any browser scope (DuckDuckGo, Chrome, Arc… not just Safari) gets a page
+        // assistant. Page content comes from Safari's bridge when available, else from
+        // MarkItDown converting the live URL — so "about this page" works everywhere.
+        let scopedBrowserBundle =
+            l2.targetApp?.bundleId
+            ?? AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier ?? ""
+        let isBrowserScope =
+            activeKey != "safari"
+            && SelectedContextResolver.isBrowserBundleId(scopedBrowserBundle)
+
         let ctx = searchState.contextApp
         let appLabel =
             ctx?.name ?? settings.customAppEntries.first(where: { $0.key == activeKey })?.label
@@ -601,16 +611,33 @@ extension LauncherView {
                 - Never dump raw output — always give a clean plain-English summary.\(destructiveWarning)
                 \(toolRules)
                 """
-        } else if activeKey == "safari" {
-            let safariTab = AppleAppsAPI.shared.getCurrentTab()
-            let pageURL =
-                (safariTab["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        } else if activeKey == "safari" || isBrowserScope {
+            let safariTab = isBrowserScope ? [:] : AppleAppsAPI.shared.getCurrentTab()
+            let browserPID =
+                AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+            let pageURL: String = {
+                if let u = (safariTab["url"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !u.isEmpty { return u }
+                // Non-Safari browsers: read the live address-bar URL over Accessibility.
+                return AXContextReader.shared.liveCurrentURL(
+                    pid: browserPID, bundleId: scopedBrowserBundle)
+                    ?? AXContextReader.shared.current.currentURL ?? ""
+            }()
             let pageTitle =
                 (safariTab["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                ?? ""
-            let pageText = fetchSafariPageText() ?? ""
-            let pageLinks = fetchSafariPageLinks()
-            let pageImages = fetchSafariPageImages()
+                ?? (AppDelegate.shared?.previousFrontmostApp?.localizedName ?? "")
+            var pageText = isBrowserScope ? "" : (fetchSafariPageText() ?? "")
+            // Fallback / non-Safari: convert the live URL to markdown with MarkItDown so
+            // the model has the page content even when there's no Safari bridge text.
+            if pageText.isEmpty, let url = URL(string: pageURL),
+                MarkItDownService.supports(url),
+                let conv = MarkItDownService.convert(url)
+            {
+                pageText = conv.markdown
+            }
+            // These read via Safari's JavaScript bridge — skip for other browsers.
+            let pageLinks = isBrowserScope ? [] : fetchSafariPageLinks()
+            let pageImages = isBrowserScope ? [] : fetchSafariPageImages()
             let lowerQuery = query.lowercased()
             let selectedText =
                 AXContextReader.shared.current.selectedText?
