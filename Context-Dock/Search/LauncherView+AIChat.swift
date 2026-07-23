@@ -4835,7 +4835,7 @@ extension LauncherView {
     func builtInCapabilityPromptBlock() async -> String {
         await MainActor.run {
             let prefixes = [
-                "notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."
+                "notes.", "calendar.", "contacts.", "reminders.", "photos.", "messages.", "github."
             ]
             let caps = CapabilityRegistry.shared.all.filter { cap in
                 prefixes.contains(where: cap.id.hasPrefix)

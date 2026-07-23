@@ -133,6 +133,8 @@ final class CapabilityRegistry {
                 { AppleContactsMCPCapabilities.register(in: self) }),
             ("reminders.", AppSettings.shared.remindersMCPEnabled,
                 { AppleRemindersMCPCapabilities.register(in: self) }),
+            ("photos.", AppSettings.shared.photosMCPEnabled,
+                { ApplePhotosMCPCapabilities.register(in: self) }),
             ("messages.", AppSettings.shared.messagesMCPEnabled,
                 { AppleMessagesMCPCapabilities.register(in: self) }),
             ("github.", AppSettings.shared.githubMCPEnabled,
@@ -171,6 +173,9 @@ final class CapabilityRegistry {
         }
         if AppSettings.shared.remindersMCPEnabled {
             AppleRemindersMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.photosMCPEnabled {
+            ApplePhotosMCPCapabilities.register(in: self)
         }
         if AppSettings.shared.messagesMCPEnabled {
             AppleMessagesMCPCapabilities.register(in: self)

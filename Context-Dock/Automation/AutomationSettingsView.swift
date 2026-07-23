@@ -3120,6 +3120,7 @@ struct AutomationAdapterDetailView: View {
     @AppStorage("calendarMCPEnabled") private var calendarMCPEnabled: Bool = true
     @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = true
     @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = true
+    @AppStorage("photosMCPEnabled") private var photosMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") private var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
@@ -3502,6 +3503,7 @@ struct AutomationAdapterDetailView: View {
         case "com.apple.iCal": return calendarMCPEnabled
         case "com.apple.AddressBook": return contactsMCPEnabled
         case "com.apple.reminders": return remindersMCPEnabled
+        case "com.apple.Photos": return photosMCPEnabled
         case "com.apple.MobileSMS": return messagesMCPEnabled
         case "com.github.GitHubClient": return githubMCPEnabled
         default: return false
@@ -3620,7 +3622,7 @@ struct AutomationAdapterDetailView: View {
     /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
     private var hasBuiltInIntegration: Bool {
         ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
-         "com.apple.MobileSMS",
+         "com.apple.Photos", "com.apple.MobileSMS",
          "com.github.GitHubClient"].contains(currentAdapter.bundleId)
     }
 
@@ -3727,6 +3729,16 @@ struct AutomationAdapterDetailView: View {
                     AppleRemindersMCPCapabilities.register(in: CapabilityRegistry.shared)
                 },
                 toolPrefix: "reminders."
+            )
+        case "com.apple.Photos":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Photos",
+                capabilities: "recent photos · search library",
+                icon: "photo.on.rectangle", tint: .pink,
+                isOn: liveRegisteringBinding($photosMCPEnabled) {
+                    ApplePhotosMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "photos."
             )
         case "com.apple.MobileSMS":
             builtInIntegrationRow(

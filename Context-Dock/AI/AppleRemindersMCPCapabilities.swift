@@ -13,8 +13,47 @@ enum AppleRemindersMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerToday(registry)
+        registerOverdue(registry)
         registerList(registry)
         registerCreate(registry)
+    }
+
+    // MARK: - reminders.overdue
+
+    private static func registerOverdue(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.overdue",
+                title: "Get Overdue Reminders",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                let items = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(returning: AppleAppsAPI.shared.getOverdueReminders())
+                    }
+                }
+                if items.isEmpty {
+                    return .init(success: true, output: "Nothing overdue — you're caught up.")
+                }
+                let df = DateFormatter()
+                df.dateStyle = .medium
+                df.timeStyle = .short
+                let lines = items.prefix(30).map { r -> String in
+                    let title = r["title"] as? String ?? "Untitled"
+                    let due = (r["dueDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let dueStr = due.map { " (due \(df.string(from: $0)))" } ?? ""
+                    return "• \(title)\(dueStr)"
+                }
+                return .init(
+                    success: true,
+                    output: "Overdue reminders (\(items.count)):\n\(lines.joined(separator: "\n"))")
+            }
+        )
     }
 
     // MARK: - reminders.today

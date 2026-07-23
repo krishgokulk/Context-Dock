@@ -13,9 +13,44 @@ enum AppleCalendarMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerToday(registry)
+        registerNext(registry)
         registerList(registry)
         registerSearch(registry)
         registerCreate(registry)
+    }
+
+    // MARK: - calendar.next
+
+    private static func registerNext(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "calendar.next",
+                title: "Get Next Calendar Event",
+                appBundleID: "com.apple.iCal",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                guard AppSettings.shared.calendarMCPEnabled else {
+                    throw AICapabilityError.blocked("Calendar access is disabled in Settings.")
+                }
+                let event = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(returning: AppleAppsAPI.shared.getNextEvent())
+                    }
+                }
+                guard let ev = event else {
+                    return .init(success: true, output: "No upcoming events found.")
+                }
+                let df = DateFormatter()
+                df.dateStyle = .medium
+                df.timeStyle = .short
+                let title = ev["title"] as? String ?? "Untitled"
+                let start = (ev["startDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                let when = start.map { df.string(from: $0) } ?? "?"
+                let location = (ev["location"] as? String).flatMap { $0.isEmpty ? nil : " @ \($0)" } ?? ""
+                return .init(success: true, output: "Next: \(title) — \(when)\(location)")
+            }
+        )
     }
 
     // MARK: - calendar.today
