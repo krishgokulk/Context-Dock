@@ -3219,7 +3219,7 @@ extension LauncherView {
             let pillQuery = finderSearchPopoverActive ? "" : q
             scheduleDockPillRebuild(
                 query: pillQuery,
-                delayNanoseconds: settings.useListViewForPills ? 20_000_000 : 55_000_000,
+                delayNanoseconds: 20_000_000,
                 refreshContext: false
             )
         }
