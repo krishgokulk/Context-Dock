@@ -3338,7 +3338,10 @@ extension LauncherView {
             !hasSelectionScopeSurface,
             l2.targetApp == nil,
             lockedSubmenuParent == nil,
-            globalInlineAppScope == nil
+            globalInlineAppScope == nil,
+            // Never surface a transient app-scope hint while in a CLI/provider scope.
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
         else { return nil }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3594,7 +3597,12 @@ extension LauncherView {
             !hasSelectionScopeSurface,
             l2.targetApp == nil,
             lockedSubmenuParent == nil,
-            globalInlineAppScope == nil
+            globalInlineAppScope == nil,
+            // Inside a CLI tool or System Command provider scope the input is a
+            // command/prompt, not a scope-building query — never convert typed words
+            // into a second app-scope chip (which flipped the layer + double-scoped).
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3640,10 +3648,11 @@ extension LauncherView {
             lockedSubmenuParent == nil,
             lockedFindToken == nil,
             !suppressGlobalInlineAppScopeDetection,
-            // Inside a System Command provider scope (Quick Note, Windows, …) the input
-            // is a prompt/filter, not a scope-building query — never convert typed words
-            // like "apple notes app" into app-scope chips.
-            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
+            // Inside a System Command provider scope (Quick Note, Windows, …) or a CLI
+            // tool scope the input is a prompt/command, not a scope-building query —
+            // never convert typed words like "apple notes app" into app-scope chips.
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
