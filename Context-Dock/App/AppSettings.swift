@@ -914,6 +914,8 @@ class AppSettings: ObservableObject {
     @AppStorage("contactsMCPEnabled") var contactsMCPEnabled: Bool = true
     @AppStorage("remindersMCPEnabled") var remindersMCPEnabled: Bool = true
     @AppStorage("photosMCPEnabled") var photosMCPEnabled: Bool = true
+    @AppStorage("mailMCPEnabled") var mailMCPEnabled: Bool = true
+    @AppStorage("musicMCPEnabled") var musicMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") var githubMCPEnabled: Bool = false
 

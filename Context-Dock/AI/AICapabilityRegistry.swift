@@ -135,6 +135,10 @@ final class CapabilityRegistry {
                 { AppleRemindersMCPCapabilities.register(in: self) }),
             ("photos.", AppSettings.shared.photosMCPEnabled,
                 { ApplePhotosMCPCapabilities.register(in: self) }),
+            ("mail.", AppSettings.shared.mailMCPEnabled,
+                { AppleMailMCPCapabilities.register(in: self) }),
+            ("music.", AppSettings.shared.musicMCPEnabled,
+                { AppleMusicMCPCapabilities.register(in: self) }),
             ("messages.", AppSettings.shared.messagesMCPEnabled,
                 { AppleMessagesMCPCapabilities.register(in: self) }),
             ("github.", AppSettings.shared.githubMCPEnabled,
@@ -176,6 +180,12 @@ final class CapabilityRegistry {
         }
         if AppSettings.shared.photosMCPEnabled {
             ApplePhotosMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.mailMCPEnabled {
+            AppleMailMCPCapabilities.register(in: self)
+        }
+        if AppSettings.shared.musicMCPEnabled {
+            AppleMusicMCPCapabilities.register(in: self)
         }
         if AppSettings.shared.messagesMCPEnabled {
             AppleMessagesMCPCapabilities.register(in: self)

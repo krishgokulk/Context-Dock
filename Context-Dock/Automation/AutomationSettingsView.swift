@@ -3121,6 +3121,8 @@ struct AutomationAdapterDetailView: View {
     @AppStorage("contactsMCPEnabled") private var contactsMCPEnabled: Bool = true
     @AppStorage("remindersMCPEnabled") private var remindersMCPEnabled: Bool = true
     @AppStorage("photosMCPEnabled") private var photosMCPEnabled: Bool = true
+    @AppStorage("mailMCPEnabled") private var mailMCPEnabled: Bool = true
+    @AppStorage("musicMCPEnabled") private var musicMCPEnabled: Bool = true
     @AppStorage("messagesMCPEnabled") private var messagesMCPEnabled: Bool = true
     @AppStorage("githubMCPEnabled") private var githubMCPEnabled: Bool = false
 
@@ -3504,6 +3506,8 @@ struct AutomationAdapterDetailView: View {
         case "com.apple.AddressBook": return contactsMCPEnabled
         case "com.apple.reminders": return remindersMCPEnabled
         case "com.apple.Photos": return photosMCPEnabled
+        case "com.apple.mail": return mailMCPEnabled
+        case "com.apple.Music": return musicMCPEnabled
         case "com.apple.MobileSMS": return messagesMCPEnabled
         case "com.github.GitHubClient": return githubMCPEnabled
         default: return false
@@ -3622,7 +3626,7 @@ struct AutomationAdapterDetailView: View {
     /// Contacts, Reminders, GitHub) — used for counts and the empty-state check.
     private var hasBuiltInIntegration: Bool {
         ["com.apple.Notes", "com.apple.iCal", "com.apple.AddressBook", "com.apple.reminders",
-         "com.apple.Photos", "com.apple.MobileSMS",
+         "com.apple.Photos", "com.apple.mail", "com.apple.Music", "com.apple.MobileSMS",
          "com.github.GitHubClient"].contains(currentAdapter.bundleId)
     }
 
@@ -3739,6 +3743,26 @@ struct AutomationAdapterDetailView: View {
                     ApplePhotosMCPCapabilities.register(in: CapabilityRegistry.shared)
                 },
                 toolPrefix: "photos."
+            )
+        case "com.apple.mail":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Mail",
+                capabilities: "recent inbox messages",
+                icon: "envelope.fill", tint: .blue,
+                isOn: liveRegisteringBinding($mailMCPEnabled) {
+                    AppleMailMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "mail."
+            )
+        case "com.apple.Music":
+            builtInIntegrationRow(
+                title: "DoraX Apple MCP · Music",
+                capabilities: "now playing · volume",
+                icon: "music.note", tint: .pink,
+                isOn: liveRegisteringBinding($musicMCPEnabled) {
+                    AppleMusicMCPCapabilities.register(in: CapabilityRegistry.shared)
+                },
+                toolPrefix: "music."
             )
         case "com.apple.MobileSMS":
             builtInIntegrationRow(
