@@ -478,7 +478,10 @@ extension LauncherView {
             return l2.chatMessages.isEmpty && !l2.isLoading
         case .globalContext:
             if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
-                return true
+                // Only the EMPTY scoped-chat prompt is the compact idle pill. Once a
+                // conversation exists (messages / loading), it must render the solid card
+                // — otherwise typing the next query left the chat sheet see-through.
+                return l2.chatMessages.isEmpty && !l2.isLoading
             }
             if shouldUsePureGlobalAppSearch,
                 globalContextViewModel.typingSnapshot.phase != .expanded
