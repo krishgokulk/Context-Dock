@@ -435,6 +435,24 @@ extension LauncherView {
             order += 1
         }
 
+        // Command scopes are part of Global Actions. Show them before app launch rows
+        // so a pinned CLI like `obsidian` is usable without opening Obsidian.app.
+        for result in globalCLIScopeMatches(for: q, limit: limit - candidates.count) {
+            let key = globalApplicationIdentityKey(
+                for: result, explicitBundleIdentifier: result.subtitle)
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
+        }
+
+        for result in globalSystemCommandScopeMatches(for: q, limit: limit - candidates.count) {
+            let key = globalApplicationIdentityKey(
+                for: result, explicitBundleIdentifier: result.subtitle)
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
+        }
+
         let runningSource =
             runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
         for app in runningSource
@@ -470,22 +488,6 @@ extension LauncherView {
                 )
             else { continue }
             add(app)
-        }
-
-        for result in globalCLIScopeMatches(for: q, limit: limit - candidates.count) {
-            let key = globalApplicationIdentityKey(
-                for: result, explicitBundleIdentifier: result.subtitle)
-            guard seen.insert(key).inserted else { continue }
-            candidates.append((result, result.score, order))
-            order += 1
-        }
-
-        for result in globalSystemCommandScopeMatches(for: q, limit: limit - candidates.count) {
-            let key = globalApplicationIdentityKey(
-                for: result, explicitBundleIdentifier: result.subtitle)
-            guard seen.insert(key).inserted else { continue }
-            candidates.append((result, result.score, order))
-            order += 1
         }
 
         if isGlobalContextActive, q.count >= 3 {
@@ -615,7 +617,7 @@ extension LauncherView {
                     contactData: nil
                 )
                 result.score =
-                    (normalizedDockPillText(package.command).hasPrefix(q) ? 8_850 : 5_200)
+                    (normalizedDockPillText(package.command).hasPrefix(q) ? 34_000 : 30_000)
                     - Double(package.command.count)
                 return result
             }
@@ -818,7 +820,7 @@ extension LauncherView {
                 )
                 result.dismissesLauncher = true
                 result.score =
-                    (normalizedDockPillText(command.name).hasPrefix(q) ? 8_700 : 5_100)
+                    (normalizedDockPillText(command.name).hasPrefix(q) ? 33_000 : 29_000)
                     - Double(command.name.count)
                 return result
             }

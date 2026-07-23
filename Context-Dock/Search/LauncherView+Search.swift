@@ -263,9 +263,9 @@ extension LauncherView {
             var priority: Double {
                 switch self {
                 case .extensionCommand: return 20.0
+                case .cliTool:          return 18.0
                 case .application:      return 15.0
                 case .folder:           return 14.0
-                case .cliTool:          return 13.0
                 case .shortcut:         return 12.0
                 case .calendarEvent, .reminder: return 10.0
                 case .mail, .message:   return 9.0
