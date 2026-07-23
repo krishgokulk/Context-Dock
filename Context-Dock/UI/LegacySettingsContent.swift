@@ -3681,39 +3681,41 @@ Now create one for: "<what the extension should do>"
         ),
         Template(
             id: 4,
-            title: "Media Extension",
-            icon: "photo.on.rectangle",
-            description: "Acts on media files (images, video, audio). Use a 'fileType' trigger. Paste the JSON back here.",
+            title: "CLI Tool Scope",
+            icon: "terminal",
+            description: "Wraps a command-line tool as a scoped Global Command — subcommands become rows. Paste the JSON back here.",
             prompt: """
-You generate a Context-Dock MEDIA EXTENSION. It acts on media files and is
-surfaced by file type. The selected file path(s) arrive on stdin and as
-$CD_FILE; the directory is the working directory.
+You generate a Context-Dock GLOBAL COMMAND that wraps a CLI tool. The user
+types the tool name to scope in, then a subcommand; $CD_QUERY is whatever they
+typed after the name.
+
+Available variable: $CD_QUERY — the text typed after the command name.
+  - In bash scripts use it as the env var "$CD_QUERY".
 
 Output ONLY this JSON (no prose, no markdown fences):
 {
   "version": "1.0",
-  "extensions": [
+  "type": "system_commands",
+  "systemCommands": [
     {
-      "name": "Convert to MP4",
-      "description": "Re-encode the selected video to MP4 with ffmpeg.",
-      "icon": "film",
-      "layer": "L2",
-      "tags": ["media", "video"],
-      "triggers": [ { "type": "fileType", "value": "mov" } ],
+      "name": "brew",
+      "description": "Run a Homebrew subcommand.",
+      "icon": "terminal",
+      "keywords": ["brew", "homebrew", "cli"],
       "scriptType": "bash",
-      "script": "ffmpeg -i \\"$CD_FILE\\" \\"${CD_FILE%.*}.mp4\\""
+      "script": "/opt/homebrew/bin/brew $CD_QUERY"
     }
   ]
 }
 
 Rules:
-- Use { "type": "fileType", "value": "<ext>" } (e.g. mov, png, mp3) so it
-  surfaces on matching media files; add more triggers for more types.
-- Add "media" plus the kind ("video"/"image"/"audio") to "tags".
-- "scriptType": bash, applescript, jxa, python, or swift.
+- "type" MUST be exactly "system_commands".
+- "scriptType" is "bash", "applescript", or "jxa".
+- Use the tool's absolute path so it runs outside an interactive shell.
 - "icon" is a valid SF Symbol name.
+- Optional "presets": [..] lists common subcommands as tappable values.
 
-Now create one for: "<the media transform you want>"
+Now create one for: "<the CLI tool + subcommands you want>"
 """
         )
     ]
