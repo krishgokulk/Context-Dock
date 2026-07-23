@@ -144,6 +144,10 @@ struct LauncherView: View {
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
     @State var finderDesktopRecentPills: [DockPill] = []
     @State var finderDesktopIndexedPills: [DockPill] = []  // all user-folder files, pre-loaded for instant filter
+    /// Non-nil while browsing INTO a folder in Finder desktop mode: the result list
+    /// shows that folder's contents instead of the search results. Right-arrow on a
+    /// focused folder drills in; Backspace on an empty field pops back out.
+    @State var finderBrowsePath: String? = nil
     @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""
@@ -320,8 +324,8 @@ struct LauncherView: View {
                             queryOverride: ""
                         )
                     },
-                    type: .application,
-                    filePath: pkg.installedPath,
+                    type: .cliTool,
+                    filePath: nil,
                     contactData: nil,
                     stableID: "cli://\(pkg.command)"
                 )
@@ -434,10 +438,17 @@ struct LauncherView: View {
 
     var currentDockSurfaceMode: DockSurfaceMode {
         if showMediaLayer { return .mediaDock }
-        if shouldShowContextDockChatSheet || isContextDockChatRoutingLocked {
+        if shouldShowContextDockChatSheet || isContextDockChatRoutingLocked
+            // Inside a CLI tool scope the input composes the next command, so keep the
+            // opaque chat surface while typing — don't fall through to the transparent
+            // Global Context surface (which made the sheet go see-through mid-query).
+            || (isCLIToolScopeLocked && (l2.chatArmed || !l2.chatMessages.isEmpty))
+        {
             return .contextDockChat
         }
-        if aiMode.isActive { return .generalChat }
+        // Selection Scope is its own scoped surface. Its AI answers should render in-place
+        // inside the selection sheet, not promote the whole dock into system-wide AI Assistant.
+        if aiMode.isActive && !hasSelectionScopeSurface { return .generalChat }
         if isGlobalContextActive { return .globalContext }
         return .contextDock
     }
@@ -479,6 +490,23 @@ struct LauncherView: View {
         default: break
         }
         return nil
+    }
+
+    /// Selection Scope freezes the payload at entry so the source app can lose focus without
+    /// losing the scope. Use this for Selection Scope UI/actions; use `activeSelection` only
+    /// when the caller truly needs the live AX state.
+    var effectiveSelectionForScope: ActiveSelection? {
+        if let payload = selectionScopePayload {
+            let files = payload.frozenFilePaths.map { URL(fileURLWithPath: $0) }
+            if !files.isEmpty { return .files(files) }
+            let fullText = payload.frozenFullText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let fullText, !fullText.isEmpty { return .text(fullText) }
+            let label = payload.frozenText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let label, !label.isEmpty, payload.frozenIcon == "text.cursor" {
+                return .text(label)
+            }
+        }
+        return activeSelection
     }
 
     var hasActiveDockContextSelection: Bool {
@@ -537,7 +565,9 @@ struct LauncherView: View {
 
         // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
         // an empty query — so it's visible the moment the launcher opens with a selection.
-        if hasSelectionScopeSurface { return true }
+        if hasSelectionScopeSurface {
+            return !aiMode.isActive
+        }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Finder desktop-only mode is a dedicated file-search scope. Once the user types,
@@ -2056,20 +2086,12 @@ struct LauncherView: View {
         }) {
             Group {
                 if isGlobalContextActive {
-                    if hasSelectionScopeSurface,
-                        let selIcon = frozenSelectionIcon ?? activeSelectionIcon
-                    {
-                        Image(systemName: selIcon)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.purple.opacity(0.90))
-                    } else {
-                        Image("DoraXD")
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 22, height: 22)
-                            .blendMode(.screen)
-                    }
+                    Image("DoraXD")
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 22, height: 22)
+                        .blendMode(.screen)
                 } else if let appIcon = l2.targetApp?.icon ?? frontmost.icon {
                     // Show frontmost app icon as the anchor
                     Image(nsImage: appIcon)
@@ -2519,52 +2541,81 @@ struct LauncherView: View {
 
     @ViewBuilder
     var selectionContextChip: some View {
-        // Prefer live AX state (axContext) for immediate updates; fall back to currentContext
-        let axFiles =
-            isDismissedFinderSelection(axContext.selectedFilePaths)
-            ? []
-            : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
-        let axText = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if !axFiles.isEmpty {
-            let label =
-                axFiles.count == 1
-                ? axFiles[0].lastPathComponent
-                : "\(axFiles.count) files"
-            let icon =
-                axFiles.count == 1
-                ? fileIcon(for: axFiles[0].pathExtension.lowercased())
-                : "doc.on.doc.fill"
-            selectionChipView(icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
-        } else if !axText.isEmpty {
-            let snippet = String(axText.prefix(40))
-            selectionChipView(
-                icon: "text.cursor",
-                label: "\"\(snippet)\(axText.count > 40 ? "…" : "")\"",
-                onDismiss: dismissContextAndReturnToDock)
-        } else {
-            switch currentContext {
-            case .filesSelected(let urls) where !urls.isEmpty:
+        if hasSelectionScopeSurface, let scoped = effectiveSelectionForScope {
+            switch scoped {
+            case .files(let urls):
                 let label = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
                 let icon =
                     urls.count == 1
-                    ? fileIcon(for: urls[0].pathExtension.lowercased()) : "doc.on.doc.fill"
+                    ? selectionSymbol(for: urls[0])
+                    : "doc.on.doc.fill"
                 selectionChipView(
-                    icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
-            case .textSelected(let text)
-            where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+                    icon: icon,
+                    label: label,
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            case .text(let text):
                 let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 selectionChipView(
                     icon: "text.cursor",
                     label: "\"\(String(t.prefix(40)))\(t.count > 40 ? "…" : "")\"",
-                    onDismiss: dismissContextAndReturnToDock)
-            case .url(let urlStr) where !urlStr.isEmpty:
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            case .url(let urlStr):
                 selectionChipView(
                     icon: "link",
                     label: URL(string: urlStr)?.host ?? String(urlStr.prefix(40)),
+                    onDismiss: dismissSelectionAndStayInGlobalContext
+                )
+            }
+        } else {
+            // Prefer live AX state (axContext) for immediate updates; fall back to currentContext
+            let axFiles =
+                isDismissedFinderSelection(axContext.selectedFilePaths)
+                ? []
+                : axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
+            let axText = axContext.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if !axFiles.isEmpty {
+                let label =
+                    axFiles.count == 1
+                    ? axFiles[0].lastPathComponent
+                    : "\(axFiles.count) files"
+                let icon =
+                    axFiles.count == 1
+                    ? fileIcon(for: axFiles[0].pathExtension.lowercased())
+                    : "doc.on.doc.fill"
+                selectionChipView(icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
+            } else if !axText.isEmpty {
+                let snippet = String(axText.prefix(40))
+                selectionChipView(
+                    icon: "text.cursor",
+                    label: "\"\(snippet)\(axText.count > 40 ? "…" : "")\"",
                     onDismiss: dismissContextAndReturnToDock)
-            default:
-                EmptyView()
+            } else {
+                switch currentContext {
+                case .filesSelected(let urls) where !urls.isEmpty:
+                    let label = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
+                    let icon =
+                        urls.count == 1
+                        ? fileIcon(for: urls[0].pathExtension.lowercased()) : "doc.on.doc.fill"
+                    selectionChipView(
+                        icon: icon, label: label, onDismiss: dismissContextAndReturnToDock)
+                case .textSelected(let text)
+                where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    selectionChipView(
+                        icon: "text.cursor",
+                        label: "\"\(String(t.prefix(40)))\(t.count > 40 ? "…" : "")\"",
+                        onDismiss: dismissContextAndReturnToDock)
+                case .url(let urlStr) where !urlStr.isEmpty:
+                    selectionChipView(
+                        icon: "link",
+                        label: URL(string: urlStr)?.host ?? String(urlStr.prefix(40)),
+                        onDismiss: dismissContextAndReturnToDock)
+                default:
+                    EmptyView()
+                }
             }
         }
     }
@@ -2592,20 +2643,39 @@ struct LauncherView: View {
         setFrontmostAppContextOnly(reason: "dismiss context chip")
     }
 
-    /// Leaves Selection Scope but stays in Global Context. Exiting is NOT "throw the selection
-    /// away": the live selection stays readable, so its icon returns beside the running-app
-    /// capsule and one click re-enters the scope. Only the frozen payload (what makes this a
-    /// scope) is dropped. Previously this also stamped a dismissed signature and wiped
-    /// axContext/currentContext, which erased the icon entirely and made the same selection
-    /// un-selectable for the rest of the session.
+    /// Leaves Selection Scope and returns to the frontmost app Context Dock. Exiting is NOT
+    /// "throw the selection away": the live selection stays readable, so its icon returns beside
+    /// the "+" / app capsule and one click re-enters the scope. Only the frozen payload (what
+    /// makes this a scope) is dropped.
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
+        let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-            // Drop ONLY the frozen selection. The surface (Context Dock or Global Context) is
-            // left exactly as it was — exiting the scope is not a surface change — and the live
-            // selection survives, so its icon parks back beside the capsule / "+".
+            if let payload = payloadToKeepLive {
+                let files = payload.frozenFilePaths
+                if !files.isEmpty {
+                    axContext.selectedFilePaths = files
+                    currentContext = .filesSelected(files.map { URL(fileURLWithPath: $0) })
+                    liveDockSelectionPreviewText =
+                        files.count == 1
+                        ? URL(fileURLWithPath: files[0]).lastPathComponent
+                        : "\(files.count) files selected"
+                } else if let text = payload.frozenFullText ?? payload.frozenText,
+                    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    axContext.selectedText = trimmed
+                    currentContext = .textSelected(trimmed)
+                    liveDockSelectionPreviewText = trimmed
+                }
+            }
+            // Drop ONLY the frozen selection and force the surface back to Context Dock.
+            // The live selection survives, so its icon parks back beside the capsule / "+".
             selectionScopePayload = nil
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             showContextInDock = true
             showMediaLayer = false
             aiMode.isActive = false
@@ -2625,6 +2695,7 @@ struct LauncherView: View {
         scheduleGlobalAppMatchRebuild(query: "", delayNanoseconds: 0)
         scheduleGlobalGroupedListRebuild(query: "", delayNanoseconds: 0)
         scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
+        setFrontmostAppContextOnly(reason: "exit selection scope")
     }
 
     @ViewBuilder
@@ -2715,6 +2786,12 @@ struct LauncherView: View {
         if shouldShowSeparateActionList {
             return false
         }
+        if hasSelectionScopeSurface && aiMode.isActive {
+            return hasUserSentMessageInCurrentSession
+                || !aiMode.messages.isEmpty
+                || aiMode.isLoading
+                || aiMode.streamingId != nil
+        }
         if isCompactSmartScope {
             return true
         }
@@ -2759,6 +2836,7 @@ struct LauncherView: View {
     var shouldShowFrontmostContextChip: Bool {
         showContextInDock
             && !isGlobalContextActive
+            && !hasSelectionScopeSurface
             && settings.enableFrontmostDetection
             && !isCompactSmartScope
             && l2.targetApp == nil

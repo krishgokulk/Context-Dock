@@ -285,6 +285,251 @@ struct AXTriggerRule: Codable, Identifiable, Equatable {
             priority: 7
         ),
     ]
+
+    static let legacySelectionScopeBuiltInNames: Set<String> = [
+        "Selection — Ask AI",
+        "Selection — Document Brief",
+        "Selection — OCR Image",
+        "Selection — Compress File",
+        "Selection — Link Summary",
+    ]
+
+    static let selectionScopeBuiltInExamples: [AXTriggerRule] = [
+        AXTriggerRule(
+            name: "Ask AI",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .selectedText, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Ask AI",
+                    icon: "sparkles",
+                    accentColor: "yellow",
+                    actionType: .shellCommand,
+                    actionValue: "printf '%s' 'Ask AI about this selection:\\n{selectedText}' | pbcopy"
+                ),
+            ],
+            priority: 20
+        ),
+        AXTriggerRule(
+            name: "Copy Text",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .selectedText, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Copy Text",
+                    icon: "doc.on.doc",
+                    accentColor: "blue",
+                    actionType: .shellCommand,
+                    actionValue: "printf '%s' '{selectedText}' | pbcopy"
+                ),
+            ],
+            priority: 19
+        ),
+        AXTriggerRule(
+            name: "Open File",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Open",
+                    icon: "arrow.up.right.square",
+                    accentColor: "green",
+                    actionType: .openFile,
+                    actionValue: "{file}"
+                ),
+            ],
+            priority: 19
+        ),
+        AXTriggerRule(
+            name: "Reveal in Finder",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Reveal",
+                    icon: "folder",
+                    accentColor: "blue",
+                    actionType: .shellCommand,
+                    actionValue: "open -R '{file}'"
+                ),
+            ],
+            priority: 18
+        ),
+        AXTriggerRule(
+            name: "Copy Path",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Copy Path",
+                    icon: "doc.on.clipboard",
+                    accentColor: "teal",
+                    actionType: .shellCommand,
+                    actionValue: "printf '%s' '{file}' | pbcopy"
+                ),
+            ],
+            priority: 18
+        ),
+        AXTriggerRule(
+            name: "Document Brief",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(pdf|txt|md|markdown|rtf|doc|docx|pages|csv|json|xml|html)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Document Brief",
+                    icon: "doc.richtext",
+                    accentColor: "purple",
+                    actionType: .shellCommand,
+                    actionValue: "markitdown '{file}' | pbcopy"
+                ),
+            ],
+            priority: 19
+        ),
+        AXTriggerRule(
+            name: "Extract Text",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(pdf|txt|md|markdown|rtf|doc|docx|pages|csv|json|xml|html)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Extract Text",
+                    icon: "doc.text.magnifyingglass",
+                    accentColor: "indigo",
+                    actionType: .shellCommand,
+                    actionValue: "markitdown '{file}' | pbcopy"
+                ),
+            ],
+            priority: 18
+        ),
+        AXTriggerRule(
+            name: "OCR Image",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(png|jpg|jpeg|heic|webp|tif|tiff|gif)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "OCR Image",
+                    icon: "text.viewfinder",
+                    accentColor: "pink",
+                    actionType: .shellCommand,
+                    actionValue: "shortcuts run 'Extract Text from Image' --input-path '{file}'"
+                ),
+            ],
+            priority: 18
+        ),
+        AXTriggerRule(
+            name: "Describe Image",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(png|jpg|jpeg|heic|webp|tif|tiff|gif)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Describe Image",
+                    icon: "photo",
+                    accentColor: "purple",
+                    actionType: .shellCommand,
+                    actionValue: "printf '%s' 'Describe this image: {file}' | pbcopy"
+                ),
+            ],
+            priority: 17
+        ),
+        AXTriggerRule(
+            name: "Convert Image",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(png|jpg|jpeg|heic|webp|tif|tiff)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Convert Image",
+                    icon: "photo.badge.arrow.down",
+                    accentColor: "blue",
+                    actionType: .shellCommand,
+                    actionValue: "sips -s format jpeg '{file}' --out '{file}.jpg'"
+                ),
+            ],
+            priority: 16
+        ),
+        AXTriggerRule(
+            name: "Compress Image",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .matchesRegex, value: "(?i)\\.(png|jpg|jpeg|heic|tif|tiff)$"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Compress Image",
+                    icon: "arrow.down.right.and.arrow.up.left",
+                    accentColor: "orange",
+                    actionType: .shellCommand,
+                    actionValue: "sips -s format jpeg -s formatOptions 72 '{file}' --out '{file}.compressed.jpg'"
+                ),
+            ],
+            priority: 16
+        ),
+        AXTriggerRule(
+            name: "Compress to ZIP",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .filePath, op: .isNotEmpty, value: ""),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Compress to ZIP",
+                    icon: "archivebox",
+                    accentColor: "orange",
+                    actionType: .shellCommand,
+                    actionValue: "ditto -c -k --keepParent '{file}' '{file}.zip'"
+                ),
+            ],
+            priority: 17
+        ),
+        AXTriggerRule(
+            name: "Link Summary",
+            isEnabled: true,
+            conditions: [
+                AXTriggerCondition(field: .currentURL, op: .startsWith, value: "http"),
+            ],
+            conditionLogic: .all,
+            pills: [
+                AXRulePill(
+                    label: "Copy Link for AI",
+                    icon: "link",
+                    accentColor: "teal",
+                    actionType: .shellCommand,
+                    actionValue: "printf '%s' 'Summarize this URL and extract tasks: {url}' | pbcopy"
+                ),
+            ],
+            priority: 16
+        ),
+    ]
 }
 
 // MARK: - Resolved pill (flat, app-agnostic)

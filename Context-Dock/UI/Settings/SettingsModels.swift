@@ -165,7 +165,6 @@ extension SettingsSidebarSection {
                 SettingsSidebarRow("Frontmost App Actions", children: [
                     .frontmostAppAdapters
                 ]),
-                SettingsSidebarRow("Media Actions", page: .mediaActions),
                 SettingsSidebarRow("Selection Scope", page: .shortcutSheetWorkflows)
             ]
         ),

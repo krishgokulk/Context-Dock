@@ -630,6 +630,20 @@ final class SystemCommandsRegistry {
             script: #"tell application "Finder" to empty trash"#,
             description: "Empty the Trash"
         ),
+        SystemCommand(
+            name: "Process Monitor",
+            icon: "cpu",
+            keywords: [
+                "process", "processes", "memory", "ram", "cpu", "usage", "activity",
+                "monitor", "kill", "quit", "task", "provider:processes",
+            ],
+            // Enter opens the scoped list; there is no single action. The
+            // provider:processes scope renders live apps grouped with their helper
+            // processes (CPU% + memory), sortable, with Kill on Enter.
+            scriptType: "applescript",
+            script: #"return"#,
+            description: "Live CPU + memory usage by app; Enter to quit"
+        ),
 
         // ── Example templates (disabled) ──────────────────────────────────────
         // Shipped OFF so they don't clutter Global Context. They live in
@@ -663,6 +677,106 @@ final class SystemCommandsRegistry {
               || open "x-apple.systempreferences:com.apple.Focus-Settings.extension"
             """#,
             description: "Example: run a Focus shortcut; scope for Work / Personal / Off",
+            enabled: false
+        ),
+
+        // ── List Extension example ────────────────────────────────────────────
+        // A user-authored LIVE LIST scope, the general-purpose version of the
+        // built-in Process Monitor. Marked with `provider:custom`: the Script prints
+        // one JSON row per line, and the Undo field is the per-row action (with the
+        // row exposed as $CD_ROW_ID / $CD_ROW_TITLE). `refresh:3` re-samples every
+        // 3s. Duplicate this to build your own extension (Docker containers, git
+        // branches, open ports, …). Shipped OFF so it only lives in Settings.
+        SystemCommand(
+            name: "Top Memory",
+            icon: "memorychip",
+            keywords: ["top", "memory", "ram", "hogs", "provider:custom", "refresh:3"],
+            scriptType: "bash",
+            script: #"""
+            # Print the top memory apps as JSON rows. Each line: one JSON object.
+            ps -axo rss=,comm= | sort -rn | head -12 | while read rss comm; do
+              name=$(basename "$comm")
+              mb=$(( rss / 1024 ))
+              printf '{"id":"%s","title":"%s","badge":"%s MB"}\n' "$comm" "$name" "$mb"
+            done
+            """#,
+            description:
+                "Example List Extension: top memory apps (JSON rows). Enter reveals the process in Finder. Duplicate to build your own.",
+            undoScriptType: "bash",
+            undoScript: #"open -R "$CD_ROW_ID" 2>/dev/null || open "$(dirname "$CD_ROW_ID")""#,
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Top CPU",
+            icon: "cpu",
+            keywords: ["top", "cpu", "processor", "busy", "hot", "provider:custom", "refresh:2"],
+            scriptType: "bash",
+            script: #"""
+            # Top CPU processes as JSON rows. id = PID (so the action can kill it).
+            ps -axo pid=,%cpu=,comm= | sort -k2 -rn | head -12 | while read pid cpu comm; do
+              name=$(basename "$comm")
+              printf '{"id":"%s","title":"%s","badge":"%s%% CPU","icon":"cpu"}\n' "$pid" "$name" "$cpu"
+            done
+            """#,
+            description:
+                "Example List Extension: busiest CPU processes. Enter quits the process (SIGTERM).",
+            undoScriptType: "bash",
+            undoScript: #"kill "$CD_ROW_ID" 2>/dev/null"#,
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Listening Ports",
+            icon: "network",
+            keywords: [
+                "ports", "port", "listening", "lsof", "server", "servers", "localhost",
+                "provider:custom", "refresh:3",
+            ],
+            scriptType: "bash",
+            script: #"""
+            # Processes listening on TCP ports. id = PID so Enter can kill the server.
+            /usr/sbin/lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null \
+              | awk 'NR>1 {split($9,a,":"); print $2"\t"$1"\t"a[length(a)]}' \
+              | sort -u | head -20 | while IFS=$'\t' read pid name port; do
+                printf '{"id":"%s","title":"%s","subtitle":"PID %s","badge":"port %s","icon":"network"}\n' "$pid" "$name" "$pid" "$port"
+              done
+            """#,
+            description:
+                "Example List Extension: apps listening on TCP ports. Enter kills the process — handy for freeing a stuck dev server.",
+            undoScriptType: "bash",
+            undoScript: #"kill "$CD_ROW_ID" 2>/dev/null"#,
+            enabled: false
+        ),
+        SystemCommand(
+            name: "Scratch Notes",
+            icon: "square.and.pencil",
+            keywords: ["note", "notes", "scratch", "jot", "capture", "provider:custom", "query:live", "refresh:1"],
+            scriptType: "bash",
+            script: #"""
+            # Capture-style extension (query:live re-runs this on every keystroke).
+            # When you've typed something, offer a Save row first; then list saved
+            # notes newest-first, filtered by the query.
+            store="$HOME/Library/Application Support/Context-Dock/scratch-notes.txt"
+            mkdir -p "$(dirname "$store")"; touch "$store"
+            q="$CD_QUERY"
+            if [ -n "$q" ]; then
+              printf '{"id":"__save__","title":"Save note: %s","icon":"plus.circle"}\n' "$q"
+            fi
+            tail -r "$store" 2>/dev/null | while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              case "$line" in *"$q"*) printf '{"id":"%s","title":"%s","icon":"note.text"}\n' "$line" "$line";; esac
+            done
+            """#,
+            description:
+                "Example capture extension: type a note and Enter the Save row to store it; existing notes list below and copy on Enter. Shows how query:live builds Quick Note-style scopes.",
+            undoScriptType: "bash",
+            undoScript: #"""
+            store="$HOME/Library/Application Support/Context-Dock/scratch-notes.txt"
+            if [ "$CD_ROW_ID" = "__save__" ]; then
+              printf '%s\n' "${CD_ROW_TITLE#Save note: }" >> "$store"
+            else
+              printf '%s' "$CD_ROW_ID" | pbcopy
+            fi
+            """#,
             enabled: false
         ),
     ]

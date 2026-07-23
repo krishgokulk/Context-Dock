@@ -1854,11 +1854,14 @@ extension LauncherView {
     func currentFocusedDockPillForQuickLook() -> DockPill? {
         guard isL2ContextActive, usesVerticalListDockLayout else { return nil }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let pills =
-            pillQuery.isEmpty
-            ? selectionScopedDockPills(cachedDockPills)
-            : contextDockViewModel.visiblePills
+        // Read the SAME clustered/grouped pill order the keyboard navigates and the
+        // list renders — otherwise focusedPillIndex points into an ungrouped array and
+        // Space previews a different file than the highlighted row (e.g. a Finder
+        // search grouped into Files/Images regrouped the rows).
+        let pills: [DockPill] =
+            (shouldUsePureGlobalAppSearch || isActiveGlobalRunningAppMenuScope())
+            ? visibleGlobalGroupedListNavigationState(for: q).menuPills
+            : renderedOrderDockPills(for: q)
         let index = l2.focusedPillIndex ?? listViewHoveredIndex
         guard let index, pills.indices.contains(index), !pills[index].isSeparator else {
             return nil

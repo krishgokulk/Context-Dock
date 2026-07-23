@@ -103,6 +103,10 @@ private enum GeneralAIChatConversationStore {
 }
 
 extension LauncherView {
+    var isCLIToolScopeLocked: Bool {
+        currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+    }
+
     var shouldShowContextDockChatButton: Bool {
         showContextInDock
             && !showMediaLayer
@@ -526,8 +530,7 @@ extension LauncherView {
     }
 
     var shouldShowSelectionCompactAIAction: Bool {
-        guard isGlobalContextActive,
-            hasSelectionScopeSurface,
+        guard hasSelectionScopeSurface,
             !aiMode.isActive,
             !l2.isLoading,
             lockedFindToken == nil
@@ -768,17 +771,21 @@ extension LauncherView {
             l2.currentTask = nil
             exitContextDockChatBackToContext()
         }
+        // Tear down the CLI scope's embedded PTY so the next scope starts clean.
+        CLIScopeTerminalManager.shared.reset()
         isSearchFieldFocused = true
     }
 
     func exitContextDockChatAndScope() {
+        let wasCLIToolScope = isCLIToolScopeLocked
         exitContextDockChatSheet()
         clearSearchContext()
         remPanelIsProcessing = false
         remIsInstalled = nil
         systemDataResults = []
         searchState.lastSmartQuery = ""
-        globalContextActivation = GlobalContextActivation(autoActivated: false)
+        globalContextActivation = wasCLIToolScope ? nil : GlobalContextActivation(autoActivated: false)
+        showContextInDock = true
         isSearchFieldFocused = true
     }
 
@@ -1124,9 +1131,36 @@ extension LauncherView {
                         }
                     }
                 }
+
+                // CLI tool scopes get an embedded live PTY docked at the bottom —
+                // approved commands run here in real time; chevron expands it.
+                if isInCLIToolScope {
+                    CLIScopeTerminalPanel(isDark: isEffectiveDark, accentColor: .green)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
+                }
             }
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
+    }
+
+    /// True while the active scope / scoped chat is a CLI tool (cli:// bundle, a
+    /// pinned CLI tool, or a bare binary path) — drives the embedded terminal panel.
+    var isInCLIToolScope: Bool {
+        if isCLIToolScopeLocked { return true }
+        if let scope = globalInlineAppScope,
+            isCLIToolScopeChip(
+                bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath)
+        {
+            return true
+        }
+        if let target = l2.targetApp,
+            isCLIToolScopeChip(bundleId: target.bundleId, appName: target.name, appPath: "")
+        {
+            return true
+        }
+        return false
     }
 
     /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
@@ -1200,7 +1234,8 @@ extension LauncherView {
                         ForEach(aiMode.messages) { message in
                             AIChatMessageView(
                                 message: message,
-                                isStreaming: message.id == aiMode.streamingId
+                                isStreaming: message.id == aiMode.streamingId,
+                                onReplaceText: selectionScopeReplaceTextAction(for: message)
                             )
                             .id(message.id)
                         }
@@ -1248,6 +1283,31 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    func selectionScopeReplaceTextAction(for message: AIChatMessage) -> (() -> Void)? {
+        guard hasSelectionScopeSurface,
+            message.role == .assistant,
+            message.id != aiMode.streamingId,
+            aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else { return nil }
+        let replacement = cleanedNativeWritingToolOutput(message.content)
+        guard !replacement.isEmpty else { return nil }
+        return {
+            replaceSelectionTextWithAIAnswer(replacement)
+        }
+    }
+
+    func replaceSelectionTextWithAIAnswer(_ text: String) {
+        guard hasSelectionScopeSurface else { return }
+        let target =
+            AppDelegate.shared?.previousFrontmostApp
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == selectionScopePayload?.sourceBundleId
+            }
+        let pid = target?.processIdentifier ?? 0
+        pasteNativeWritingToolOutput(text, sourcePID: pid)
+        DockActionFeedback.showResult("Replacement pasted", icon: "arrow.left.arrow.right", success: true)
     }
 
     var generalAISelectionContextLabel: String? {
@@ -1576,27 +1636,38 @@ extension LauncherView {
         )
     }
 
-    func selectionAIContextBlock() -> String {
+    func selectionAIContextBlock(compact: Bool = false, query: String? = nil) -> String {
         let snapshot = currentAISelectionSnapshot
         guard !snapshot.isEmpty else { return "" }
         var parts: [String] = []
+        let textLimit = compact ? 4_000 : 12_000
+        let fileLimit = compact ? 5 : 20
+        let fileContentLimit = compact ? 2_500 : 5_000
         if let text = snapshot.text?.trimmingCharacters(in: .whitespacesAndNewlines),
             !text.isEmpty
         {
-            parts.append("Selected content:\n\"\"\"\n\(String(text.prefix(12_000)))\n\"\"\"")
+            let selectedText = String(text.prefix(textLimit))
+            let suffix = text.count > selectedText.count
+                ? "\n\n*(Selected text compacted for the current AI context budget)*"
+                : ""
+            parts.append("Selected content:\n\"\"\"\n\(selectedText)\(suffix)\n\"\"\"")
         }
         if let pageURL = snapshot.pageURL, !pageURL.isEmpty {
             parts.append("Selection page: \(pageURL)")
         }
         if !snapshot.files.isEmpty {
-            let blocks = ContextDetector.shared.analyzeFiles(snapshot.files).compactMap {
+            let blocks = ContextDetector.shared.analyzeFiles(Array(snapshot.files.prefix(fileLimit))).compactMap {
                 item -> String? in
                 guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
                     !content.isEmpty
                 else { return nil }
-                return "### \(item.url.lastPathComponent) (\(item.type))\n\(content)"
+                let markdown = MarkItDownService.compact(content, for: query, limit: fileContentLimit)
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(markdown)"
             }
             if !blocks.isEmpty { parts.append("Selected files:\n\n" + blocks.joined(separator: "\n\n")) }
+            if snapshot.files.count > fileLimit {
+                parts.append("Additional selected files omitted for context budget: \(snapshot.files.count - fileLimit)")
+            }
         }
         return parts.joined(separator: "\n\n")
     }
@@ -4259,7 +4330,10 @@ extension LauncherView {
             }
         }
 
-        let selectionContextBlock = selectionAIContextBlock()
+        let selectionContextBlock = selectionAIContextBlock(
+            compact: providerSelection.effectiveProvider == .onDevice,
+            query: query
+        )
         if !selectionContextBlock.isEmpty {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
         }

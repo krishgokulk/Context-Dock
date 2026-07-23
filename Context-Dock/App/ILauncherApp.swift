@@ -1021,8 +1021,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// True when the dock should be present on EVERY Space at a fixed screen position
     /// (no per-Space move, no hide on Space switch): the bottom dock always, and a
     /// floating dock that the user made persistent via Pin or Always-Float.
+    /// Set while the dock is inside an active scope / scoped chat (CLI tool, app
+    /// scope, provider scope). Makes the dock float on every Space so switching
+    /// desktops keeps it put until the user exits the scope — same as a pin.
+    var scopeChatSpaceHold: Bool = false {
+        didSet {
+            guard oldValue != scopeChatSpaceHold else { return }
+            applyPersistentDockBehavior()
+        }
+    }
+
     var dockJoinsAllSpaces: Bool {
         settings.effectiveDockAtBottom || settings.alwaysFloatDock || settings.launcherPinned
+            || scopeChatSpaceHold
     }
 
     /// The collectionBehavior for the current dock mode.
@@ -1185,6 +1196,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Clipboard / Notifications scopes stay put — the user opened them to work
         // alongside another app, so focus loss must not tear them down.
         guard !smartScopeActive else { return }
+        // An active scope / scoped chat (CLI tool, app scope) floats until the user
+        // exits it — a Space switch resigns key, and hiding here made it disappear.
+        guard !scopeChatSpaceHold else { return }
         guard Date() >= suppressHideOnResignUntil else { return }
         // A chat-approved command can briefly activate its target app (`code --status`
         // spawns VS Code's CLI and VS Code takes focus). That's not the user clicking
@@ -1199,6 +1213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Re-check at execution time so a stale hide cannot collapse Clipboard/
             // Notifications after the user has entered the persistent scope.
             guard !self.smartScopeActive else { return }
+            guard !self.scopeChatSpaceHold else { return }
             // Keep launcher available while one of our own panels (settings, approvals) owns focus.
             guard !NSApp.isActive else { return }
             // Hide on any focus loss to another app — mouse click OR Cmd+Tab OR Dock click.

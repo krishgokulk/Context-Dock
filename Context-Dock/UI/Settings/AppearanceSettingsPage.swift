@@ -39,19 +39,6 @@ struct AppearanceSettingsPage: View {
                     }
                     .padding(.vertical, 10)
                 }
-
-
-                CardSection(title: "Pill Layout", systemImage: "rectangle.grid.1x2") {
-                    SettingsPageRow(
-                        icon: "list.bullet",
-                        iconColor: .indigo,
-                        title: "List View",
-                        subtitle: "Show actions as a vertical list instead of horizontal scroll."
-                    ) {
-                        Toggle("", isOn: $settings.useListViewForPills)
-                            .labelsHidden()
-                    }
-                }
             }
             .padding(28)
         }

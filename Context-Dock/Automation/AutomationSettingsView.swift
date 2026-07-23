@@ -144,7 +144,7 @@ struct AutomationSettingsView: View {
             } else {
                 // ── Column 2: Item list ──────────────────────────────
                 itemList
-                    .frame(minWidth: 280, idealWidth: 300, maxWidth: 360)
+                    .frame(minWidth: 340, idealWidth: 390, maxWidth: 480)
 
                 // ── Column 3: Detail / Editor ────────────────────────
                 detailPane
@@ -163,7 +163,7 @@ struct AutomationSettingsView: View {
             }
         }
         .sheet(isPresented: $showRuleSheet) {
-            AXRuleEditSheet(rule: nil) { rule in
+            AXRuleEditSheet(rule: nil, isSelectionScope: settingsPage == .shortcutSheetWorkflows) { rule in
                 settings.addAXRule(rule)
                 focusOnRule(rule.id)
             }
@@ -227,11 +227,13 @@ struct AutomationSettingsView: View {
             message: { Text(importError ?? "") })
         .onAppear {
             applySettingsPage(settingsPage)
+            seedSelectionScopeBuiltInsIfNeeded()
             pkgMgr.loadPackages()
             Task { await l2Mgr.loadExtensions() }
         }
         .onChange(of: settingsPage) { _, newValue in
             applySettingsPage(newValue)
+            seedSelectionScopeBuiltInsIfNeeded()
         }
         .task {
             guard shouldLoadAppCatalog else { return }
@@ -551,15 +553,18 @@ struct AutomationSettingsView: View {
                 listEmpty(icon: "scope", label: "No trigger rules", action: { presentCreateFlow() })
             } else {
                 List(selection: $selectedRuleID) {
-                    ForEach(filteredTriggers) { rule in
-                        AutomationRow(
-                            icon: "scope",
-                            color: .red,
-                            title: rule.name,
-                            subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s")",
-                            isEnabled: rule.isEnabled
-                        )
-                        .tag(rule.id)
+                    Section(settingsPage == .shortcutSheetWorkflows ? "Selection Scope Extensions" : "Triggers") {
+                        ForEach(filteredTriggers) { rule in
+                            let displayPill = rule.pills.first
+                            AutomationRow(
+                                icon: displayPill?.icon ?? "scope",
+                                color: colorForAccentName(displayPill?.accentColor) ?? .red,
+                                title: rule.name,
+                                subtitle: "\(rule.conditions.count) condition\(rule.conditions.count == 1 ? "" : "s") · \(rule.pills.count) pill\(rule.pills.count == 1 ? "" : "s")",
+                                isEnabled: rule.isEnabled
+                            )
+                            .tag(rule.id)
+                        }
                     }
                 }
                 .listStyle(.inset)
@@ -867,7 +872,23 @@ struct AutomationSettingsView: View {
     }
 
     private var filteredTriggers: [AXTriggerRule] {
-        let rules = settings.axTriggerRules
+        let rules: [AXTriggerRule]
+        if settingsPage == .shortcutSheetWorkflows {
+            let selectionNames = Set(AXTriggerRule.selectionScopeBuiltInExamples.map(\.name))
+            let genericExampleNames = Set(AXTriggerRule.builtInExamples.map(\.name))
+            rules = settings.axTriggerRules.filter { rule in
+                if selectionNames.contains(rule.name) { return true }
+                if genericExampleNames.contains(rule.name) { return false }
+                if rule.name.localizedCaseInsensitiveContains("selection") { return true }
+                return rule.conditions.contains { condition in
+                    condition.field == .selectedText
+                        || condition.field == .filePath
+                        || condition.field == .currentURL
+                }
+            }
+        } else {
+            rules = settings.axTriggerRules
+        }
         guard !searchText.isEmpty else { return rules }
         return rules.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
@@ -1013,6 +1034,35 @@ struct AutomationSettingsView: View {
         selectedCategory = category
         showingImportPanel = false
         clearSelection()
+    }
+
+    private func seedSelectionScopeBuiltInsIfNeeded() {
+        guard settingsPage == .shortcutSheetWorkflows else { return }
+        settings.axTriggerRules.removeAll {
+            AXTriggerRule.legacySelectionScopeBuiltInNames.contains($0.name)
+        }
+        let existingNames = Set(settings.axTriggerRules.map(\.name))
+        let missing = AXTriggerRule.selectionScopeBuiltInExamples.filter {
+            !existingNames.contains($0.name)
+        }
+        guard !missing.isEmpty else { return }
+        settings.axTriggerRules.append(contentsOf: missing)
+    }
+
+    private func colorForAccentName(_ name: String?) -> Color? {
+        switch name?.lowercased() {
+        case "blue": return .blue
+        case "red": return .red
+        case "green": return .green
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "purple": return .purple
+        case "indigo": return .indigo
+        case "teal": return .teal
+        case "pink": return .pink
+        case "gray", "grey": return .secondary
+        default: return nil
+        }
     }
 
     // MARK: Helpers
@@ -1212,60 +1262,178 @@ struct AutomationSettingsView: View {
         .background(Color(NSColor.controlBackgroundColor))
     }
 
+    @ViewBuilder
     private var contextTriggerEmptyDetail: some View {
+        if settingsPage == .shortcutSheetWorkflows {
+            selectionScopeBuiltInDetail
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Context Triggers", systemImage: "scope")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Rules that auto-activate the dock with relevant actions when you select text, files, or URLs in any app.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("How to create a trigger")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        onboardingStep(number: "1", title: "Click +", detail: "Add a new rule using the button at the bottom of the list.")
+                        onboardingStep(number: "2", title: "Set the condition", detail: "Match on selected text pattern, file extension, URL host, or app.")
+                        onboardingStep(number: "3", title: "Attach actions", detail: "Add scripts or shortcuts to run when the trigger fires.")
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Trigger types")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        triggerTypeRow("text.cursor", "Text selection", "Fires when selected text matches a pattern or length threshold")
+                        triggerTypeRow("doc.fill", "File selection", "Fires when a file of a given extension is selected in Finder")
+                        triggerTypeRow("link", "URL", "Fires when a URL matching a host pattern is on the clipboard")
+                        triggerTypeRow("app.fill", "App-specific", "Fires only when a specific app is frontmost")
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Available variables in trigger actions")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        variableRow("{{selection}}", "The text or file path that matched the trigger")
+                        variableRow("{{clipboard}}", "Current clipboard content")
+                        variableRow("{{url}}", "Matched URL")
+                        variableRow("{{app}}", "Name of the frontmost app when trigger fired")
+                    }
+                }
+                .padding(20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.controlBackgroundColor))
+        }
+    }
+
+    private var selectionScopeBuiltInDetail: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Context Triggers", systemImage: "scope")
+                    Label("Create Selection Scope extensions", systemImage: "command.square")
                         .font(.system(size: 15, weight: .semibold))
-                    Text("Rules that auto-activate the dock with relevant actions when you select text, files, or URLs in any app.")
+                    Text("The built-in extensions are listed on the left as real editable examples. Use this page to create workflows that run only against the user’s current selected text, file, folder, URL, document, image, video, or audio.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("How to create a trigger")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Recommended design")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
+                    onboardingStep(number: "1", title: "Choose the selected input", detail: "Use selected text for writing actions, file path/extension for files and folders, URL host for links, and app name only when the workflow belongs to one app.")
+                    onboardingStep(number: "2", title: "Pick the safest engine", detail: "Prefer built-in macOS tools first: MarkItDown for documents, Vision OCR for images, sips for image conversion, ditto/zip for archives, and AI only for reasoning.")
+                    onboardingStep(number: "3", title: "Attach one clear action", detail: "Use an AI prompt for answers in-place, a shell command for local transforms, a Shortcut for user automation, or an app adapter when the target app exposes a real capability.")
+                    onboardingStep(number: "4", title: "Respect approval and scope", detail: "Read-only actions can run immediately. Anything that writes, deletes, sends, moves, or opens another app should ask first and should only receive the selected content.")
+                }
 
-                    onboardingStep(number: "1", title: "Click +", detail: "Add a new rule using the button at the bottom of the list.")
-                    onboardingStep(number: "2", title: "Set the condition", detail: "Match on selected text pattern, file extension, URL host, or app.")
-                    onboardingStep(number: "3", title: "Attach actions", detail: "Add scripts or shortcuts to run when the trigger fires.")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Useful starter actions")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    codeExample("Copy selected text", "printf '%s' \"{selectedText}\" | pbcopy")
+                    codeExample("Document to Markdown", "markitdown \"{file}\" | pbcopy")
+                    codeExample("Zip selected item", "ditto -c -k --keepParent \"{file}\" \"{file}.zip\"")
+                    codeExample("Convert image", "sips -s format jpeg \"{file}\" --out \"{file}.jpg\"")
                 }
 
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Trigger types")
+                    Text("Useful variables")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-
-                    triggerTypeRow("text.cursor", "Text selection", "Fires when selected text matches a pattern or length threshold")
-                    triggerTypeRow("doc.fill", "File selection", "Fires when a file of a given extension is selected in Finder")
-                    triggerTypeRow("link", "URL", "Fires when a URL matching a host pattern is on the clipboard")
-                    triggerTypeRow("app.fill", "App-specific", "Fires only when a specific app is frontmost")
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Available variables in trigger actions")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-
-                    variableRow("{{selection}}", "The text or file path that matched the trigger")
-                    variableRow("{{clipboard}}", "Current clipboard content")
-                    variableRow("{{url}}", "Matched URL")
-                    variableRow("{{app}}", "Name of the frontmost app when trigger fired")
+                    variableRow("{selectedText}", "Text selected through Accessibility")
+                    variableRow("{file}", "Selected file or folder path")
+                    variableRow("{url}", "Selected or detected URL")
+                    variableRow("{appName}", "Frontmost app when Selection Scope opened")
+                    variableRow("{bundleId}", "Frontmost app bundle identifier")
+                    variableRow("{clipboard}", "Current clipboard content")
+                    variableRow("{encodedText}", "URL-encoded selected text")
+                    variableRow("{encodedURL}", "URL-encoded detected URL")
                 }
             }
             .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private func codeExample(_ title: String, _ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(command)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(NSColor.textBackgroundColor).opacity(0.65),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+        }
+    }
+
+    private func selectionBuiltInGroup(
+        title: String,
+        icon: String,
+        color: Color,
+        items: [(String, String)]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 22, height: 22)
+                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.0) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(color)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.0)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(item.1)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(Color(NSColor.textBackgroundColor).opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
     }
 
     private func onboardingStep(number: String, title: String, detail: String) -> some View {
@@ -6640,8 +6808,14 @@ end tell
                             Text("Wi-Fi networks").tag("wifi")
                             Text("Window layouts").tag("windows")
                             Text("Quick notes").tag("notepad")
+                            Text("List Extension (custom rows)").tag("custom")
                         }
                         .pickerStyle(.menu)
+                        if scopeProvider == "custom" {
+                            Text("Script above = JSON rows source. Undo field = per-row action ($CD_ROW_ID). Add keyword refresh:N for auto-refresh.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
                         TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
                             .textFieldStyle(.roundedBorder)
                         if interaction != SystemCommandInteraction.none.rawValue {
@@ -6815,6 +6989,17 @@ struct SystemCommandEditorView: View {
     @State private var valueScript: String
     @State private var scopeProvider: String
     @State private var scopeItems: String
+    @State private var refreshSeconds: String
+    @State private var liveQuery: Bool
+
+    private static func parseRefreshSeconds(_ keywords: [String]) -> String {
+        keywords.first(where: { $0.lowercased().hasPrefix("refresh:") })?
+            .split(separator: ":", maxSplits: 1).last.map(String.init) ?? "3"
+    }
+
+    private static func parseLiveQuery(_ keywords: [String]) -> Bool {
+        keywords.contains { $0.lowercased() == "query:live" }
+    }
 
     init(command: SystemCommand, registry: SystemCommandsRegistryObservable, onDelete: @escaping () -> Void) {
         self.command  = command
@@ -6839,6 +7024,8 @@ struct SystemCommandEditorView: View {
         _valueScript = State(initialValue: command.valueScript)
         _scopeProvider = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
         _scopeItems = State(initialValue: command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
+        _refreshSeconds = State(initialValue: Self.parseRefreshSeconds(command.keywords))
+        _liveQuery = State(initialValue: Self.parseLiveQuery(command.keywords))
     }
 
     private var hasChanges: Bool {
@@ -6856,6 +7043,8 @@ struct SystemCommandEditorView: View {
             || valueScript != command.valueScript
             || scopeProvider != (command.keywords.first(where: { $0.lowercased().hasPrefix("provider:") })?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "none")
             || scopeItems != (command.keywords.first(where: { $0.lowercased().hasPrefix("presets:") || $0.lowercased().hasPrefix("preset:") })?.split(separator: ":", maxSplits: 1).last.map { String($0).replacingOccurrences(of: "|", with: ", ") } ?? "")
+            || refreshSeconds != Self.parseRefreshSeconds(command.keywords)
+            || liveQuery != Self.parseLiveQuery(command.keywords)
     }
 
     private var actionType: SystemCommandActionType {
@@ -6999,6 +7188,7 @@ struct SystemCommandEditorView: View {
                         Text("None").tag("none")
                         Text("Bluetooth devices").tag("bluetooth")
                         Text("Wi-Fi networks").tag("wifi")
+                        Text("List Extension (custom rows)").tag("custom")
                     }
                     .pickerStyle(.menu)
                     TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
@@ -7006,6 +7196,48 @@ struct SystemCommandEditorView: View {
                     Text("When this command is scoped, its control stays at the top and these dynamic or custom rows remain searchable below it.")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
+                }
+
+                if scopeProvider == "custom" {
+                    labeledField("List Extension") {
+                        Text(
+                            """
+                            Build a live list scope like the built-in Process Monitor. The Script \
+                            above is the ROWS source: print one JSON object per line. The Undo field \
+                            below is the ROW ACTION, run on Enter with the row exposed as \
+                            $CD_ROW_ID / $CD_ROW_TITLE.
+                            """
+                        )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        Text(
+                            #"{"id":"1","title":"Dia","subtitle":"47 proc","badge":"6.68 GB","icon":"cpu"}"#
+                        )
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        Text("Only title (or id) is required. icon = an SF Symbol name or a file/app path. Non-JSON lines become title-only rows.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                        HStack(spacing: 8) {
+                            Text("Auto-refresh every")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            TextField("3", text: $refreshSeconds)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 50)
+                            Text("seconds")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Toggle(isOn: $liveQuery) {
+                            Text("Live query — re-run the rows script on every keystroke ($CD_QUERY)")
+                                .font(.system(size: 11))
+                        }
+                        Text("Turn on for capture-style scopes (type + Enter to save, live search). The script decides what rows to show for the current query — no client-side filtering.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
 
                 labeledField("Dock Completion") {
@@ -7054,8 +7286,13 @@ struct SystemCommandEditorView: View {
                             updated.icon        = icon.trimmingCharacters(in: .whitespaces)
                             updated.keywords = keywords.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") }
+                                .filter { !$0.isEmpty && !$0.lowercased().hasPrefix("provider:") && !$0.lowercased().hasPrefix("preset:") && !$0.lowercased().hasPrefix("presets:") && !$0.lowercased().hasPrefix("refresh:") && !$0.lowercased().hasPrefix("query:") }
                             if scopeProvider != "none" { updated.keywords.append("provider:\(scopeProvider)") }
+                            if scopeProvider == "custom" {
+                                let secs = Int(refreshSeconds.trimmingCharacters(in: .whitespaces)) ?? 3
+                                updated.keywords.append("refresh:\(max(1, secs))")
+                                if liveQuery { updated.keywords.append("query:live") }
+                            }
                             let customItems = scopeItems.components(separatedBy: ",")
                                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                                 .filter { !$0.isEmpty }

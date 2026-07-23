@@ -142,6 +142,21 @@ extension LauncherView {
                 scopedBundleId: scopedBundleId, query: scopedSearchQuery)
         }
 
+        // Process Monitor: live grouped process list (CPU% + memory) with Kill on
+        // Enter. A leading row toggles the sort column. Rows come from a single `ps`
+        // sample grouped by owning app.
+        if command.keywords.contains(where: { $0.lowercased() == "provider:processes" }) {
+            return processMonitorScopePills(
+                scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
+        // User-authored list extension: rows come from the command's own script
+        // (printed as JSON lines), Enter runs its row-action (undo) script.
+        if CustomListProviderService.isListProvider(command) {
+            return customListProviderScopePills(
+                command: command, scopedBundleId: scopedBundleId, query: scopedSearchQuery)
+        }
+
         let normalizedCommandTerms = ([command.name] + command.keywords).map(normalizedDockPillText)
         let isVolume = normalizedCommandTerms.contains { $0.contains("volume") }
         if let adapterScopeId = systemCommandAdapterScopeId(command) {
@@ -1285,6 +1300,182 @@ extension LauncherView {
             pill.searchTerms = command.searchTerms + [appName, "window", "layout"]
             return pill
         }
+    }
+
+    /// Live process/memory monitor scope. First row toggles the sort column; the
+    /// remaining rows are apps (grouped with their helper processes) showing summed
+    /// CPU% and memory. Enter on an app row terminates all of its processes.
+    func processMonitorScopePills(scopedBundleId: String, query: String) -> [DockPill] {
+        let service = ProcessMonitorService.shared
+        let sort = service.sortMode
+
+        // Read ONLY the cached snapshot here — sampling runs `ps` (a blocking
+        // subprocess) and MUST NOT happen inside the view-build path. When the cache
+        // is empty/stale, kick a background refresh that rebuilds the scope on
+        // completion; while the scope stays open this yields ~2s live polling.
+        if service.isSnapshotStale {
+            service.refresh { [weak launcherViewModel] in
+                guard launcherViewModel != nil else { return }
+                self.scheduleDockPillRebuild(
+                    query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        }
+        let groups = service.cachedGroups()
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = trimmed.isEmpty
+            ? groups
+            : groups.filter { $0.name.lowercased().contains(trimmed) }
+
+        var pills: [DockPill] = []
+
+        // Sort toggle (stands in for the top-right dropdown). Enter flips Memory⇄CPU
+        // and rebuilds the list in place.
+        var sortPill = DockPill(
+            id: "syscmd-processes-sort",
+            name: "Sort: \(sort.label)",
+            icon: "arrow.up.arrow.down",
+            accentColorName: "gray",
+            badge: "\(groups.count) apps · \(groups.reduce(0) { $0 + $1.processCount }) processes",
+            execute: {
+                service.sortMode = (sort == .memory) ? .cpu : .memory
+                scheduleDockPillRebuild(query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        )
+        sortPill.rankingKind = "systemCommand"
+        sortPill.sourceBundleId = scopedBundleId
+        sortPill.sourceAppName = "Process Monitor"
+        sortPill.trackingIdentifier = "syscmd-processes:sort"
+        sortPill.searchTerms = ["sort", "cpu", "memory", "process", "monitor"]
+        pills.append(sortPill)
+
+        let cap = 40
+        for group in filtered.prefix(cap) {
+            let mem = service.formattedMemory(group.memoryBytes)
+            let cpu = String(format: "%.1f%%", group.cpuPercent)
+            let countLabel = group.processCount > 1 ? " · \(group.processCount) proc" : ""
+            var pill = DockPill(
+                id: "syscmd-processes-\(group.id)",
+                name: group.name,
+                icon: "cpu",
+                accentColorName: "blue",
+                badge: "\(cpu)   \(mem)\(countLabel)",
+                execute: {
+                    let killed = service.kill(group)
+                    AppToast.show(
+                        killed > 0 ? "Quit \(group.name)" : "Couldn't quit \(group.name)",
+                        icon: killed > 0 ? "xmark.circle" : "exclamationmark.triangle",
+                        tint: killed > 0 ? .orange : .red
+                    )
+                    // Give SIGTERM a moment to land, then force a fresh sample so the
+                    // quit app drops off the list, and rebuild.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak launcherViewModel] in
+                        guard launcherViewModel != nil else { return }
+                        service.refresh {
+                            self.scheduleDockPillRebuild(
+                                query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+                        }
+                    }
+                }
+            )
+            pill.menuItemImage = service.icon(for: group)
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = "Process Monitor"
+            pill.trackingIdentifier = "syscmd-processes:\(group.id)"
+            pill.keyboardShortcutLabel = "Kill"
+            pill.searchTerms = [group.name, "process", "memory", "cpu", "kill", "activity"]
+            pills.append(pill)
+        }
+
+        return pills
+    }
+
+    /// Renders a user-authored list extension (`provider:custom`). Reads ONLY the
+    /// cached rows (the rows script runs off-view); kicks a background refresh when
+    /// the cache is stale and rebuilds the scope when it returns.
+    func customListProviderScopePills(
+        command: SystemCommand, scopedBundleId: String, query: String
+    ) -> [DockPill] {
+        let service = CustomListProviderService.shared
+        let live = CustomListProviderService.isLiveQuery(command)
+
+        if service.isStale(command, query: query) {
+            service.refresh(command, query: query) { [weak launcherViewModel] in
+                guard launcherViewModel != nil else { return }
+                self.scheduleDockPillRebuild(
+                    query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+            }
+        }
+
+        let rows = service.rows(for: command)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Live-query scripts already account for the query (via $CD_QUERY), so never
+        // client-filter their rows — that would hide a synthetic "Save: <query>" row.
+        let filtered = (trimmed.isEmpty || live)
+            ? rows
+            : rows.filter {
+                $0.title.lowercased().contains(trimmed)
+                    || ($0.subtitle?.lowercased().contains(trimmed) ?? false)
+            }
+
+        let hasAction = !command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return filtered.enumerated().map { index, row in
+            var pill = DockPill(
+                // Index keeps the id unique even when a script emits duplicate row ids
+                // (e.g. several processes sharing one executable path) — duplicate
+                // SwiftUI ForEach ids otherwise collapse a row into a blank gap.
+                id: "syscmd-custom-\(command.id)-\(index)-\(row.id)",
+                name: row.title,
+                icon: sfSymbolName(for: row.icon) ?? command.icon,
+                accentColorName: "indigo",
+                badge: row.badge ?? row.subtitle,
+                execute: {
+                    if hasAction {
+                        service.runAction(command, row: row, query: self.searchState.query)
+                        AppToast.show("Ran \(command.name)", icon: command.icon, tint: .blue)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak launcherViewModel] in
+                        guard launcherViewModel != nil else { return }
+                        service.refresh(command, query: self.searchState.query) {
+                            self.scheduleDockPillRebuild(
+                                query: self.searchState.query, delayNanoseconds: 0, refreshContext: false)
+                        }
+                    }
+                }
+            )
+            if let fileIcon = fileSystemIcon(for: row.icon) {
+                pill.menuItemImage = fileIcon
+            }
+            if row.badge != nil, let sub = row.subtitle {
+                pill.menuStatusBadge = sub
+            }
+            pill.rankingKind = "systemCommand"
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = command.name
+            pill.trackingIdentifier = "syscmd-custom:\(command.id):\(row.id)"
+            if hasAction { pill.keyboardShortcutLabel = "Run" }
+            pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
+            return pill
+        }
+    }
+
+    /// If `icon` looks like an SF Symbol name (no slash, no dot-app), return it.
+    private func sfSymbolName(for icon: String?) -> String? {
+        guard let icon, !icon.isEmpty, !icon.contains("/"), !icon.hasSuffix(".app") else {
+            return nil
+        }
+        return icon
+    }
+
+    /// If `icon` is a file/app path, load its Finder icon.
+    private func fileSystemIcon(for icon: String?) -> NSImage? {
+        guard let icon, icon.contains("/") || icon.hasSuffix(".app") else { return nil }
+        let path = (icon as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        image.size = NSSize(width: 20, height: 20)
+        return image
     }
 
     /// Normalized regions (top-left origin) a layout moves the window into. `nil`
@@ -3300,6 +3491,7 @@ extension LauncherView {
         preserveGlobalContext: Bool = false
     ) -> Bool {
         guard !bundleIdentifier.isEmpty, !appName.isEmpty else { return false }
+        let isCLIToolScope = bundleIdentifier.hasPrefix("cli://")
 
         let targetApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
@@ -3371,7 +3563,19 @@ extension LauncherView {
             clearSearchFieldEditorText()
         }
 
-        if let targetApp {
+        if isCLIToolScope {
+            crossAppMenuTargetPID = 0
+            crossAppMenuNeedsLiveLoad = false
+            crossAppMenuItems = []
+            // CLI scopes are chat scopes, not app/global search scopes. Keeping both
+            // l2.targetApp and globalInlineAppScope made the dock render duplicate
+            // capsules and allowed global/app result matching to compete with the
+            // scoped CLI conversation. l2.targetApp is the single owner until exit.
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            globalContextActivation = nil
+            armGlobalScopedChat(appName: appName, bundleId: bundleIdentifier)
+        } else if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
             DispatchQueue.main.async {
@@ -4008,11 +4212,14 @@ extension LauncherView {
                 excludingTitles: extensionTitleSet,
                 allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
             )
-            var sel: [DockPill] = finderFilePills + macOSExtensionPills + finderMenuPills
-            if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                sel.append(selectionScopeAskAIPill(query: q))
-            }
+            var sel: [DockPill] = []
+            sel.append(selectionScopeAskAIPill(query: q))
+            sel.append(contentsOf: selectionScopeCopyPill(query: q))
+            sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
+            sel.append(contentsOf: finderFilePills)
+            sel.append(contentsOf: macOSExtensionPills)
+            sel.append(contentsOf: finderMenuPills)
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
             return dedupeRankedDockPills(
@@ -4405,7 +4612,8 @@ extension LauncherView {
                 return command.isEmpty ? nil : command.lowercased()
             }
         )
-        let shouldExposeCLIPills = scopedBundleId.hasPrefix("cli://")
+        let isCLIChatScope = scopedBundleId.hasPrefix("cli://")
+        let shouldExposeCLIPills = isCLIChatScope && scopedSearchQuery.isEmpty
         let visibleCLIPackages = shouldExposeCLIPills
             ? cliPackages.filter { package in
                 !adapterCLICommands.contains(package.command.lowercased())

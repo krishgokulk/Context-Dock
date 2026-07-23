@@ -7,6 +7,12 @@ extension LauncherView {
         animated: Bool = true,
         debounceNanoseconds: UInt64 = 50_000_000
     ) {
+        // Keep the dock floating across Spaces while a scope / scoped chat is active,
+        // so switching desktops doesn't leave it on the old Space (reads as "hidden").
+        // Cleared automatically once the scope is exited.
+        AppDelegate.shared?.scopeChatSpaceHold =
+            currentGlobalScopedBundleID != nil || l2.chatArmed || shouldShowContextDockChatSheet
+
         if isGlobalContextActive,
             globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
             reason.isTypingOrContentRefresh,
@@ -536,8 +542,11 @@ extension LauncherView {
                 return nil
             }
 
-            // Right Arrow cycles the running-app scope. Empty-field Left Arrow is reserved
-            // consistently for entering General Chat from Global Context or Context Dock.
+            // Right Arrow cycles the running-app scope forward. Left Arrow mirrors it
+            // BACKWARD — but only once a running-app scope is active. With no scope the
+            // empty-field Left Arrow stays reserved for General Chat (handled by the
+            // SwiftUI .onKeyPress(.leftArrow) below), so both start states are distinct:
+            // from the bare field Right enters the capsule, Left enters General Chat.
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 124,
@@ -547,6 +556,21 @@ extension LauncherView {
                 self.currentGlobalScopedBundleID?.hasPrefix("cli://") != true
             {
                 _ = self.cycleGlobalContextAppScope(direction: 1)
+                self.focusedAppPillIndex = nil
+                self.l2.focusedPillIndex = nil
+                return nil
+            }
+
+            if self.isGlobalContextActive || self.l2.targetApp != nil,
+                q.isEmpty,
+                event.keyCode == 123,
+                self.focusedAppPillIndex == nil,
+                self.l2.focusedPillIndex == nil,
+                let scopedBundle = self.currentGlobalScopedBundleID,
+                !scopedBundle.hasPrefix("syscmd://"),
+                !scopedBundle.hasPrefix("cli://")
+            {
+                _ = self.cycleGlobalContextAppScope(direction: -1)
                 self.focusedAppPillIndex = nil
                 self.l2.focusedPillIndex = nil
                 return nil
@@ -1239,14 +1263,16 @@ extension LauncherView {
             self.renderedDockHeight = visibleStartHeight
 
             if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
-                // Expansion: give the transparent host its final capacity first. On the next
-                // runloop turn, reveal only the top-aligned SwiftUI shell beneath the input.
+                // Expansion: give the transparent host its final capacity, then reveal the
+                // top-aligned SwiftUI shell in the SAME runloop turn. Deferring the reveal
+                // spring by a runloop (the old DispatchQueue.main.async) left the shell at
+                // its previous small height for one frame inside the already-grown window —
+                // the "stuck small, then expands" hitch. setFrame(display:) is synchronous,
+                // so the window is already at full size before the spring starts.
                 window.setFrame(newFrame, display: true)
                 if shouldAnimateVisibleShell {
-                    DispatchQueue.main.async {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
-                            self.renderedDockHeight = effectiveHeight
-                        }
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                        self.renderedDockHeight = effectiveHeight
                     }
                 } else {
                     self.renderedDockHeight = effectiveHeight
@@ -1550,6 +1576,17 @@ extension LauncherView {
                         ghost.execute()
                         searchState.query = ""
                         l2.focusedPillIndex = nil
+                        return .handled
+                    }
+                    if isCLIToolScopeLocked {
+                        let trimmed = searchState.query.trimmingCharacters(
+                            in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return .handled }
+                        if let target = currentGlobalScopedChatTarget {
+                            armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                            dismissMediaLayer()
+                            handleL2QuerySkippingMenuRouter(trimmed)
+                        }
                         return .handled
                     }
                     if isL2ContextActive,
@@ -1865,6 +1902,9 @@ extension LauncherView {
                         return .handled
                     }
                 }
+                // Browsing a Finder folder with an empty field → pop to the parent
+                // folder, then back out to the search results.
+                if popFinderBrowseFromEmptyBackspaceIfNeeded() { return .handled }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
             // Left Arrow on an empty field (no scope chips) → standalone General AI
@@ -1891,6 +1931,12 @@ extension LauncherView {
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
                 if activeNotepadScopeCommand != nil { return .ignored }
+                // Finder desktop: drill into the focused folder, showing its contents.
+                // Only when the caret is at the end so it never hijacks cursor movement
+                // while editing the query.
+                if searchInputCursorIsAtEnd(), drillIntoFocusedFinderFolderIfPossible() {
+                    return .handled
+                }
                 if searchState.activeSmartQueryKey == "clipboard",
                     clipboardSourcePillFocusIndex != nil
                 {

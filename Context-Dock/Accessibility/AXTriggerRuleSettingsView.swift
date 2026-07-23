@@ -66,6 +66,7 @@ struct ShortcutPickerInline: View {
 struct AXRuleEditSheet: View {
     let rule: AXTriggerRule?
     let onCreate: (AXTriggerRule) -> Void
+    private let isSelectionScope: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -83,15 +84,28 @@ struct AXRuleEditSheet: View {
             .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
     }
 
-    init(rule: AXTriggerRule?, onCreate: @escaping (AXTriggerRule) -> Void) {
+    init(rule: AXTriggerRule?, isSelectionScope: Bool = false, onCreate: @escaping (AXTriggerRule) -> Void) {
         self.rule = rule
         self.onCreate = onCreate
-        _name           = State(initialValue: rule?.name           ?? "New Rule")
+        self.isSelectionScope = isSelectionScope
+        let defaultCondition = isSelectionScope
+            ? AXTriggerCondition(field: .selectedText, op: .isNotEmpty, value: "")
+            : AXTriggerCondition()
+        let defaultPill = isSelectionScope
+            ? AXRulePill(
+                label: "Ask AI",
+                icon: "sparkles",
+                accentColor: "yellow",
+                actionType: .shellCommand,
+                actionValue: "printf '%s' 'Ask AI about this selection:\\n{selectedText}' | pbcopy"
+            )
+            : AXRulePill()
+        _name           = State(initialValue: rule?.name           ?? (isSelectionScope ? "Ask AI" : "New Rule"))
         _isEnabled      = State(initialValue: rule?.isEnabled      ?? true)
         _conditionLogic = State(initialValue: rule?.conditionLogic ?? .all)
-        _conditions     = State(initialValue: rule?.conditions     ?? [AXTriggerCondition()])
-        _pills          = State(initialValue: rule?.pills          ?? [AXRulePill()])
-        _priority       = State(initialValue: rule?.priority       ?? 0)
+        _conditions     = State(initialValue: rule?.conditions     ?? [defaultCondition])
+        _pills          = State(initialValue: rule?.pills          ?? [defaultPill])
+        _priority       = State(initialValue: rule?.priority       ?? (isSelectionScope ? 20 : 0))
         _scopeBundleId  = State(initialValue: rule?.bundleId       ?? "")
         _scopeAppName   = State(initialValue: rule?.appName        ?? "")
     }
@@ -100,7 +114,7 @@ struct AXRuleEditSheet: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text(rule == nil ? "New Trigger Rule" : "Edit Rule")
+                Text(rule == nil ? (isSelectionScope ? "New Selection Extension" : "New Trigger Rule") : "Edit Rule")
                     .font(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -131,9 +145,14 @@ struct AXRuleEditSheet: View {
                     // Basic info
                     GroupBox("Rule") {
                         VStack(alignment: .leading, spacing: 8) {
+                            if isSelectionScope {
+                                Label("Selection Scope extensions only receive the selected text, files, folders, URLs, and the source app context.", systemImage: "command.square")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             HStack {
                                 Text("Name").frame(width: 80, alignment: .trailing)
-                                TextField("e.g. GitHub Repo Detected", text: $name)
+                                TextField(isSelectionScope ? "e.g. Copy Path, OCR Image, Ask AI" : "e.g. GitHub Repo Detected", text: $name)
                                     .textFieldStyle(.roundedBorder)
                             }
                             HStack {
@@ -188,11 +207,11 @@ struct AXRuleEditSheet: View {
                                     .fixedSize()
 
                                     if !scopeBundleId.isEmpty {
-                                        Text("Only triggers in \(scopeAppName.isEmpty ? scopeBundleId : scopeAppName). App-scoped rules are evaluated before global rules.")
+                                        Text("Use App Scope when this extension depends on one app’s UI, menus, shortcuts, or data. It prevents the same selected text/file from triggering the wrong workflow in another app.")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     } else {
-                                        Text("Evaluates in every app. Use app-scoped rules to avoid false matches.")
+                                        Text(isSelectionScope ? "Global is best for generic selected text, files, links, and media. Choose an app only when the action belongs to that app." : "Evaluates in every app. Choose an app scope when the rule depends on one app’s menus, UI, or data.")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
@@ -256,7 +275,7 @@ struct AXRuleEditSheet: View {
                 .padding()
             }
         }
-        .frame(width: 560, height: 600)
+        .frame(width: 820, height: 680)
     }
 
     @ViewBuilder
@@ -268,7 +287,7 @@ struct AXRuleEditSheet: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 130)
+            .frame(width: 150)
 
             Picker("", selection: cond.op) {
                 ForEach(AXConditionOperator.allCases) { o in
@@ -276,7 +295,7 @@ struct AXRuleEditSheet: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 130)
+            .frame(width: 150)
 
             if cond.wrappedValue.op.needsValue {
                 TextField("value", text: cond.value)
@@ -299,10 +318,10 @@ struct AXRuleEditSheet: View {
             HStack(spacing: 6) {
                 TextField("Label", text: pill.label)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 130)
+                    .frame(width: 170)
                 TextField("SF Symbol", text: pill.icon)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
+                    .frame(width: 150)
                 Picker("", selection: pill.actionType) {
                     Text("Shortcut").tag(AppShortcut.ActionType.shortcut)
                     Text("Open URL").tag(AppShortcut.ActionType.openURL)
@@ -312,7 +331,7 @@ struct AXRuleEditSheet: View {
                     Text("Script File").tag(AppShortcut.ActionType.scriptFile)
                 }
                 .labelsHidden()
-                .frame(width: 120)
+                .frame(width: 150)
                 Button(action: onDelete) {
                     Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                 }

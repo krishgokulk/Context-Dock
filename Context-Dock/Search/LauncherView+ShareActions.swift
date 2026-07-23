@@ -64,7 +64,9 @@ extension LauncherView {
             if let resolved = ShareDestinationResolver.resolve(
                 query: item.title, items: shareItems)
             {
-                resolved.service.perform(withItems: shareItems)
+                ShareActionCoordinator.shared.performDirectShare(
+                    resolved.service, items: shareItems, title: resolved.title
+                ) {}
                 return
             }
             // Known destination but no matching installed service → system picker

@@ -864,6 +864,7 @@ class AppSettings: ObservableObject {
     @AppStorage("appToolExtensionsData") private var appToolExtensionsData: Data = Data()
     @AppStorage("tuiFolderAccessData") private var tuiFolderAccessData: Data = Data()
     @AppStorage("pinnedCLIToolsData") private var pinnedCLIToolsData: Data = Data()
+    @AppStorage("pinnedCLIToolsSeeded") private var pinnedCLIToolsSeeded: Bool = false
     @AppStorage("menuPillFavouritesData") private var menuPillFavouritesData: Data = Data()
 
     // MARK: - Favourite menu pills (per app bundle ID)
@@ -943,7 +944,6 @@ class AppSettings: ObservableObject {
     @AppStorage("clipboardHistoryLimit") var clipboardHistoryLimit: Int = 10  // Max entries kept in clipboard history (5–50)
     @AppStorage("clipboardHistoryRetentionHours") var clipboardHistoryRetentionHours: Int = 8  // Auto-remove clipboard history after N hours
     @AppStorage("dockIconSize_v2") var dockIconSize: Double = 44  // App icon and pill size in dock (28–72, default 44)
-    @AppStorage("useListViewForPills") var useListViewForPills: Bool = true  // Show pills as vertical Spotlight-style list instead of horizontal scroll
 
     // Notification Settings
     @AppStorage("notifyOnActionCompleted") var notifyOnActionCompleted: Bool = true
@@ -1401,9 +1401,23 @@ class AppSettings: ObservableObject {
     func unpinCLITool(_ command: String) { pinnedCLITools.remove(command) }
 
     private func loadPinnedCLITools() {
-        guard !pinnedCLIToolsData.isEmpty else { return }
-        if let decoded = try? JSONDecoder().decode(Set<String>.self, from: pinnedCLIToolsData) {
+        if !pinnedCLIToolsData.isEmpty,
+            let decoded = try? JSONDecoder().decode(Set<String>.self, from: pinnedCLIToolsData) {
             pinnedCLITools = decoded
+        }
+        seedDefaultCLIToolsIfNeeded()
+    }
+
+    /// Seed Homebrew as a default CLI tool scope on first run (only when it's
+    /// actually installed), so users can search / install apps and work with brew
+    /// via the AI-assisted CLI scope out of the box. One-shot — never re-adds after
+    /// the user removes it.
+    private func seedDefaultCLIToolsIfNeeded() {
+        guard !pinnedCLIToolsSeeded else { return }
+        pinnedCLIToolsSeeded = true
+        let brewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        if brewPaths.contains(where: { FileManager.default.fileExists(atPath: $0) }) {
+            pinnedCLITools.insert("brew")
         }
     }
     private func savePinnedCLITools() {

@@ -161,8 +161,8 @@ extension LauncherView {
         return false
     }
 
-    /// If the launcher opened while text/files were selected, enter Selection Scope (Global
-    /// Context + selection) directly instead of Context Dock. Returns true when it activated.
+    /// If the launcher opened while text/files were selected, enter Selection Scope directly
+    /// from Context Dock. Selection Scope is its own mode, not Global Context + selection.
     @discardableResult
     func openInSelectionScopeIfSelectionPresent() -> Bool {
         guard let activation = currentSelectionActivationSnapshot(refresh: true),
@@ -171,7 +171,10 @@ extension LauncherView {
             return false
         }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-            globalContextActivation = activation
+            selectionScopePayload = activation
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             aiMode.isActive = false
             showMediaLayer = false
             showContextInDock = true
@@ -209,12 +212,18 @@ extension LauncherView {
     }
 
     func openSelectionContextFromTrailingButton() {
-        guard let payload = currentSelectionActivationSnapshot(refresh: true) else { return }
+        guard let payload = currentSelectionActivationSnapshot(refresh: true)
+            ?? currentSelectionActivationSnapshot(refresh: false)
+            ?? liveSelectionActivationFallback()
+        else { return }
         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
             // Enter Selection Scope IN PLACE — assigning globalContextActivation here used to
             // yank the user out of Context Dock into Global Context. The selection came from the
             // frontmost app, so the scope stays on whichever surface they're already on.
             selectionScopePayload = payload
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
             aiMode.isActive = false
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
@@ -231,6 +240,56 @@ extension LauncherView {
             requestWindowSizeUpdate(reason: .modeChanged)
         }
         prewarmFinderContextualActionsForSelection()
+    }
+
+    func liveSelectionActivationFallback() -> GlobalContextActivation? {
+        if let selection = activeSelection {
+            switch selection {
+            case .files(let urls):
+                let paths = urls.map(\.path)
+                guard !paths.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: paths.count == 1 ? urls[0].lastPathComponent : "\(paths.count) selected items",
+                    frozenIcon: "doc",
+                    sourceBundleId: frontmost.bundleID,
+                    frozenFilePaths: paths
+                )
+            case .text(let text):
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: String(trimmed.prefix(120)),
+                    frozenFullText: trimmed,
+                    frozenIcon: "text.cursor",
+                    sourceBundleId: frontmost.bundleID
+                )
+            case .url(let url):
+                let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return GlobalContextActivation(
+                    autoActivated: false,
+                    frozenText: trimmed,
+                    frozenFullText: trimmed,
+                    frozenIcon: "link",
+                    sourceBundleId: frontmost.bundleID
+                )
+            }
+        }
+
+        if let preview = liveDockSelectionPreviewText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !preview.isEmpty
+        {
+            return GlobalContextActivation(
+                autoActivated: false,
+                frozenText: String(preview.prefix(120)),
+                frozenFullText: preview,
+                frozenIcon: "text.cursor",
+                sourceBundleId: frontmost.bundleID
+            )
+        }
+        return nil
     }
 
     @discardableResult
@@ -352,6 +411,9 @@ extension LauncherView {
         if shouldSuppressIdleBottomResultsPanel {
             return 0
         }
+        if hasSelectionScopeSurface && aiMode.isActive {
+            return DockHeightResolver.chatAreaHeight(measuredContentHeight: measuredChatContentHeight)
+        }
         if showContextInDock && currentDockSurfaceMode == .contextDock
             && !shouldShowContextDockUnifiedSearchContent
         {
@@ -386,7 +448,13 @@ extension LauncherView {
             aiChatSection
         case .contextDockChat:
             l2ChatSection
-        case .globalContext, .contextDock:
+        case .contextDock:
+            if hasSelectionScopeSurface && aiMode.isActive {
+                aiChatSection
+            } else {
+                searchResultsContent
+            }
+        case .globalContext:
             searchResultsContent
         case .mediaDock:
             EmptyView()
@@ -404,13 +472,17 @@ extension LauncherView {
         case .generalChat:
             return aiMode.messages.isEmpty && !aiMode.isLoading && aiMode.streamingId == nil
         case .contextDockChat:
-            if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
-                return true
-            }
+            // A scoped chat (CLI/app) sets shouldShowGlobalScopedChatPin, but that must
+            // NOT force the idle pill once a conversation exists — otherwise the opaque
+            // card (drawn only when !idle) never appears and the sheet is see-through
+            // while typing. Idle only when the conversation is empty.
             return l2.chatMessages.isEmpty && !l2.isLoading
         case .globalContext:
             if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
-                return true
+                // Only the EMPTY scoped-chat prompt is the compact idle pill. Once a
+                // conversation exists (messages / loading), it must render the solid card
+                // — otherwise typing the next query left the chat sheet see-through.
+                return l2.chatMessages.isEmpty && !l2.isLoading
             }
             if shouldUsePureGlobalAppSearch,
                 globalContextViewModel.typingSnapshot.phase != .expanded
@@ -505,9 +577,11 @@ extension LauncherView {
                 // ContentHeight) so the window fits the real conversation; search modes use the
                 // computed results height. Gate chat on message presence (not the measured height,
                 // which starts at 0) to avoid a chicken-and-egg where it never gets to render.
+                let isSelectionScopeAIChat = hasSelectionScopeSurface && aiMode.isActive
                 let isChatMode =
                     currentDockSurfaceMode == .generalChat
                     || currentDockSurfaceMode == .contextDockChat
+                    || isSelectionScopeAIChat
                 let modeContentHeight = unifiedDockModeContentHeight
                 let showsModeContent = isChatMode ? shouldShowUnifiedDockModeContent : (modeContentHeight > 0)
                 if showsModeContent {
@@ -520,9 +594,12 @@ extension LauncherView {
                     // frames its own scroll to min(measured, cap), so the sheet hugs short chats and
                     // scrolls long ones with no clipping. Search: computed height.
                     if isChatMode {
+                        // No insertion/removal transition here: on each new query the chat
+                        // content re-identifies and the opacity+scale transition left the
+                        // OUTGOING messages rendered translucently over the incoming ones
+                        // (the ghosted overlap above the card). The chat sizes itself.
                         unifiedDockModeContent
                             .frame(width: resultsPanelWidth, alignment: .leading)
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     } else {
                         unifiedDockModeContent
                             .frame(height: modeContentHeight)
@@ -1126,6 +1203,12 @@ extension LauncherView {
                                 .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
                         }
 
+                        if hasSelectionScopeSurface && showContextInDock && isSearchBarExpanded {
+                            selectionContextChip
+                                .transition(
+                                    .scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
+                        }
+
                         // Soft frontmost context chip — same visual language as app scope,
                         // but not locked. Frontmost app changes still update this chip.
                         if shouldShowFrontmostContextChip,
@@ -1667,8 +1750,7 @@ extension LauncherView {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
                                             .font(.system(size: 15, weight: .regular))
-                                    } else if isGlobalContextActive,
-                                        hasSelectionScopeSurface,
+                                    } else if hasSelectionScopeSurface,
                                         let prompt = activeSelectionPromptText
                                     {
                                         if searchState.contextApp == nil, l2.targetApp == nil {
@@ -1963,7 +2045,7 @@ extension LauncherView {
                                                 scheduleGlobalGroupedListRebuild(query: q)
                                                 if let scope = globalInlineAppScope,
                                                     !isContextDockChatConnected,
-                                                    isQuestionStyleDockQuery(q)
+                                                    (scope.bundleId.hasPrefix("cli://") || isQuestionStyleDockQuery(q))
                                                 {
                                                     armGlobalInlineScopeChat(scope)
                                                 }
@@ -2015,6 +2097,13 @@ extension LauncherView {
                                             let trimmed = searchState.query.trimmingCharacters(
                                                 in: .whitespacesAndNewlines
                                             )
+                                            if isCLIToolScopeLocked, !trimmed.isEmpty,
+                                                let target = currentGlobalScopedChatTarget
+                                            {
+                                                armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                                                handleL2QuerySkippingMenuRouter(trimmed)
+                                                return
+                                            }
                                             if shouldUseFinderSearchPopover(for: trimmed) {
                                                 if let firstResult = finderSemanticResults.first {
                                                     executeFinderFolderSearchResult(firstResult)
@@ -2253,6 +2342,27 @@ extension LauncherView {
                                     .buttonStyle(.plain)
                                     .help("Clear")
                                 }
+                            } else if hasSelectionScopeSurface {
+                                HStack(spacing: 6) {
+                                    if isContextDockChatConnected {
+                                        contextDockChatCloseButton
+                                    }
+                                    if showGlobalClipboardPill && !globalClipboardText.isEmpty {
+                                        clipboardTrailingButton
+                                    }
+                                    Button {
+                                        dismissSelectionAndStayInGlobalContext()
+                                        isSearchFieldFocused = true
+                                    } label: {
+                                        Image(systemName: "minus")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(.secondary.opacity(0.70))
+                                            .frame(width: 22, height: 22)
+                                            .background(Color.white.opacity(0.07), in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Exit selection scope")
+                                }
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
@@ -2268,7 +2378,7 @@ extension LauncherView {
                                     }
                                     // Selection Scope active → visible exit affordance
                                     // (same action as backspace on an empty field).
-                                    if hasSelectionScopeSurface || globalContextActivationHasFrozenPayload {
+                                    if globalContextActivationHasFrozenPayload {
                                         Button {
                                             dismissSelectionAndStayInGlobalContext()
                                             isSearchFieldFocused = true
@@ -2824,6 +2934,22 @@ extension LauncherView {
         .zIndex(2)
     }
 
+    /// A CLI tool scope — detected by the cli:// prefix, a pinned CLI tool name, or a
+    /// bare executable path (bin/sbin). Any of these must render the terminal glyph,
+    /// not the binary's generic white doc icon.
+    func isCLIToolScopeChip(bundleId: String, appName: String, appPath: String) -> Bool {
+        if bundleId.hasPrefix("cli://") { return true }
+        let name = appName.lowercased()
+        if !name.isEmpty, settings.pinnedCLITools.contains(where: { $0.lowercased() == name }) {
+            return true
+        }
+        guard !appPath.isEmpty, (appPath as NSString).pathExtension.isEmpty else { return false }
+        let parent = ((appPath as NSString).deletingLastPathComponent as NSString)
+            .lastPathComponent.lowercased()
+        return (parent == "bin" || parent == "sbin")
+            && FileManager.default.isExecutableFile(atPath: appPath)
+    }
+
     func globalInlineScopeChip(_ scope: GlobalInlineAppScope) -> some View {
         let isHovered = hoveredGlobalInlineScopeBundleId == scope.bundleId
         let icon: NSImage = {
@@ -2836,7 +2962,7 @@ extension LauncherView {
                     return image
                 }
             }
-            if scope.bundleId.hasPrefix("cli://"),
+            if isCLIToolScopeChip(bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath),
                 let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.appName)
             {
                 return image
@@ -3123,7 +3249,7 @@ extension LauncherView {
             let pillQuery = finderSearchPopoverActive ? "" : q
             scheduleDockPillRebuild(
                 query: pillQuery,
-                delayNanoseconds: settings.useListViewForPills ? 20_000_000 : 55_000_000,
+                delayNanoseconds: 20_000_000,
                 refreshContext: false
             )
         }
@@ -3214,6 +3340,13 @@ extension LauncherView {
             return NSImage(systemSymbolName: "command", accessibilityDescription: "Global Command")
         }
         if bundleID.hasPrefix("cli://") {
+            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+        }
+        // A CLI tool scope whose bundleId isn't cli:// (scoped via a pinned-tool /
+        // bare-binary path) still gets the terminal glyph, not the binary's white icon.
+        if let scope = globalInlineAppScope, scope.bundleId == bundleID,
+            isCLIToolScopeChip(bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath)
+        {
             return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
         }
         if let running = NSWorkspace.shared.runningApplications.first(where: {
@@ -3569,16 +3702,26 @@ extension LauncherView {
     }
 
 	    var shouldSuppressContextMatchDockForScopedChat: Bool {
-	        guard currentGlobalScopedChatTarget != nil else { return false }
+	        guard let target = currentGlobalScopedChatTarget else { return false }
 	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 	        guard !q.isEmpty else { return false }
+	        if target.bundleId.hasPrefix("cli://") {
+	            return true
+	        }
 	        return shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat
 	    }
 
 	    var shouldShowGlobalScopedChatPin: Bool {
-	        guard isGlobalContextActive, currentGlobalScopedChatTarget != nil else { return false }
+	        guard let target = currentGlobalScopedChatTarget else { return false }
 	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 	        guard !q.isEmpty else { return false }
+	        if target.bundleId.hasPrefix("cli://") {
+	            // A pinned CLI scope is a terminal-capability chat. It must not yield
+	            // Enter to focused app/search/action rows; typed text always becomes a
+	            // scoped AI request that can propose CLI commands with approval.
+	            return !showMediaLayer && !aiMode.isActive
+	        }
+	        guard isGlobalContextActive else { return false }
 	        guard focusedAppPillIndex == nil,
 	            l2.focusedPillIndex == nil,
 	            searchState.selectedIndex == nil,

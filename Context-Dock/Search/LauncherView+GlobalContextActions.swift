@@ -435,6 +435,24 @@ extension LauncherView {
             order += 1
         }
 
+        // Command scopes are part of Global Actions. Show them before app launch rows
+        // so a pinned CLI like `obsidian` is usable without opening Obsidian.app.
+        for result in globalCLIScopeMatches(for: q, limit: limit - candidates.count) {
+            let key = globalApplicationIdentityKey(
+                for: result, explicitBundleIdentifier: result.subtitle)
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
+        }
+
+        for result in globalSystemCommandScopeMatches(for: q, limit: limit - candidates.count) {
+            let key = globalApplicationIdentityKey(
+                for: result, explicitBundleIdentifier: result.subtitle)
+            guard seen.insert(key).inserted else { continue }
+            candidates.append((result, result.score, order))
+            order += 1
+        }
+
         let runningSource =
             runningRegularApps.isEmpty ? currentRegularRunningApps() : runningRegularApps
         for app in runningSource
@@ -470,22 +488,6 @@ extension LauncherView {
                 )
             else { continue }
             add(app)
-        }
-
-        for result in globalCLIScopeMatches(for: q, limit: limit - candidates.count) {
-            let key = globalApplicationIdentityKey(
-                for: result, explicitBundleIdentifier: result.subtitle)
-            guard seen.insert(key).inserted else { continue }
-            candidates.append((result, result.score, order))
-            order += 1
-        }
-
-        for result in globalSystemCommandScopeMatches(for: q, limit: limit - candidates.count) {
-            let key = globalApplicationIdentityKey(
-                for: result, explicitBundleIdentifier: result.subtitle)
-            guard seen.insert(key).inserted else { continue }
-            candidates.append((result, result.score, order))
-            order += 1
         }
 
         if isGlobalContextActive, q.count >= 3 {
@@ -586,7 +588,6 @@ extension LauncherView {
         guard limit > 0 else { return [] }
         let q = normalizedDockPillText(query)
         guard !q.isEmpty else { return [] }
-        let icon = NSWorkspace.shared.icon(forFileType: "public.unix-executable")
         return terminalPackageManager.packages
             .filter(\.isEnabled)
             .filter(isUserAddedGlobalCLITool)
@@ -600,8 +601,11 @@ extension LauncherView {
                 else { return nil }
                 var result = SearchResult(
                     title: package.command,
+                    // nil icon → ResultRow renders the green terminal.fill for .cliTool,
+                    // matching the scope chip; a generic unix-executable NSImage showed an
+                    // ugly grey box instead.
                     subtitle: "cli://\(package.command)",
-                    icon: icon,
+                    icon: nil,
                     action: {
                         _ = activateInlineDockAppScope(
                             bundleIdentifier: "cli://\(package.command)",
@@ -610,12 +614,12 @@ extension LauncherView {
                             preserveGlobalContext: true
                         )
                     },
-                    type: .application,
+                    type: .cliTool,
                     filePath: nil,
                     contactData: nil
                 )
                 result.score =
-                    (normalizedDockPillText(package.command).hasPrefix(q) ? 8_850 : 5_200)
+                    (normalizedDockPillText(package.command).hasPrefix(q) ? 34_000 : 30_000)
                     - Double(package.command.count)
                 return result
             }
@@ -818,7 +822,7 @@ extension LauncherView {
                 )
                 result.dismissesLauncher = true
                 result.score =
-                    (normalizedDockPillText(command.name).hasPrefix(q) ? 8_700 : 5_100)
+                    (normalizedDockPillText(command.name).hasPrefix(q) ? 33_000 : 29_000)
                     - Double(command.name.count)
                 return result
             }
@@ -2924,7 +2928,7 @@ extension LauncherView {
                             preserveGlobalContext: true
                         )
                     },
-                    type: .application,
+                    type: .cliTool,
                     filePath: nil,
                     contactData: nil,
                     stableID: doc.id
@@ -3336,7 +3340,10 @@ extension LauncherView {
             !hasSelectionScopeSurface,
             l2.targetApp == nil,
             lockedSubmenuParent == nil,
-            globalInlineAppScope == nil
+            globalInlineAppScope == nil,
+            // Never surface a transient app-scope hint while in a CLI/provider scope.
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
         else { return nil }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3592,7 +3599,12 @@ extension LauncherView {
             !hasSelectionScopeSurface,
             l2.targetApp == nil,
             lockedSubmenuParent == nil,
-            globalInlineAppScope == nil
+            globalInlineAppScope == nil,
+            // Inside a CLI tool or System Command provider scope the input is a
+            // command/prompt, not a scope-building query — never convert typed words
+            // into a second app-scope chip (which flipped the layer + double-scoped).
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3638,10 +3650,11 @@ extension LauncherView {
             lockedSubmenuParent == nil,
             lockedFindToken == nil,
             !suppressGlobalInlineAppScopeDetection,
-            // Inside a System Command provider scope (Quick Note, Windows, …) the input
-            // is a prompt/filter, not a scope-building query — never convert typed words
-            // like "apple notes app" into app-scope chips.
-            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
+            // Inside a System Command provider scope (Quick Note, Windows, …) or a CLI
+            // tool scope the input is a prompt/command, not a scope-building query —
+            // never convert typed words like "apple notes app" into app-scope chips.
+            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
+            currentGlobalScopedBundleID?.hasPrefix("cli://") != true
         else { return false }
 
         let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)

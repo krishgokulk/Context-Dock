@@ -40,7 +40,7 @@ struct AXContext {
 
     var isBrowserURL: Bool { currentURL != nil }
 
-    var hasSelection: Bool { !(selectedText ?? "").isEmpty }
+    var hasSelection: Bool { !(selectedText ?? "").isEmpty || !selectedFilePaths.isEmpty }
 
     var isBrowser: Bool {
         AXContextReader.browserBundleIds.contains(bundleId)
