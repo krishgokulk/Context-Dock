@@ -65,10 +65,19 @@ class KeyableWindow: NSPanel {
         return true
     }
 
-    // Start tracking drag
+    // Start tracking drag — but only when the click lands on non-interactive chrome.
+    // Selectable text, controls, and scroll views report mouseDownCanMoveWindow == false;
+    // arming a window drag over them made click-drag move the window instead of selecting
+    // text (or scrolling). Let those views handle the mouse; drag only from bare chrome.
     override func mouseDown(with event: NSEvent) {
-        initialMouseLocation = NSEvent.mouseLocation
-        initialWindowOrigin = frame.origin
+        let hit = contentView?.hitTest(event.locationInWindow)
+        if hit?.mouseDownCanMoveWindow == false {
+            initialMouseLocation = nil
+            initialWindowOrigin = nil
+        } else {
+            initialMouseLocation = NSEvent.mouseLocation
+            initialWindowOrigin = frame.origin
+        }
         super.mouseDown(with: event)
     }
 
@@ -1223,9 +1232,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private var savePositionWorkItem: DispatchWorkItem?
+
     func windowDidMove(_ notification: Notification) {
         guard notification.object as? NSWindow === launcherWindow else { return }
-        saveLauncherFloatingPosition()
+        // windowDidMove fires many times per second while dragging. Persisting the
+        // position on each event wrote four @AppStorage values per frame, and each
+        // write triggers AppSettings.objectWillChange → a full launcher re-render — the
+        // drag lag. Debounce so the save (and its one re-render) happens only after the
+        // drag settles.
+        savePositionWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.saveLauncherFloatingPosition() }
+        savePositionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     func windowDidEndLiveResize(_ notification: Notification) {

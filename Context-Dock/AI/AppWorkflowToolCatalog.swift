@@ -83,6 +83,9 @@ final class AppWorkflowToolCatalog {
             promptBlock(for: nil),
         ]
 
+        let globalTools = globalToolsPromptBlock()
+        if !globalTools.isEmpty { lines.append(globalTools) }
+
         let history = relevantAppChatHistory(query: query, liveBundleID: liveBundleID)
         if !history.isEmpty {
             lines.append("Saved frontmost-app chat history:")
@@ -90,6 +93,39 @@ final class AppWorkflowToolCatalog {
         }
 
         return lines.joined(separator: "\n\n")
+    }
+
+    /// Surface DoraX Global Commands and pinned CLI tools to General Chat so it can
+    /// suggest them by name and drive CLI tools via terminal commands (with approval).
+    private func globalToolsPromptBlock() -> String {
+        var lines: [String] = []
+
+        let commands = SystemCommandsRegistry.shared.commands.filter { $0.isEnabled }
+        if !commands.isEmpty {
+            lines.append(
+                "DoraX Global Commands the user can run (suggest by name when relevant):")
+            for command in commands.prefix(40) {
+                let keywords = command.keywords
+                    .filter {
+                        !$0.hasPrefix("provider:") && !$0.hasPrefix("preset:")
+                            && !$0.hasPrefix("presets:") && !$0.hasPrefix("refresh:")
+                            && !$0.hasPrefix("query:")
+                    }
+                    .prefix(4)
+                    .joined(separator: ", ")
+                let kw = keywords.isEmpty ? "" : " — keywords: \(keywords)"
+                lines.append("- \(command.name): \(command.description)\(kw)")
+            }
+        }
+
+        let cli = AppSettings.shared.pinnedCLITools.sorted()
+        if !cli.isEmpty {
+            lines.append(
+                "Pinned CLI tools you may drive with terminal commands (the user approves each run): "
+                    + cli.joined(separator: ", ") + ".")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private func scopedAdapters(bundleID: String?) -> [AppAdapter] {

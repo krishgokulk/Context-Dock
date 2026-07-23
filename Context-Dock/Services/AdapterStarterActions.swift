@@ -35,8 +35,65 @@ enum AdapterStarterActions {
     /// The starter actions for an app — curated when we know the app, generic otherwise.
     /// Always returns at least one action.
     static func starters(for bundleId: String, appName: String) -> [AdapterAction] {
-        let curated = curatedActions(for: bundleId)
+        var curated = curatedActions(for: bundleId)
+        // Web apps (YouTube, YT Music…) get a per-install Safari WebApp bundle id, so
+        // match those by name.
+        if curated.isEmpty { curated = curatedActionsByAppName(appName) }
         return curated.isEmpty ? [genericAssistAction(appName: appName)] : curated
+    }
+
+    /// Curated starters for apps whose bundle id isn't stable (Safari web apps).
+    private static func curatedActionsByAppName(_ appName: String) -> [AdapterAction] {
+        switch appName.lowercased() {
+        case "youtube", "yt music", "youtube music":
+            return youTubeStarters()
+        default:
+            return []
+        }
+    }
+
+    /// YouTube (web app) — summarize the current video with AI, and grab the video or
+    /// audio with yt-dlp. Showcases three action types: an AI prompt over live page
+    /// content, and two approved shell commands driving a CLI tool.
+    private static func youTubeStarters() -> [AdapterAction] {
+        [
+            AdapterAction(
+                id: "starter.youtube.summarize",
+                name: "Summarize Video",
+                icon: "text.append",
+                description: "Summarize the current video from the live page (speakers, topics, key points)",
+                triggers: ["summarize", "summary", "tldr", "recap"],
+                type: .aiPrompt,
+                aiPromptTemplate:
+                    "Summarize the current YouTube video \"$WINDOW_TITLE\" ($CURRENT_URL) using the "
+                    + "live page content. Give the speakers, key topics, and a short takeaway.",
+                accentColor: "red"
+            ),
+            AdapterAction(
+                id: "starter.youtube.download",
+                name: "Download Video (yt-dlp)",
+                icon: "arrow.down.circle",
+                description: "Download the current video to ~/Downloads with yt-dlp",
+                triggers: ["download", "save", "video", "ytdlp"],
+                type: .shell,
+                script:
+                    "yt-dlp -o '~/Downloads/%(title)s.%(ext)s' \"$CURRENT_URL\"",
+                requiresApproval: true,
+                accentColor: "red"
+            ),
+            AdapterAction(
+                id: "starter.youtube.downloadAudio",
+                name: "Download Audio (MP3)",
+                icon: "music.note",
+                description: "Extract audio from the current video as MP3 with yt-dlp",
+                triggers: ["audio", "mp3", "music", "song"],
+                type: .shell,
+                script:
+                    "yt-dlp -x --audio-format mp3 -o '~/Downloads/%(title)s.%(ext)s' \"$CURRENT_URL\"",
+                requiresApproval: true,
+                accentColor: "red"
+            ),
+        ]
     }
 
     static func missingStarters(for adapter: AppAdapter) -> [AdapterAction] {
@@ -344,6 +401,31 @@ enum AdapterStarterActions {
                     triggers: ["next", "skip"],
                     type: .applescript,
                     script: "tell application \"Spotify\" to next track",
+                    accentColor: "green"
+                ),
+                AdapterAction(
+                    id: "starter.spotify.copyTrack",
+                    name: "Copy Current Track",
+                    icon: "doc.on.clipboard",
+                    description: "Copy the now-playing artist and title to the clipboard",
+                    triggers: ["copy", "track", "now", "playing"],
+                    type: .shell,
+                    script:
+                        "osascript -e 'tell application \"Spotify\" to (get artist of current track) "
+                        + "& \" — \" & (get name of current track)' | pbcopy",
+                    accentColor: "green"
+                ),
+                AdapterAction(
+                    id: "starter.spotify.lyrics",
+                    name: "Find Lyrics",
+                    icon: "quote.bubble",
+                    description: "Open a web search for the current track's lyrics",
+                    triggers: ["lyrics", "words", "sing"],
+                    type: .shell,
+                    script:
+                        "t=$(osascript -e 'tell application \"Spotify\" to (get artist of current track) "
+                        + "& \" \" & (get name of current track)'); "
+                        + "open \"https://www.google.com/search?q=$(printf '%s lyrics' \"$t\" | sed 's/ /+/g')\"",
                     accentColor: "green"
                 ),
             ]

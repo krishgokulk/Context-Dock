@@ -67,13 +67,32 @@ final class BrowserURLLibraryService: @unchecked Sendable {
         if query.isEmpty || ["recent", "recents", "history", "url", "urls", "bookmark", "bookmarks"].contains(query) {
             return Array(snapshot.prefix(limit))
         }
-        return Array(snapshot.filter {
-            normalized($0.title).contains(query)
-                || normalized($0.url.absoluteString).contains(query)
-                || normalized($0.domain).contains(query)
-                || normalized($0.kind.rawValue).contains(query)
-                || normalized($0.browserName).contains(query)
-        }.prefix(limit))
+
+        // Token match, not literal-phrase match. "github page" was matched as one
+        // substring — no URL/title contains "github page", so real github visits were
+        // missed. Split into tokens (≥3 chars), match any, and rank by how many tokens
+        // an entry hits so the strongest match floats up.
+        let tokens = query.split(separator: " ").map(String.init).filter { $0.count >= 3 }
+        guard !tokens.isEmpty else {
+            return Array(
+                snapshot.filter {
+                    normalized($0.title).contains(query)
+                        || normalized($0.url.absoluteString).contains(query)
+                        || normalized($0.domain).contains(query)
+                }.prefix(limit))
+        }
+        struct Match { let entry: BrowserURLLibraryEntry; let score: Int; let order: Int }
+        var matches: [Match] = []
+        for (index, entry) in snapshot.enumerated() {
+            let hay = normalized(entry.title) + " " + normalized(entry.url.absoluteString)
+                + " " + normalized(entry.domain)
+            var score = 0
+            for token in tokens where hay.contains(token) { score += 1 }
+            if score > 0 { matches.append(Match(entry: entry, score: score, order: index)) }
+        }
+        // More matching tokens first; original (date-sorted) order within a score.
+        matches.sort { $0.score != $1.score ? $0.score > $1.score : $0.order < $1.order }
+        return matches.prefix(limit).map(\.entry)
     }
 
     @MainActor
