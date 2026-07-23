@@ -727,10 +727,27 @@ struct GetMessagesConversationSnapshotTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        MessagesAutomation.conversationSnapshot(
-            contactFilter: arguments.contactFilter,
-            limit: arguments.limit
+        let rows = MessagesChatDBReader.recent(
+            limit: arguments.limit,
+            contact: arguments.contactFilter
         )
+        guard let rows else {
+            return "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access."
+        }
+        guard !rows.isEmpty else {
+            let filter = arguments.contactFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+            return filter.isEmpty
+                ? "No recent Messages conversations were found."
+                : "No recent Messages conversation matched \(filter)."
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, HH:mm"
+        return rows.map { row in
+            let sender = row.fromMe ? "You" : (row.handle.isEmpty ? "Them" : row.handle)
+            let body = row.text.isEmpty ? "[attachment]" : row.text
+            return "\(formatter.string(from: row.date)) — \(sender): \(body)"
+        }.joined(separator: "\n")
     }
 }
 
@@ -1141,18 +1158,13 @@ final class OnDeviceToolSession {
                     )
                 }
 
-                // Dynamic Profile: use tools-capable session for complex queries,
-                // bare session for pure chat to reduce latency.
-                let looksLikeToolQuery = Self.looksLikeToolQuery(message) || !imageURLs.isEmpty
-                let session: LanguageModelSession
-                if looksLikeToolQuery {
-                    session = LanguageModelSession(
-                        tools: self.tools(for: bundleId, axContext: axContext),
-                        instructions: fullPrompt
-                    )
-                } else {
-                    session = LanguageModelSession(instructions: fullPrompt)
-                }
+                // This is an app-scoped tool session, so always attach that app's tools.
+                // Natural requests such as "draft a reply" or "what did they say?" do not
+                // necessarily contain command verbs, but still require live app/MCP data.
+                let session = LanguageModelSession(
+                    tools: self.tools(for: bundleId, axContext: axContext),
+                    instructions: fullPrompt
+                )
 
                 // Images: OCR-extract text and prepend to message for context
                 var finalMessage = message
@@ -1182,13 +1194,13 @@ final class OnDeviceToolSession {
                     if !delta.isEmpty { onPartial(delta) }
                 }
 
-                // If the model executed tools but produced no text, request a summary.
+                // Foundation Models can finish a tool turn with zero generated text. A
+                // second `respond` on that same tool session can remain suspended after an
+                // approval-backed terminal call, leaving the UI's placeholder bubble empty.
+                // Complete deterministically; the tool result/approval card already carries
+                // the execution details and a later user turn can ask for more analysis.
                 if finalContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    let summary = try? await session.respond(
-                        to: "Summarize what you just did and the result in one to two sentences."
-                    )
-                    let summaryText = summary?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    onComplete(summaryText.isEmpty ? "Done." : summaryText)
+                    onComplete("Done — the requested app tool completed successfully.")
                 } else {
                     onComplete(finalContent)
                 }
@@ -1196,16 +1208,6 @@ final class OnDeviceToolSession {
                 onError("Apple Intelligence error: \(error.localizedDescription)")
             }
         }
-    }
-
-    // Heuristic: does the message look like it needs tool execution?
-    private static func looksLikeToolQuery(_ message: String) -> Bool {
-        let lower = message.lowercased()
-        let toolKeywords = ["open ", "run ", "execute ", "close ", "quit ",
-                            "file ", "folder ", "shell ", "terminal ", "git ",
-                            "rename ", "delete ", "copy ", "move ", "create ",
-                            "show me ", "find ", "search for ", "list "]
-        return toolKeywords.contains { lower.hasPrefix($0) || lower.contains(" \($0)") }
     }
 
     private func systemPrompt(
