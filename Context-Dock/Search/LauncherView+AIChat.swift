@@ -773,6 +773,9 @@ extension LauncherView {
         }
         // Tear down the CLI scope's embedded PTY so the next scope starts clean.
         CLIScopeTerminalManager.shared.reset()
+        // Drop any captured text / attachments from the frontmost-app chat + menu.
+        contextDockChatCapturedText = nil
+        contextDockChatFiles = []
         isSearchFieldFocused = true
     }
 
@@ -816,6 +819,61 @@ extension LauncherView {
         }
         .buttonStyle(.plain)
         .help(isContextDockChatConnected ? "AI conversation connected" : "Connect AI conversation")
+    }
+
+    /// + menu for the frontmost-app chat: attach files/photos, screenshots, or grab
+    /// on-screen text (Capture Text) so the scoped chat can act on what's visible —
+    /// e.g. OCR a Messages thread, then ask "what should I reply?".
+    @ViewBuilder
+    var contextDockChatAttachMenu: some View {
+        Menu {
+            Button {
+                let picked = pickFilesForChatAttachment(imagesOnly: false)
+                if !picked.isEmpty { contextDockChatFiles.append(contentsOf: picked) }
+            } label: { Label("Upload File", systemImage: "doc") }
+            Button {
+                let picked = pickFilesForChatAttachment(imagesOnly: true)
+                if !picked.isEmpty { contextDockChatFiles.append(contentsOf: picked) }
+            } label: { Label("Upload Photo", systemImage: "photo") }
+            Divider()
+            Button {
+                captureScreenshotToAttachments(interactive: false) { url in
+                    contextDockChatFiles.append(url)
+                }
+            } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
+            Button {
+                captureScreenshotToAttachments(interactive: true) { url in
+                    contextDockChatFiles.append(url)
+                }
+            } label: { Label("Capture Area", systemImage: "crop") }
+            Button {
+                captureScreenText { text in
+                    let existing = contextDockChatCapturedText?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    contextDockChatCapturedText =
+                        existing.isEmpty ? text : existing + "\n\n" + text
+                }
+            } label: { Label("Capture Text", systemImage: "text.viewfinder") }
+        } label: {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 15))
+                .foregroundStyle(
+                    .secondary.opacity(
+                        contextDockChatFiles.isEmpty && contextDockChatCapturedText == nil ? 0.6 : 0.95))
+                .frame(width: 26, height: 26)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Attach a file, screenshot, or capture on-screen text")
+    }
+
+    /// Pin + the attach menu, shown together in the frontmost-app chat toolbar.
+    var contextDockChatTrailingControls: some View {
+        HStack(spacing: 4) {
+            contextDockChatAttachMenu
+            contextDockChatCloseButton
+        }
     }
 
     /// Trailing pin toggle (replaces the old duplicate "−" close button — the scope

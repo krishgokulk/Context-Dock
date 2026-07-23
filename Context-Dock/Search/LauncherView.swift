@@ -148,6 +148,12 @@ struct LauncherView: View {
     /// shows that folder's contents instead of the search results. Right-arrow on a
     /// focused folder drills in; Backspace on an empty field pops back out.
     @State var finderBrowsePath: String? = nil
+    /// Captured text (OCR / on-screen grab) attached to the frontmost-app chat — the
+    /// "Capture Text" action feeds on-screen content (e.g. a Messages thread) to the
+    /// scoped chat so the model can act on what's visible.
+    @State var contextDockChatCapturedText: String? = nil
+    /// Files / screenshots attached to the frontmost-app chat via its + menu.
+    @State var contextDockChatFiles: [URL] = []
     @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""

@@ -288,6 +288,33 @@ extension LauncherView {
             """
     }
 
+    /// On-screen text / files the user attached to the frontmost-app chat via its +
+    /// menu (Capture Text, screenshots, uploads) — injected so the scoped model can
+    /// act on what's visible (e.g. a captured Messages thread).
+    func contextDockChatAttachmentPromptBlock() -> String {
+        var parts: [String] = []
+        if let captured = contextDockChatCapturedText?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !captured.isEmpty
+        {
+            parts.append(
+                "CAPTURED ON-SCREEN TEXT (use this to answer the user):\n"
+                    + String(captured.prefix(4000)))
+        }
+        if !contextDockChatFiles.isEmpty {
+            let analyzed = ContextDetector.shared.analyzeFiles(Array(contextDockChatFiles.prefix(10)))
+            let blocks = analyzed.map { item -> String in
+                guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !content.isEmpty
+                else { return "- \(item.url.lastPathComponent) (\(item.type))" }
+                return "### \(item.url.lastPathComponent) (\(item.type))\n\(String(content.prefix(3000)))"
+            }
+            if !blocks.isEmpty {
+                parts.append("ATTACHED FILES (use these):\n\n" + blocks.joined(separator: "\n\n"))
+            }
+        }
+        return parts.isEmpty ? "" : "\n\n" + parts.joined(separator: "\n\n")
+    }
+
     func buildIntelligentL2Prompt(
         query: String, context: UserContext, frontmostApp: String?
     ) -> String {
@@ -301,6 +328,7 @@ extension LauncherView {
         if isOnDeviceAI {
             // COMPACT PROMPT for on-device AI (4096 token limit)
             return buildCompactL2Prompt(query: query, context: context, frontmostApp: frontmostApp)
+                + contextDockChatAttachmentPromptBlock()
         }
 
         // FULL PROMPT for cloud AI providers (larger context windows)
@@ -1285,6 +1313,7 @@ extension LauncherView {
             prompt += crossAppSection
         }
 
+        prompt += contextDockChatAttachmentPromptBlock()
         return prompt
     }
 

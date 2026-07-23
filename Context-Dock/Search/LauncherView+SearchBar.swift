@@ -2307,7 +2307,7 @@ extension LauncherView {
                                     }
                                 }
                             } else if shouldShowGlobalScopedChatPin {
-                                contextDockChatCloseButton
+                                contextDockChatTrailingControls
                             } else if searchState.isLoadingApps && searchState.results.isEmpty {
                                 GlobalInputLoadingDots()
                                     .frame(width: 26, height: 26)
@@ -2325,7 +2325,7 @@ extension LauncherView {
 	                                    .accessibilityLabel("Preparing app actions")
 	                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
 		                            } else if showContextInDock && isContextDockChatConnected {
-		                                contextDockChatCloseButton
+		                                contextDockChatTrailingControls
 		                            } else if !searchState.query.isEmpty {
 	                                HStack(spacing: 6) {
                                     // Selection scope still offers the ✨ ask-AI action. The
@@ -2345,7 +2345,7 @@ extension LauncherView {
                             } else if hasSelectionScopeSurface {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
-                                        contextDockChatCloseButton
+                                        contextDockChatTrailingControls
                                     }
                                     if showGlobalClipboardPill && !globalClipboardText.isEmpty {
                                         clipboardTrailingButton
@@ -2366,7 +2366,7 @@ extension LauncherView {
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
-                                        contextDockChatCloseButton
+                                        contextDockChatTrailingControls
                                     }
                                     if showGlobalClipboardPill && !globalClipboardText.isEmpty {
                                         clipboardTrailingButton
@@ -2400,7 +2400,7 @@ extension LauncherView {
                                 // A live selection shows its icon to the RIGHT of the "+".
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
-                                        contextDockChatCloseButton
+                                        contextDockChatTrailingControls
                                     } else if !isCompactSmartScope {
                                         let finderContext =
                                             frontmost.bundleID == "com.apple.finder"
