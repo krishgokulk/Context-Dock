@@ -3567,6 +3567,29 @@ extension LauncherView {
                         dateHeader.isEmpty ? query : "\(dateHeader)\n\nUser request: \(query)"
 
                     await withCheckedContinuation { cont in
+                        // On-device Foundation Models can stall silently (no token, no
+                        // onComplete/onError) — the old "stuck empty bubble". Guard the
+                        // continuation so a timeout can finish it with a useful message.
+                        let resumeGuard = ResumeOnceGuard()
+                        let timeoutTask = Task {
+                            try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30s
+                            guard resumeGuard.claim() else { return }
+                            await MainActor.run {
+                                guard let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId })
+                                else { return }
+                                if self.l2.chatMessages[idx].content.isEmpty {
+                                    self.l2.chatMessages[idx] = AIChatMessage(
+                                        id: msgId, role: .assistant,
+                                        content:
+                                            "On-device AI didn't respond in time for this one. "
+                                            + "Try again, switch to a cloud provider (pick a model at "
+                                            + "the top-left of the chat), or route it through a Shortcut "
+                                            + "in Settings → AI Providers.",
+                                        isError: true)
+                                }
+                            }
+                            cont.resume()
+                        }
                         AIProviderService.shared.streamOnDeviceResponse(
                             message: onDeviceMessage,
                             context: onDeviceContext,
@@ -3614,7 +3637,8 @@ extension LauncherView {
                                         }
                                     }
                                 }
-                                cont.resume()
+                                timeoutTask.cancel()
+                                if resumeGuard.claim() { cont.resume() }
                             },
                             onError: { errText in
                                 DispatchQueue.main.async {
@@ -3643,7 +3667,8 @@ extension LauncherView {
                                             isError: true)
                                     }
                                 }
-                                cont.resume()
+                                timeoutTask.cancel()
+                                if resumeGuard.claim() { cont.resume() }
                             }
                         )
                     }
