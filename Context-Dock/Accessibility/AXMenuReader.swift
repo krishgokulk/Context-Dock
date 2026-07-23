@@ -44,6 +44,12 @@ struct AXMenuItem: Identifiable {
 
 final class AXMenuReader {
     static let shared = AXMenuReader()
+
+    /// Max items read per menu level — bounds the AX-IPC cost of huge dynamic menus.
+    static let maxChildrenPerMenu = 120
+    /// Menus whose recursive contents are skipped (dynamic URL lists surfaced natively
+    /// by BrowserURLLibraryService). Matched case-insensitively by title.
+    static let skipRecursionMenuTitles: Set<String> = ["history", "bookmarks"]
     private init() {}
 
     // MARK: - Structural cache
@@ -279,7 +285,12 @@ final class AXMenuReader {
         guard let children = childElements(of: parent) else { return [] }
 
         var result: [AXMenuItem] = []
+        var readCount = 0
         for child in children {
+            // Bound per-level breadth. Browser History/Bookmarks menus hold thousands of
+            // entries; without a cap each one costs several AX IPC reads and stalls the
+            // dock when the browser is frontmost.
+            if readCount >= Self.maxChildrenPerMenu { break }
             let role  = strAttr(child, kAXRoleAttribute as CFString) ?? ""
             let title = strAttr(child, kAXTitleAttribute as CFString) ?? ""
 
@@ -291,13 +302,21 @@ final class AXMenuReader {
 
             // Skip separators and unnamed items
             guard !title.isEmpty, title != "-" else { continue }
+            readCount += 1
 
             let isEnabled  = boolAttr(child, kAXEnabledAttribute as CFString) ?? true
             let childPath  = path + [title]
-            let subItems   = readChildren(of: submenuContainer(for: child) ?? child,
-                                          path: childPath,
-                                          depth: depth + 1,
-                                          maxDepth: maxDepth)
+            // Do NOT walk the huge dynamic browser menus — History and Bookmarks hold
+            // thousands of URL rows read over slow AX IPC, and DoraX already surfaces
+            // browser history/bookmarks natively (BrowserURLLibraryService). The menu
+            // item itself still appears; only its recursive contents are skipped.
+            let subItems: [AXMenuItem] =
+                Self.skipRecursionMenuTitles.contains(title.lowercased())
+                ? []
+                : readChildren(of: submenuContainer(for: child) ?? child,
+                               path: childPath,
+                               depth: depth + 1,
+                               maxDepth: maxDepth)
 
             // Read keyboard shortcut and checked state from AX attributes
             let shortcutChar      = strAttr(child, "AXMenuItemCmdChar" as CFString)
