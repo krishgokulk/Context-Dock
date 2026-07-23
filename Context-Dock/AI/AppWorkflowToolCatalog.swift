@@ -125,6 +125,24 @@ final class AppWorkflowToolCatalog {
                     + cli.joined(separator: ", ") + ".")
         }
 
+        // Selection Scope actions — the user's own per-file / per-selection tools.
+        let selectionExts = L2ExtensionManager.shared.extensions.filter { $0.isEnabled }
+        if !selectionExts.isEmpty {
+            lines.append(
+                "Selection Scope actions (apply to selected text or files — invoke by name when a "
+                    + "file/selection is attached):")
+            for ext in selectionExts.prefix(30) {
+                let triggers = ext.triggers.prefix(3).joined(separator: ", ")
+                let tg = triggers.isEmpty ? "" : " — triggers: \(triggers)"
+                lines.append("- \(ext.displayName): \(ext.description)\(tg)")
+            }
+        }
+
+        // Data & Storage: the local file index (Finder search) is available as a tool.
+        lines.append(
+            "Local file search: you can find the user's files and folders across their indexed "
+                + "search directories by name or content — ask for a file and reference its path.")
+
         return lines.joined(separator: "\n")
     }
 

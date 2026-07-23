@@ -4757,20 +4757,42 @@ extension LauncherView {
             let caps = CapabilityRegistry.shared.all.filter { cap in
                 prefixes.contains(where: cap.id.hasPrefix)
             }
-            guard !caps.isEmpty else { return "" }
-            var lines = [
-                "## Built-in App Tools",
-                "You can also call these built-in tools with the same single-line JSON format, using server \"builtin\":",
-                "{\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"<tool id>\", \"arguments\": { … }}}",
-                "",
-                "Available built-in tools:",
-            ]
-            for cap in caps {
-                let fields = cap.inputSchema.fields.map { f in
-                    "\(f.name)\(f.required ? "" : "?")"
-                }.joined(separator: ", ")
-                lines.append("- \(cap.id): \(cap.title) | input: [\(fields)]")
+            var lines: [String] = []
+            if !caps.isEmpty {
+                lines.append(contentsOf: [
+                    "## Built-in App Tools",
+                    "You can also call these built-in tools with the same single-line JSON format, using server \"builtin\":",
+                    "{\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"<tool id>\", \"arguments\": { … }}}",
+                    "",
+                    "Available built-in tools:",
+                ])
+                for cap in caps {
+                    let fields = cap.inputSchema.fields.map { f in
+                        "\(f.name)\(f.required ? "" : "?")"
+                    }.joined(separator: ", ")
+                    lines.append("- \(cap.id): \(cap.title) | input: [\(fields)]")
+                }
             }
+
+            // Selection Scope actions — runnable on the attached file/selection via the
+            // extension.run tool. Only file/selection-triggered extensions are listed.
+            let selectionManifests = ExtensionRegistry.shared.manifests.filter { manifest in
+                manifest.extensionValue.triggers.contains { trigger in
+                    if case .selection = trigger { return true }
+                    if case .fileType = trigger { return true }
+                    return false
+                }
+            }
+            if !selectionManifests.isEmpty {
+                if !lines.isEmpty { lines.append("") }
+                lines.append("## Selection Scope actions (run on the attached file/selection)")
+                lines.append(
+                    "Run one with: {\"mcp_call\": {\"server\": \"builtin\", \"tool\": \"extension.run\", \"arguments\": {\"extensionID\": \"<id>\"}}}")
+                for manifest in selectionManifests.prefix(30) {
+                    lines.append("- \(manifest.id.uuidString): \(manifest.name) — \(manifest.summary)")
+                }
+            }
+
             return lines.joined(separator: "\n")
         }
     }
@@ -4799,9 +4821,20 @@ extension LauncherView {
         let plan = AIActionPlan(
             capability: tool, input: input, explanation: "Requested from AI chat"
         )
+        // Selection-scope tools (extension.run) act on the file/text the user attached
+        // to the chat — pass it as the execution context instead of .none, so an
+        // "OCR this image" style action runs on the attachment.
+        let execContext: UserContext = await MainActor.run {
+            if !aiMode.selectionFiles.isEmpty {
+                return .filesSelected(aiMode.selectionFiles)
+            }
+            let sel = AXContextReader.shared.current.selectedText?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return sel.isEmpty ? .none : .textSelected(sel)
+        }
         do {
             let result = try await AIExecutionEngine.shared.executeWithApproval(
-                plan, context: .none
+                plan, context: execContext
             )
             return result.output
         } catch {
