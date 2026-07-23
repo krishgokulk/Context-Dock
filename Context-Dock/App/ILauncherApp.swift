@@ -65,10 +65,19 @@ class KeyableWindow: NSPanel {
         return true
     }
 
-    // Start tracking drag
+    // Start tracking drag — but only when the click lands on non-interactive chrome.
+    // Selectable text, controls, and scroll views report mouseDownCanMoveWindow == false;
+    // arming a window drag over them made click-drag move the window instead of selecting
+    // text (or scrolling). Let those views handle the mouse; drag only from bare chrome.
     override func mouseDown(with event: NSEvent) {
-        initialMouseLocation = NSEvent.mouseLocation
-        initialWindowOrigin = frame.origin
+        let hit = contentView?.hitTest(event.locationInWindow)
+        if hit?.mouseDownCanMoveWindow == false {
+            initialMouseLocation = nil
+            initialWindowOrigin = nil
+        } else {
+            initialMouseLocation = NSEvent.mouseLocation
+            initialWindowOrigin = frame.origin
+        }
         super.mouseDown(with: event)
     }
 
