@@ -48,9 +48,23 @@ final class RecentItemsService {
         return cachedApps
     }
 
+    /// A bare CLI executable (no extension, sitting in a bin/sbin dir) — e.g. the
+    /// `brew` binary. These show a generic white doc icon and aren't documents, so
+    /// they must not appear as "Recent Document" results (the CLI tool scope owns
+    /// them instead).
+    private static func isCommandLineBinary(_ url: URL) -> Bool {
+        guard url.pathExtension.isEmpty else { return false }
+        let parent = url.deletingLastPathComponent().lastPathComponent.lowercased()
+        guard parent == "bin" || parent == "sbin" else { return false }
+        return FileManager.default.isExecutableFile(atPath: url.path)
+    }
+
     func recentDocuments() -> [RecentDocument] {
         if Date().timeIntervalSince(docsLoadedAt) < ttl {
-            cachedDocs.removeAll { !FileManager.default.fileExists(atPath: $0.url.path) }
+            cachedDocs.removeAll {
+                !FileManager.default.fileExists(atPath: $0.url.path)
+                    || Self.isCommandLineBinary($0.url)
+            }
             return cachedDocs
         }
         let systemURLs = loadItems(
@@ -65,6 +79,7 @@ final class RecentItemsService {
             let url = rawURL.standardizedFileURL
             guard url.pathExtension.lowercased() != "app",
                 FileManager.default.fileExists(atPath: url.path),
+                !Self.isCommandLineBinary(url),
                 seen.insert(url.path).inserted
             else { return nil }
             return RecentDocument(
