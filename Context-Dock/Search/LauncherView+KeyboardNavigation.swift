@@ -1570,6 +1570,17 @@ extension LauncherView {
                         l2.focusedPillIndex = nil
                         return .handled
                     }
+                    if isCLIToolScopeLocked {
+                        let trimmed = searchState.query.trimmingCharacters(
+                            in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return .handled }
+                        if let target = currentGlobalScopedChatTarget {
+                            armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                            dismissMediaLayer()
+                            handleL2QuerySkippingMenuRouter(trimmed)
+                        }
+                        return .handled
+                    }
                     if isL2ContextActive,
                         l2.focusedPillIndex != nil,
                         executeFocusedOrDirectAppPillIfNeeded()

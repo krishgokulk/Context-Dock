@@ -2090,6 +2090,13 @@ extension LauncherView {
                                             let trimmed = searchState.query.trimmingCharacters(
                                                 in: .whitespacesAndNewlines
                                             )
+                                            if isCLIToolScopeLocked, !trimmed.isEmpty,
+                                                let target = currentGlobalScopedChatTarget
+                                            {
+                                                armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                                                handleL2QuerySkippingMenuRouter(trimmed)
+                                                return
+                                            }
                                             if shouldUseFinderSearchPopover(for: trimmed) {
                                                 if let firstResult = finderSemanticResults.first {
                                                     executeFinderFolderSearchResult(firstResult)

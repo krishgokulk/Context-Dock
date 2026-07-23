@@ -103,6 +103,10 @@ private enum GeneralAIChatConversationStore {
 }
 
 extension LauncherView {
+    var isCLIToolScopeLocked: Bool {
+        currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+    }
+
     var shouldShowContextDockChatButton: Bool {
         showContextInDock
             && !showMediaLayer
@@ -771,13 +775,15 @@ extension LauncherView {
     }
 
     func exitContextDockChatAndScope() {
+        let wasCLIToolScope = isCLIToolScopeLocked
         exitContextDockChatSheet()
         clearSearchContext()
         remPanelIsProcessing = false
         remIsInstalled = nil
         systemDataResults = []
         searchState.lastSmartQuery = ""
-        globalContextActivation = GlobalContextActivation(autoActivated: false)
+        globalContextActivation = wasCLIToolScope ? nil : GlobalContextActivation(autoActivated: false)
+        showContextInDock = true
         isSearchFieldFocused = true
     }
 
