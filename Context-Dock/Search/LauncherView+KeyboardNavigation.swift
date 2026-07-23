@@ -1263,14 +1263,16 @@ extension LauncherView {
             self.renderedDockHeight = visibleStartHeight
 
             if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
-                // Expansion: give the transparent host its final capacity first. On the next
-                // runloop turn, reveal only the top-aligned SwiftUI shell beneath the input.
+                // Expansion: give the transparent host its final capacity, then reveal the
+                // top-aligned SwiftUI shell in the SAME runloop turn. Deferring the reveal
+                // spring by a runloop (the old DispatchQueue.main.async) left the shell at
+                // its previous small height for one frame inside the already-grown window —
+                // the "stuck small, then expands" hitch. setFrame(display:) is synchronous,
+                // so the window is already at full size before the spring starts.
                 window.setFrame(newFrame, display: true)
                 if shouldAnimateVisibleShell {
-                    DispatchQueue.main.async {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
-                            self.renderedDockHeight = effectiveHeight
-                        }
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                        self.renderedDockHeight = effectiveHeight
                     }
                 } else {
                     self.renderedDockHeight = effectiveHeight
