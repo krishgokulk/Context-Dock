@@ -3665,25 +3665,32 @@ extension LauncherView {
     }
 
 	    var shouldSuppressContextMatchDockForScopedChat: Bool {
-	        guard currentGlobalScopedChatTarget != nil else { return false }
+	        guard let target = currentGlobalScopedChatTarget else { return false }
 	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 	        guard !q.isEmpty else { return false }
+	        if target.bundleId.hasPrefix("cli://") {
+	            return true
+	        }
 	        return shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat
 	    }
 
 	    var shouldShowGlobalScopedChatPin: Bool {
-	        guard isGlobalContextActive, currentGlobalScopedChatTarget != nil else { return false }
+	        guard let target = currentGlobalScopedChatTarget else { return false }
 	        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
 	        guard !q.isEmpty else { return false }
+	        if target.bundleId.hasPrefix("cli://") {
+	            // A pinned CLI scope is a terminal-capability chat. It must not yield
+	            // Enter to focused app/search/action rows; typed text always becomes a
+	            // scoped AI request that can propose CLI commands with approval.
+	            return !showMediaLayer && !aiMode.isActive
+	        }
+	        guard isGlobalContextActive else { return false }
 	        guard focusedAppPillIndex == nil,
 	            l2.focusedPillIndex == nil,
 	            searchState.selectedIndex == nil,
 	            !showMediaLayer,
 	            !aiMode.isActive
 	        else { return false }
-	        if currentGlobalScopedChatTarget?.bundleId.hasPrefix("cli://") == true {
-	            return true
-	        }
 	        return isQuestionStyleDockQuery(q)
 	    }
 

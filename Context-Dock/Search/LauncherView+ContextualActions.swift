@@ -3567,17 +3567,13 @@ extension LauncherView {
             crossAppMenuTargetPID = 0
             crossAppMenuNeedsLiveLoad = false
             crossAppMenuItems = []
-            if preserveGlobalContext {
-                globalInlineAppScope = GlobalInlineAppScope(
-                    appName: appName,
-                    bundleId: bundleIdentifier,
-                    appPath: "",
-                    matchedAlias: appName,
-                    aliasStartIndex: 0,
-                    isExplicit: true
-                )
-                additionalGlobalInlineAppScopes = []
-            }
+            // CLI scopes are chat scopes, not app/global search scopes. Keeping both
+            // l2.targetApp and globalInlineAppScope made the dock render duplicate
+            // capsules and allowed global/app result matching to compete with the
+            // scoped CLI conversation. l2.targetApp is the single owner until exit.
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            globalContextActivation = nil
             armGlobalScopedChat(appName: appName, bundleId: bundleIdentifier)
         } else if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
@@ -4616,7 +4612,8 @@ extension LauncherView {
                 return command.isEmpty ? nil : command.lowercased()
             }
         )
-        let shouldExposeCLIPills = scopedBundleId.hasPrefix("cli://")
+        let isCLIChatScope = scopedBundleId.hasPrefix("cli://")
+        let shouldExposeCLIPills = isCLIChatScope && scopedSearchQuery.isEmpty
         let visibleCLIPackages = shouldExposeCLIPills
             ? cliPackages.filter { package in
                 !adapterCLICommands.contains(package.command.lowercased())
