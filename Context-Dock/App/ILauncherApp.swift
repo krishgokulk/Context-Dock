@@ -1021,8 +1021,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// True when the dock should be present on EVERY Space at a fixed screen position
     /// (no per-Space move, no hide on Space switch): the bottom dock always, and a
     /// floating dock that the user made persistent via Pin or Always-Float.
+    /// Set while the dock is inside an active scope / scoped chat (CLI tool, app
+    /// scope, provider scope). Makes the dock float on every Space so switching
+    /// desktops keeps it put until the user exits the scope — same as a pin.
+    var scopeChatSpaceHold: Bool = false {
+        didSet {
+            guard oldValue != scopeChatSpaceHold else { return }
+            applyPersistentDockBehavior()
+        }
+    }
+
     var dockJoinsAllSpaces: Bool {
         settings.effectiveDockAtBottom || settings.alwaysFloatDock || settings.launcherPinned
+            || scopeChatSpaceHold
     }
 
     /// The collectionBehavior for the current dock mode.

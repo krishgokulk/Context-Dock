@@ -434,7 +434,12 @@ struct LauncherView: View {
 
     var currentDockSurfaceMode: DockSurfaceMode {
         if showMediaLayer { return .mediaDock }
-        if shouldShowContextDockChatSheet || isContextDockChatRoutingLocked {
+        if shouldShowContextDockChatSheet || isContextDockChatRoutingLocked
+            // Inside a CLI tool scope the input composes the next command, so keep the
+            // opaque chat surface while typing — don't fall through to the transparent
+            // Global Context surface (which made the sheet go see-through mid-query).
+            || (isCLIToolScopeLocked && (l2.chatArmed || !l2.chatMessages.isEmpty))
+        {
             return .contextDockChat
         }
         // Selection Scope is its own scoped surface. Its AI answers should render in-place
