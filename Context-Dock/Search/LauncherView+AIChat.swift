@@ -648,6 +648,10 @@ extension LauncherView {
     }
 
     func armContextDockChat(animated: Bool = true) {
+        // Hold the dock open for the whole scoped-chat session. Setting this only from
+        // the debounced requestWindowSizeUpdate left it stale, so clicking the frontmost
+        // app resigned key and hid the chat mid-conversation.
+        AppDelegate.shared?.scopeChatSpaceHold = true
         let existingName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingBundleId = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if (l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty),
@@ -731,6 +735,8 @@ extension LauncherView {
     /// Global Context was active (the "+" button has no global guard). Only chats not
     /// bound to the frontmost app fall out to Global Context.
     func exitContextDockChatBackToContext() {
+        // Scoped chat over → release the hold so normal click-away hiding resumes.
+        AppDelegate.shared?.scopeChatSpaceHold = false
         let chatApp = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         let frontApp = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedApp = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
