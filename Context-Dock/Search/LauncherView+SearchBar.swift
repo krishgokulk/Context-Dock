@@ -2934,6 +2934,22 @@ extension LauncherView {
         .zIndex(2)
     }
 
+    /// A CLI tool scope — detected by the cli:// prefix, a pinned CLI tool name, or a
+    /// bare executable path (bin/sbin). Any of these must render the terminal glyph,
+    /// not the binary's generic white doc icon.
+    func isCLIToolScopeChip(bundleId: String, appName: String, appPath: String) -> Bool {
+        if bundleId.hasPrefix("cli://") { return true }
+        let name = appName.lowercased()
+        if !name.isEmpty, settings.pinnedCLITools.contains(where: { $0.lowercased() == name }) {
+            return true
+        }
+        guard !appPath.isEmpty, (appPath as NSString).pathExtension.isEmpty else { return false }
+        let parent = ((appPath as NSString).deletingLastPathComponent as NSString)
+            .lastPathComponent.lowercased()
+        return (parent == "bin" || parent == "sbin")
+            && FileManager.default.isExecutableFile(atPath: appPath)
+    }
+
     func globalInlineScopeChip(_ scope: GlobalInlineAppScope) -> some View {
         let isHovered = hoveredGlobalInlineScopeBundleId == scope.bundleId
         let icon: NSImage = {
@@ -2946,7 +2962,7 @@ extension LauncherView {
                     return image
                 }
             }
-            if scope.bundleId.hasPrefix("cli://"),
+            if isCLIToolScopeChip(bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath),
                 let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.appName)
             {
                 return image
@@ -3324,6 +3340,13 @@ extension LauncherView {
             return NSImage(systemSymbolName: "command", accessibilityDescription: "Global Command")
         }
         if bundleID.hasPrefix("cli://") {
+            return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+        }
+        // A CLI tool scope whose bundleId isn't cli:// (scoped via a pinned-tool /
+        // bare-binary path) still gets the terminal glyph, not the binary's white icon.
+        if let scope = globalInlineAppScope, scope.bundleId == bundleID,
+            isCLIToolScopeChip(bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath)
+        {
             return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
         }
         if let running = NSWorkspace.shared.runningApplications.first(where: {

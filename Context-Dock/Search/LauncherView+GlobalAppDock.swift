@@ -1253,17 +1253,20 @@ extension LauncherView {
                 return (icon, scope.scopedBundleId)
             }
         }
-        if scope.scopedBundleId.hasPrefix("cli://"),
-            let icon = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.scopedAppName)
-        {
-            return (icon, scope.scopedBundleId)
-        }
-        let appPath =
+        let scopedAppPath =
             allApplications.first { result in
                 bundleIdentifierForApplicationPath(result.subtitle)
                     == scope.scopedBundleId
             }?.subtitle
             ?? applicationURLForBundleIdentifier(scope.scopedBundleId)?.path
+        if isCLIToolScopeChip(
+            bundleId: scope.scopedBundleId, appName: scope.scopedAppName,
+            appPath: scopedAppPath ?? ""),
+            let icon = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.scopedAppName)
+        {
+            return (icon, scope.scopedBundleId)
+        }
+        let appPath = scopedAppPath
         let icon =
             resolvedApplicationIcon(
                 bundleIdentifier: scope.scopedBundleId, appName: scope.scopedAppName)
