@@ -334,40 +334,61 @@ final class FileIndexManager: ObservableObject {
         startSpotlightQuery()
     }
 
+    /// Cancels a stale chunked ingest when a newer query result arrives.
+    private var ingestGeneration = 0
+
     private func ingestResults(from q: NSMetadataQuery) {
+        // Pause live updates while we walk the current result set, and process it in
+        // small batches spread across runloop turns. Building 60k IndexedFile structs
+        // (each with Spotlight attribute reads) in one synchronous pass froze the main
+        // thread on "Add Directory" (esp. the whole home folder); chunking keeps the UI
+        // responsive and lets partial results appear as they index.
         q.disableUpdates()
-        defer { q.enableUpdates() }
+        ingestGeneration &+= 1
+        let generation = ingestGeneration
+        let maxIngest = 60_000
+        let total = min(q.resultCount, maxIngest)
+        progress.isIndexing = true
+        processIngestBatch(query: q, total: total, from: 0, files: [], generation: generation)
+    }
+
+    private func processIngestBatch(
+        query q: NSMetadataQuery, total: Int, from start: Int,
+        files accumulator: [IndexedFile], generation: Int
+    ) {
+        // A newer query result superseded this walk — abandon it and re-enable updates.
+        guard generation == ingestGeneration else {
+            q.enableUpdates()
+            return
+        }
 
         let settings = AppSettings.shared
         let showDocs = settings.enableL1DocumentSearch
         let showFiles = settings.enableL1FileSearch
+        let allowedDirs = settings.useCustomSearchDirectories
+            ? settings.searchDirectories.map { $0.path } : []
 
-        // HARD CAP the ingest. Without it, adding a large scope (the home folder, iCloud
-        // Drive) makes NSMetadataQuery return hundreds of thousands of items that we'd build
-        // into IndexedFile structs synchronously on the main thread — a UI freeze + memory
-        // spike the watchdog kills (looks like a crash on "Add Directory"). 60k names is
-        // plenty for prefix/fuzzy search.
-        let maxIngest = 60_000
-        let total = min(q.resultCount, maxIngest)
-        var files: [IndexedFile] = []
+        // ~2 ms of Spotlight attribute work per batch — small enough that the runloop
+        // stays smooth between batches.
+        let batchSize = 2_500
+        let end = min(start + batchSize, total)
+        var files = accumulator
         files.reserveCapacity(total)
 
-        for i in 0 ..< total {
+        for i in start ..< end {
             guard let item = q.result(at: i) as? NSMetadataItem else { continue }
             guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
             let url = URL(fileURLWithPath: path)
             let ext = url.pathExtension.lowercased()
 
-            // Apply document/file filter
             let isDoc = documentExtensions.contains(ext)
             if isDoc && !showDocs { continue }
             if !isDoc && !showFiles { continue }
 
-            // Custom directories filter
             if settings.useCustomSearchDirectories {
-                let allowed = settings.searchDirectories.map { $0.path }
-                guard !allowed.isEmpty else { continue }
-                guard allowed.contains(where: { path.hasPrefix($0) }) else { continue }
+                guard !allowedDirs.isEmpty,
+                    allowedDirs.contains(where: { path.hasPrefix($0) })
+                else { continue }
             }
 
             var attrs: [FileAttributeKey: Any] = [:]
@@ -377,21 +398,29 @@ final class FileIndexManager: ObservableObject {
             if let mod = item.value(forAttribute: NSMetadataItemFSContentChangeDateKey) as? Date {
                 attrs[.modificationDate] = mod
             }
-            // Derive isDirectory from Spotlight metadata — avoids a stat() syscall per file
             let contentType = item.value(forAttribute: "kMDItemContentType") as? String ?? ""
             let isDir = contentType == "public.folder"
             attrs[.type] = isDir ? FileAttributeType.typeDirectory : FileAttributeType.typeRegular
             files.append(IndexedFile(url: url, attributes: attrs))
         }
 
+        // Publish progressively so search works while the rest indexes.
         indexedFiles = files
         buildNameIndex(from: files)
-
-        metadata.lastFullIndexDate = Date()
-        metadata.totalFilesIndexed = files.count
-        progress.isIndexing = false
         progress.filesIndexed = files.count
         isReady = true
+
+        if end < total {
+            DispatchQueue.main.async { [weak self] in
+                self?.processIngestBatch(
+                    query: q, total: total, from: end, files: files, generation: generation)
+            }
+        } else {
+            metadata.lastFullIndexDate = Date()
+            metadata.totalFilesIndexed = files.count
+            progress.isIndexing = false
+            q.enableUpdates()
+        }
     }
 
     private func buildNameIndex(from files: [IndexedFile]) {
