@@ -1600,7 +1600,19 @@ final class GeneralAIActionResolver {
 
     private func resolveNativeShareIntent(_ original: String) async -> GeneralAIActionResolution? {
         guard let intent = ShareIntentRouter.shared.parse(original) else { return nil }
-        let context = AXContextReader.shared.current
+        var context = AXContextReader.shared.current
+        // The AX context only carries a page URL for Safari. For any other browser
+        // (DuckDuckGo, Chrome, Arc…) read its live address-bar URL so "share current
+        // page" has something to share.
+        if (context.currentURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let app = await AppDelegate.shared?.previousFrontmostApp,
+            let bundleId = app.bundleIdentifier,
+            SelectedContextResolver.isBrowserBundleId(bundleId),
+            let liveURL = AXContextReader.shared.liveCurrentURL(
+                pid: app.processIdentifier, bundleId: bundleId)
+        {
+            context.currentURL = liveURL
+        }
         let items = ShareIntentRouter.shared.shareItems(for: context)
         guard !items.isEmpty else {
             return .explain(
