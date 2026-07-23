@@ -7363,76 +7363,10 @@ struct PermissionsSettingsView: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                // Accessibility Card (existing)
-                Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 50))
-                    .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: hasAccessibilityPermission ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
-                        
-                        Text("Accessibility Permissions")
-                            .font(.headline)
-                    }
-                    
-                    Text("Required for global hotkey detection")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.gray.opacity(0.06))
-                .cornerRadius(8)
-                
-                if !hasAccessibilityPermission {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("How to enable:")
-                            .font(.headline)
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("1. Click 'Open System Settings' below")
-                            Text("2. Find 'ILauncher' in the list")
-                            Text("3. Toggle the switch to enable")
-                            Text("4. Return here and click 'Check Again'")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.08))
-                    .cornerRadius(8)
-                    
-                    HStack(spacing: 12) {
-                        Button("Open System Settings") {
-                            openAccessibilitySettings()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        
-                        Button("Check Again") {
-                            checkPermissions()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                } else {
-                    VStack(spacing: 8) {
-                        Text("✅ Permissions Granted")
-                            .font(.headline)
-                            .foregroundStyle(.green)
-                        
-                        Text("All required permissions are enabled")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(Color.green.opacity(0.1))
-                    .cornerRadius(8)
-                }
-                
-                // System data search permissions section (Calendars, Reminders, Photos, Contacts, Automation)
+            VStack(alignment: .leading, spacing: 18) {
+                permissionHero
+                permissionCapabilityGrid
+
                 Form {
                     SystemPermissionsSection()
                 }
@@ -7444,6 +7378,110 @@ struct PermissionsSettingsView: View {
         .onAppear {
             checkPermissions()
         }
+    }
+
+    private var permissionHero: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill((hasAccessibilityPermission ? Color.green : Color.orange).opacity(0.16))
+                    .frame(width: 72, height: 72)
+                Image(systemName: hasAccessibilityPermission ? "checkmark.shield.fill" : "lock.shield.fill")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(hasAccessibilityPermission ? .green : .orange)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(hasAccessibilityPermission ? "Core permissions are ready" : "Core permission needed")
+                        .font(.title3.bold())
+                    statusPill(hasAccessibilityPermission ? "Authorized" : "Action required", color: hasAccessibilityPermission ? .green : .orange)
+                }
+                Text("Context-Dock is more than a launcher. It reads frontmost-app context, menu caches, selected text/files, app data, and safe automation routes so AI Assistant, Context Dock Chat, and Selection Scope can act with the correct boundary.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button("Open System Settings") { openAccessibilitySettings() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Check Again") { checkPermissions() }
+                        .buttonStyle(.bordered)
+                    Text("Spotlight and Raycast mostly launch or search. Context-Dock needs explicit macOS grants because it can understand and act inside apps.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06))
+        )
+    }
+
+    private var permissionCapabilityGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+            permissionCapabilityCard(
+                icon: "accessibility",
+                title: "Accessibility",
+                detail: "Hotkey launch, frontmost app identity, selected text/files, menu cache, and menu-click actions.",
+                color: hasAccessibilityPermission ? .green : .orange
+            )
+            permissionCapabilityCard(
+                icon: "rectangle.inset.filled.and.person.filled",
+                title: "Screen context",
+                detail: "Window previews and visual grounding when an app has no API, MCP, CLI, or adapter route.",
+                color: .blue
+            )
+            permissionCapabilityCard(
+                icon: "calendar.badge.clock",
+                title: "Apple data",
+                detail: "Calendar, Reminders, Contacts, Photos, Notes, Mail, and Messages answers through native stores where possible.",
+                color: .purple
+            )
+            permissionCapabilityCard(
+                icon: "applescript",
+                title: "Automation",
+                detail: "Approved AppleScript/menu actions for app-scoped workflows. Write/send/move actions still require approval.",
+                color: .teal
+            )
+        }
+    }
+
+    private func permissionCapabilityCard(icon: String, title: String, detail: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 34, height: 34)
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.05))
+        )
+    }
+
+    private func statusPill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.14), in: Capsule())
     }
     
     func checkPermissions() {

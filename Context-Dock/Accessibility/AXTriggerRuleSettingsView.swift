@@ -207,11 +207,11 @@ struct AXRuleEditSheet: View {
                                     .fixedSize()
 
                                     if !scopeBundleId.isEmpty {
-                                        Text("Only triggers in \(scopeAppName.isEmpty ? scopeBundleId : scopeAppName). App-scoped rules are evaluated before global rules.")
+                                        Text("Use App Scope when this extension depends on one app’s UI, menus, shortcuts, or data. It prevents the same selected text/file from triggering the wrong workflow in another app.")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     } else {
-                                        Text("Evaluates in every app. Use app-scoped rules to avoid false matches.")
+                                        Text(isSelectionScope ? "Global is best for generic selected text, files, links, and media. Choose an app only when the action belongs to that app." : "Evaluates in every app. Choose an app scope when the rule depends on one app’s menus, UI, or data.")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
