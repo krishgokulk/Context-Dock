@@ -2038,7 +2038,7 @@ extension LauncherView {
                                                 scheduleGlobalGroupedListRebuild(query: q)
                                                 if let scope = globalInlineAppScope,
                                                     !isContextDockChatConnected,
-                                                    isQuestionStyleDockQuery(q)
+                                                    (scope.bundleId.hasPrefix("cli://") || isQuestionStyleDockQuery(q))
                                                 {
                                                     armGlobalInlineScopeChat(scope)
                                                 }
@@ -3681,6 +3681,9 @@ extension LauncherView {
 	            !showMediaLayer,
 	            !aiMode.isActive
 	        else { return false }
+	        if currentGlobalScopedChatTarget?.bundleId.hasPrefix("cli://") == true {
+	            return true
+	        }
 	        return isQuestionStyleDockQuery(q)
 	    }
 

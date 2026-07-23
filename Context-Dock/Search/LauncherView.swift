@@ -320,8 +320,8 @@ struct LauncherView: View {
                             queryOverride: ""
                         )
                     },
-                    type: .application,
-                    filePath: pkg.installedPath,
+                    type: .cliTool,
+                    filePath: nil,
                     contactData: nil,
                     stableID: "cli://\(pkg.command)"
                 )

@@ -3491,6 +3491,7 @@ extension LauncherView {
         preserveGlobalContext: Bool = false
     ) -> Bool {
         guard !bundleIdentifier.isEmpty, !appName.isEmpty else { return false }
+        let isCLIToolScope = bundleIdentifier.hasPrefix("cli://")
 
         let targetApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
@@ -3562,7 +3563,23 @@ extension LauncherView {
             clearSearchFieldEditorText()
         }
 
-        if let targetApp {
+        if isCLIToolScope {
+            crossAppMenuTargetPID = 0
+            crossAppMenuNeedsLiveLoad = false
+            crossAppMenuItems = []
+            if preserveGlobalContext {
+                globalInlineAppScope = GlobalInlineAppScope(
+                    appName: appName,
+                    bundleId: bundleIdentifier,
+                    appPath: "",
+                    matchedAlias: appName,
+                    aliasStartIndex: 0,
+                    isExplicit: true
+                )
+                additionalGlobalInlineAppScopes = []
+            }
+            armGlobalScopedChat(appName: appName, bundleId: bundleIdentifier)
+        } else if let targetApp {
             // Force a fresh menu load for the newly scoped app (don't reuse a stale/empty
             // target) so its menus actually populate in Global Context scope.
             DispatchQueue.main.async {

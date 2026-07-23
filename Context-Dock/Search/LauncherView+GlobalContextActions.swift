@@ -610,7 +610,7 @@ extension LauncherView {
                             preserveGlobalContext: true
                         )
                     },
-                    type: .application,
+                    type: .cliTool,
                     filePath: nil,
                     contactData: nil
                 )
@@ -2924,7 +2924,7 @@ extension LauncherView {
                             preserveGlobalContext: true
                         )
                     },
-                    type: .application,
+                    type: .cliTool,
                     filePath: nil,
                     contactData: nil,
                     stableID: doc.id
