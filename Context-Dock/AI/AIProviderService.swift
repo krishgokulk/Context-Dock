@@ -779,7 +779,21 @@ class AIProviderService: ObservableObject {
         #endif
     }
 
-    private func shouldUseOnDeviceToolSession(for context: UserContext) -> Bool {
+    private func shouldUseOnDeviceToolSession(for context: UserContext, message: String = "") -> Bool {
+        // Pure generation / Q&A ("draft a letter", "summarize", "what is…") needs no app
+        // tool. Loading the app's whole tool set for these can stall the on-device model
+        // (the reply never streams → the chat sticks on an empty bubble). Use plain
+        // streaming for those; reserve the tool session for action-shaped requests.
+        let m = message.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let generationHints = [
+            "draft", "write", "compose", "rewrite", "rephrase", "summarize", "summarise",
+            "translate", "explain", "describe", "reply", "respond", "answer", "suggest",
+            "improve", "proofread", "what", "why", "how", "who", "when", "where",
+            "tell me", "give me",
+        ]
+        if generationHints.contains(where: { m.hasPrefix($0 + " ") || m == $0 }) {
+            return false
+        }
         if case .appFocused(_, let bundleID) = context {
             // Browsers need the streaming path so they receive live page content from AXWebReader.
             // Tool session gets an empty AX context when the dock is frontmost (not the browser).
@@ -821,7 +835,7 @@ class AIProviderService: ObservableObject {
         history: [ChatMessage] = [],
         additionalContextPrompt: String = ""
     ) async throws -> String {
-        let useTools = shouldUseOnDeviceToolSession(for: context)
+        let useTools = shouldUseOnDeviceToolSession(for: context, message: message)
         let matchedPackage = TerminalPackageManager.shared.findPackageForQuery(message)
         let contextPrompt = await buildContextPrompt(
             for: context,
@@ -903,7 +917,7 @@ class AIProviderService: ObservableObject {
                     }
 
                     // ── 2. Build full context prompt with live page / file content ──
-                    let useTools = self.shouldUseOnDeviceToolSession(for: context)
+                    let useTools = self.shouldUseOnDeviceToolSession(for: context, message: message)
                     let matchedPackage = TerminalPackageManager.shared.findPackageForQuery(message)
                     let contextPrompt = await buildContextPrompt(
                         for: context,
