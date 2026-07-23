@@ -16,6 +16,72 @@ enum AppleRemindersMCPCapabilities {
         registerOverdue(registry)
         registerList(registry)
         registerCreate(registry)
+        registerComplete(registry)
+        registerDelete(registry)
+    }
+
+    // MARK: - reminders.complete
+
+    private static func registerComplete(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.complete",
+                title: "Complete a Reminder",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part) of the reminder to mark done", required: true)
+                ]),
+                riskLevel: .medium
+            ) { request in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let done = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.completeReminder(matchingTitle: match))
+                    }
+                }
+                return .init(
+                    success: done != nil,
+                    output: done.map { "Marked '\($0)' as complete." }
+                        ?? "No open reminder matching '\(match)' found.")
+            }
+        )
+    }
+
+    // MARK: - reminders.delete
+
+    private static func registerDelete(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.delete",
+                title: "Delete a Reminder",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part) of the reminder to delete", required: true)
+                ]),
+                riskLevel: .high
+            ) { request in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let deleted = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.deleteReminder(matchingTitle: match))
+                    }
+                }
+                return .init(
+                    success: deleted != nil,
+                    output: deleted.map { "Deleted reminder '\($0)'." }
+                        ?? "No open reminder matching '\(match)' found.")
+            }
+        )
     }
 
     // MARK: - reminders.overdue

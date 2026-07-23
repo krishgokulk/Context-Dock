@@ -17,6 +17,89 @@ enum AppleCalendarMCPCapabilities {
         registerList(registry)
         registerSearch(registry)
         registerCreate(registry)
+        registerUpdate(registry)
+        registerDelete(registry)
+    }
+
+    // MARK: - calendar.update
+
+    private static func registerUpdate(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "calendar.update",
+                title: "Update Calendar Event",
+                appBundleID: "com.apple.iCal",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part of it) of the event to update", required: true),
+                    .init(name: "newTitle", description: "New title", required: false),
+                    .init(name: "newStartDate", description: "New start (ISO 8601)", required: false),
+                    .init(name: "durationMinutes", description: "New duration in minutes", required: false),
+                    .init(name: "location", description: "New location", required: false),
+                    .init(name: "notes", description: "New notes", required: false),
+                ]),
+                riskLevel: .medium
+            ) { request in
+                guard AppSettings.shared.calendarMCPEnabled else {
+                    throw AICapabilityError.blocked("Calendar access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let iso = ISO8601DateFormatter()
+                iso.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+                let newStart = request.input["newStartDate"].flatMap { iso.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
+                let newEnd = newStart.flatMap { s -> Date? in
+                    guard let mins = Int(request.input["durationMinutes"] ?? "") else { return nil }
+                    return s.addingTimeInterval(TimeInterval(max(1, mins) * 60))
+                }
+                let updated = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.updateEvent(
+                            matchingTitle: match,
+                            newTitle: request.input["newTitle"],
+                            newStart: newStart, newEnd: newEnd,
+                            newLocation: request.input["location"],
+                            newNotes: request.input["notes"]))
+                    }
+                }
+                return .init(
+                    success: updated != nil,
+                    output: updated.map { "Updated event '\($0)'." }
+                        ?? "No event matching '\(match)' found in the next few months.")
+            }
+        )
+    }
+
+    // MARK: - calendar.delete
+
+    private static func registerDelete(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "calendar.delete",
+                title: "Delete Calendar Event",
+                appBundleID: "com.apple.iCal",
+                inputSchema: .init(fields: [
+                    .init(name: "matchTitle", description: "Title (or part of it) of the event to delete", required: true)
+                ]),
+                riskLevel: .high
+            ) { request in
+                guard AppSettings.shared.calendarMCPEnabled else {
+                    throw AICapabilityError.blocked("Calendar access is disabled in Settings.")
+                }
+                guard let match = request.input["matchTitle"], !match.isEmpty else {
+                    throw AICapabilityError.missingInput("matchTitle")
+                }
+                let deleted = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.deleteEvent(matchingTitle: match))
+                    }
+                }
+                return .init(
+                    success: deleted != nil,
+                    output: deleted.map { "Deleted event '\($0)'." }
+                        ?? "No event matching '\(match)' found.")
+            }
+        )
     }
 
     // MARK: - calendar.next

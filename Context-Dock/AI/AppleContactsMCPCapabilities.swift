@@ -12,6 +12,46 @@ enum AppleContactsMCPCapabilities {
     static func register(in registry: CapabilityRegistry) {
         registerSearch(registry)
         registerDetails(registry)
+        registerCreate(registry)
+    }
+
+    // MARK: - contacts.create
+
+    private static func registerCreate(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "contacts.create",
+                title: "Create Contact",
+                appBundleID: "com.apple.AddressBook",
+                inputSchema: .init(fields: [
+                    .init(name: "firstName", description: "Contact's first name", required: true),
+                    .init(name: "lastName", description: "Last name", required: false),
+                    .init(name: "phone", description: "Phone number", required: false),
+                    .init(name: "email", description: "Email address", required: false),
+                ]),
+                riskLevel: .medium
+            ) { request in
+                guard AppSettings.shared.contactsMCPEnabled else {
+                    throw AICapabilityError.blocked("Contacts access is disabled in Settings.")
+                }
+                guard let firstName = request.input["firstName"], !firstName.isEmpty else {
+                    throw AICapabilityError.missingInput("firstName")
+                }
+                let saved = await withCheckedContinuation { cont in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        cont.resume(returning: AppleAppsAPI.shared.createContact(
+                            firstName: firstName,
+                            lastName: request.input["lastName"],
+                            phone: request.input["phone"],
+                            email: request.input["email"]))
+                    }
+                }
+                return .init(
+                    success: saved != nil,
+                    output: saved.map { "Created contact '\($0)'." }
+                        ?? "Failed to create contact — grant Contacts access in System Settings › Privacy.")
+            }
+        )
     }
 
     // MARK: - contacts.search

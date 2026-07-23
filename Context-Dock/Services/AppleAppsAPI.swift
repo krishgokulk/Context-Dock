@@ -157,6 +157,66 @@ class AppleAppsAPI {
         }
     }
 
+    /// Find the nearest event whose title matches (case-insensitive contains) within a
+    /// window around now, apply the edits, and save. Returns the matched title or nil.
+    func updateEvent(
+        matchingTitle: String, newTitle: String? = nil, newStart: Date? = nil,
+        newEnd: Date? = nil, newLocation: String? = nil, newNotes: String? = nil
+    ) -> String? {
+        guard requestEventAccess(), let event = findEvent(matchingTitle: matchingTitle) else {
+            return nil
+        }
+        if let newTitle, !newTitle.isEmpty { event.title = newTitle }
+        if let newStart { event.startDate = newStart }
+        if let newEnd { event.endDate = newEnd }
+        if let newLocation { event.location = newLocation }
+        if let newNotes { event.notes = newNotes }
+        do {
+            try eventStore.save(event, span: .thisEvent)
+            return event.title
+        } catch { return nil }
+    }
+
+    /// Delete the nearest event whose title matches. Returns the deleted title or nil.
+    func deleteEvent(matchingTitle: String) -> String? {
+        guard requestEventAccess(), let event = findEvent(matchingTitle: matchingTitle) else {
+            return nil
+        }
+        let title = event.title
+        do {
+            try eventStore.remove(event, span: .thisEvent)
+            return title
+        } catch { return nil }
+    }
+
+    private func findEvent(matchingTitle: String) -> EKEvent? {
+        let needle = matchingTitle.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        let start = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        let end = Calendar.current.date(byAdding: .day, value: 120, to: Date()) ?? Date()
+        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
+        return eventStore.events(matching: predicate)
+            .filter { ($0.title ?? "").lowercased().contains(needle) }
+            .sorted { abs($0.startDate.timeIntervalSinceNow) < abs($1.startDate.timeIntervalSinceNow) }
+            .first
+    }
+
+    private func requestEventAccess() -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        var granted = false
+        eventStore.requestAccess(to: .event) { ok, _ in granted = ok; semaphore.signal() }
+        _ = semaphore.wait(timeout: .now() + 5)
+        return granted
+    }
+
+    private func requestReminderAccess() -> Bool {
+        let semaphore = DispatchSemaphore(value: 0)
+        var granted = false
+        eventStore.requestAccess(to: .reminder) { ok, _ in granted = ok; semaphore.signal() }
+        _ = semaphore.wait(timeout: .now() + 5)
+        return granted
+    }
+
     // MARK: - Reminders API
 
     func getReminders(limit: Int = 10) -> [[String: Any]] {
@@ -202,6 +262,83 @@ class AppleAppsAPI {
             }
             return dueDate < now
         }
+    }
+
+    /// Mark the first incomplete reminder whose title matches as completed.
+    func completeReminder(matchingTitle: String) -> String? {
+        modifyReminder(matchingTitle: matchingTitle) { reminder in
+            reminder.isCompleted = true
+        }
+    }
+
+    /// Delete the first reminder whose title matches.
+    func deleteReminder(matchingTitle: String) -> String? {
+        guard requestReminderAccess() else { return nil }
+        let needle = matchingTitle.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        let predicate = eventStore.predicateForReminders(in: nil)
+        let semaphore = DispatchSemaphore(value: 0)
+        var deleted: String?
+        eventStore.fetchReminders(matching: predicate) { [weak self] reminders in
+            if let match = reminders?.first(where: {
+                !$0.isCompleted && ($0.title ?? "").lowercased().contains(needle)
+            }) {
+                deleted = match.title
+                try? self?.eventStore.remove(match, commit: true)
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 4)
+        return deleted
+    }
+
+    /// Create a new contact. Returns the saved display name, or nil on failure.
+    func createContact(
+        firstName: String, lastName: String?, phone: String?, email: String?
+    ) -> String? {
+        let contact = CNMutableContact()
+        contact.givenName = firstName
+        if let lastName, !lastName.isEmpty { contact.familyName = lastName }
+        if let phone, !phone.isEmpty {
+            contact.phoneNumbers = [
+                CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: phone))
+            ]
+        }
+        if let email, !email.isEmpty {
+            contact.emailAddresses = [
+                CNLabeledValue(label: CNLabelHome, value: email as NSString)
+            ]
+        }
+        let request = CNSaveRequest()
+        request.add(contact, toContainerWithIdentifier: nil)
+        do {
+            try contactStore.execute(request)
+            let name = [firstName, lastName ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+            return name.isEmpty ? firstName : name
+        } catch { return nil }
+    }
+
+    private func modifyReminder(
+        matchingTitle: String, _ change: @escaping (EKReminder) -> Void
+    ) -> String? {
+        guard requestReminderAccess() else { return nil }
+        let needle = matchingTitle.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        let predicate = eventStore.predicateForReminders(in: nil)
+        let semaphore = DispatchSemaphore(value: 0)
+        var changed: String?
+        eventStore.fetchReminders(matching: predicate) { [weak self] reminders in
+            if let match = reminders?.first(where: {
+                !$0.isCompleted && ($0.title ?? "").lowercased().contains(needle)
+            }) {
+                change(match)
+                changed = match.title
+                try? self?.eventStore.save(match, commit: true)
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 4)
+        return changed
     }
 
     // MARK: - Contacts API
