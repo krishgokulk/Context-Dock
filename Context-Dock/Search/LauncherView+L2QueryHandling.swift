@@ -541,17 +541,23 @@ extension LauncherView {
                         prompt += "Title: \(title)\n"
                         prompt += "URL: \(url)\n"
 
-                        // Fetch actual page content for Safari
-                        if appName.lowercased() == "safari" {
-                            if let pageText = fetchSafariPageText(), !pageText.isEmpty {
-                                let preview = pageText.prefix(3000)
-                                prompt += "\n📄 PAGE CONTENT:\n```\n\(preview)\n```\n"
-                                if pageText.count > 3000 {
-                                    prompt += "... (total: \(pageText.count) characters)\n"
-                                }
-                                prompt +=
-                                    "\n✅ Use this ACTUAL page content to answer questions about what's on the page!\n"
+                        // Actual page content: Safari via its bridge, any other browser
+                        // (DuckDuckGo/Chrome/Arc) by converting the tab URL with MarkItDown.
+                        let tabPageText: String? = {
+                            if appName.lowercased() == "safari" { return fetchSafariPageText() }
+                            guard let u = URL(string: url), MarkItDownService.supports(u) else {
+                                return nil
                             }
+                            return MarkItDownService.convert(u)?.markdown
+                        }()
+                        if let pageText = tabPageText, !pageText.isEmpty {
+                            let preview = pageText.prefix(3000)
+                            prompt += "\n📄 PAGE CONTENT:\n```\n\(preview)\n```\n"
+                            if pageText.count > 3000 {
+                                prompt += "... (total: \(pageText.count) characters)\n"
+                            }
+                            prompt +=
+                                "\n✅ Use this ACTUAL page content to answer questions about what's on the page!\n"
                         }
 
                     case .note(let content):
