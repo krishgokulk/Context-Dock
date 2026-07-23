@@ -925,14 +925,31 @@ extension LauncherView {
     /// Rank Finder desktop file pills by match quality, then cluster into type groups ordered by
     /// their best member — so the group holding the top match leads and each type appears once.
     func rankedFinderDesktopPills(_ pills: [DockPill], query: String) -> [DockPill] {
-        guard !query.isEmpty else { return pills }
-        struct Scored { var pill: DockPill; var score: Int; var order: Int }
+        // Frequency of past opens, so the user's most-launched items surface first.
+        func openCount(_ pill: DockPill) -> Int {
+            guard let path = pill.resolvedURL?.path else { return 0 }
+            return FinderOpenFrequencyStore.shared.count(forPath: path)
+        }
+
+        // Empty query = the default Finder desktop list: order by how often the user
+        // opens each item (Downloads, Screenshots, Applications, hot files at top),
+        // preserving the incoming order as a stable tiebreak.
+        guard !query.isEmpty else {
+            return pills.enumerated()
+                .sorted { a, b in
+                    let fa = openCount(a.element), fb = openCount(b.element)
+                    return fa != fb ? fa > fb : a.offset < b.offset
+                }
+                .map(\.element)
+        }
+
+        struct Scored { var pill: DockPill; var score: Int; var freq: Int; var order: Int }
         let scored = pills.enumerated().map { idx, pill -> Scored in
             var p = pill
             let s = finderDesktopMatchScore(
                 name: p.name, searchTerms: p.searchTerms, query: query)
             p.rankingScore = Double(s)
-            return Scored(pill: p, score: s, order: idx)
+            return Scored(pill: p, score: s, freq: openCount(pill), order: idx)
         }
         let groups = Dictionary(grouping: scored) { finderDesktopTypeGroup($0.pill) }
         let groupOrder = groups.keys.sorted { a, b in
@@ -943,7 +960,14 @@ extension LauncherView {
         }
         return groupOrder.flatMap { key -> [DockPill] in
             (groups[key] ?? [])
-                .sorted { $0.score != $1.score ? $0.score > $1.score : $0.order < $1.order }
+                // Match quality first, then most-opened, then stable input order — so
+                // frequency only breaks ties between equally-good name matches and can
+                // never override a better textual match.
+                .sorted { l, r in
+                    if l.score != r.score { return l.score > r.score }
+                    if l.freq != r.freq { return l.freq > r.freq }
+                    return l.order < r.order
+                }
                 .map(\.pill)
         }
     }
@@ -1477,7 +1501,12 @@ extension LauncherView {
             icon: icon,
             accentColorName: isApp ? "blue" : (isDir ? "blue" : "teal"),
             badge: badge,
-            execute: { NSWorkspace.shared.open(url) }
+            execute: {
+                // Record the open so most-launched items (Downloads, Screenshots,
+                // Applications, hot files) rank to the top next time.
+                FinderOpenFrequencyStore.shared.recordOpen(path: path)
+                NSWorkspace.shared.open(url)
+            }
         )
         if loadIcon {
             pill.menuItemImage = NSWorkspace.shared.icon(forFile: path)
