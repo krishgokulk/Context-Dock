@@ -472,9 +472,10 @@ extension LauncherView {
         case .generalChat:
             return aiMode.messages.isEmpty && !aiMode.isLoading && aiMode.streamingId == nil
         case .contextDockChat:
-            if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
-                return true
-            }
+            // A scoped chat (CLI/app) sets shouldShowGlobalScopedChatPin, but that must
+            // NOT force the idle pill once a conversation exists — otherwise the opaque
+            // card (drawn only when !idle) never appears and the sheet is see-through
+            // while typing. Idle only when the conversation is empty.
             return l2.chatMessages.isEmpty && !l2.isLoading
         case .globalContext:
             if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
