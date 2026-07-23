@@ -1149,6 +1149,13 @@ extension LauncherView {
                         guard !l2.handledApprovalIds.contains(msg.id) else { return }
                         l2.handledApprovalIds.insert(msg.id)
                         let command = msg.content
+                        // CLI tool scope: run the approved command LIVE in the scope's
+                        // embedded PTY (real-time output, interactive) instead of bouncing
+                        // to Terminal.app.
+                        if isInCLIToolScope {
+                            CLIScopeTerminalManager.shared.run(command)
+                            return
+                        }
                         // Bridge card whose tool loop is still awaiting THIS command →
                         // resume it (the loop runs it and feeds the result back to the
                         // model). Every other case (dock_cmd, or an orphaned bridge card

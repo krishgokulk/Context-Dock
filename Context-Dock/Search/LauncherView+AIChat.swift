@@ -771,6 +771,8 @@ extension LauncherView {
             l2.currentTask = nil
             exitContextDockChatBackToContext()
         }
+        // Tear down the CLI scope's embedded PTY so the next scope starts clean.
+        CLIScopeTerminalManager.shared.reset()
         isSearchFieldFocused = true
     }
 
@@ -1129,9 +1131,36 @@ extension LauncherView {
                         }
                     }
                 }
+
+                // CLI tool scopes get an embedded live PTY docked at the bottom —
+                // approved commands run here in real time; chevron expands it.
+                if isInCLIToolScope {
+                    CLIScopeTerminalPanel(isDark: isEffectiveDark, accentColor: .green)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
+                }
             }
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
+    }
+
+    /// True while the active scope / scoped chat is a CLI tool (cli:// bundle, a
+    /// pinned CLI tool, or a bare binary path) — drives the embedded terminal panel.
+    var isInCLIToolScope: Bool {
+        if isCLIToolScopeLocked { return true }
+        if let scope = globalInlineAppScope,
+            isCLIToolScopeChip(
+                bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath)
+        {
+            return true
+        }
+        if let target = l2.targetApp,
+            isCLIToolScopeChip(bundleId: target.bundleId, appName: target.name, appPath: "")
+        {
+            return true
+        }
+        return false
     }
 
     /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
