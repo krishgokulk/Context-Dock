@@ -593,9 +593,12 @@ extension LauncherView {
                     // frames its own scroll to min(measured, cap), so the sheet hugs short chats and
                     // scrolls long ones with no clipping. Search: computed height.
                     if isChatMode {
+                        // No insertion/removal transition here: on each new query the chat
+                        // content re-identifies and the opacity+scale transition left the
+                        // OUTGOING messages rendered translucently over the incoming ones
+                        // (the ghosted overlap above the card). The chat sizes itself.
                         unifiedDockModeContent
                             .frame(width: resultsPanelWidth, alignment: .leading)
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     } else {
                         unifiedDockModeContent
                             .frame(height: modeContentHeight)
