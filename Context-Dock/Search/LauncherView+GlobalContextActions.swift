@@ -588,7 +588,6 @@ extension LauncherView {
         guard limit > 0 else { return [] }
         let q = normalizedDockPillText(query)
         guard !q.isEmpty else { return [] }
-        let icon = NSWorkspace.shared.icon(forFileType: "public.unix-executable")
         return terminalPackageManager.packages
             .filter(\.isEnabled)
             .filter(isUserAddedGlobalCLITool)
@@ -602,8 +601,11 @@ extension LauncherView {
                 else { return nil }
                 var result = SearchResult(
                     title: package.command,
+                    // nil icon → ResultRow renders the green terminal.fill for .cliTool,
+                    // matching the scope chip; a generic unix-executable NSImage showed an
+                    // ugly grey box instead.
                     subtitle: "cli://\(package.command)",
-                    icon: icon,
+                    icon: nil,
                     action: {
                         _ = activateInlineDockAppScope(
                             bundleIdentifier: "cli://\(package.command)",

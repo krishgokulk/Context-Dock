@@ -864,6 +864,7 @@ class AppSettings: ObservableObject {
     @AppStorage("appToolExtensionsData") private var appToolExtensionsData: Data = Data()
     @AppStorage("tuiFolderAccessData") private var tuiFolderAccessData: Data = Data()
     @AppStorage("pinnedCLIToolsData") private var pinnedCLIToolsData: Data = Data()
+    @AppStorage("pinnedCLIToolsSeeded") private var pinnedCLIToolsSeeded: Bool = false
     @AppStorage("menuPillFavouritesData") private var menuPillFavouritesData: Data = Data()
 
     // MARK: - Favourite menu pills (per app bundle ID)
@@ -1400,9 +1401,23 @@ class AppSettings: ObservableObject {
     func unpinCLITool(_ command: String) { pinnedCLITools.remove(command) }
 
     private func loadPinnedCLITools() {
-        guard !pinnedCLIToolsData.isEmpty else { return }
-        if let decoded = try? JSONDecoder().decode(Set<String>.self, from: pinnedCLIToolsData) {
+        if !pinnedCLIToolsData.isEmpty,
+            let decoded = try? JSONDecoder().decode(Set<String>.self, from: pinnedCLIToolsData) {
             pinnedCLITools = decoded
+        }
+        seedDefaultCLIToolsIfNeeded()
+    }
+
+    /// Seed Homebrew as a default CLI tool scope on first run (only when it's
+    /// actually installed), so users can search / install apps and work with brew
+    /// via the AI-assisted CLI scope out of the box. One-shot — never re-adds after
+    /// the user removes it.
+    private func seedDefaultCLIToolsIfNeeded() {
+        guard !pinnedCLIToolsSeeded else { return }
+        pinnedCLIToolsSeeded = true
+        let brewPaths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+        if brewPaths.contains(where: { FileManager.default.fileExists(atPath: $0) }) {
+            pinnedCLITools.insert("brew")
         }
     }
     private func savePinnedCLITools() {
