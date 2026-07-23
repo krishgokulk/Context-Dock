@@ -583,6 +583,34 @@ extension LauncherView {
         }
     }
 
+    /// After a Quick Look peek closes, keep the list selection on the file that was
+    /// being previewed — Spotlight-style — instead of dropping back to the first row.
+    /// Restores BOTH the results-list selection (searchState.selectedIndex, which
+    /// drives Finder file search) and the dock-pill focus (l2.focusedPillIndex).
+    func restoreSelectionAfterQuickLookClose(previewedURL url: URL) {
+        // Results-list selection (Finder file search is driven by this, not pills).
+        if let resultIdx = searchState.results.firstIndex(where: { $0.filePath == url.path }) {
+            searchState.selectedIndex = resultIdx
+        }
+
+        guard usesVerticalListDockLayout else { return }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
+        let pills =
+            pillQuery.isEmpty
+            ? selectionScopedDockPills(cachedDockPills)
+            : contextDockViewModel.visiblePills
+        if let idx = pills.firstIndex(where: { $0.quickLookURL == url }) {
+            l2.focusedPillIndex = idx
+            l2.pillNavViaKeyboard = true
+            isSearchFieldFocused = false
+        } else if l2.focusedPillIndex != nil {
+            // Keep whatever pill focus already existed; just stay in list-nav mode.
+            l2.pillNavViaKeyboard = true
+            isSearchFieldFocused = false
+        }
+    }
+
     func removeQuickLookEventMonitor() {
         if let monitor = quickLookEventMonitor {
             NSEvent.removeMonitor(monitor)
@@ -604,30 +632,17 @@ extension LauncherView {
         {
             panel.orderOut(nil)
             quickLookDataSource = nil
-            // Spotlight-style: land focus on the result that was being previewed so Down/Up
-            // continue from THERE, not from the first result. Use the previewed URL to find
-            // its row (the peek may have arrow-navigated to a different file than where it
-            // opened), then keep the list focused (not the input field).
-            if usesVerticalListDockLayout {
-                let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-                let pills =
-                    pillQuery.isEmpty
-                    ? selectionScopedDockPills(cachedDockPills)
-                    : contextDockViewModel.visiblePills
-                if let idx = pills.firstIndex(where: { $0.quickLookURL == url }) {
-                    l2.focusedPillIndex = idx
-                } else if l2.focusedPillIndex == nil {
-                    l2.focusedPillIndex = listViewHoveredIndex
-                }
-                l2.pillNavViaKeyboard = true
-                isSearchFieldFocused = false
-            }
+            restoreSelectionAfterQuickLookClose(previewedURL: url)
             return true
         }
 
         let dataSource = QuickLookDataSource(urls: [url])
+        // Quick Look closes itself on Space/Escape without routing through our monitor,
+        // so restore the previewed selection from the panel's own close callback too.
+        dataSource.onClose = { [self] in
+            quickLookDataSource = nil
+            restoreSelectionAfterQuickLookClose(previewedURL: url)
+        }
         quickLookDataSource = dataSource
         panel.dataSource = dataSource
         panel.delegate = dataSource
