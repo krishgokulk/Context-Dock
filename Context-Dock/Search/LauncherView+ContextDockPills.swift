@@ -761,6 +761,11 @@ extension LauncherView {
     }
 
     func buildFinderDesktopModePills(query: String) -> [DockPill] {
+        // Browsing INTO a folder: show its contents (filtered by the typed query),
+        // not the search results.
+        if isBrowsingFinderFolder {
+            return finderBrowseContentsPills(query: query)
+        }
         let syncBase: [DockPill]
         if query.isEmpty {
             // finderDesktopRecentPills already contains running apps + recent files

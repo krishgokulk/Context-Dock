@@ -144,6 +144,10 @@ struct LauncherView: View {
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
     @State var finderDesktopRecentPills: [DockPill] = []
     @State var finderDesktopIndexedPills: [DockPill] = []  // all user-folder files, pre-loaded for instant filter
+    /// Non-nil while browsing INTO a folder in Finder desktop mode: the result list
+    /// shows that folder's contents instead of the search results. Right-arrow on a
+    /// focused folder drills in; Backspace on an empty field pops back out.
+    @State var finderBrowsePath: String? = nil
     @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
     @State var finderDesktopSearchPills: [DockPill] = []
     @State var finderDesktopSearchQuery: String = ""

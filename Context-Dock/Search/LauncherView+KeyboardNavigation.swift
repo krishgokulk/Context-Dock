@@ -1902,6 +1902,9 @@ extension LauncherView {
                         return .handled
                     }
                 }
+                // Browsing a Finder folder with an empty field → pop to the parent
+                // folder, then back out to the search results.
+                if popFinderBrowseFromEmptyBackspaceIfNeeded() { return .handled }
                 return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
             }
             // Left Arrow on an empty field (no scope chips) → standalone General AI
@@ -1928,6 +1931,12 @@ extension LauncherView {
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
                 if activeNotepadScopeCommand != nil { return .ignored }
+                // Finder desktop: drill into the focused folder, showing its contents.
+                // Only when the caret is at the end so it never hijacks cursor movement
+                // while editing the query.
+                if searchInputCursorIsAtEnd(), drillIntoFocusedFinderFolderIfPossible() {
+                    return .handled
+                }
                 if searchState.activeSmartQueryKey == "clipboard",
                     clipboardSourcePillFocusIndex != nil
                 {

@@ -35,7 +35,7 @@ extension LauncherView {
 
     func dockPillListView(pills: [DockPill]) -> some View {
         let visiblePills = clusterPillsByGroup(Array(pills.prefix(maxListViewDockPills)))
-        return ScrollViewReader { proxy in
+        let list = ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(visiblePills.enumerated()), id: \.element.id) { idx, pill in
@@ -116,6 +116,15 @@ extension LauncherView {
                 DispatchQueue.main.async {
                     refreshQuickLookPreviewForCurrentFocusIfVisible()
                 }
+            }
+        }
+        // When drilling into a folder, show a Finder-style breadcrumb footer below
+        // the contents (⌫ walks back out).
+        return VStack(spacing: 0) {
+            list
+            if isBrowsingFinderFolder {
+                Divider().opacity(0.12).padding(.horizontal, 10)
+                finderBrowseBreadcrumb
             }
         }
     }
