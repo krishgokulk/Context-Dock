@@ -448,11 +448,6 @@ extension LauncherView {
             withAnimation(.spring(response: 0.15, dampingFraction: 0.80)) {
                 hoveredDockAppKey = hovering ? hoverKey : nil
                 if let index { hoveredAppPillIndex = hovering ? index : nil }
-                if hovering, let previewApp {
-                    RunningAppPreviewService.shared.scheduleShow(for: previewApp, icon: icon)
-                } else if !hovering {
-                    RunningAppPreviewService.shared.scheduleHide()
-                }
             }
         }
         .help(label)
@@ -530,16 +525,12 @@ extension LauncherView {
         }
         .frame(width: outerSz, height: outerSz)
         .onHover { hovering in
-            guard acceptsMouseDrivenDockInteraction else { return }
             guard let hoverKey else { return }
+            guard acceptsMouseDrivenDockInteraction else { return }
             if hovering {
                 hoveredDockAppKey = hoverKey
-                if let runningApp {
-                    RunningAppPreviewService.shared.scheduleShow(for: runningApp, icon: icon)
-                }
             } else if hoveredDockAppKey == hoverKey {
                 hoveredDockAppKey = nil
-                RunningAppPreviewService.shared.scheduleHide()
             }
         }
         .help(label)

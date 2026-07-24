@@ -1071,6 +1071,9 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 activateClipboardScope()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .activateWindowReviewScope)) { _ in
+                activateWindowReviewScope()
+            }
             .onChange(of: currentContext.description) { _, _ in
                 // Trigger smooth expansion when context is detected
                 if settings.enableContextAIExtensions {

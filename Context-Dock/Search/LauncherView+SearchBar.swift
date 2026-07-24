@@ -1161,8 +1161,9 @@ extension LauncherView {
 
                         if let compactScopeKey, showContextInDock, isSearchBarExpanded {
                             let isClipboard = compactScopeKey == "clipboard"
-                            let label = isClipboard ? "Clipboard" : "Notifications"
-                            let symbol = isClipboard ? "doc.on.clipboard" : "bell.badge"
+                            let isWindows = compactScopeKey == "windows"
+                            let label = isClipboard ? "Clipboard" : (isWindows ? "Window Preview" : "Notifications")
+                            let symbol = isClipboard ? "doc.on.clipboard" : (isWindows ? "macwindow.on.rectangle" : "bell.badge")
                             let accent =
                                 isClipboard ? SwiftUI.Color.blue : SwiftUI.Color.accentColor
                             let chipTextColor: SwiftUI.Color =
@@ -2735,6 +2736,8 @@ extension LauncherView {
                 Group {
                     if searchState.activeSmartQueryKey == "clipboard" {
                         clipboardScopeView
+                    } else if searchState.activeSmartQueryKey == "windows" {
+                        windowReviewScopeView
                     } else {
                         notificationScopeView
                     }

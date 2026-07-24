@@ -5357,6 +5357,8 @@ extension LauncherView {
             return ("doc.on.clipboard", "Clipboard", "")
         case "notifications":
             return ("bell.badge", "Notifications", "")
+        case "windows":
+            return ("macwindow.on.rectangle", "Window Preview", "")
         case "notes": return ("note.text", "Notes", "/System/Applications/Notes.app")
         case "mail": return ("envelope", "Mail", "/System/Applications/Mail.app")
         case "photos": return ("photo.on.rectangle", "Photos", "/System/Applications/Photos.app")

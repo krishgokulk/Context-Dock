@@ -1382,6 +1382,10 @@ extension LauncherView {
                 onClose()
             }
             .onKeyPress(.upArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(direction: -1)
+                    return .handled
+                }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
                 if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
@@ -1435,6 +1439,10 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(direction: 1)
+                    return .handled
+                }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
                 if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
@@ -1556,6 +1564,9 @@ extension LauncherView {
             .onKeyPress(.return) {
                 // Quick Note editor: Return / Shift+Return insert a newline.
                 if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "windows" {
+                    return executeFocusedWindowReviewItem() ? .handled : .ignored
+                }
                 if !showFolderPreview {
                     if executeScopedRunningAppIfIdle() {
                         return .handled
@@ -1913,6 +1924,10 @@ extension LauncherView {
             // Left Arrow on an empty field (no scope chips) → standalone General AI
             // chat. With text or a scope chip present it stays a normal cursor/scope key.
             .onKeyPress(.leftArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(direction: -1)
+                    return .handled
+                }
                 if searchState.activeSmartQueryKey == "clipboard",
                     clipboardSourcePillFocusIndex != nil
                 {
@@ -1939,6 +1954,10 @@ extension LauncherView {
             // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(direction: 1)
+                    return .handled
+                }
                 if activeNotepadScopeCommand != nil { return .ignored }
                 // Finder desktop: drill into the focused folder, showing its contents.
                 // Only when the caret is at the end so it never hijacks cursor movement

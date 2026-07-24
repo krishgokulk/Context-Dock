@@ -269,6 +269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var captureTextHotKeyRef: EventHotKeyRef?
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
+    var windowReviewHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
@@ -1402,12 +1403,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             RemoveEventHandler(ref)
             captureHotkeyEventHandlerRef = nil
         }
-        for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef] {
+        for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef,
+                    windowReviewHotKeyRef] {
             if let ref { UnregisterEventHotKey(ref) }
         }
         captureTextHotKeyRef = nil
         captureAreaHotKeyRef = nil
         captureScreenshotHotKeyRef = nil
+        windowReviewHotKeyRef = nil
     }
 
     func registerCaptureHotkeys() {
@@ -1416,6 +1419,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.captureTextHotkeyKeyCode,
             settings.captureAreaHotkeyKeyCode,
             settings.captureScreenshotHotkeyKeyCode,
+            settings.windowReviewHotkeyKeyCode,
         ].contains { $0 != 0 }
         guard configured else { return }
 
@@ -1435,6 +1439,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 41: ScreenCaptureService.shared.capture(.text)
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
+            case 44: AppDelegate.shared?.activateWindowReviewScope()
             default: return OSStatus(eventNotHandledErr)
             }
             return noErr
@@ -1462,6 +1467,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.captureScreenshotHotkeyKeyCode,
                 settings.captureScreenshotHotkeyModifiers,
                 id, GetApplicationEventTarget(), 0, &captureScreenshotHotKeyRef)
+        }
+        if settings.windowReviewHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 44)
+            RegisterEventHotKey(
+                settings.windowReviewHotkeyKeyCode, settings.windowReviewHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &windowReviewHotKeyRef)
         }
     }
 
@@ -1800,6 +1811,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
         presentSmartScope(.activateClipboardScope)
+    }
+
+    func activateWindowReviewScope() {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        presentSmartScope(.activateWindowReviewScope)
     }
 
     /// True while a compact scope (Clipboard / Notifications) is showing, so the

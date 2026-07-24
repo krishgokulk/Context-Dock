@@ -113,6 +113,8 @@ struct LauncherView: View {
     @ObservedObject var terminalBridge = TerminalAIBridge.shared
     @ObservedObject var terminalPackageManager = TerminalPackageManager.shared
     @ObservedObject var adapterManager = AppAdapterManager.shared
+    @ObservedObject var windowReviewService = RunningAppPreviewService.shared
+    @State var windowReviewFocusedID: String? = nil
 
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared
     @ObservedObject var usageStore = AIProviderUsageStore.shared
@@ -418,7 +420,7 @@ struct LauncherView: View {
 
     var isCompactSmartScope: Bool {
         guard let key = searchState.activeSmartQueryKey else { return false }
-        return key == "clipboard" || key == "notifications"
+        return key == "clipboard" || key == "notifications" || key == "windows"
     }
 
     var hasSecondaryDockContentBesideInput: Bool {
@@ -2900,6 +2902,9 @@ struct LauncherView: View {
     }
 
     var searchResultsPanelMaxHeight: CGFloat {
+        // Compact scopes own custom content rather than `searchState.results`. Without an
+        // explicit capacity, an empty result array collapses their custom view to zero height.
+        if isCompactSmartScope { return 450 }
         switch currentDockSurfaceMode {
         case .globalContext, .contextDock:
             let liveHeight = DockHeightResolver.l1ResultsHeight(for: searchState.results.count)

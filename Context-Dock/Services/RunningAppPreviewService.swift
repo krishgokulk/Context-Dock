@@ -13,6 +13,14 @@ struct RunningAppWindowPreview: Identifiable {
     var minimized: Bool = false
 }
 
+struct WindowReviewGroup: Identifiable {
+    let id: pid_t
+    let app: NSRunningApplication
+    let name: String
+    let icon: NSImage?
+    var windows: [RunningAppWindowPreview]
+}
+
 @MainActor
 final class RunningAppPreviewService: ObservableObject {
     static let shared = RunningAppPreviewService()
@@ -20,6 +28,7 @@ final class RunningAppPreviewService: ObservableObject {
     @Published private(set) var appName: String = ""
     @Published private(set) var previews: [RunningAppWindowPreview] = []
     @Published private(set) var appIcon: NSImage?
+    @Published private(set) var reviewGroups: [WindowReviewGroup] = []
 
     private var panel: NSPanel?
     private var hoverTask: Task<Void, Never>?
@@ -41,11 +50,48 @@ final class RunningAppPreviewService: ObservableObject {
         }
     }
 
+    /// Keyboard entry point for the same per-app window switcher used by capsule hover.
+    /// It deliberately stays app-scoped: this does not enter or mutate any dock/chat mode.
+    func showWindowReview() {
+        let app = AppDelegate.shared?.menuBarOwningUserFacingApplication()
+            ?? AppDelegate.shared?.previousFrontmostApp
+        guard let app, !app.isTerminated else { return }
+        hoverTask?.cancel()
+        hideTask?.cancel()
+        show(for: app, icon: app.icon)
+    }
+
+    func loadWindowReview() {
+        let ownBundleID = Bundle.main.bundleIdentifier
+        reviewGroups = NSWorkspace.shared.runningApplications
+            .filter {
+                !$0.isTerminated && $0.activationPolicy == .regular
+                    && $0.bundleIdentifier != ownBundleID
+            }
+            .compactMap { app in
+                let windows = windowPreviews(for: app)
+                guard !windows.isEmpty else { return nil }
+                return WindowReviewGroup(
+                    id: app.processIdentifier, app: app, name: app.localizedName ?? "App",
+                    icon: app.icon, windows: windows)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        for group in reviewGroups {
+            refreshReviewScreenshots(for: group.app, previews: group.windows)
+        }
+    }
+
+    func focus(_ preview: RunningAppWindowPreview, in app: NSRunningApplication) {
+        activePID = app.processIdentifier
+        focus(preview)
+    }
+
     func scheduleHide() {
         hoverTask?.cancel()
         hideTask?.cancel()
         hideTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 120_000_000)
+            // Leave enough time to cross the small gap between the capsule and preview.
+            try? await Task.sleep(nanoseconds: 260_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.hide()
@@ -98,8 +144,17 @@ final class RunningAppPreviewService: ObservableObject {
     private func show(for app: NSRunningApplication, icon: NSImage?) {
         guard !app.isTerminated else { return }
         let pid = app.processIdentifier
-        let windows = windowPreviews(for: app)
-        guard !windows.isEmpty else { return }
+        var windows = windowPreviews(for: app)
+        if windows.isEmpty {
+            // Always acknowledge hover. Apps with no ordinary windows, or Macs where
+            // Accessibility/Screen Recording is unavailable, still get an actionable card.
+            windows = [RunningAppWindowPreview(
+                id: CGWindowID(0xFFFF_FFFE),
+                title: app.localizedName ?? "App",
+                bounds: .zero,
+                image: nil
+            )]
+        }
 
         activePID = pid
         appName = app.localizedName ?? "App"
@@ -156,7 +211,7 @@ final class RunningAppPreviewService: ObservableObject {
         // Prefer showing ABOVE the hovered capsule icon (snapshot grows upward, clear of
         // the result sheet). Fall back below only when there isn't room above, so it
         // never renders off-screen / empty.
-        let gap: CGFloat = 30
+        let gap: CGFloat = 12
         let aboveY = mouse.y + gap
         let belowY = mouse.y - gap - height
         let y: CGFloat
@@ -176,7 +231,9 @@ final class RunningAppPreviewService: ObservableObject {
             return cached.previews
         }
 
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        // `.optionAll` is required for minimized windows and windows on another Space.
+        // Filtering by owner, layer, alpha, and useful bounds below removes helper surfaces.
+        let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
         guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
         else { return [] }
 
@@ -199,11 +256,14 @@ final class RunningAppPreviewService: ObservableObject {
             let windowID = CGWindowID(windowNumber.uint32Value)
             let title = (info[kCGWindowName as String] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let isOnScreen =
+                (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
             return RunningAppWindowPreview(
                 id: windowID,
                 title: title?.isEmpty == false ? title! : app.localizedName ?? "Window",
                 bounds: bounds,
-                image: nil
+                image: nil,
+                minimized: !isOnScreen
             )
         }
         .prefix(5)
@@ -213,10 +273,20 @@ final class RunningAppPreviewService: ObservableObject {
         // CGWindowList only returns on-screen windows. Merge in the app's other windows
         // via Accessibility — minimized windows and windows on other Spaces — so the
         // hover peek is a real alt-tab of ALL the app's windows, not just visible ones.
-        let onScreenTitles = Set(previews.map { $0.title.lowercased() })
-        for axWin in axWindowPreviews(for: app) where !onScreenTitles.contains(axWin.title.lowercased()) {
+        let axPreviews = axWindowPreviews(for: app)
+        let minimizedTitles = Set(
+            axPreviews.filter(\.minimized).map { $0.title.lowercased() })
+        previews = previews.map { preview in
+            var updated = preview
+            if minimizedTitles.contains(preview.title.lowercased()) {
+                updated.minimized = true
+            }
+            return updated
+        }
+        var knownTitles = Set(previews.map { $0.title.lowercased() })
+        for axWin in axPreviews where knownTitles.insert(axWin.title.lowercased()).inserted {
             previews.append(axWin)
-            if previews.count >= 6 { break }
+            if previews.count >= 5 { break }
         }
 
         cache[pid] = (Date(), previews)
@@ -262,7 +332,7 @@ final class RunningAppPreviewService: ObservableObject {
             guard
                 let content = try? await SCShareableContent.excludingDesktopWindows(
                     false,
-                    onScreenWindowsOnly: true
+                    onScreenWindowsOnly: false
                 )
             else { return }
 
@@ -297,6 +367,40 @@ final class RunningAppPreviewService: ObservableObject {
                 }
                 self.previews = updated
                 self.cache[pid] = (Date(), updated)
+            }
+        }
+    }
+
+    private func refreshReviewScreenshots(
+        for app: NSRunningApplication, previews requestedPreviews: [RunningAppWindowPreview]
+    ) {
+        let pid = app.processIdentifier
+        let ids = Set(requestedPreviews.filter { $0.id < 0xFFFF_0000 }.map(\.id))
+        guard !ids.isEmpty else { return }
+        Task {
+            guard let content = try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: false) else { return }
+            var images: [CGWindowID: CGImage] = [:]
+            for window in content.windows where ids.contains(CGWindowID(window.windowID)) {
+                let filter = SCContentFilter(desktopIndependentWindow: window)
+                let config = SCStreamConfiguration()
+                config.width = 480
+                config.height = 300
+                config.showsCursor = false
+                if let image = try? await SCScreenshotManager.captureImage(
+                    contentFilter: filter, configuration: config) {
+                    images[CGWindowID(window.windowID)] = image
+                }
+            }
+            guard !images.isEmpty else { return }
+            await MainActor.run {
+                guard let index = self.reviewGroups.firstIndex(where: { $0.id == pid }) else { return }
+                self.reviewGroups[index].windows = self.reviewGroups[index].windows.map { preview in
+                    guard let image = images[preview.id] else { return preview }
+                    return RunningAppWindowPreview(
+                        id: preview.id, title: preview.title, bounds: preview.bounds,
+                        image: image, minimized: preview.minimized)
+                }
             }
         }
     }
