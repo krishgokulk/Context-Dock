@@ -299,7 +299,16 @@ extension LauncherView {
             if FileManager.default.fileExists(atPath: url.path),
                 (try? Data(contentsOf: url))?.isEmpty == false
             {
-                await MainActor.run { append(url) }
+                await MainActor.run {
+                    // Also put the shot on the clipboard so it can be pasted anywhere,
+                    // matching Capture Text's behaviour.
+                    if let image = NSImage(contentsOf: url) {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.writeObjects([image])
+                    }
+                    append(url)
+                }
             }
         }
     }

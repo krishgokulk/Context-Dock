@@ -2131,6 +2131,22 @@ extension LauncherView {
                                             if launchTypedAppMatchIfNeeded() {
                                                 return
                                             }
+                                            // Attachment-only send: a captured shot / text or an
+                                            // uploaded file is enough — Enter sends it with an
+                                            // implicit ask instead of exiting the chat.
+                                            let hasChatAttachments =
+                                                !contextDockChatFiles.isEmpty
+                                                || (contextDockChatCapturedText?.isEmpty == false)
+                                            if trimmed.isEmpty, hasChatAttachments,
+                                                shouldShowContextDockChatSheet || l2.showChatPopover
+                                                    || l2.chatArmed || shouldShowGlobalScopedChatPin
+                                            {
+                                                handleL2QuerySkippingMenuRouter(
+                                                    contextDockChatFiles.isEmpty
+                                                        ? "Explain the captured text."
+                                                        : "Explain what's in the attached file(s).")
+                                                return
+                                            }
                                             if trimmed.isEmpty,
                                                 shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed
                                             {

@@ -874,9 +874,67 @@ extension LauncherView {
         .help("Attach a file, screenshot, or capture on-screen text")
     }
 
+    /// Attachment chips (files / captured text) for the frontmost-app chat, shown next
+    /// to the + so the user can see what will be sent — and drop it again.
+    @ViewBuilder
+    var contextDockChatAttachmentChips: some View {
+        let fileCount = contextDockChatFiles.count
+        let hasText = (contextDockChatCapturedText?.isEmpty == false)
+        if fileCount > 0 || hasText {
+            HStack(spacing: 4) {
+                if fileCount > 0 {
+                    Button {
+                        contextDockChatFiles.removeAll()
+                    } label: {
+                        HStack(spacing: 3) {
+                            if let first = contextDockChatFiles.first,
+                                let thumb = NSImage(contentsOf: first)
+                            {
+                                Image(nsImage: thumb)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 16, height: 16)
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                            } else {
+                                Image(systemName: "doc.fill").font(.system(size: 9))
+                            }
+                            Text(fileCount > 1 ? "\(fileCount)" : "1")
+                                .font(.system(size: 10, weight: .semibold))
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(fileCount) attachment(s) — click to remove")
+                }
+                if hasText {
+                    Button {
+                        contextDockChatCapturedText = nil
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "text.viewfinder").font(.system(size: 9))
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Captured text attached — click to remove")
+                }
+            }
+            .transition(.scale(scale: 0.85).combined(with: .opacity))
+        }
+    }
+
     /// Pin + the attach menu, shown together in the frontmost-app chat toolbar.
     var contextDockChatTrailingControls: some View {
         HStack(spacing: 4) {
+            contextDockChatAttachmentChips
             contextDockChatAttachMenu
             contextDockChatCloseButton
         }
