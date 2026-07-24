@@ -4132,6 +4132,7 @@ extension LauncherView {
     }
 
     func replaceCachedDockPills(_ pills: [DockPill], preserveFocus: Bool) {
+        defer { applyQueuedPillNavigationIfReady() }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let focusedRenderedPillID: String? = {
             guard preserveFocus,
@@ -4172,6 +4173,36 @@ extension LauncherView {
 
         l2.focusedPillIndex = nil
         l2.pillNavViaKeyboard = false
+    }
+
+    /// Replay arrow presses received during preview loading against the final ordered rows.
+    func applyQueuedPillNavigationIfReady() {
+        guard let generation = contextDockViewModel.queuedPillNavigationGeneration,
+            generation == dockPillBuildGeneration
+        else { return }
+
+        let delta = contextDockViewModel.queuedPillNavigationDelta
+        contextDockViewModel.queuedPillNavigationDelta = 0
+        contextDockViewModel.queuedPillNavigationGeneration = nil
+        guard delta != 0, usesVerticalListDockLayout else { return }
+
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rendered = renderedOrderDockPills(for: q)
+        let selectable = rendered.indices.filter { !rendered[$0].isSeparator }
+        guard !selectable.isEmpty else { return }
+
+        let currentPosition: Int = {
+            if let focused = l2.focusedPillIndex,
+                let position = selectable.firstIndex(of: focused)
+            {
+                return position
+            }
+            // While typing, row one is the visual default; the first Down selects row two.
+            return q.isEmpty ? -1 : 0
+        }()
+        let target = min(max(currentPosition + delta, 0), selectable.count - 1)
+        l2.pillNavViaKeyboard = true
+        l2.focusedPillIndex = selectable[target]
     }
 
     func logDockPerformance(_ label: String, started: Date, query: String) {

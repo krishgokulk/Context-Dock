@@ -345,7 +345,7 @@ extension LauncherView {
                 switch event.keyCode {
                 case 125:  // Down
                     if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
-                case 124, 48:  // Right / Tab — ghost completion FIRST, then expansion
+                case 124, 48:  // Right / Tab — completion/scope only; ↓ owns sheet reveal
                     if event.keyCode == 124,
                         self.acceptTopGlobalAppGhostCompletionIfPossible()
                     {
@@ -353,13 +353,6 @@ extension LauncherView {
                     }
                     if event.keyCode == 124,
                         self.activateFocusedGlobalAppScopeIfPossible()
-                    {
-                        return nil
-                    }
-                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: {
-                        $0.isExpandable
-                    }),
-                        self.expandGlobalContextTypingMatch(selectFirst: true)
                     {
                         return nil
                     }
@@ -381,18 +374,10 @@ extension LauncherView {
                     if exactLaunchIcons.count == 1, let item = exactLaunchIcons.first {
                         self.executeMatchDockIcon(item)
                         return nil
-                    } else if expandableRunningIcons.count == 1 {
-                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                            return nil
-                        }
-                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable
+                    } else if expandableRunningIcons.count == 1,
+                        let item = expandableRunningIcons.first
                     {
-                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                            return nil
-                        }
-                    } else if matchIcons.contains(where: { $0.isExpandable }),
-                        self.expandGlobalContextTypingMatch(selectFirst: true)
-                    {
+                        self.executeMatchDockIcon(item)
                         return nil
                     }
                 default:
@@ -407,16 +392,6 @@ extension LauncherView {
                 }
                 if self.activateFocusedGlobalAppScopeIfPossible() {
                     return nil
-                }
-                if self.isGlobalContextActive,
-                    self.shouldUsePureGlobalAppSearch,
-                    self.globalInlineAppScope == nil,
-                    self.globalContextViewModel.typingSnapshot.phase != .expanded,
-                    !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                        return nil
-                    }
                 }
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     self.focusTopGlobalAppResultIfPossible()
@@ -887,6 +862,18 @@ extension LauncherView {
                 return nil
 
             case 125:  // Down — navigate pills when focused, else pass through to SwiftUI
+                // Never navigate the coordinator's temporary preview array. Its final
+                // result can have a different order, which makes an index highlight a
+                // different action and causes the visible jump seen during loading.
+                if self.usesVerticalListDockLayout,
+                    self.pendingDockPillQuery == q,
+                    self.dockPillBuildTask != nil
+                {
+                    self.contextDockViewModel.queuedPillNavigationDelta += 1
+                    self.contextDockViewModel.queuedPillNavigationGeneration =
+                        self.dockPillBuildGeneration
+                    return nil
+                }
                 if self.usesVerticalListDockLayout, !pills.isEmpty {
                     if self.settings.effectiveDockAtBottom {
                         guard let cur = self.l2.focusedPillIndex else { return event }
@@ -927,6 +914,15 @@ extension LauncherView {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
                         self.clipboardHistoryExpanded.toggle()
                     }
+                    return nil
+                }
+                if self.usesVerticalListDockLayout,
+                    self.pendingDockPillQuery == q,
+                    self.dockPillBuildTask != nil
+                {
+                    self.contextDockViewModel.queuedPillNavigationDelta -= 1
+                    self.contextDockViewModel.queuedPillNavigationGeneration =
+                        self.dockPillBuildGeneration
                     return nil
                 }
                 if self.usesVerticalListDockLayout, !pills.isEmpty {
@@ -1270,19 +1266,25 @@ extension LauncherView {
             self.renderedDockHeight = visibleStartHeight
 
             if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
-                // Expansion: give the transparent host its final capacity, then reveal the
-                // top-aligned SwiftUI shell in the SAME runloop turn. Deferring the reveal
-                // spring by a runloop (the old DispatchQueue.main.async) left the shell at
-                // its previous small height for one frame inside the already-grown window —
-                // the "stuck small, then expands" hitch. setFrame(display:) is synchronous,
-                // so the window is already at full size before the spring starts.
-                window.setFrame(newFrame, display: true)
                 if shouldAnimateVisibleShell {
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                    // Lay out the sheet at its final height before it becomes visible, then
+                    // animate only the NSPanel frame. Animating both the SwiftUI shell and
+                    // the host produced two independent stages: a clipped half-sheet first,
+                    // followed by the final expansion after rows measured.
+                    var transaction = Transaction()
+                    transaction.animation = nil
+                    withTransaction(transaction) {
                         self.renderedDockHeight = effectiveHeight
+                    }
+                    await NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0.24
+                        context.timingFunction = CAMediaTimingFunction(
+                            name: .easeInEaseOut)
+                        window.animator().setFrame(newFrame, display: true)
                     }
                 } else {
                     self.renderedDockHeight = effectiveHeight
+                    window.setFrame(newFrame, display: true)
                 }
             } else {
                 // Collapse: hide the visible shell first while the larger transparent host still

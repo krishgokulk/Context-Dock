@@ -2476,7 +2476,7 @@ extension LauncherView {
             preparedResultsVersion: preparedVersion
         )
         scheduleBackgroundGlobalContextPreparation(q)
-        scheduleGlobalContextIdleAutoExpansion(query: q)
+        scheduleEligibleGlobalContextAutoExpansion(query: q)
         if wasExpanded { scheduleGlobalContextIdleCollapse() }
 
         // Search the immutable Global Context index away from the main actor. Every
@@ -2648,19 +2648,28 @@ extension LauncherView {
         }
     }
 
-    /// Spotlight-style idle reveal: matching remains detached; this only schedules the
-    /// already-existing expansion transaction after the user pauses briefly.
-    func scheduleGlobalContextIdleAutoExpansion(query: String) {
+    /// Auto-reveal is limited to Global Context's launcher sources. Frontmost-app actions,
+    /// Finder/file results, selection actions, and provider-backed scopes stay compact until ↓.
+    func scheduleEligibleGlobalContextAutoExpansion(query: String) {
         globalContextViewModel.autoExpandTask?.cancel()
         globalContextViewModel.autoExpandTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 360_000_000)
+            defer { globalContextViewModel.autoExpandTask = nil }
             guard !Task.isCancelled,
                 isGlobalContextActive,
                 shouldUsePureGlobalAppSearch,
+                globalInlineAppScope == nil,
+                currentGlobalScopedBundleID == nil,
                 searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     .lowercased() == query,
                 globalContextViewModel.typingSnapshot.phase != .expanded
             else { return }
+
+            let state = visibleGlobalGroupedListNavigationState(for: query)
+            let hasAppsOrRunningApps = !state.appResults.isEmpty
+            let hasGlobalCommandsOrCachedMenus =
+                !state.menuPills.isEmpty || !state.menuGroups.isEmpty || !state.appMenuGroups.isEmpty
+            guard hasAppsOrRunningApps || hasGlobalCommandsOrCachedMenus else { return }
             _ = expandGlobalContextTypingMatch(selectFirst: true)
         }
     }
