@@ -30,8 +30,27 @@ final class AXSearchFieldInjector {
         let bundleId = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? bundleId
 
+        // Fully yield keyboard focus BEFORE posting any events. The DoraX dock is a
+        // panel that stays key; if it isn't ordered out, the synthetic Cmd+F / paste
+        // go to its search field ("typed into our app") and nothing lands in the
+        // target app. orderOut is synchronous, so key focus is released immediately.
+        await MainActor.run { AppDelegate.shared?.launcherWindow?.orderOut(nil) }
+
         _ = app.activate(options: [.activateIgnoringOtherApps])
+        // Electron/Catalyst apps ignore NSRunningApplication.activate — re-open via
+        // NSWorkspace (activates a running app, never relaunches) so it truly fronts.
+        if let url = app.bundleURL {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        }
         await AXActionResolver.waitForActivation(of: app)
+        // Poll until the target is actually frontmost (max ~1s) — posting the search
+        // shortcut before the app is key was the "focuses field then nothing" bug.
+        for _ in 0..<20 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
 
         guard
             let field = await openSearchUIAndResolveField(
