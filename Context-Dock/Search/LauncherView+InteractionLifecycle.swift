@@ -157,6 +157,18 @@ extension LauncherView {
                     }
                 }
 
+                // A running-app capsule owns the current surface until its explicit Exit.
+                // Do not reinterpret trackpad movement as app cycling or a layer switch.
+                // Vertical events remain available to the result list for normal scrolling;
+                // horizontal gestures are consumed so they cannot leak into General Chat.
+                if self.isGlobalContextActive,
+                    self.currentGlobalScopedBundleID != nil,
+                    attempted
+                {
+                    self.didSwitchLayerInCurrentSwipe = true
+                    return totalHorizontal > totalVertical ? nil : event
+                }
+
                 // Horizontal swipe over the input toggles AI Chat from any layer and back.
                 if totalHorizontal > 70 && totalHorizontal > totalVertical * 1.8
                     && (self.isHoveringDockArea || self.isHoveringInputField)
@@ -257,6 +269,7 @@ extension LauncherView {
 
     func switchDockLayer(_ direction: DockLayerDirection) {
         guard !isExplicitAppScopeLocked else { return }
+        guard !(isGlobalContextActive && currentGlobalScopedBundleID != nil) else { return }
 
         switch direction {
         case .up:
@@ -393,6 +406,7 @@ extension LauncherView {
     func enterGeneralChatPreservingLayer() {
         guard settings.enableAIMode else { return }
         guard currentDockSurfaceMode != .generalChat else { return }
+        guard !(isGlobalContextActive && currentGlobalScopedBundleID != nil) else { return }
 
         // Refresh so Global Commands and built-in MCPs the user enabled this session
         // are callable without a relaunch.
