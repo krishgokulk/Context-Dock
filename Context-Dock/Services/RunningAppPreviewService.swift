@@ -141,14 +141,24 @@ final class RunningAppPreviewService: ObservableObject {
         let count = min(max(itemCount, 1), 5)
         let itemWidth: CGFloat = 184
         let width = min(CGFloat(count) * itemWidth + 52, 980)
-        let height: CGFloat = 246
-        panel.setContentSize(NSSize(width: width, height: height))
+        let maxHeight: CGFloat = 246
 
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+
+        // ALWAYS above the hovered capsule icon: the panel's bottom sits just above the
+        // cursor and the snapshot grows upward — never below (which overlapped the
+        // result sheet). If there isn't full room above, shrink the panel to fit rather
+        // than flipping under the icon.
+        let gap: CGFloat = 30
+        let bottomY = mouse.y + gap
+        let topLimit = visible.maxY - 10
+        let height = max(120, min(maxHeight, topLimit - bottomY))
+        panel.setContentSize(NSSize(width: width, height: height))
+
         let x = min(max(mouse.x - width / 2, visible.minX + 18), visible.maxX - width - 18)
-        let y = min(max(mouse.y + 28, visible.minY + 18), visible.maxY - height - 18)
+        let y = min(bottomY, topLimit - height)
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
