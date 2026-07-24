@@ -1383,7 +1383,7 @@ extension LauncherView {
             }
             .onKeyPress(.upArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    navigateWindowReview(direction: -1)
+                    navigateWindowReview(vertical: -1)
                     return .handled
                 }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
@@ -1440,7 +1440,7 @@ extension LauncherView {
             }
             .onKeyPress(.downArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    navigateWindowReview(direction: 1)
+                    navigateWindowReview(vertical: 1)
                     return .handled
                 }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
@@ -1517,6 +1517,9 @@ extension LauncherView {
             .onKeyPress(.space) {
                 // Quick Note editor: space is text — never steal it back to the input.
                 if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "windows" {
+                    return quickLookFocusedWindowReviewItem() ? .handled : .ignored
+                }
                 if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
                     searchState.query.append(" ")
                     reclaimSearchInputFocus()
@@ -1925,7 +1928,7 @@ extension LauncherView {
             // chat. With text or a scope chip present it stays a normal cursor/scope key.
             .onKeyPress(.leftArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    navigateWindowReview(direction: -1)
+                    navigateWindowReview(horizontal: -1)
                     return .handled
                 }
                 if searchState.activeSmartQueryKey == "clipboard",
@@ -1955,7 +1958,7 @@ extension LauncherView {
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    navigateWindowReview(direction: 1)
+                    navigateWindowReview(horizontal: 1)
                     return .handled
                 }
                 if activeNotepadScopeCommand != nil { return .ignored }

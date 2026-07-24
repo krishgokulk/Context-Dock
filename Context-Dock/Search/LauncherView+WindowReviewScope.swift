@@ -74,14 +74,51 @@ extension LauncherView {
             }
     }
 
-    func navigateWindowReview(direction: Int) {
-        let ids = windowReviewNavigationIDs
-        guard !ids.isEmpty else { return }
-        let current = windowReviewFocusedID.flatMap { ids.firstIndex(of: $0) }
-        let next = min(max((current ?? (direction > 0 ? -1 : ids.count)) + direction, 0), ids.count - 1)
-        windowReviewFocusedID = ids[next]
+    var windowReviewNavigationRows: [[String]] {
+        var rows: [[String]] = []
+        let tabs = filteredWindowReviewSafariTabs.map { "tab:\($0.id)" }
+        if !tabs.isEmpty { rows.append(tabs) }
+        rows.append(contentsOf: filteredWindowReviewGroups.compactMap { group in
+            let ids = group.windows.map { "window:\(group.id):\($0.id)" }
+            return ids.isEmpty ? nil : ids
+        })
+        return rows
+    }
+
+    func navigateWindowReview(horizontal direction: Int) {
+        let rows = windowReviewNavigationRows
+        guard !rows.isEmpty else { return }
+        let location: (row: Int, column: Int)? = rows.enumerated().compactMap { row, ids in
+            ids.firstIndex(where: { $0 == windowReviewFocusedID }).map { (row, $0) }
+        }.first
+        let row = location?.row ?? (direction > 0 ? 0 : rows.count - 1)
+        let start = location?.column ?? (direction > 0 ? -1 : rows[row].count)
+        let column = min(max(start + direction, 0), rows[row].count - 1)
+        windowReviewFocusedID = rows[row][column]
         isKeyboardNavigation = true
         isSearchFieldFocused = false
+    }
+
+    func navigateWindowReview(vertical direction: Int) {
+        let rows = windowReviewNavigationRows
+        guard !rows.isEmpty else { return }
+        let location: (row: Int, column: Int)? = rows.enumerated().compactMap { row, ids in
+            ids.firstIndex(where: { $0 == windowReviewFocusedID }).map { (row, $0) }
+        }.first
+        let startRow = location?.row ?? (direction > 0 ? -1 : rows.count)
+        let row = min(max(startRow + direction, 0), rows.count - 1)
+        let column = min(location?.column ?? 0, rows[row].count - 1)
+        windowReviewFocusedID = rows[row][column]
+        isKeyboardNavigation = true
+        isSearchFieldFocused = false
+    }
+
+    func windowReviewRowID(containing focusID: String?) -> String? {
+        guard let focusID else { return nil }
+        if focusID.hasPrefix("tab:") { return "window-review-row-tabs" }
+        return filteredWindowReviewGroups.first(where: { group in
+            group.windows.contains { "window:\(group.id):\($0.id)" == focusID }
+        }).map { "window-review-row-\($0.id)" }
     }
 
     func executeFocusedWindowReviewItem() -> Bool {
@@ -110,6 +147,28 @@ extension LauncherView {
         return false
     }
 
+    func quickLookFocusedWindowReviewItem() -> Bool {
+        let ids = windowReviewNavigationIDs
+        guard !ids.isEmpty else { return false }
+        let focused = windowReviewFocusedID ?? ids.first!
+        windowReviewFocusedID = focused
+        if focused.hasPrefix("tab:"),
+            let tab = filteredWindowReviewSafariTabs.first(where: { "tab:\($0.id)" == focused }),
+            let url = URL(string: tab.url) {
+            WebQuickLookPanel.shared.toggle(url: url)
+            return true
+        }
+        for group in filteredWindowReviewGroups {
+            if let preview = group.windows.first(where: {
+                "window:\(group.id):\($0.id)" == focused
+            }) {
+                windowReviewService.toggleQuickLook(preview, in: group.app)
+                return true
+            }
+        }
+        return false
+    }
+
     @ViewBuilder
     var windowReviewScopeView: some View {
         let groups = filteredWindowReviewGroups
@@ -123,8 +182,9 @@ extension LauncherView {
             }
             .frame(maxWidth: .infinity, minHeight: 180)
         } else {
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 16) {
+            ScrollViewReader { verticalProxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                     if !safariTabs.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 7) {
@@ -133,12 +193,18 @@ extension LauncherView {
                                 Text("\(safariTabs.count)").font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(.tertiary)
                             }.padding(.horizontal, 14)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(spacing: 10) {
-                                    ForEach(safariTabs) { tab in windowReviewSafariTabCard(tab) }
-                                }.padding(.horizontal, 14).padding(.bottom, 3)
+                            ScrollViewReader { proxy in
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    LazyHStack(spacing: 10) {
+                                        ForEach(safariTabs) { tab in windowReviewSafariTabCard(tab) }
+                                    }.padding(.horizontal, 14).padding(.bottom, 3)
+                                }
+                                .onChange(of: windowReviewFocusedID) { _, id in
+                                    guard id?.hasPrefix("tab:") == true else { return }
+                                    withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
+                                }
                             }
-                        }
+                        }.id("window-review-row-tabs")
                     }
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
@@ -153,19 +219,30 @@ extension LauncherView {
                             }
                             .padding(.horizontal, 14)
 
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(spacing: 10) {
-                                    ForEach(group.windows) { preview in
-                                        windowReviewCard(preview, group: group)
+                            ScrollViewReader { proxy in
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    LazyHStack(spacing: 10) {
+                                        ForEach(group.windows) { preview in
+                                            windowReviewCard(preview, group: group)
+                                        }
                                     }
+                                    .padding(.horizontal, 14)
+                                    .padding(.bottom, 3)
                                 }
-                                .padding(.horizontal, 14)
-                                .padding(.bottom, 3)
+                                .onChange(of: windowReviewFocusedID) { _, id in
+                                    guard id?.hasPrefix("window:\(group.id):") == true else { return }
+                                    withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
+                                }
                             }
-                        }
+                        }.id("window-review-row-\(group.id)")
                     }
+                    }
+                    .padding(.vertical, 12)
                 }
-                .padding(.vertical, 12)
+                .onChange(of: windowReviewFocusedID) { _, id in
+                    guard let rowID = windowReviewRowID(containing: id) else { return }
+                    withAnimation(.easeOut(duration: 0.16)) { verticalProxy.scrollTo(rowID, anchor: .center) }
+                }
             }
             .frame(maxHeight: 540)
         }
@@ -198,6 +275,12 @@ extension LauncherView {
         .background(
             windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.20) : .clear,
             in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12).strokeBorder(
+                windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.8) : .clear,
+                lineWidth: 1.5))
+        .id(focusID)
+        .onHover { hovering in if hovering { windowReviewFocusedID = focusID } }
     }
 
     func windowReviewCard(_ preview: RunningAppWindowPreview, group: WindowReviewGroup) -> some View {
@@ -241,5 +324,11 @@ extension LauncherView {
         .background(
             windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.20) : .clear,
             in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12).strokeBorder(
+                windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.8) : .clear,
+                lineWidth: 1.5))
+        .id(focusID)
+        .onHover { hovering in if hovering { windowReviewFocusedID = focusID } }
     }
 }

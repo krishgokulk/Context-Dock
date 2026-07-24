@@ -34,6 +34,7 @@ final class RunningAppPreviewService: ObservableObject {
     private var hoverTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
     private var activePID: pid_t = 0
+    private var quickLookPreviewID: CGWindowID?
     private var cache: [pid_t: (date: Date, previews: [RunningAppWindowPreview])] = [:]
 
     private init() {}
@@ -86,6 +87,32 @@ final class RunningAppPreviewService: ObservableObject {
         focus(preview)
     }
 
+    func toggleQuickLook(_ preview: RunningAppWindowPreview, in app: NSRunningApplication) {
+        if panel?.isVisible == true, quickLookPreviewID == preview.id,
+            activePID == app.processIdentifier {
+            hide()
+            AppDelegate.shared?.launcherWindow?.makeKey()
+            return
+        }
+        hoverTask?.cancel()
+        hideTask?.cancel()
+        quickLookPreviewID = preview.id
+        activePID = app.processIdentifier
+        appName = app.localizedName ?? "Window Preview"
+        appIcon = app.icon
+        previews = [preview]
+        if panel == nil { buildPanel() }
+        sizeAndPositionPanel(itemCount: 1)
+        panel?.alphaValue = 0
+        panel?.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel?.animator().alphaValue = 1
+        }
+        AppDelegate.shared?.launcherWindow?.makeKey()
+    }
+
     func scheduleHide() {
         hoverTask?.cancel()
         hideTask?.cancel()
@@ -108,6 +135,7 @@ final class RunningAppPreviewService: ObservableObject {
         hideTask?.cancel()
         panel?.orderOut(nil)
         activePID = 0
+        quickLookPreviewID = nil
     }
 
     func focus(_ preview: RunningAppWindowPreview) {
