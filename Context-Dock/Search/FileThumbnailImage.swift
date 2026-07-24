@@ -52,7 +52,15 @@ struct FileThumbnailImage: View {
         guard FileManager.default.fileExists(atPath: filePath, isDirectory: &isDirectory),
             !isDirectory.boolValue
         else { return }
-        if loadedPath == filePath, thumbnail != nil { return }
+
+        // Finder Desktop keeps thousands of indexed rows icon-free so search stays fast.
+        // Resolve the real LaunchServices file icon only when a row becomes visible; this
+        // replaces the semantic placeholder immediately while Quick Look works in the
+        // background on a richer preview for image/document types that support one.
+        if loadedPath != filePath {
+            thumbnail = NSWorkspace.shared.icon(forFile: filePath)
+            loadedPath = filePath
+        }
         if let cached = ThumbnailGenerator.shared.cachedThumbnail(for: filePath) {
             thumbnail = cached
             loadedPath = filePath
@@ -67,7 +75,6 @@ struct FileThumbnailImage: View {
                 continuation.resume(returning: thumb)
             }
         }
-        guard loadedPath != filePath || thumbnail == nil else { return }
         if let image {
             thumbnail = image
             loadedPath = filePath
