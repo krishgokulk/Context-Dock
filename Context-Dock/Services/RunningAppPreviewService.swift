@@ -10,6 +10,7 @@ struct RunningAppWindowPreview: Identifiable {
     let title: String
     let bounds: CGRect
     let image: CGImage?
+    var minimized: Bool = false
 }
 
 @MainActor
@@ -85,6 +86,8 @@ final class RunningAppPreviewService: ObservableObject {
 
         let target = bestAXWindowMatch(for: preview, in: windows) ?? windows.first
         if let target {
+            // Un-minimize first so clicking a minimized preview restores its window.
+            AXUIElementSetAttributeValue(target, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
             AXUIElementSetAttributeValue(target, kAXMainAttribute as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             AXUIElementPerformAction(target, kAXRaiseAction as CFString)
@@ -205,9 +208,47 @@ final class RunningAppPreviewService: ObservableObject {
         }
         .prefix(5)
 
-        let previews = Array(result)
+        var previews = Array(result)
+
+        // CGWindowList only returns on-screen windows. Merge in the app's other windows
+        // via Accessibility — minimized windows and windows on other Spaces — so the
+        // hover peek is a real alt-tab of ALL the app's windows, not just visible ones.
+        let onScreenTitles = Set(previews.map { $0.title.lowercased() })
+        for axWin in axWindowPreviews(for: app) where !onScreenTitles.contains(axWin.title.lowercased()) {
+            previews.append(axWin)
+            if previews.count >= 6 { break }
+        }
+
         cache[pid] = (Date(), previews)
         return previews
+    }
+
+    /// Accessibility enumeration of ALL the app's windows, including minimized ones
+    /// (which CGWindowList omits). Minimized entries carry no live screenshot — the
+    /// panel shows the app icon + title for those.
+    private func axWindowPreviews(for app: NSRunningApplication) -> [RunningAppWindowPreview] {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
+                == .success,
+            let windows = windowsRef as? [AXUIElement]
+        else { return [] }
+
+        return windows.prefix(6).enumerated().map { index, window in
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+            let rawTitle = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var minRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minRef)
+            let minimized = (minRef as? Bool) ?? ((minRef as? NSNumber)?.boolValue ?? false)
+            return RunningAppWindowPreview(
+                id: CGWindowID(0xFFFF_0000 &+ UInt32(index)),  // synthetic, no CG image
+                title: (rawTitle?.isEmpty == false) ? rawTitle! : (app.localizedName ?? "Window"),
+                bounds: .zero,
+                image: nil,
+                minimized: minimized)
+        }
     }
 
     private func refreshScreenshots(
@@ -314,6 +355,14 @@ struct RunningAppPreviewPanelView: View {
                                         .aspectRatio(contentMode: .fill)
                                         .frame(width: 164, height: 106)
                                         .clipped()
+                                } else if let icon = service.appIcon {
+                                    // Minimized / off-Space window — no live pixels; show the
+                                    // app icon so the window still appears in the peek.
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 48, height: 48)
+                                        .opacity(0.85)
                                 } else {
                                     Image(systemName: "rectangle.dashed")
                                         .font(.system(size: 28, weight: .medium))
@@ -322,6 +371,16 @@ struct RunningAppPreviewPanelView: View {
                             }
                             .frame(width: 164, height: 106)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(alignment: .topTrailing) {
+                                if preview.minimized {
+                                    Text("Minimized")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(Color.black.opacity(0.5), in: Capsule())
+                                        .padding(5)
+                                }
+                            }
                             .overlay {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
