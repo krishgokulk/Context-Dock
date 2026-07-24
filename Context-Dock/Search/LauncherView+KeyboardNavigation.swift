@@ -159,6 +159,34 @@ extension LauncherView {
 
     func setupDockPillKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // Compact scopes normally yield directly to the field editor. Window Preview is
+            // different: its arrows, Space and Return are first-class selection controls, so
+            // intercept them before `handleTopLevelKeyRouting` returns the event to NSTextField.
+            if self.searchState.activeSmartQueryKey == "windows",
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+            {
+                switch event.keyCode {
+                case 123:
+                    self.navigateWindowReview(horizontal: -1)
+                    return nil
+                case 124:
+                    self.navigateWindowReview(horizontal: 1)
+                    return nil
+                case 125:
+                    self.navigateWindowReview(vertical: 1)
+                    return nil
+                case 126:
+                    self.navigateWindowReview(vertical: -1)
+                    return nil
+                case 36:
+                    return self.executeFocusedWindowReviewItem() ? nil : event
+                case 49:
+                    return self.quickLookFocusedWindowReviewItem() ? nil : event
+                default:
+                    break
+                }
+            }
+
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
             // .onKeyPress ever sees it.
