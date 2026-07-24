@@ -154,6 +154,15 @@ extension LauncherView {
             "Switching to", subject: name, icon: "arrow.up.right.circle", tint: .white.opacity(0.8))
         if app.isHidden { app.unhide() }
         app.activate(options: [.activateIgnoringOtherApps])
+        // Electron/Catalyst apps (VS Code, Slack…) frequently ignore
+        // NSRunningApplication.activate on modern macOS and stay behind the dock.
+        // Re-opening via NSWorkspace reliably raises them and does NOT relaunch a
+        // running app — it just activates it.
+        if let url = app.bundleURL {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        }
         // Dismiss the "Switching to" toast once the app has had time to become frontmost
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             DockActionFeedback.complete(switchId)
