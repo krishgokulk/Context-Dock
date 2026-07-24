@@ -1627,6 +1627,13 @@ extension LauncherView {
             l2.activeRequestID = nil
         }
 
+        // Hide the dock BEFORE injecting. The injector opens the app's search with
+        // synthetic Cmd+F/paste key events, which go to whatever window is key — while
+        // the dock is visible it stays key and eats them, so nothing was typed into any
+        // app. Yielding key to the target app lets the keystrokes land.
+        resetDockStateAfterAppAction()
+        forceHideLauncherAfterResultExecution()
+
         let searchActionId = DockActionFeedback.start(
             "Searching", subject: "\(intent.targetAppName) for \"\(searchQuery)\"",
             icon: "magnifyingglass", tint: .accentColor)
