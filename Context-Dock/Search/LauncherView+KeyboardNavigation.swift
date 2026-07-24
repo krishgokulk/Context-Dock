@@ -1922,6 +1922,12 @@ extension LauncherView {
                     !aiMode.isActive,
                     !showMediaLayer,
                     !isCompactSmartScope,
+                    // Never hop out of an open frontmost-app chat — Left Arrow only enters
+                    // General Chat from a bare dock, not from an active scoped conversation.
+                    !shouldShowContextDockChatSheet,
+                    !l2.chatArmed,
+                    !l2.showChatPopover,
+                    l2.targetApp == nil,
                     settings.enableAIMode
                 else { return .ignored }
                 enterGeneralChatPreservingLayer()
@@ -1966,14 +1972,21 @@ extension LauncherView {
                     return .handled
                 }
                 // In a browser with an empty field, right-arrow grabs the current
-                // page and immediately arms app-scoped chat for that page.
+                // page and immediately arms app-scoped chat for that page. Verify against
+                // the LIVE frontmost app: a stale cached bundle made this fire while the
+                // user was in a non-browser app (VS Code), attaching a browser page to
+                // that app's chat.
+                let liveFrontmostBundle =
+                    AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+                    ?? frontmost.bundleID
                 if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,
                     !isCompactSmartScope,
                     l2.targetApp == nil,
-                    AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID),
+                    AXWebReader.shared.isBrowser(bundleId: liveFrontmostBundle),
+                    liveFrontmostBundle == frontmost.bundleID,
                     addCurrentSafariPageToContextFromKeyboard()
                 {
                     searchState.revision += 1
