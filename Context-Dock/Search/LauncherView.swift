@@ -150,6 +150,8 @@ struct LauncherView: View {
     /// shows that folder's contents instead of the search results. Right-arrow on a
     /// focused folder drills in; Backspace on an empty field pops back out.
     @State var finderBrowsePath: String? = nil
+    /// Multi-file clipboard clips the user expanded into a stack of individual files.
+    @State var expandedClipboardEntryIDs: Set<UUID> = []
     /// Captured text (OCR / on-screen grab) attached to the frontmost-app chat — the
     /// "Capture Text" action feeds on-screen content (e.g. a Messages thread) to the
     /// scoped chat so the model can act on what's visible.

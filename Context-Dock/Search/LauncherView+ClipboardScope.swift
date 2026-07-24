@@ -1103,8 +1103,9 @@ extension LauncherView {
                     .help("Copy")
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.leading, row.isChild ? 34 : 12)
+            .padding(.trailing, 12)
+            .padding(.vertical, row.isChild ? 4 : 6)
             .contentShape(Rectangle())
             .background(
                 ZStack {
@@ -1506,8 +1507,15 @@ extension LauncherView {
             clipboardSourceFilterBundleId.isEmpty
             ? entries
             : entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
-        let rows = scoped.enumerated().map { index, entry in
-            clipboardSharedRow(entry, index: index)
+        let rows = scoped.enumerated().flatMap { index, entry -> [SharedResultRowModel] in
+            var out = [clipboardSharedRow(entry, index: index)]
+            // Expanded multi-file clip → show each file as an indented child row.
+            if entry.filePaths.count > 1, expandedClipboardEntryIDs.contains(entry.id) {
+                out.append(contentsOf: entry.filePaths.enumerated().map { fileIdx, path in
+                    clipboardFileChildRow(entry: entry, path: path, fileIndex: fileIdx)
+                })
+            }
+            return out
         }
         return VStack(spacing: 0) {
             clipboardSourceAppPills(entries)
@@ -1651,7 +1659,9 @@ extension LauncherView {
     }
 
     func clipboardSharedRow(_ entry: ClipboardEntry, index: Int) -> SharedResultRowModel {
-        SharedResultRowModel(
+        let isMultiFile = entry.filePaths.count > 1
+        let isExpanded = expandedClipboardEntryIDs.contains(entry.id)
+        return SharedResultRowModel(
             id: entry.id.uuidString,
             title: entry.preview.isEmpty ? "Clipboard Item" : entry.preview,
             subtitle: clipboardEntrySubtitle(entry),
@@ -1660,13 +1670,23 @@ extension LauncherView {
             sourceImage: clipboardSourceIcon(for: entry),
             accentColorName: entry.imageData != nil
                 ? "purple" : (entry.fileCount > 0 ? "green" : "blue"),
+            // A multi-file clip shows a chevron and expands its files in place.
+            trailingText: isMultiFile ? (isExpanded ? "▾" : "▸") : nil,
             badges: entry.ocrText.isEmpty ? [] : ["OCR"],
             isFocused: focusedClipboardEntryIndex == index || searchState.selectedIndex == index
                 || selectedClipboardEntryIDs.contains(entry.id),
             quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
             dragProvider: { clipboardDragProvider(for: entry) },
             open: {
-                pasteClipboardEntryToFrontmost(entry, index: index)
+                // Multi-file clip → tap expands/collapses the stack; single item pastes.
+                if isMultiFile {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        if isExpanded { expandedClipboardEntryIDs.remove(entry.id) }
+                        else { expandedClipboardEntryIDs.insert(entry.id) }
+                    }
+                } else {
+                    pasteClipboardEntryToFrontmost(entry, index: index)
+                }
             },
             focus: {
                 focusedClipboardEntryIndex = index
@@ -1675,12 +1695,47 @@ extension LauncherView {
             remove: {
                 clipboardHistory.removeAll { $0.id == entry.id }
                 selectedClipboardEntryIDs.remove(entry.id)
+                expandedClipboardEntryIDs.remove(entry.id)
                 savePersistedClipboardHistory()
                 syncVisibleClipboardStateAfterPrune()
                 refreshCompactScopeResults(resetSelection: false)
             },
             copy: {
                 copyClipboardEntryToPasteboard(entry)
+            }
+        )
+    }
+
+    /// One indented file row inside an expanded multi-file clip stack. Tapping pastes
+    /// that single file; the copy button puts just it on the clipboard.
+    func clipboardFileChildRow(entry: ClipboardEntry, path: String, fileIndex: Int)
+        -> SharedResultRowModel
+    {
+        let url = URL(fileURLWithPath: path)
+        return SharedResultRowModel(
+            id: "\(entry.id.uuidString)-file-\(fileIndex)",
+            title: url.lastPathComponent,
+            subtitle: finderDisplayPath(url.deletingLastPathComponent().path),
+            systemIcon: "doc",
+            image: NSWorkspace.shared.icon(forFile: path),
+            sourceImage: nil,
+            accentColorName: "green",
+            quickLookURL: url,
+            dragProvider: {
+                NSItemProvider(contentsOf: url).map { $0 }
+            },
+            isChild: true,
+            open: {
+                // Paste just this file into the frontmost app.
+                let single = ClipboardEntry(
+                    text: url.lastPathComponent, timestamp: entry.timestamp, filePaths: [path])
+                pasteClipboardEntriesToFrontmost([single])
+            },
+            focus: {},
+            copy: {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.writeObjects([url as NSURL])
             }
         )
     }
