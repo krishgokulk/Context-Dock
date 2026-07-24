@@ -2157,6 +2157,18 @@ extension LauncherView {
 		                                            if shouldShowGlobalScopedChatPin,
 		                                                let target = currentGlobalScopedChatTarget
 		                                            {
+		                                                // "search X" / "find X" in a scoped app injects into the app's own search
+		                                                // field. Resolve BEFORE arming the chat — arming flips wasContextDockChatActive,
+		                                                // which demotes the find intent to a chat message (Enter did nothing for Photos).
+		                                                let findScope = resolveDockScope(for: trimmed)
+		                                                let findRaw = rawScopedActionQuery(for: trimmed, scope: findScope)
+		                                                if let findIntent = resolvedFindIntent(
+		                                                    for: trimmed, dockScope: findScope, rawScopedQuery: findRaw)
+		                                                {
+		                                                    executeAppFindIntent(findIntent)
+		                                                    searchState.query = ""
+		                                                    return
+		                                                }
 		                                                armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
 		                                                handleL2QuerySkippingMenuRouter(trimmed)
 		                                                return
