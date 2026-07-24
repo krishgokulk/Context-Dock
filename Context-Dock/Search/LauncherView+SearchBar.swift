@@ -10,8 +10,21 @@ extension LauncherView {
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
             && !hasSelectionScopeSurface
+            // The selection must belong to the CURRENT frontmost app. A Finder selection
+            // stays in the cached AX context after switching to another app, so without
+            // this the selection button lingered in every app.
+            && selectionBelongsToFrontmostApp
             && (liveDockSelectionPreviewText != nil
                 || currentSelectionActivationSnapshot(refresh: false) != nil)
+    }
+
+    /// True when the cached selection was read from the app that is currently frontmost
+    /// — so a stale selection from a previous app never shows the selection button.
+    var selectionBelongsToFrontmostApp: Bool {
+        let source = axContext.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let front = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty source = no app attribution (e.g. text selection just captured); allow it.
+        return source.isEmpty || front.isEmpty || source == front
     }
 
     /// Selection icon for a single selected item. A selected FOLDER must read as a folder —
