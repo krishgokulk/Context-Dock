@@ -10,6 +10,15 @@ struct RunningAppWindowPreview: Identifiable {
     let title: String
     let bounds: CGRect
     let image: CGImage?
+    var minimized: Bool = false
+}
+
+struct WindowReviewGroup: Identifiable {
+    let id: pid_t
+    let app: NSRunningApplication
+    let name: String
+    let icon: NSImage?
+    var windows: [RunningAppWindowPreview]
 }
 
 @MainActor
@@ -19,11 +28,13 @@ final class RunningAppPreviewService: ObservableObject {
     @Published private(set) var appName: String = ""
     @Published private(set) var previews: [RunningAppWindowPreview] = []
     @Published private(set) var appIcon: NSImage?
+    @Published private(set) var reviewGroups: [WindowReviewGroup] = []
 
     private var panel: NSPanel?
     private var hoverTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
     private var activePID: pid_t = 0
+    private var quickLookPreviewID: CGWindowID?
     private var cache: [pid_t: (date: Date, previews: [RunningAppWindowPreview])] = [:]
 
     private init() {}
@@ -40,11 +51,74 @@ final class RunningAppPreviewService: ObservableObject {
         }
     }
 
+    /// Keyboard entry point for the same per-app window switcher used by capsule hover.
+    /// It deliberately stays app-scoped: this does not enter or mutate any dock/chat mode.
+    func showWindowReview() {
+        let app = AppDelegate.shared?.menuBarOwningUserFacingApplication()
+            ?? AppDelegate.shared?.previousFrontmostApp
+        guard let app, !app.isTerminated else { return }
+        hoverTask?.cancel()
+        hideTask?.cancel()
+        show(for: app, icon: app.icon)
+    }
+
+    func loadWindowReview() {
+        let ownBundleID = Bundle.main.bundleIdentifier
+        reviewGroups = NSWorkspace.shared.runningApplications
+            .filter {
+                !$0.isTerminated && $0.activationPolicy == .regular
+                    && $0.bundleIdentifier != ownBundleID
+            }
+            .compactMap { app in
+                let windows = windowPreviews(for: app)
+                guard !windows.isEmpty else { return nil }
+                return WindowReviewGroup(
+                    id: app.processIdentifier, app: app, name: app.localizedName ?? "App",
+                    icon: app.icon, windows: windows)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        for group in reviewGroups {
+            refreshReviewScreenshots(for: group.app, previews: group.windows)
+        }
+    }
+
+    func focus(_ preview: RunningAppWindowPreview, in app: NSRunningApplication) {
+        activePID = app.processIdentifier
+        focus(preview)
+    }
+
+    func toggleQuickLook(_ preview: RunningAppWindowPreview, in app: NSRunningApplication) {
+        if panel?.isVisible == true, quickLookPreviewID == preview.id,
+            activePID == app.processIdentifier {
+            hide()
+            AppDelegate.shared?.launcherWindow?.makeKey()
+            return
+        }
+        hoverTask?.cancel()
+        hideTask?.cancel()
+        quickLookPreviewID = preview.id
+        activePID = app.processIdentifier
+        appName = app.localizedName ?? "Window Preview"
+        appIcon = app.icon
+        previews = [preview]
+        if panel == nil { buildPanel() }
+        sizeAndPositionPanel(itemCount: 1)
+        panel?.alphaValue = 0
+        panel?.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel?.animator().alphaValue = 1
+        }
+        AppDelegate.shared?.launcherWindow?.makeKey()
+    }
+
     func scheduleHide() {
         hoverTask?.cancel()
         hideTask?.cancel()
         hideTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 120_000_000)
+            // Leave enough time to cross the small gap between the capsule and preview.
+            try? await Task.sleep(nanoseconds: 260_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.hide()
@@ -61,6 +135,7 @@ final class RunningAppPreviewService: ObservableObject {
         hideTask?.cancel()
         panel?.orderOut(nil)
         activePID = 0
+        quickLookPreviewID = nil
     }
 
     func focus(_ preview: RunningAppWindowPreview) {
@@ -85,6 +160,8 @@ final class RunningAppPreviewService: ObservableObject {
 
         let target = bestAXWindowMatch(for: preview, in: windows) ?? windows.first
         if let target {
+            // Un-minimize first so clicking a minimized preview restores its window.
+            AXUIElementSetAttributeValue(target, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
             AXUIElementSetAttributeValue(target, kAXMainAttribute as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             AXUIElementPerformAction(target, kAXRaiseAction as CFString)
@@ -95,8 +172,17 @@ final class RunningAppPreviewService: ObservableObject {
     private func show(for app: NSRunningApplication, icon: NSImage?) {
         guard !app.isTerminated else { return }
         let pid = app.processIdentifier
-        let windows = windowPreviews(for: app)
-        guard !windows.isEmpty else { return }
+        var windows = windowPreviews(for: app)
+        if windows.isEmpty {
+            // Always acknowledge hover. Apps with no ordinary windows, or Macs where
+            // Accessibility/Screen Recording is unavailable, still get an actionable card.
+            windows = [RunningAppWindowPreview(
+                id: CGWindowID(0xFFFF_FFFE),
+                title: app.localizedName ?? "App",
+                bounds: .zero,
+                image: nil
+            )]
+        }
 
         activePID = pid
         appName = app.localizedName ?? "App"
@@ -147,8 +233,23 @@ final class RunningAppPreviewService: ObservableObject {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+
         let x = min(max(mouse.x - width / 2, visible.minX + 18), visible.maxX - width - 18)
-        let y = min(max(mouse.y + 28, visible.minY + 18), visible.maxY - height - 18)
+
+        // Prefer showing ABOVE the hovered capsule icon (snapshot grows upward, clear of
+        // the result sheet). Fall back below only when there isn't room above, so it
+        // never renders off-screen / empty.
+        let gap: CGFloat = 12
+        let aboveY = mouse.y + gap
+        let belowY = mouse.y - gap - height
+        let y: CGFloat
+        if aboveY + height <= visible.maxY - 10 {
+            y = aboveY
+        } else if belowY >= visible.minY + 10 {
+            y = belowY
+        } else {
+            y = min(max(aboveY, visible.minY + 10), visible.maxY - 10 - height)
+        }
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
@@ -158,7 +259,9 @@ final class RunningAppPreviewService: ObservableObject {
             return cached.previews
         }
 
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        // `.optionAll` is required for minimized windows and windows on another Space.
+        // Filtering by owner, layer, alpha, and useful bounds below removes helper surfaces.
+        let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
         guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]
         else { return [] }
 
@@ -181,18 +284,69 @@ final class RunningAppPreviewService: ObservableObject {
             let windowID = CGWindowID(windowNumber.uint32Value)
             let title = (info[kCGWindowName as String] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let isOnScreen =
+                (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
             return RunningAppWindowPreview(
                 id: windowID,
                 title: title?.isEmpty == false ? title! : app.localizedName ?? "Window",
                 bounds: bounds,
-                image: nil
+                image: nil,
+                minimized: !isOnScreen
             )
         }
         .prefix(5)
 
-        let previews = Array(result)
+        var previews = Array(result)
+
+        // CGWindowList only returns on-screen windows. Merge in the app's other windows
+        // via Accessibility — minimized windows and windows on other Spaces — so the
+        // hover peek is a real alt-tab of ALL the app's windows, not just visible ones.
+        let axPreviews = axWindowPreviews(for: app)
+        let minimizedTitles = Set(
+            axPreviews.filter(\.minimized).map { $0.title.lowercased() })
+        previews = previews.map { preview in
+            var updated = preview
+            if minimizedTitles.contains(preview.title.lowercased()) {
+                updated.minimized = true
+            }
+            return updated
+        }
+        var knownTitles = Set(previews.map { $0.title.lowercased() })
+        for axWin in axPreviews where knownTitles.insert(axWin.title.lowercased()).inserted {
+            previews.append(axWin)
+            if previews.count >= 5 { break }
+        }
+
         cache[pid] = (Date(), previews)
         return previews
+    }
+
+    /// Accessibility enumeration of ALL the app's windows, including minimized ones
+    /// (which CGWindowList omits). Minimized entries carry no live screenshot — the
+    /// panel shows the app icon + title for those.
+    private func axWindowPreviews(for app: NSRunningApplication) -> [RunningAppWindowPreview] {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var windowsRef: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef)
+                == .success,
+            let windows = windowsRef as? [AXUIElement]
+        else { return [] }
+
+        return windows.prefix(6).enumerated().map { index, window in
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+            let rawTitle = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var minRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minRef)
+            let minimized = (minRef as? Bool) ?? ((minRef as? NSNumber)?.boolValue ?? false)
+            return RunningAppWindowPreview(
+                id: CGWindowID(0xFFFF_0000 &+ UInt32(index)),  // synthetic, no CG image
+                title: (rawTitle?.isEmpty == false) ? rawTitle! : (app.localizedName ?? "Window"),
+                bounds: .zero,
+                image: nil,
+                minimized: minimized)
+        }
     }
 
     private func refreshScreenshots(
@@ -206,7 +360,7 @@ final class RunningAppPreviewService: ObservableObject {
             guard
                 let content = try? await SCShareableContent.excludingDesktopWindows(
                     false,
-                    onScreenWindowsOnly: true
+                    onScreenWindowsOnly: false
                 )
             else { return }
 
@@ -241,6 +395,40 @@ final class RunningAppPreviewService: ObservableObject {
                 }
                 self.previews = updated
                 self.cache[pid] = (Date(), updated)
+            }
+        }
+    }
+
+    private func refreshReviewScreenshots(
+        for app: NSRunningApplication, previews requestedPreviews: [RunningAppWindowPreview]
+    ) {
+        let pid = app.processIdentifier
+        let ids = Set(requestedPreviews.filter { $0.id < 0xFFFF_0000 }.map(\.id))
+        guard !ids.isEmpty else { return }
+        Task {
+            guard let content = try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: false) else { return }
+            var images: [CGWindowID: CGImage] = [:]
+            for window in content.windows where ids.contains(CGWindowID(window.windowID)) {
+                let filter = SCContentFilter(desktopIndependentWindow: window)
+                let config = SCStreamConfiguration()
+                config.width = 480
+                config.height = 300
+                config.showsCursor = false
+                if let image = try? await SCScreenshotManager.captureImage(
+                    contentFilter: filter, configuration: config) {
+                    images[CGWindowID(window.windowID)] = image
+                }
+            }
+            guard !images.isEmpty else { return }
+            await MainActor.run {
+                guard let index = self.reviewGroups.firstIndex(where: { $0.id == pid }) else { return }
+                self.reviewGroups[index].windows = self.reviewGroups[index].windows.map { preview in
+                    guard let image = images[preview.id] else { return preview }
+                    return RunningAppWindowPreview(
+                        id: preview.id, title: preview.title, bounds: preview.bounds,
+                        image: image, minimized: preview.minimized)
+                }
             }
         }
     }
@@ -299,6 +487,14 @@ struct RunningAppPreviewPanelView: View {
                                         .aspectRatio(contentMode: .fill)
                                         .frame(width: 164, height: 106)
                                         .clipped()
+                                } else if let icon = service.appIcon {
+                                    // Minimized / off-Space window — no live pixels; show the
+                                    // app icon so the window still appears in the peek.
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 48, height: 48)
+                                        .opacity(0.85)
                                 } else {
                                     Image(systemName: "rectangle.dashed")
                                         .font(.system(size: 28, weight: .medium))
@@ -307,6 +503,16 @@ struct RunningAppPreviewPanelView: View {
                             }
                             .frame(width: 164, height: 106)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(alignment: .topTrailing) {
+                                if preview.minimized {
+                                    Text("Minimized")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .background(Color.black.opacity(0.5), in: Capsule())
+                                        .padding(5)
+                                }
+                            }
                             .overlay {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)

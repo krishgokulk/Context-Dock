@@ -10,8 +10,21 @@ extension LauncherView {
             // In Selection Scope the left input icon already shows the selection; the trailing
             // button repeats the same icon (the redundant second box). Hide it there.
             && !hasSelectionScopeSurface
+            // The selection must belong to the CURRENT frontmost app. A Finder selection
+            // stays in the cached AX context after switching to another app, so without
+            // this the selection button lingered in every app.
+            && selectionBelongsToFrontmostApp
             && (liveDockSelectionPreviewText != nil
                 || currentSelectionActivationSnapshot(refresh: false) != nil)
+    }
+
+    /// True when the cached selection was read from the app that is currently frontmost
+    /// — so a stale selection from a previous app never shows the selection button.
+    var selectionBelongsToFrontmostApp: Bool {
+        let source = axContext.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let front = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty source = no app attribution (e.g. text selection just captured); allow it.
+        return source.isEmpty || front.isEmpty || source == front
     }
 
     /// Selection icon for a single selected item. A selected FOLDER must read as a folder —
@@ -1148,8 +1161,9 @@ extension LauncherView {
 
                         if let compactScopeKey, showContextInDock, isSearchBarExpanded {
                             let isClipboard = compactScopeKey == "clipboard"
-                            let label = isClipboard ? "Clipboard" : "Notifications"
-                            let symbol = isClipboard ? "doc.on.clipboard" : "bell.badge"
+                            let isWindows = compactScopeKey == "windows"
+                            let label = isClipboard ? "Clipboard" : (isWindows ? "Window Preview" : "Notifications")
+                            let symbol = isClipboard ? "doc.on.clipboard" : (isWindows ? "macwindow.on.rectangle" : "bell.badge")
                             let accent =
                                 isClipboard ? SwiftUI.Color.blue : SwiftUI.Color.accentColor
                             let chipTextColor: SwiftUI.Color =
@@ -2131,6 +2145,22 @@ extension LauncherView {
                                             if launchTypedAppMatchIfNeeded() {
                                                 return
                                             }
+                                            // Attachment-only send: a captured shot / text or an
+                                            // uploaded file is enough — Enter sends it with an
+                                            // implicit ask instead of exiting the chat.
+                                            let hasChatAttachments =
+                                                !contextDockChatFiles.isEmpty
+                                                || (contextDockChatCapturedText?.isEmpty == false)
+                                            if trimmed.isEmpty, hasChatAttachments,
+                                                shouldShowContextDockChatSheet || l2.showChatPopover
+                                                    || l2.chatArmed || shouldShowGlobalScopedChatPin
+                                            {
+                                                handleL2QuerySkippingMenuRouter(
+                                                    contextDockChatFiles.isEmpty
+                                                        ? "Explain the captured text."
+                                                        : "Explain what's in the attached file(s).")
+                                                return
+                                            }
                                             if trimmed.isEmpty,
                                                 shouldShowContextDockChatSheet || l2.showChatPopover || l2.chatArmed
                                             {
@@ -2141,6 +2171,18 @@ extension LauncherView {
 		                                            if shouldShowGlobalScopedChatPin,
 		                                                let target = currentGlobalScopedChatTarget
 		                                            {
+		                                                // "search X" / "find X" in a scoped app injects into the app's own search
+		                                                // field. Resolve BEFORE arming the chat — arming flips wasContextDockChatActive,
+		                                                // which demotes the find intent to a chat message (Enter did nothing for Photos).
+		                                                let findScope = resolveDockScope(for: trimmed)
+		                                                let findRaw = rawScopedActionQuery(for: trimmed, scope: findScope)
+		                                                if let findIntent = resolvedFindIntent(
+		                                                    for: trimmed, dockScope: findScope, rawScopedQuery: findRaw)
+		                                                {
+		                                                    executeAppFindIntent(findIntent)
+		                                                    searchState.query = ""
+		                                                    return
+		                                                }
 		                                                armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
 		                                                handleL2QuerySkippingMenuRouter(trimmed)
 		                                                return
@@ -2694,6 +2736,8 @@ extension LauncherView {
                 Group {
                     if searchState.activeSmartQueryKey == "clipboard" {
                         clipboardScopeView
+                    } else if searchState.activeSmartQueryKey == "windows" {
+                        windowReviewScopeView
                     } else {
                         notificationScopeView
                     }

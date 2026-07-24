@@ -648,6 +648,10 @@ extension LauncherView {
     }
 
     func armContextDockChat(animated: Bool = true) {
+        // Hold the dock open for the whole scoped-chat session. Setting this only from
+        // the debounced requestWindowSizeUpdate left it stale, so clicking the frontmost
+        // app resigned key and hid the chat mid-conversation.
+        AppDelegate.shared?.scopeChatSpaceHold = true
         let existingName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingBundleId = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if (l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty),
@@ -731,6 +735,8 @@ extension LauncherView {
     /// Global Context was active (the "+" button has no global guard). Only chats not
     /// bound to the frontmost app fall out to Global Context.
     func exitContextDockChatBackToContext() {
+        // Scoped chat over → release the hold so normal click-away hiding resumes.
+        AppDelegate.shared?.scopeChatSpaceHold = false
         let chatApp = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         let frontApp = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedApp = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -868,9 +874,67 @@ extension LauncherView {
         .help("Attach a file, screenshot, or capture on-screen text")
     }
 
+    /// Attachment chips (files / captured text) for the frontmost-app chat, shown next
+    /// to the + so the user can see what will be sent — and drop it again.
+    @ViewBuilder
+    var contextDockChatAttachmentChips: some View {
+        let fileCount = contextDockChatFiles.count
+        let hasText = (contextDockChatCapturedText?.isEmpty == false)
+        if fileCount > 0 || hasText {
+            HStack(spacing: 4) {
+                if fileCount > 0 {
+                    Button {
+                        contextDockChatFiles.removeAll()
+                    } label: {
+                        HStack(spacing: 3) {
+                            if let first = contextDockChatFiles.first,
+                                let thumb = NSImage(contentsOf: first)
+                            {
+                                Image(nsImage: thumb)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 16, height: 16)
+                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                            } else {
+                                Image(systemName: "doc.fill").font(.system(size: 9))
+                            }
+                            Text(fileCount > 1 ? "\(fileCount)" : "1")
+                                .font(.system(size: 10, weight: .semibold))
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(fileCount) attachment(s) — click to remove")
+                }
+                if hasText {
+                    Button {
+                        contextDockChatCapturedText = nil
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "text.viewfinder").font(.system(size: 9))
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Captured text attached — click to remove")
+                }
+            }
+            .transition(.scale(scale: 0.85).combined(with: .opacity))
+        }
+    }
+
     /// Pin + the attach menu, shown together in the frontmost-app chat toolbar.
     var contextDockChatTrailingControls: some View {
         HStack(spacing: 4) {
+            contextDockChatAttachmentChips
             contextDockChatAttachMenu
             contextDockChatCloseButton
         }
@@ -883,6 +947,10 @@ extension LauncherView {
         Button {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
                 settings.launcherPinned.toggle()
+                // Pin changes dockJoinsAllSpaces — re-apply the window collectionBehavior
+                // now, otherwise the dock keeps moveToActiveSpace and vanishes when the
+                // user switches desktop Spaces despite being pinned.
+                AppDelegate.shared?.applyPersistentDockBehavior()
             }
             isSearchFieldFocused = true
         } label: {
@@ -5289,6 +5357,8 @@ extension LauncherView {
             return ("doc.on.clipboard", "Clipboard", "")
         case "notifications":
             return ("bell.badge", "Notifications", "")
+        case "windows":
+            return ("macwindow.on.rectangle", "Window Preview", "")
         case "notes": return ("note.text", "Notes", "/System/Applications/Notes.app")
         case "mail": return ("envelope", "Mail", "/System/Applications/Mail.app")
         case "photos": return ("photo.on.rectangle", "Photos", "/System/Applications/Photos.app")

@@ -936,16 +936,28 @@ extension LauncherView {
             return FinderOpenFrequencyStore.shared.count(forPath: path)
         }
 
-        // Empty query = the default Finder desktop list: order by how often the user
-        // opens each item (Downloads, Screenshots, Applications, hot files at top),
-        // preserving the incoming order as a stable tiebreak.
+        // Empty query = the default Finder desktop list. Group by type (Folders /
+        // Applications / Documents / Images / …) and, within each group, order by how
+        // often the user opens each item (most-launched first). Groups are ordered by
+        // their hottest member so the most-used type leads. The dock list adds the
+        // section headers from the same type grouping.
         guard !query.isEmpty else {
-            return pills.enumerated()
-                .sorted { a, b in
-                    let fa = openCount(a.element), fb = openCount(b.element)
-                    return fa != fb ? fa > fb : a.offset < b.offset
-                }
-                .map(\.element)
+            let indexed = pills.enumerated().map { (order: $0.offset, pill: $0.element) }
+            let groups = Dictionary(grouping: indexed) { finderDesktopTypeGroup($0.pill) }
+            let groupOrder = groups.keys.sorted { a, b in
+                let fa = groups[a]?.map { openCount($0.pill) }.max() ?? 0
+                let fb = groups[b]?.map { openCount($0.pill) }.max() ?? 0
+                if fa != fb { return fa > fb }
+                return a < b
+            }
+            return groupOrder.flatMap { key -> [DockPill] in
+                (groups[key] ?? [])
+                    .sorted { l, r in
+                        let fl = openCount(l.pill), fr = openCount(r.pill)
+                        return fl != fr ? fl > fr : l.order < r.order
+                    }
+                    .map(\.pill)
+            }
         }
 
         struct Scored { var pill: DockPill; var score: Int; var freq: Int; var order: Int }

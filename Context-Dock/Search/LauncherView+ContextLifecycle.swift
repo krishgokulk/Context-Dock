@@ -836,6 +836,15 @@ extension LauncherView {
                 let appChanged =
                     !frontmost.bundleID.isEmpty && frontmost.bundleID != bundleID
 
+                // A selection belongs to the app it was made in. When the frontmost app
+                // actually changes, drop the previous app's cached selection so its
+                // selection button/scope doesn't linger in every other app.
+                if appChanged {
+                    liveDockSelectionPreviewText = nil
+                    axContext.selectedText = nil
+                    axContext.selectedFilePaths = []
+                }
+
                 frontmost.name = appName
                 frontmost.bundleID = bundleID
 
@@ -1061,6 +1070,9 @@ extension LauncherView {
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 activateClipboardScope()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .activateWindowReviewScope)) { _ in
+                activateWindowReviewScope()
             }
             .onChange(of: currentContext.description) { _, _ in
                 // Trigger smooth expansion when context is detected

@@ -349,13 +349,32 @@ class MediaPlayerObserver: ObservableObject {
     """
 
     private func pollSafari() async -> (title: String, artist: String, isPlaying: Bool, elapsed: Double, duration: Double)? {
+        // `tell application "Safari"` LAUNCHES Safari if it isn't running — this poller
+        // ran on a timer and silently kept Safari alive in the background. Only poll a
+        // browser that's already running.
+        guard Self.isRunning(bundleId: "com.apple.Safari") else { return nil }
         let s = "tell application \"Safari\"\nif (count of windows)=0 then return \"\"\ntry\nset r to do JavaScript \"\(jsQuery)\" in current tab of front window\nreturn r\nend try\nend tell\nreturn \"\""
         return parseJSON(await runAS(s))
     }
 
     private func pollChromium(_ app: String) async -> (title: String, artist: String, isPlaying: Bool, elapsed: Double, duration: Double)? {
+        guard Self.isRunning(appName: app) else { return nil }
         let s = "tell application \"\(app)\"\nif (count of windows)=0 then return \"\"\ntry\nset r to execute active tab of front window javascript \"\(jsQuery)\"\nreturn r\nend try\nend tell\nreturn \"\""
         return parseJSON(await runAS(s))
+    }
+
+    /// True when an app is already running — used to gate AppleScript that would
+    /// otherwise launch the target app.
+    static func isRunning(bundleId: String) -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleId && !$0.isTerminated
+        }
+    }
+
+    static func isRunning(appName: String) -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            ($0.localizedName == appName) && !$0.isTerminated
+        }
     }
 
     private func parseJSON(_ json: String?) -> (title: String, artist: String, isPlaying: Bool, elapsed: Double, duration: Double)? {

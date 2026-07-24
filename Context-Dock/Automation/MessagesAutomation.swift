@@ -58,6 +58,13 @@ enum MessagesAutomation {
         contactFilter: String = "",
         limit: Int = 15
     ) -> String {
+        // `tell application "Messages"` LAUNCHES Messages if it isn't running. Never
+        // launch it just to read — return empty so callers fall back to the chat-DB
+        // reader (MessagesChatDBReader) instead of springing Messages to life.
+        guard NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == "com.apple.MobileSMS" && !$0.isTerminated
+        }) else { return "" }
+
         let safeLimit = max(1, min(limit, 30))
         let filterEscaped = escapeAppleScriptLiteral(contactFilter)
 

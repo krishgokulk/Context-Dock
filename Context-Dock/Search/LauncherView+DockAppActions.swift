@@ -154,6 +154,15 @@ extension LauncherView {
             "Switching to", subject: name, icon: "arrow.up.right.circle", tint: .white.opacity(0.8))
         if app.isHidden { app.unhide() }
         app.activate(options: [.activateIgnoringOtherApps])
+        // Electron/Catalyst apps (VS Code, Slack…) frequently ignore
+        // NSRunningApplication.activate on modern macOS and stay behind the dock.
+        // Re-opening via NSWorkspace reliably raises them and does NOT relaunch a
+        // running app — it just activates it.
+        if let url = app.bundleURL {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        }
         // Dismiss the "Switching to" toast once the app has had time to become frontmost
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             DockActionFeedback.complete(switchId)
@@ -701,18 +710,44 @@ extension LauncherView {
     func liveBrowserPageURLString() -> String? {
         let previousApp = AppDelegate.shared?.previousFrontmostApp
         let pid = previousApp?.processIdentifier ?? 0
+        let bundleId = previousApp?.bundleIdentifier ?? ""
         // Fresh on-demand AX read — the only source that works for Safari Web Apps
         // (no extension, no address bar, cached context may point at the dock).
         let liveAXRead: String? = {
-            guard let previousApp, let bundleId = previousApp.bundleIdentifier else { return nil }
+            guard previousApp != nil, !bundleId.isEmpty else { return nil }
             return AXContextReader.shared.liveCurrentURL(pid: pid, bundleId: bundleId)
         }()
-        return (SafariBrowserBridge.shared.isFresh ? SafariBrowserBridge.shared.latestContext?.url : nil)
-            ?? AXWebReader.shared.cachedSnapshot(for: pid)?.url
-            ?? axContext.currentURL
-            ?? AXContextReader.shared.current.currentURL
-            ?? liveAXRead
-            ?? SafariTabManager.shared.lastSelectedTab()?.url
+
+        // Safari Web Apps (YouTube, YT Music, Spotify…) have no extension bridge and no
+        // address bar, and the cached sources can still hold a stale value or the web
+        // app's bundle id — which leaked into the prompt as the "page URL". For those,
+        // the live AXWebArea read must win.
+        let isSafariWebApp = bundleId.hasPrefix("com.apple.Safari.WebApp")
+        let ordered: [String?] =
+            isSafariWebApp
+            ? [
+                liveAXRead,
+                AXWebReader.shared.cachedSnapshot(for: pid)?.url,
+                axContext.currentURL,
+            ]
+            : [
+                SafariBrowserBridge.shared.isFresh ? SafariBrowserBridge.shared.latestContext?.url : nil,
+                AXWebReader.shared.cachedSnapshot(for: pid)?.url,
+                axContext.currentURL,
+                AXContextReader.shared.current.currentURL,
+                liveAXRead,
+                SafariTabManager.shared.lastSelectedTab()?.url,
+            ]
+
+        // Only accept real web URLs — never a bundle id or an app name.
+        return ordered.compactMap { $0 }.first { raw in
+            guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+                let scheme = url.scheme?.lowercased(),
+                scheme == "http" || scheme == "https",
+                url.host?.isEmpty == false
+            else { return false }
+            return true
+        }
     }
 
     func currentBrowserPageIcon() -> NSImage? {
@@ -1094,17 +1129,6 @@ extension LauncherView {
                         }
                         .buttonStyle(.plain)
                         .focusable(false)
-                        .onHover { hovering in
-                            guard acceptsMouseDrivenDockInteraction else { return }
-                            if hovering {
-                                RunningAppPreviewService.shared.scheduleShow(
-                                    for: app,
-                                    icon: resolvedRunningAppIcon(for: app)
-                                )
-                            } else {
-                                RunningAppPreviewService.shared.scheduleHide()
-                            }
-                        }
                     }
                 }
                 .padding(.horizontal, 7)

@@ -200,6 +200,8 @@ final class ContextDockViewModel: ObservableObject {
 
     var pillBuildTask: Task<Void, Never>?
     var pillBuildGeneration = 0
+    var queuedPillNavigationDelta = 0
+    var queuedPillNavigationGeneration: Int?
     var menuLoadTask: Task<Void, Never>?
     var liveMenuRefreshTask: Task<Void, Never>?
     var menuAvailabilityRefreshTask: Task<Void, Never>?
@@ -222,6 +224,8 @@ final class ContextDockViewModel: ObservableObject {
         pendingPreviewPills = []
         pendingPillQuery = nil
         visiblePills = []
+        queuedPillNavigationDelta = 0
+        queuedPillNavigationGeneration = nil
         if cancelBuild {
             pillBuildTask?.cancel()
             pillBuildTask = nil
@@ -274,6 +278,8 @@ final class ContextDockViewModel: ObservableObject {
 
         pillBuildGeneration &+= 1
         pillBuildTask?.cancel()
+        queuedPillNavigationDelta = 0
+        queuedPillNavigationGeneration = nil
 
         if isQuestionStyle {
             lastPillQuery = query

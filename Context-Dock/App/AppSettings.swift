@@ -853,6 +853,8 @@ class AppSettings: ObservableObject {
     @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
     @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
+    @AppStorage("windowReviewHotkeyKeyCode") private var _windowReviewHotkeyKeyCode: Int = 0
+    @AppStorage("windowReviewHotkeyModifiers") private var _windowReviewHotkeyModifiers: Int = 0
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()
@@ -1678,6 +1680,14 @@ class AppSettings: ObservableObject {
         get { UInt32(_captureScreenshotHotkeyModifiers) }
         set { objectWillChange.send(); _captureScreenshotHotkeyModifiers = Int(newValue) }
     }
+    var windowReviewHotkeyKeyCode: UInt32 {
+        get { UInt32(_windowReviewHotkeyKeyCode) }
+        set { objectWillChange.send(); _windowReviewHotkeyKeyCode = Int(newValue) }
+    }
+    var windowReviewHotkeyModifiers: UInt32 {
+        get { UInt32(_windowReviewHotkeyModifiers) }
+        set { objectWillChange.send(); _windowReviewHotkeyModifiers = Int(newValue) }
+    }
 
     init() {
         migrateAIKeysToKeychain()
@@ -2381,6 +2391,10 @@ class AppSettings: ObservableObject {
         hotkeyDisplayString(
             keyCode: captureScreenshotHotkeyKeyCode,
             modifiers: captureScreenshotHotkeyModifiers)
+    }
+    var windowReviewHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: windowReviewHotkeyKeyCode, modifiers: windowReviewHotkeyModifiers)
     }
 
     // Computed property to get hotkey display string

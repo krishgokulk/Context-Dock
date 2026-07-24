@@ -1221,11 +1221,6 @@ extension LauncherView {
             withAnimation(.spring(response: 0.18, dampingFraction: 0.75)) {
                 hoveredAppPillIndex = hovering ? index : nil
             }
-            if hovering, let previewApp {
-                RunningAppPreviewService.shared.scheduleShow(for: previewApp, icon: icon)
-            } else if !hovering {
-                RunningAppPreviewService.shared.scheduleHide()
-            }
         }
     }
 

@@ -30,8 +30,27 @@ final class AXSearchFieldInjector {
         let bundleId = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? bundleId
 
+        // Fully yield keyboard focus BEFORE posting any events. The DoraX dock is a
+        // panel that stays key; if it isn't ordered out, the synthetic Cmd+F / paste
+        // go to its search field ("typed into our app") and nothing lands in the
+        // target app. orderOut is synchronous, so key focus is released immediately.
+        await MainActor.run { AppDelegate.shared?.launcherWindow?.orderOut(nil) }
+
         _ = app.activate(options: [.activateIgnoringOtherApps])
-        await AXActionResolver.waitForActivation(of: app)
+        // Electron/Catalyst apps ignore NSRunningApplication.activate — re-open via
+        // NSWorkspace (activates a running app, never relaunches) so it truly fronts.
+        if let url = app.bundleURL {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        }
+        // Confirm the target is frontmost before posting keys, but keep the wait short —
+        // it usually fronts within ~100ms, and a long poll was the post-search delay.
+        // Skip the extra AXActionResolver.waitForActivation (it double-waited).
+        for _ in 0..<8 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { break }
+            try? await Task.sleep(nanoseconds: 30_000_000)  // ≤240ms total
+        }
 
         guard
             let field = await openSearchUIAndResolveField(
@@ -188,7 +207,7 @@ final class AXSearchFieldInjector {
     ) async -> AXUIElement? {
         if !hasCuratedSearchShortcut(bundleId: bundleId) {
             let openers = menuDerivedSearchOpeners(bundleId: bundleId, appName: appName, pid: pid)
-            for item in openers.prefix(2) {
+            for item in openers.prefix(1) {
                 let shortcut = item.shortcutChar?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if !shortcut.isEmpty {
                     let sent = await MainActor.run {
@@ -199,7 +218,7 @@ final class AXSearchFieldInjector {
                         )
                     }
                     if sent {
-                        try? await Task.sleep(nanoseconds: 200_000_000)
+                        try? await Task.sleep(nanoseconds: 120_000_000)
                         if let field = await resolveSearchField(pid: pid, attempts: 3) {
                             return field
                         }
@@ -210,7 +229,7 @@ final class AXSearchFieldInjector {
                     AXMenuReader.shared.clickMenuItem(path: item.path, in: pid)
                 }
                 guard clicked else { continue }
-                try? await Task.sleep(nanoseconds: 200_000_000)
+                try? await Task.sleep(nanoseconds: 120_000_000)
                 if let field = await resolveSearchField(pid: pid, attempts: 3) {
                     return field
                 }
@@ -219,7 +238,7 @@ final class AXSearchFieldInjector {
 
         for (index, shortcut) in searchShortcutLadder(bundleId: bundleId).enumerated() {
             sendKey(shortcut.key, modifiers: shortcut.modifiers, pid: pid)
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            try? await Task.sleep(nanoseconds: 120_000_000)
             // First rung gets more patience (app may animate its search UI in).
             if let field = await resolveSearchField(pid: pid, attempts: index == 0 ? 4 : 2) {
                 return field

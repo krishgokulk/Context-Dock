@@ -13,9 +13,27 @@ final class ScreenCaptureService: @unchecked Sendable {
 
     func capture(_ kind: CaptureKind) {
         Task.detached(priority: .userInitiated) {
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("context-dock-hotkey-capture-\(UUID().uuidString).png")
-            defer { try? FileManager.default.removeItem(at: url) }
+            let isSavedImage: Bool
+            switch kind {
+            case .area, .screenshot: isSavedImage = true
+            case .text: isSavedImage = false
+            }
+            let url: URL
+            if isSavedImage,
+                let pictures = FileManager.default.urls(
+                    for: .picturesDirectory, in: .userDomainMask).first
+            {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+                let name = "Screenshot \(formatter.string(from: Date()))-\(UUID().uuidString.prefix(4)).png"
+                url = pictures.appendingPathComponent(name)
+            } else {
+                url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("context-dock-hotkey-capture-\(UUID().uuidString).png")
+            }
+            defer {
+                if !isSavedImage { try? FileManager.default.removeItem(at: url) }
+            }
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")

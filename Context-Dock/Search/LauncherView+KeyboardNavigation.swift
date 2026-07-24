@@ -159,6 +159,34 @@ extension LauncherView {
 
     func setupDockPillKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // Compact scopes normally yield directly to the field editor. Window Preview is
+            // different: its arrows, Space and Return are first-class selection controls, so
+            // intercept them before `handleTopLevelKeyRouting` returns the event to NSTextField.
+            if self.searchState.activeSmartQueryKey == "windows",
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+            {
+                switch event.keyCode {
+                case 123:
+                    self.navigateWindowReview(horizontal: -1)
+                    return nil
+                case 124:
+                    self.navigateWindowReview(horizontal: 1)
+                    return nil
+                case 125:
+                    self.navigateWindowReview(vertical: 1)
+                    return nil
+                case 126:
+                    self.navigateWindowReview(vertical: -1)
+                    return nil
+                case 36:
+                    return self.executeFocusedWindowReviewItem() ? nil : event
+                case 49:
+                    return self.quickLookFocusedWindowReviewItem() ? nil : event
+                default:
+                    break
+                }
+            }
+
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
             // .onKeyPress ever sees it.
@@ -345,7 +373,7 @@ extension LauncherView {
                 switch event.keyCode {
                 case 125:  // Down
                     if self.expandGlobalContextTypingMatch(selectFirst: true) { return nil }
-                case 124, 48:  // Right / Tab — ghost completion FIRST, then expansion
+                case 124, 48:  // Right / Tab — completion/scope only; ↓ owns sheet reveal
                     if event.keyCode == 124,
                         self.acceptTopGlobalAppGhostCompletionIfPossible()
                     {
@@ -353,13 +381,6 @@ extension LauncherView {
                     }
                     if event.keyCode == 124,
                         self.activateFocusedGlobalAppScopeIfPossible()
-                    {
-                        return nil
-                    }
-                    if self.globalContextViewModel.typingSnapshot.matchDockIcons.contains(where: {
-                        $0.isExpandable
-                    }),
-                        self.expandGlobalContextTypingMatch(selectFirst: true)
                     {
                         return nil
                     }
@@ -381,18 +402,10 @@ extension LauncherView {
                     if exactLaunchIcons.count == 1, let item = exactLaunchIcons.first {
                         self.executeMatchDockIcon(item)
                         return nil
-                    } else if expandableRunningIcons.count == 1 {
-                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                            return nil
-                        }
-                    } else if matchIcons.count == 1, let item = matchIcons.first, item.isExpandable
+                    } else if expandableRunningIcons.count == 1,
+                        let item = expandableRunningIcons.first
                     {
-                        if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                            return nil
-                        }
-                    } else if matchIcons.contains(where: { $0.isExpandable }),
-                        self.expandGlobalContextTypingMatch(selectFirst: true)
-                    {
+                        self.executeMatchDockIcon(item)
                         return nil
                     }
                 default:
@@ -407,16 +420,6 @@ extension LauncherView {
                 }
                 if self.activateFocusedGlobalAppScopeIfPossible() {
                     return nil
-                }
-                if self.isGlobalContextActive,
-                    self.shouldUsePureGlobalAppSearch,
-                    self.globalInlineAppScope == nil,
-                    self.globalContextViewModel.typingSnapshot.phase != .expanded,
-                    !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    if self.expandGlobalContextTypingMatch(selectFirst: true) {
-                        return nil
-                    }
                 }
                 if !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     self.focusTopGlobalAppResultIfPossible()
@@ -547,9 +550,15 @@ extension LauncherView {
             // empty-field Left Arrow stays reserved for General Chat (handled by the
             // SwiftUI .onKeyPress(.leftArrow) below), so both start states are distinct:
             // from the bare field Right enters the capsule, Left enters General Chat.
+            // An open frontmost-app chat owns the arrow keys — cycling the app scope from
+            // inside a conversation swapped it to another app (e.g. Finder) mid-chat.
+            let inScopedChat =
+                self.shouldShowContextDockChatSheet || self.l2.chatArmed || self.l2.showChatPopover
+
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 124,
+                !inScopedChat,
                 self.focusedAppPillIndex == nil,
                 self.l2.focusedPillIndex == nil,
                 self.currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
@@ -564,6 +573,7 @@ extension LauncherView {
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 123,
+                !inScopedChat,
                 self.focusedAppPillIndex == nil,
                 self.l2.focusedPillIndex == nil,
                 let scopedBundle = self.currentGlobalScopedBundleID,
@@ -880,6 +890,18 @@ extension LauncherView {
                 return nil
 
             case 125:  // Down — navigate pills when focused, else pass through to SwiftUI
+                // Never navigate the coordinator's temporary preview array. Its final
+                // result can have a different order, which makes an index highlight a
+                // different action and causes the visible jump seen during loading.
+                if self.usesVerticalListDockLayout,
+                    self.pendingDockPillQuery == q,
+                    self.dockPillBuildTask != nil
+                {
+                    self.contextDockViewModel.queuedPillNavigationDelta += 1
+                    self.contextDockViewModel.queuedPillNavigationGeneration =
+                        self.dockPillBuildGeneration
+                    return nil
+                }
                 if self.usesVerticalListDockLayout, !pills.isEmpty {
                     if self.settings.effectiveDockAtBottom {
                         guard let cur = self.l2.focusedPillIndex else { return event }
@@ -920,6 +942,15 @@ extension LauncherView {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.78)) {
                         self.clipboardHistoryExpanded.toggle()
                     }
+                    return nil
+                }
+                if self.usesVerticalListDockLayout,
+                    self.pendingDockPillQuery == q,
+                    self.dockPillBuildTask != nil
+                {
+                    self.contextDockViewModel.queuedPillNavigationDelta -= 1
+                    self.contextDockViewModel.queuedPillNavigationGeneration =
+                        self.dockPillBuildGeneration
                     return nil
                 }
                 if self.usesVerticalListDockLayout, !pills.isEmpty {
@@ -1263,19 +1294,19 @@ extension LauncherView {
             self.renderedDockHeight = visibleStartHeight
 
             if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
-                // Expansion: give the transparent host its final capacity, then reveal the
-                // top-aligned SwiftUI shell in the SAME runloop turn. Deferring the reveal
-                // spring by a runloop (the old DispatchQueue.main.async) left the shell at
-                // its previous small height for one frame inside the already-grown window —
-                // the "stuck small, then expands" hitch. setFrame(display:) is synchronous,
-                // so the window is already at full size before the spring starts.
-                window.setFrame(newFrame, display: true)
                 if shouldAnimateVisibleShell {
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.90)) {
+                    // Spotlight-style reveal: the transparent host receives its final capacity
+                    // synchronously, then the single top-anchored SwiftUI surface grows inside it.
+                    // Animating the NSPanel frame exposed the already-full list through a moving
+                    // crop (empty sheet first, rows later). A non-bouncy ease-out keeps the glass,
+                    // divider, headers, and rows moving as one prepared surface.
+                    window.setFrame(newFrame, display: true)
+                    withAnimation(.easeOut(duration: 0.18)) {
                         self.renderedDockHeight = effectiveHeight
                     }
                 } else {
                     self.renderedDockHeight = effectiveHeight
+                    window.setFrame(newFrame, display: true)
                 }
             } else {
                 // Collapse: hide the visible shell first while the larger transparent host still
@@ -1379,6 +1410,10 @@ extension LauncherView {
                 onClose()
             }
             .onKeyPress(.upArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(vertical: -1)
+                    return .handled
+                }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
                 if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
@@ -1432,6 +1467,10 @@ extension LauncherView {
                 return .ignored
             }
             .onKeyPress(.downArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(vertical: 1)
+                    return .handled
+                }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
                 if activeNotepadScopeCommand != nil { return .ignored }
                 if isGlobalContextActive,
@@ -1506,6 +1545,9 @@ extension LauncherView {
             .onKeyPress(.space) {
                 // Quick Note editor: space is text — never steal it back to the input.
                 if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "windows" {
+                    return quickLookFocusedWindowReviewItem() ? .handled : .ignored
+                }
                 if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
                     searchState.query.append(" ")
                     reclaimSearchInputFocus()
@@ -1553,6 +1595,9 @@ extension LauncherView {
             .onKeyPress(.return) {
                 // Quick Note editor: Return / Shift+Return insert a newline.
                 if activeNotepadScopeCommand != nil { return .ignored }
+                if searchState.activeSmartQueryKey == "windows" {
+                    return executeFocusedWindowReviewItem() ? .handled : .ignored
+                }
                 if !showFolderPreview {
                     if executeScopedRunningAppIfIdle() {
                         return .handled
@@ -1910,6 +1955,10 @@ extension LauncherView {
             // Left Arrow on an empty field (no scope chips) → standalone General AI
             // chat. With text or a scope chip present it stays a normal cursor/scope key.
             .onKeyPress(.leftArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(horizontal: -1)
+                    return .handled
+                }
                 if searchState.activeSmartQueryKey == "clipboard",
                     clipboardSourcePillFocusIndex != nil
                 {
@@ -1922,6 +1971,12 @@ extension LauncherView {
                     !aiMode.isActive,
                     !showMediaLayer,
                     !isCompactSmartScope,
+                    // Never hop out of an open frontmost-app chat — Left Arrow only enters
+                    // General Chat from a bare dock, not from an active scoped conversation.
+                    !shouldShowContextDockChatSheet,
+                    !l2.chatArmed,
+                    !l2.showChatPopover,
+                    l2.targetApp == nil,
                     settings.enableAIMode
                 else { return .ignored }
                 enterGeneralChatPreservingLayer()
@@ -1930,6 +1985,10 @@ extension LauncherView {
             // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
+                if searchState.activeSmartQueryKey == "windows" {
+                    navigateWindowReview(horizontal: 1)
+                    return .handled
+                }
                 if activeNotepadScopeCommand != nil { return .ignored }
                 // Finder desktop: drill into the focused folder, showing its contents.
                 // Only when the caret is at the end so it never hijacks cursor movement
@@ -1966,14 +2025,21 @@ extension LauncherView {
                     return .handled
                 }
                 // In a browser with an empty field, right-arrow grabs the current
-                // page and immediately arms app-scoped chat for that page.
+                // page and immediately arms app-scoped chat for that page. Verify against
+                // the LIVE frontmost app: a stale cached bundle made this fire while the
+                // user was in a non-browser app (VS Code), attaching a browser page to
+                // that app's chat.
+                let liveFrontmostBundle =
+                    AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+                    ?? frontmost.bundleID
                 if isGlobalContextActive || showContextInDock,
                     searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     !aiMode.isActive,
                     !showMediaLayer,
                     !isCompactSmartScope,
                     l2.targetApp == nil,
-                    AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID),
+                    AXWebReader.shared.isBrowser(bundleId: liveFrontmostBundle),
+                    liveFrontmostBundle == frontmost.bundleID,
                     addCurrentSafariPageToContextFromKeyboard()
                 {
                     searchState.revision += 1

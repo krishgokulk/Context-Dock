@@ -53,6 +53,20 @@ struct HotkeysSettingsPage: View {
                         }
                         Divider()
                         captureHotkeyRow(
+                            icon: "macwindow.on.rectangle", color: .cyan,
+                            title: "Window Review",
+                            subtitle: "Preview and restore the current app's open and minimized windows",
+                            display: settings.windowReviewHotkeyDisplayString,
+                            clear: {
+                                settings.windowReviewHotkeyKeyCode = 0
+                                settings.windowReviewHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.windowReviewHotkeyKeyCode = $0
+                                settings.windowReviewHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "text.viewfinder", color: .blue,
                             title: "Capture Text",
                             subtitle: "Select text on screen, OCR it, and save it to Clipboard",
@@ -69,7 +83,7 @@ struct HotkeysSettingsPage: View {
                         captureHotkeyRow(
                             icon: "crop", color: .purple,
                             title: "Capture Area",
-                            subtitle: "Select a screen region and save its image to Clipboard",
+                            subtitle: "Select a screen region; save it to Pictures and Clipboard",
                             display: settings.captureAreaHotkeyDisplayString,
                             clear: {
                                 settings.captureAreaHotkeyKeyCode = 0
@@ -83,7 +97,7 @@ struct HotkeysSettingsPage: View {
                         captureHotkeyRow(
                             icon: "camera.viewfinder", color: .green,
                             title: "Screenshot",
-                            subtitle: "Capture the full screen and save its image to Clipboard",
+                            subtitle: "Capture the full screen; save it to Pictures and Clipboard",
                             display: settings.captureScreenshotHotkeyDisplayString,
                             clear: {
                                 settings.captureScreenshotHotkeyKeyCode = 0
