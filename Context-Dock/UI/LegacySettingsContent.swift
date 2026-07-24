@@ -3732,6 +3732,55 @@ Rules:
 
 Now create one for: "<the CLI tool + subcommands you want>"
 """
+        ),
+        Template(
+            id: 5,
+            title: "Live Scope (advanced)",
+            icon: "square.stack.3d.up",
+            description: "A full live list scope like Process Monitor — a searchable, auto-refreshing list of rows, each runnable on Return. Build anything: ports, Docker containers, git branches, a password store, a file box. Paste the JSON back here.",
+            prompt: """
+You generate a Context-Dock LIVE SCOPE. It becomes a Global Command that opens a
+searchable, auto-refreshing LIST in Global Context — exactly like the built-in
+Process Monitor. Each row is selectable and runs an action on Return.
+
+How a Live Scope works:
+- A ROWS script prints ONE JSON object PER LINE (NDJSON), each a list row:
+  {"id":"unique","title":"shown","subtitle":"dim text","badge":"tag","icon":"SFSymbol-or-/abs/path"}
+  Only "id" and "title" are required.
+- An ACTION script runs when the user presses Return on a row. The selected row is
+  exposed as env vars: $CD_ROW_ID, $CD_ROW_TITLE.
+- $CD_QUERY is whatever the user typed — filter your rows with it for search-as-you-type.
+- Keyword "provider:custom" MAKES it a live scope. Add "refresh:N" to auto-refresh
+  every N seconds. Everything runs in the background off the UI.
+
+Output ONLY this JSON (no prose, no markdown fences):
+{
+  "version": "1.0",
+  "type": "system_commands",
+  "systemCommands": [
+    {
+      "name": "Ports",
+      "description": "Listening TCP ports — Return kills the process.",
+      "icon": "network",
+      "keywords": ["ports", "provider:custom", "refresh:5"],
+      "scriptType": "bash",
+      "script": "lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 { printf \\"{\\\\\\"id\\\\\\":\\\\\\"%s\\\\\\",\\\\\\"title\\\\\\":\\\\\\"port %s\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s (pid %s)\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"network\\\\\\"}\\\\n\\", $2, $9, $1, $2 }'",
+      "undoScriptType": "bash",
+      "undoScript": "kill -9 \\"$CD_ROW_ID\\""
+    }
+  ]
+}
+
+Rules:
+- "type" MUST be exactly "system_commands".
+- keywords MUST include "provider:custom"; add "refresh:N" for live refresh.
+- "script" = the ROWS script (NDJSON). "undoScript" = the ROW ACTION (Return).
+- "scriptType"/"undoScriptType" are "bash", "applescript", or "jxa".
+- "icon" is an SF Symbol name; a row "icon" may also be an absolute file/app path.
+- Make it robust: no prose output from the rows script, one JSON object per line only.
+
+Now create one for: "<describe the live scope you want — ports, docker, git branches, a password store, a file box, a web-app dashboard, anything>"
+"""
         )
     ]
 
