@@ -280,7 +280,6 @@ extension LauncherView {
                 windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.8) : .clear,
                 lineWidth: 1.5))
         .id(focusID)
-        .onHover { hovering in if hovering { windowReviewFocusedID = focusID } }
     }
 
     func windowReviewCard(_ preview: RunningAppWindowPreview, group: WindowReviewGroup) -> some View {
@@ -329,6 +328,5 @@ extension LauncherView {
                 windowReviewFocusedID == focusID ? Color.accentColor.opacity(0.8) : .clear,
                 lineWidth: 1.5))
         .id(focusID)
-        .onHover { hovering in if hovering { windowReviewFocusedID = focusID } }
     }
 }

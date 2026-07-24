@@ -38,6 +38,12 @@ extension LauncherView {
                 return event
             }
 
+            // Window Preview owns nested native vertical and horizontal ScrollViews.
+            // Never translate their trackpad movement into dock-layer or pill navigation.
+            if self.searchState.activeSmartQueryKey == "windows" {
+                return event
+            }
+
             let dx = event.scrollingDeltaX
             let dy = event.scrollingDeltaY
 

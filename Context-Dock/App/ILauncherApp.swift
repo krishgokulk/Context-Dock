@@ -1810,7 +1810,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        presentSmartScope(.activateClipboardScope)
+        if toggleOffSmartScopeIfActive("clipboard") { return }
+        presentSmartScope(.activateClipboardScope, key: "clipboard")
     }
 
     func activateWindowReviewScope() {
@@ -1818,15 +1819,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        presentSmartScope(.activateWindowReviewScope)
+        if toggleOffSmartScopeIfActive("windows") { return }
+        presentSmartScope(.activateWindowReviewScope, key: "windows")
     }
 
     /// True while a compact scope (Clipboard / Notifications) is showing, so the
     /// launcher does not auto-hide when another app takes focus.
     var smartScopeActive = false
+    private var activeSmartScopeKey: String?
 
-    private func presentSmartScope(_ notificationName: Notification.Name) {
+    private func toggleOffSmartScopeIfActive(_ key: String) -> Bool {
+        guard activeSmartScopeKey == key, launcherWindow?.isVisible == true else { return false }
+        smartScopeActivationGeneration &+= 1
+        smartScopeActive = false
+        activeSmartScopeKey = nil
+        isDockContextMode = false
+        hideLauncher(force: true)
+        return true
+    }
+
+    private func presentSmartScope(_ notificationName: Notification.Name, key: String) {
         smartScopeActive = true
+        activeSmartScopeKey = key
         smartScopeActivationGeneration &+= 1
         let generation = smartScopeActivationGeneration
         DispatchQueue.main.async {
@@ -2179,7 +2193,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.orderFrontRegardless()
             return
         }
-        if force { settings.launcherPinned = false }
+        if force {
+            settings.launcherPinned = false
+            smartScopeActive = false
+            activeSmartScopeKey = nil
+        }
         if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
             window.alphaValue = 1
             applyPersistentDockBehavior()
