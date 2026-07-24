@@ -947,6 +947,10 @@ extension LauncherView {
         Button {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
                 settings.launcherPinned.toggle()
+                // Pin changes dockJoinsAllSpaces — re-apply the window collectionBehavior
+                // now, otherwise the dock keeps moveToActiveSpace and vanishes when the
+                // user switches desktop Spaces despite being pinned.
+                AppDelegate.shared?.applyPersistentDockBehavior()
             }
             isSearchFieldFocused = true
         } label: {
