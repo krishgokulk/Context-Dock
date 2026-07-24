@@ -4722,6 +4722,10 @@ extension LauncherView {
                     "Searching", subject: intent.appName,
                     icon: "magnifyingglass", tint: .blue.opacity(0.85)
                 )
+                // Hide the dock first so the target app becomes key and receives the
+                // injector's Cmd+F / paste keystrokes (otherwise the dock eats them).
+                resetDockStateAfterAppAction()
+                forceHideLauncherAfterResultExecution()
                 Task {
                     let output = await AppContentSearchRouter.shared.execute(intent)
                     await MainActor.run {

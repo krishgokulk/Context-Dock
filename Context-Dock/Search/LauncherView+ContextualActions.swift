@@ -5218,7 +5218,12 @@ extension LauncherView {
             return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
         }()
 
-        if visibleMenuMatches.isEmpty, let appContentSearchPill {
+        // Always offer "Search <App> for <query>" while typing in a scoped app — not
+        // only when no menu item matched — so the user can always send the query to the
+        // app's own search.
+        if let appContentSearchPill,
+            !scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
             pills.append(appContentSearchPill)
         }
 
