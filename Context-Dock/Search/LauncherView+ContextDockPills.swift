@@ -7,18 +7,23 @@ struct FinderDesktopSearchRecord: Sendable {
     let pathKey: String
     let normalizedName: String
     let normalizedTerms: [String]
+    var isDirectory: Bool = false
 
     nonisolated func score(for query: String) -> Int? {
         guard !query.isEmpty else { return 0 }
-        if normalizedName == query { return 600 }
-        let base = (normalizedName as NSString).deletingPathExtension
-        if base == query { return 550 }
-        if normalizedName.hasPrefix(query) { return 500 }
-        let words = normalizedName.split { !$0.isLetter && !$0.isNumber }
-        if words.contains(where: { $0.hasPrefix(query) }) { return 400 }
-        if normalizedName.contains(query) { return 300 }
-        if normalizedTerms.contains(where: { $0.contains(query) }) { return 150 }
-        return nil
+        let base: Int?
+        if normalizedName == query { base = 600 }
+        else if (normalizedName as NSString).deletingPathExtension == query { base = 550 }
+        else if normalizedName.hasPrefix(query) { base = 500 }
+        else if normalizedName.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .contains(where: { $0.hasPrefix(query) }) { base = 400 }
+        else if normalizedName.contains(query) { base = 300 }
+        else if normalizedTerms.contains(where: { $0.contains(query) }) { base = 150 }
+        else { base = nil }
+        guard let base else { return nil }
+        // Folders lead their file peers of the same match tier — the Finder/Spotlight
+        // convention — so directories no longer scatter to the bottom of the list.
+        return isDirectory ? base + 80 : base
     }
 }
 
@@ -878,10 +883,15 @@ extension LauncherView {
         for pill in allPills {
             guard let path = pill.resolvedURL?.path.lowercased(), !path.isEmpty else { continue }
             byPath[path] = pill
+            // Derive folder-ness from the pill's icon (set by makeDesktopPill) — no
+            // filesystem stat per record, so the index build stays fast.
+            let isDir = pill.icon == "folder.fill" || pill.icon == "folder"
+                || pill.icon == "folder.fill.badge.plus"
             records.append(FinderDesktopSearchRecord(
                 pathKey: path,
                 normalizedName: pill.name.lowercased(),
-                normalizedTerms: pill.searchTerms.map { $0.lowercased() }))
+                normalizedTerms: pill.searchTerms.map { $0.lowercased() },
+                isDirectory: isDir))
         }
         contextDockViewModel.finderDesktopPillsByPath = byPath
         contextDockViewModel.finderDesktopSearchRecords = records
