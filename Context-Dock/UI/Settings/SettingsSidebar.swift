@@ -2,15 +2,12 @@ import SwiftUI
 
 struct SettingsSidebar: View {
     @Binding var selectedPage: SettingsPage
-    @State private var expandedGroups: Set<String> = Set(
-        SettingsSidebarSection.all.flatMap { section in
-            section.rows.compactMap { $0.children.isEmpty ? nil : $0.id }
-        }
-    )
 
     var body: some View {
         // Native sidebar List → macOS 26 Liquid Glass chrome (translucent,
         // floating, system selection highlight) handled by NavigationSplitView.
+        // Flat icon rows under grey section headers — every row shares one icon
+        // column and one text indent, matching System Settings / Raycast.
         List(selection: $selectedPage) {
             ForEach(SettingsSidebarSection.all) { section in
                 Section {
@@ -18,19 +15,6 @@ struct SettingsSidebar: View {
                         if let page = row.page {
                             sidebarLabel(page, title: row.title)
                                 .tag(page)
-                        } else {
-                            DisclosureGroup(
-                                isExpanded: bindingForGroup(row.id)
-                            ) {
-                                ForEach(row.children, id: \.self) { child in
-                                    sidebarLabel(child, title: child.title)
-                                        .tag(child)
-                                }
-                            } label: {
-                                Text(row.title)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                            }
                         }
                     }
                 } header: {
@@ -51,15 +35,6 @@ struct SettingsSidebar: View {
         .listStyle(.sidebar)
     }
 
-    private func bindingForGroup(_ id: String) -> Binding<Bool> {
-        Binding(
-            get: { expandedGroups.contains(id) },
-            set: { isOn in
-                if isOn { expandedGroups.insert(id) } else { expandedGroups.remove(id) }
-            }
-        )
-    }
-
     private func sidebarLabel(_ page: SettingsPage, title: String) -> some View {
         Label {
             HStack(spacing: 6) {
@@ -76,7 +51,9 @@ struct SettingsSidebar: View {
             }
         } icon: {
             Image(systemName: page.icon)
+                .font(.system(size: 13))
                 .foregroundStyle(page.color)
+                .frame(width: 20, alignment: .center)
         }
     }
 }

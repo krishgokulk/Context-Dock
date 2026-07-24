@@ -158,13 +158,9 @@ extension SettingsSidebarSection {
             title: "Extensions",
             rows: [
                 SettingsSidebarRow("Create Extension", page: .extensionImport),
-                SettingsSidebarRow("Global Context", children: [
-                    .extensionsGlobalWithoutSelection,
-                    .extensionsCLIToolScope
-                ]),
-                SettingsSidebarRow("Context Dock", children: [
-                    .frontmostAppAdapters
-                ]),
+                SettingsSidebarRow(SettingsPage.extensionsGlobalWithoutSelection.title, page: .extensionsGlobalWithoutSelection),
+                SettingsSidebarRow(SettingsPage.extensionsCLIToolScope.title, page: .extensionsCLIToolScope),
+                SettingsSidebarRow(SettingsPage.frontmostAppAdapters.title, page: .frontmostAppAdapters),
                 SettingsSidebarRow("Selection Scope", page: .shortcutSheetWorkflows)
             ]
         ),
