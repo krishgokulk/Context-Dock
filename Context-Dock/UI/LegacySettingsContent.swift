@@ -3538,14 +3538,13 @@ struct PromptTemplatesSection: View {
             id: 0,
             title: "Global Command",
             icon: "command",
-            description: "Runs from the search bar anywhere. Type the name to fire it. Paste this whole prompt into any AI, then paste the JSON back here.",
+            description: "Runs from the search bar anywhere — type its name and press Return. Also builds live-list scopes (like Process Monitor): a searchable, auto-refreshing list where each row runs an action. Paste this into any AI, then paste the JSON back here.",
             prompt: """
 You generate a Context-Dock GLOBAL COMMAND. It runs from the search bar in
-any app — the user types its name (or a keyword) and presses Return.
+Global Context — the user types its name (or a keyword) and presses Return.
 
-Available variable: $CD_QUERY — whatever the user typed after the command name.
-  - In bash scripts use it as the env var "$CD_QUERY".
-  - In AppleScript read it with: system attribute "CD_QUERY".
+Variable: $CD_QUERY — whatever the user typed after the command name.
+  - bash: env var "$CD_QUERY"   - AppleScript: system attribute "CD_QUERY"
 
 Output ONLY this JSON (no prose, no markdown fences):
 {
@@ -3566,16 +3565,47 @@ Output ONLY this JSON (no prose, no markdown fences):
 Rules:
 - "type" MUST be exactly "system_commands".
 - "scriptType" is "bash", "applescript", or "jxa".
-- "icon" is a valid SF Symbol name.
-- "keywords" are extra words that surface the command.
+- Use a tool's absolute path (e.g. /opt/homebrew/bin/brew) so it runs outside
+  an interactive shell. Wrapping a CLI tool is just script "/abs/tool $CD_QUERY".
+- "icon" is a valid SF Symbol name. "keywords" are words that surface it.
 - Optional "presets": [..] adds tappable preset values.
 
-Now create one for: "<describe what your command should do>"
+────────────────────────────────────────────────────────
+ADVANCED — LIVE SCOPE (a searchable auto-refreshing list, like Process Monitor):
+Add keyword "provider:custom" to turn the command into a live LIST. Then:
+- "script" is a ROWS script printing ONE JSON object PER LINE (NDJSON):
+  {"id":"unique","title":"shown","subtitle":"dim","badge":"tag","icon":"SFSymbol-or-/abs/path"}
+  Only "id" and "title" are required. No other output — one object per line.
+- "undoScript" is the ROW ACTION, run on Return. Selected row = $CD_ROW_ID, $CD_ROW_TITLE.
+- $CD_QUERY = typed text; filter rows with it for search-as-you-type.
+- Add "refresh:N" to auto-refresh every N seconds. All runs in the background.
+
+Live-scope example (Ports — Return kills the process):
+{
+  "version": "1.0",
+  "type": "system_commands",
+  "systemCommands": [
+    {
+      "name": "Ports",
+      "description": "Listening TCP ports — Return kills the process.",
+      "icon": "network",
+      "keywords": ["ports", "provider:custom", "refresh:5"],
+      "scriptType": "bash",
+      "script": "lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 { printf \\"{\\\\\\"id\\\\\\":\\\\\\"%s\\\\\\",\\\\\\"title\\\\\\":\\\\\\"port %s\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s (pid %s)\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"network\\\\\\"}\\\\n\\", $2, $9, $1, $2 }'",
+      "undoScriptType": "bash",
+      "undoScript": "kill -9 \\"$CD_ROW_ID\\""
+    }
+  ]
+}
+Build anything as a live scope: ports, Docker containers, git branches, a
+password store, a file box, a web-app dashboard.
+
+Now create one for: "<describe the command OR live scope you want>"
 """
         ),
         Template(
             id: 1,
-            title: "Context Dock (App Adapter)",
+            title: "Context Dock",
             icon: "rectangle.grid.1x2",
             description: "Per-app actions that appear as pills only when a specific app is frontmost. Paste the JSON back here to install.",
             prompt: """
@@ -3621,12 +3651,12 @@ Now create one for: "<app name + the actions you want>"
         ),
         Template(
             id: 2,
-            title: "Shortcut Sheet (Selection)",
+            title: "Selection Scope",
             icon: "text.viewfinder",
             description: "Runs on the user's current text/file selection (Cmd-hold sheet). Use a 'selection' trigger. Paste the JSON back here.",
             prompt: """
-You generate a Context-Dock SELECTION EXTENSION. It appears in the Shortcut
-Sheet that opens on the user's current selection (text or files).
+You generate a Context-Dock SELECTION EXTENSION. It appears in the Selection
+Scope sheet that opens on the user's current selection (text or files).
 
 The selected text/path is passed to the script on stdin and as $CD_TEXT.
 
@@ -3649,137 +3679,12 @@ Output ONLY this JSON (no prose, no markdown fences):
 
 Rules:
 - MUST include a trigger of { "type": "selection" } so it lands in the
-  Shortcut Sheet.
+  Selection Scope sheet.
 - "scriptType": bash, applescript, jxa, python, or swift.
 - "layer": use "L2" for selection/context extensions.
 - "icon" is a valid SF Symbol name.
 
 Now create one for: "<what to do with the selected text or files>"
-"""
-        ),
-        Template(
-            id: 3,
-            title: "Global Context Extension",
-            icon: "sparkles",
-            description: "Always-available extension shown in Global Context (no selection needed). Paste the JSON back here.",
-            prompt: """
-You generate a Context-Dock GLOBAL CONTEXT EXTENSION. It is always available
-in Global Context — no app or selection required. Surface it with keyword
-triggers (or "always").
-
-Output ONLY this JSON (no prose, no markdown fences):
-{
-  "version": "1.0",
-  "extensions": [
-    {
-      "name": "Toggle Dark Mode",
-      "description": "Switch the system appearance.",
-      "icon": "circle.lefthalf.filled",
-      "layer": "crossLayer",
-      "tags": ["system"],
-      "triggers": [ { "type": "keyword", "value": "dark mode" } ],
-      "scriptType": "applescript",
-      "script": "tell application \\"System Events\\" to tell appearance preferences to set dark mode to not dark mode"
-    }
-  ]
-}
-
-Rules:
-- Triggers WITHOUT selection/urlPattern/appContext/fileType land in Global
-  Context. Use { "type": "keyword", "value": "..." } or { "type": "always" }.
-- "scriptType": bash, applescript, jxa, python, or swift.
-- "layer": "crossLayer" for system-wide, or "L1" for a search action.
-- "icon" is a valid SF Symbol name.
-
-Now create one for: "<what the extension should do>"
-"""
-        ),
-        Template(
-            id: 4,
-            title: "CLI Tool Scope",
-            icon: "terminal",
-            description: "Wraps a command-line tool as a scoped Global Command — subcommands become rows. Paste the JSON back here.",
-            prompt: """
-You generate a Context-Dock GLOBAL COMMAND that wraps a CLI tool. The user
-types the tool name to scope in, then a subcommand; $CD_QUERY is whatever they
-typed after the name.
-
-Available variable: $CD_QUERY — the text typed after the command name.
-  - In bash scripts use it as the env var "$CD_QUERY".
-
-Output ONLY this JSON (no prose, no markdown fences):
-{
-  "version": "1.0",
-  "type": "system_commands",
-  "systemCommands": [
-    {
-      "name": "brew",
-      "description": "Run a Homebrew subcommand.",
-      "icon": "terminal",
-      "keywords": ["brew", "homebrew", "cli"],
-      "scriptType": "bash",
-      "script": "/opt/homebrew/bin/brew $CD_QUERY"
-    }
-  ]
-}
-
-Rules:
-- "type" MUST be exactly "system_commands".
-- "scriptType" is "bash", "applescript", or "jxa".
-- Use the tool's absolute path so it runs outside an interactive shell.
-- "icon" is a valid SF Symbol name.
-- Optional "presets": [..] lists common subcommands as tappable values.
-
-Now create one for: "<the CLI tool + subcommands you want>"
-"""
-        ),
-        Template(
-            id: 5,
-            title: "Live Scope (advanced)",
-            icon: "square.stack.3d.up",
-            description: "A full live list scope like Process Monitor — a searchable, auto-refreshing list of rows, each runnable on Return. Build anything: ports, Docker containers, git branches, a password store, a file box. Paste the JSON back here.",
-            prompt: """
-You generate a Context-Dock LIVE SCOPE. It becomes a Global Command that opens a
-searchable, auto-refreshing LIST in Global Context — exactly like the built-in
-Process Monitor. Each row is selectable and runs an action on Return.
-
-How a Live Scope works:
-- A ROWS script prints ONE JSON object PER LINE (NDJSON), each a list row:
-  {"id":"unique","title":"shown","subtitle":"dim text","badge":"tag","icon":"SFSymbol-or-/abs/path"}
-  Only "id" and "title" are required.
-- An ACTION script runs when the user presses Return on a row. The selected row is
-  exposed as env vars: $CD_ROW_ID, $CD_ROW_TITLE.
-- $CD_QUERY is whatever the user typed — filter your rows with it for search-as-you-type.
-- Keyword "provider:custom" MAKES it a live scope. Add "refresh:N" to auto-refresh
-  every N seconds. Everything runs in the background off the UI.
-
-Output ONLY this JSON (no prose, no markdown fences):
-{
-  "version": "1.0",
-  "type": "system_commands",
-  "systemCommands": [
-    {
-      "name": "Ports",
-      "description": "Listening TCP ports — Return kills the process.",
-      "icon": "network",
-      "keywords": ["ports", "provider:custom", "refresh:5"],
-      "scriptType": "bash",
-      "script": "lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR>1 { printf \\"{\\\\\\"id\\\\\\":\\\\\\"%s\\\\\\",\\\\\\"title\\\\\\":\\\\\\"port %s\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s (pid %s)\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"network\\\\\\"}\\\\n\\", $2, $9, $1, $2 }'",
-      "undoScriptType": "bash",
-      "undoScript": "kill -9 \\"$CD_ROW_ID\\""
-    }
-  ]
-}
-
-Rules:
-- "type" MUST be exactly "system_commands".
-- keywords MUST include "provider:custom"; add "refresh:N" for live refresh.
-- "script" = the ROWS script (NDJSON). "undoScript" = the ROW ACTION (Return).
-- "scriptType"/"undoScriptType" are "bash", "applescript", or "jxa".
-- "icon" is an SF Symbol name; a row "icon" may also be an absolute file/app path.
-- Make it robust: no prose output from the rows script, one JSON object per line only.
-
-Now create one for: "<describe the live scope you want — ports, docker, git branches, a password store, a file box, a web-app dashboard, anything>"
 """
         )
     ]
