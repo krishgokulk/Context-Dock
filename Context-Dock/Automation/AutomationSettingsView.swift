@@ -5746,7 +5746,7 @@ struct AutomationImportPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Import Extension")
                         .font(.system(size: 14, weight: .bold))
-                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context, Context Dock, or Shortcut Sheet")
+                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context, Context Dock, or Selection Scope")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
