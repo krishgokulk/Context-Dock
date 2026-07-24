@@ -446,7 +446,13 @@ class ContextDetector {
             return ctx
         }
 
-        // AppleScript fallback
+        // AppleScript fallback. `tell application "Safari"` LAUNCHES Safari if it isn't
+        // running — this read fired proactively and kept Safari alive in the background.
+        // Only script Safari when it's already running.
+        guard NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == "com.apple.Safari" && !$0.isTerminated
+        }) else { return nil }
+
         let script = """
         tell application "Safari"
             if (count of windows) > 0 then
