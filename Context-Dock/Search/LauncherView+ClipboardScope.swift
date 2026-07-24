@@ -1024,26 +1024,27 @@ extension LauncherView {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 40)
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 30, height: 30)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     } else {
                         Image(systemName: row.systemIcon)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(accentColor(for: row.accentColorName))
                     }
                 }
-                .frame(width: 58, height: 52)
+                .frame(width: 34, height: 34)
                 .opacity(row.isEnabled ? 1 : 0.38)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(row.title)
-                        .font(.system(size: 14, weight: row.isUnread ? .semibold : .medium))
+                        .font(.system(size: 13, weight: row.isUnread ? .semibold : .medium))
                         .foregroundStyle(row.isEnabled ? .primary : .secondary)
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         if !row.subtitle.isEmpty {
                             Text(row.subtitle)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -1068,9 +1069,9 @@ extension LauncherView {
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .padding(4)
+                        .frame(width: 18, height: 18)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .padding(3)
                         .background(
                             .ultraThinMaterial,
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -1093,17 +1094,17 @@ extension LauncherView {
                         copy()
                     } label: {
                         Image(systemName: "doc.on.clipboard")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary.opacity(0.72))
-                            .frame(width: 26, height: 26)
+                            .frame(width: 22, height: 22)
                             .background(Color.white.opacity(0.06), in: Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Copy")
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
             .background(
                 ZStack {
