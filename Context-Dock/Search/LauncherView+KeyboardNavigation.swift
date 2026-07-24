@@ -1267,20 +1267,14 @@ extension LauncherView {
 
             if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
                 if shouldAnimateVisibleShell {
-                    // Lay out the sheet at its final height before it becomes visible, then
-                    // animate only the NSPanel frame. Animating both the SwiftUI shell and
-                    // the host produced two independent stages: a clipped half-sheet first,
-                    // followed by the final expansion after rows measured.
-                    var transaction = Transaction()
-                    transaction.animation = nil
-                    withTransaction(transaction) {
+                    // Spotlight-style reveal: the transparent host receives its final capacity
+                    // synchronously, then the single top-anchored SwiftUI surface grows inside it.
+                    // Animating the NSPanel frame exposed the already-full list through a moving
+                    // crop (empty sheet first, rows later). A non-bouncy ease-out keeps the glass,
+                    // divider, headers, and rows moving as one prepared surface.
+                    window.setFrame(newFrame, display: true)
+                    withAnimation(.easeOut(duration: 0.18)) {
                         self.renderedDockHeight = effectiveHeight
-                    }
-                    await NSAnimationContext.runAnimationGroup { context in
-                        context.duration = 0.24
-                        context.timingFunction = CAMediaTimingFunction(
-                            name: .easeInEaseOut)
-                        window.animator().setFrame(newFrame, display: true)
                     }
                 } else {
                     self.renderedDockHeight = effectiveHeight
