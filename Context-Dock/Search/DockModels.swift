@@ -62,6 +62,10 @@ struct SharedResultRowModel: Identifiable {
     var isFocused: Bool = false
     var quickLookURL: URL? = nil
     var dragProvider: (() -> NSItemProvider?)? = nil
+    var isChild: Bool = false  // an expanded child (indented) under a multi-item clip stack
+    var isExpandable: Bool = false  // a multi-item clip that can expand into a file list
+    var isExpanded: Bool = false
+    var toggleExpand: (() -> Void)? = nil  // chevron / right-arrow expands the stack
     var open: () -> Void = {}
     var focus: () -> Void = {}
     var markRead: (() -> Void)? = nil

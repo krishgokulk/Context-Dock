@@ -1024,26 +1024,27 @@ extension LauncherView {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 40)
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 30, height: 30)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     } else {
                         Image(systemName: row.systemIcon)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(accentColor(for: row.accentColorName))
                     }
                 }
-                .frame(width: 58, height: 52)
+                .frame(width: 34, height: 34)
                 .opacity(row.isEnabled ? 1 : 0.38)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(row.title)
-                        .font(.system(size: 14, weight: row.isUnread ? .semibold : .medium))
+                        .font(.system(size: 13, weight: row.isUnread ? .semibold : .medium))
                         .foregroundStyle(row.isEnabled ? .primary : .secondary)
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         if !row.subtitle.isEmpty {
                             Text(row.subtitle)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -1068,9 +1069,9 @@ extension LauncherView {
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .padding(4)
+                        .frame(width: 18, height: 18)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .padding(3)
                         .background(
                             .ultraThinMaterial,
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -1088,22 +1089,38 @@ extension LauncherView {
                         .fixedSize()
                 }
 
+                if row.isExpandable, let toggle = row.toggleExpand {
+                    Button {
+                        toggle()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary.opacity(0.8))
+                            .rotationEffect(.degrees(row.isExpanded ? 0 : -90))
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.06), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(row.isExpanded ? "Collapse files" : "Expand files")
+                }
+
                 if let copy = row.copy {
                     Button {
                         copy()
                     } label: {
                         Image(systemName: "doc.on.clipboard")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary.opacity(0.72))
-                            .frame(width: 26, height: 26)
+                            .frame(width: 22, height: 22)
                             .background(Color.white.opacity(0.06), in: Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Copy")
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.leading, row.isChild ? 34 : 12)
+            .padding(.trailing, 12)
+            .padding(.vertical, row.isChild ? 4 : 6)
             .contentShape(Rectangle())
             .background(
                 ZStack {
@@ -1505,8 +1522,15 @@ extension LauncherView {
             clipboardSourceFilterBundleId.isEmpty
             ? entries
             : entries.filter { $0.sourceBundleId == clipboardSourceFilterBundleId }
-        let rows = scoped.enumerated().map { index, entry in
-            clipboardSharedRow(entry, index: index)
+        let rows = scoped.enumerated().flatMap { index, entry -> [SharedResultRowModel] in
+            var out = [clipboardSharedRow(entry, index: index)]
+            // Expanded multi-file clip → show each file as an indented child row.
+            if entry.filePaths.count > 1, expandedClipboardEntryIDs.contains(entry.id) {
+                out.append(contentsOf: entry.filePaths.enumerated().map { fileIdx, path in
+                    clipboardFileChildRow(entry: entry, path: path, fileIndex: fileIdx)
+                })
+            }
+            return out
         }
         return VStack(spacing: 0) {
             clipboardSourceAppPills(entries)
@@ -1649,8 +1673,40 @@ extension LauncherView {
         .background(Color.accentColor.opacity(0.06))
     }
 
+    /// The multi-file clip at the current keyboard focus, mapping the flat row index
+    /// (group rows + any already-expanded child rows) back to its entry. Right-arrow
+    /// uses this to expand the focused stack.
+    func focusedClipboardStackEntry() -> ClipboardEntry? {
+        guard searchState.activeSmartQueryKey == "clipboard" else { return nil }
+        guard let focus = searchState.selectedIndex ?? focusedClipboardEntryIndex else { return nil }
+        var rowIndex = 0
+        for entry in visibleClipboardEntriesForScope() {
+            if rowIndex == focus {
+                return entry.filePaths.count > 1 ? entry : nil
+            }
+            rowIndex += 1
+            if entry.filePaths.count > 1, expandedClipboardEntryIDs.contains(entry.id) {
+                rowIndex += entry.filePaths.count
+            }
+        }
+        return nil
+    }
+
+    /// Expand / collapse a multi-file clip's file stack.
+    func toggleClipboardStackExpansion(_ entry: ClipboardEntry) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            if expandedClipboardEntryIDs.contains(entry.id) {
+                expandedClipboardEntryIDs.remove(entry.id)
+            } else {
+                expandedClipboardEntryIDs.insert(entry.id)
+            }
+        }
+    }
+
     func clipboardSharedRow(_ entry: ClipboardEntry, index: Int) -> SharedResultRowModel {
-        SharedResultRowModel(
+        let isMultiFile = entry.filePaths.count > 1
+        let isExpanded = expandedClipboardEntryIDs.contains(entry.id)
+        return SharedResultRowModel(
             id: entry.id.uuidString,
             title: entry.preview.isEmpty ? "Clipboard Item" : entry.preview,
             subtitle: clipboardEntrySubtitle(entry),
@@ -1664,7 +1720,13 @@ extension LauncherView {
                 || selectedClipboardEntryIDs.contains(entry.id),
             quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
             dragProvider: { clipboardDragProvider(for: entry) },
+            isExpandable: isMultiFile,
+            isExpanded: isExpanded,
+            toggleExpand: isMultiFile
+                ? { toggleClipboardStackExpansion(entry) }
+                : nil,
             open: {
+                // Tap pastes the whole clip; the chevron / right-arrow expands the files.
                 pasteClipboardEntryToFrontmost(entry, index: index)
             },
             focus: {
@@ -1674,12 +1736,47 @@ extension LauncherView {
             remove: {
                 clipboardHistory.removeAll { $0.id == entry.id }
                 selectedClipboardEntryIDs.remove(entry.id)
+                expandedClipboardEntryIDs.remove(entry.id)
                 savePersistedClipboardHistory()
                 syncVisibleClipboardStateAfterPrune()
                 refreshCompactScopeResults(resetSelection: false)
             },
             copy: {
                 copyClipboardEntryToPasteboard(entry)
+            }
+        )
+    }
+
+    /// One indented file row inside an expanded multi-file clip stack. Tapping pastes
+    /// that single file; the copy button puts just it on the clipboard.
+    func clipboardFileChildRow(entry: ClipboardEntry, path: String, fileIndex: Int)
+        -> SharedResultRowModel
+    {
+        let url = URL(fileURLWithPath: path)
+        return SharedResultRowModel(
+            id: "\(entry.id.uuidString)-file-\(fileIndex)",
+            title: url.lastPathComponent,
+            subtitle: finderDisplayPath(url.deletingLastPathComponent().path),
+            systemIcon: "doc",
+            image: NSWorkspace.shared.icon(forFile: path),
+            sourceImage: nil,
+            accentColorName: "green",
+            quickLookURL: url,
+            dragProvider: {
+                NSItemProvider(contentsOf: url).map { $0 }
+            },
+            isChild: true,
+            open: {
+                // Paste just this file into the frontmost app.
+                let single = ClipboardEntry(
+                    text: url.lastPathComponent, timestamp: entry.timestamp, filePaths: [path])
+                pasteClipboardEntriesToFrontmost([single])
+            },
+            focus: {},
+            copy: {
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.writeObjects([url as NSURL])
             }
         )
     }

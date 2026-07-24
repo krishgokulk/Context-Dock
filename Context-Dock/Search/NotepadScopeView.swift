@@ -269,6 +269,7 @@ struct NotepadScopeView: View {
                         handleDrop(providers, into: id)
                         return true
                     }
+                attachmentStrip(for: id)
                 if isGenerating {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -297,6 +298,49 @@ struct NotepadScopeView: View {
         }
     }
 
+    /// File chips for a note's stored attachments: icon + name, drag out, open on tap,
+    /// remove with ✕.
+    @ViewBuilder
+    private func attachmentStrip(for id: UUID) -> some View {
+        let attachments = store.notes.first(where: { $0.id == id })?.attachments ?? []
+        if !attachments.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(attachments, id: \.self) { name in
+                        let url = store.attachmentURL(name)
+                        HStack(spacing: 6) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable()
+                                .frame(width: 18, height: 18)
+                            Text(name)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 140, alignment: .leading)
+                            Button {
+                                store.removeAttachment(name, from: id)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 0.6))
+                        .onTapGesture { NSWorkspace.shared.open(url) }
+                        .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
+                        .help(url.path)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
     private func editorBinding(for id: UUID) -> Binding<String> {
         Binding(
             get: { store.notes.first(where: { $0.id == id })?.text ?? "" },
@@ -304,19 +348,24 @@ struct NotepadScopeView: View {
         )
     }
 
-    /// Dropped files are appended to the note as `name — path` lines, so the note
-    /// keeps a reference you can click or feed to AI.
+    /// Dropped files are COPIED into the note's storage folder and attached — Quick
+    /// Note is a real drop/storage box, not just a path list.
     private func handleDrop(_ providers: [NSItemProvider], into id: UUID) {
+        let group = DispatchGroup()
+        var urls: [URL] = []
+        let lock = NSLock()
         for provider in providers where provider.canLoadObject(ofClass: URL.self) {
+            group.enter()
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url, url.isFileURL else { return }
-                let line = "\(url.lastPathComponent) — \(url.path)"
-                DispatchQueue.main.async {
-                    let existing = store.notes.first(where: { $0.id == id })?.text ?? ""
-                    let joined = existing.isEmpty ? line : existing + "\n" + line
-                    store.updateText(joined, for: id)
+                if let url, url.isFileURL {
+                    lock.lock(); urls.append(url); lock.unlock()
                 }
+                group.leave()
             }
+        }
+        group.notify(queue: .main) {
+            guard !urls.isEmpty else { return }
+            store.attachFiles(urls, to: id)
         }
     }
 

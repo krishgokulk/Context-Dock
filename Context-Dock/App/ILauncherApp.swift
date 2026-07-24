@@ -266,6 +266,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var contextDockEventHandlerRef: EventHandlerRef?   // stored so re-register removes old handler
     var clipboardScopeHotKeyRef: EventHotKeyRef?
     var clipboardScopeEventHandlerRef: EventHandlerRef? // stored so re-register removes old handler
+    var quickNoteHotKeyRef: EventHotKeyRef?
+    var quickNoteEventHandlerRef: EventHandlerRef?
     var captureTextHotKeyRef: EventHotKeyRef?
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
@@ -445,6 +447,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerQuickNoteHotkey()
         registerCaptureHotkeys()
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
@@ -641,6 +644,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerQuickNoteHotkey()
         registerCaptureHotkeys()
     }
 
@@ -713,6 +717,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
+        registerQuickNoteHotkey()
         registerCaptureHotkeys()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -1396,6 +1401,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RegisterEventHotKey(
             settings.clipboardScopeHotkeyKeyCode, settings.clipboardScopeHotkeyModifiers,
             hotKeyID, GetApplicationEventTarget(), 0, &clipboardScopeHotKeyRef)
+    }
+
+    /// Global hotkey → open (pin) a Quick Note sticky.
+    func registerQuickNoteHotkey() {
+        if let ref = quickNoteEventHandlerRef {
+            RemoveEventHandler(ref)
+            quickNoteEventHandlerRef = nil
+        }
+        if let ref = quickNoteHotKeyRef {
+            UnregisterEventHotKey(ref)
+            quickNoteHotKeyRef = nil
+        }
+        guard settings.quickNoteHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_716E), id: 4)  // 'ILqn'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_716E),
+                receivedID.id == 4
+            else { return OSStatus(eventNotHandledErr) }
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
+                return OSStatus(eventNotHandledErr)
+            }
+            delegate.activateQuickNoteSticky()
+            return noErr
+        }
+        let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        quickNoteEventHandlerRef = handlerRef
+        RegisterEventHotKey(
+            settings.quickNoteHotkeyKeyCode, settings.quickNoteHotkeyModifiers,
+            hotKeyID, GetApplicationEventTarget(), 0, &quickNoteHotKeyRef)
+    }
+
+    /// Open a floating Quick Note sticky — the most recent note, or a fresh one.
+    func activateQuickNoteSticky() {
+        DispatchQueue.main.async {
+            let store = QuickNotesStore.shared
+            let id = store.notes.first?.id ?? store.create()
+            StickyNotesManager.shared.pin(id)
+        }
     }
 
     func unregisterCaptureHotkeys() {

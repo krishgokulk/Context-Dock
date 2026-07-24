@@ -15,6 +15,14 @@ class AppleAppsAPI {
     static let shared = AppleAppsAPI()
 
     private let eventStore = EKEventStore()
+
+    /// True when an app is already running. Passive reads gate on this so
+    /// `tell application "…"` never LAUNCHES the target app just to read from it.
+    static func isRunning(_ bundleId: String) -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleId && !$0.isTerminated
+        }
+    }
     private let contactStore = CNContactStore()
 
     private init() {}
@@ -395,6 +403,8 @@ class AppleAppsAPI {
     // MARK: - Safari API
 
     func getCurrentTab() -> [String: Any] {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.Safari") else { return [:] }
         let script = """
             tell application "Safari"
                 if (count of windows) > 0 then
@@ -422,6 +432,8 @@ class AppleAppsAPI {
     }
 
     func getAllTabs() -> [[String: Any]] {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.Safari") else { return [] }
         let script = """
             tell application "Safari"
                 set tabList to ""
@@ -474,6 +486,8 @@ class AppleAppsAPI {
     }
 
     func searchSafariTabs(query: String) -> [[String: Any]] {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.Safari") else { return [] }
         let allTabs = getAllTabs()
         let needle = query.lowercased()
         return allTabs.filter { tab in
@@ -520,6 +534,8 @@ class AppleAppsAPI {
     // MARK: - Music API
 
     func getMusicInfo() -> [String: Any] {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.Music") else { return [:] }
         let script = """
             tell application "Music"
                 if player state is not stopped then
@@ -572,6 +588,8 @@ class AppleAppsAPI {
     }
 
     func getMusicVolume() -> Int? {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.Music") else { return nil }
         let script = """
             tell application "Music"
                 return sound volume as text
@@ -888,6 +906,8 @@ class AppleAppsAPI {
     // MARK: - Mail API
 
     func getRecentEmails(limit: Int = 10) -> [[String: Any]] {
+        // Never launch the app just to read — only script it when running.
+        guard Self.isRunning("com.apple.mail") else { return [] }
         let script = """
             tell application "Mail"
                 set emailList to ""

@@ -5724,6 +5724,13 @@ extension LauncherView {
         if measured > 1 {
             return min(max(measured, 86), listViewVisibleHeight)
         }
+        // Finder desktop clusters into several type groups (Folders / Documents /
+        // Images…), each adding a header the row-count estimate below can't see — so the
+        // estimate undercut the height and the sheet rendered as a clipped half. Until
+        // the measured height lands, reserve the full viewport (it scrolls internally).
+        if isFinderDesktopOnlyMode {
+            return listViewVisibleHeight
+        }
         let rowHeight: CGFloat = 52
         let headerReserve: CGFloat = rowCount > 0 ? 24 : 0
         let contentPadding: CGFloat = 12
