@@ -2001,6 +2001,14 @@ extension LauncherView {
                 {
                     return advanceClipboardSourcePill() ? .handled : .ignored
                 }
+                // Right arrow on a focused multi-file clip expands its file stack; then
+                // Down arrow walks into the files.
+                if let stackEntry = focusedClipboardStackEntry(),
+                    !expandedClipboardEntryIDs.contains(stackEntry.id)
+                {
+                    toggleClipboardStackExpansion(stackEntry)
+                    return .handled
+                }
                 if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }

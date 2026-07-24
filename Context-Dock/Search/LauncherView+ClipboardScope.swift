@@ -1089,6 +1089,21 @@ extension LauncherView {
                         .fixedSize()
                 }
 
+                if row.isExpandable, let toggle = row.toggleExpand {
+                    Button {
+                        toggle()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary.opacity(0.8))
+                            .rotationEffect(.degrees(row.isExpanded ? 0 : -90))
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.06), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(row.isExpanded ? "Collapse files" : "Expand files")
+                }
+
                 if let copy = row.copy {
                     Button {
                         copy()
@@ -1658,6 +1673,36 @@ extension LauncherView {
         .background(Color.accentColor.opacity(0.06))
     }
 
+    /// The multi-file clip at the current keyboard focus, mapping the flat row index
+    /// (group rows + any already-expanded child rows) back to its entry. Right-arrow
+    /// uses this to expand the focused stack.
+    func focusedClipboardStackEntry() -> ClipboardEntry? {
+        guard searchState.activeSmartQueryKey == "clipboard" else { return nil }
+        guard let focus = searchState.selectedIndex ?? focusedClipboardEntryIndex else { return nil }
+        var rowIndex = 0
+        for entry in visibleClipboardEntriesForScope() {
+            if rowIndex == focus {
+                return entry.filePaths.count > 1 ? entry : nil
+            }
+            rowIndex += 1
+            if entry.filePaths.count > 1, expandedClipboardEntryIDs.contains(entry.id) {
+                rowIndex += entry.filePaths.count
+            }
+        }
+        return nil
+    }
+
+    /// Expand / collapse a multi-file clip's file stack.
+    func toggleClipboardStackExpansion(_ entry: ClipboardEntry) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            if expandedClipboardEntryIDs.contains(entry.id) {
+                expandedClipboardEntryIDs.remove(entry.id)
+            } else {
+                expandedClipboardEntryIDs.insert(entry.id)
+            }
+        }
+    }
+
     func clipboardSharedRow(_ entry: ClipboardEntry, index: Int) -> SharedResultRowModel {
         let isMultiFile = entry.filePaths.count > 1
         let isExpanded = expandedClipboardEntryIDs.contains(entry.id)
@@ -1670,23 +1715,19 @@ extension LauncherView {
             sourceImage: clipboardSourceIcon(for: entry),
             accentColorName: entry.imageData != nil
                 ? "purple" : (entry.fileCount > 0 ? "green" : "blue"),
-            // A multi-file clip shows a chevron and expands its files in place.
-            trailingText: isMultiFile ? (isExpanded ? "▾" : "▸") : nil,
             badges: entry.ocrText.isEmpty ? [] : ["OCR"],
             isFocused: focusedClipboardEntryIndex == index || searchState.selectedIndex == index
                 || selectedClipboardEntryIDs.contains(entry.id),
             quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
             dragProvider: { clipboardDragProvider(for: entry) },
+            isExpandable: isMultiFile,
+            isExpanded: isExpanded,
+            toggleExpand: isMultiFile
+                ? { toggleClipboardStackExpansion(entry) }
+                : nil,
             open: {
-                // Multi-file clip → tap expands/collapses the stack; single item pastes.
-                if isMultiFile {
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                        if isExpanded { expandedClipboardEntryIDs.remove(entry.id) }
-                        else { expandedClipboardEntryIDs.insert(entry.id) }
-                    }
-                } else {
-                    pasteClipboardEntryToFrontmost(entry, index: index)
-                }
+                // Tap pastes the whole clip; the chevron / right-arrow expands the files.
+                pasteClipboardEntryToFrontmost(entry, index: index)
             },
             focus: {
                 focusedClipboardEntryIndex = index
