@@ -338,6 +338,21 @@ struct GeneralSettingsView: View {
                     settings.clipboardScopeHotkeyKeyCode = kc
                     settings.clipboardScopeHotkeyModifiers = mod
                 }
+
+                HotkeyRecorderRow(
+                    icon: "note.text", iconColor: .indigo,
+                    title: "Quick Note",
+                    subtitle: "Open a floating pinned note anywhere",
+                    displayString: settings.quickNoteHotkeyDisplayString,
+                    onClear: {
+                        settings.quickNoteHotkeyKeyCode = 0
+                        settings.quickNoteHotkeyModifiers = 0
+                        NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                    }
+                ) { kc, mod in
+                    settings.quickNoteHotkeyKeyCode = kc
+                    settings.quickNoteHotkeyModifiers = mod
+                }
             }
 
             CardSection(title: "Dock Key Map", systemImage: "command") {

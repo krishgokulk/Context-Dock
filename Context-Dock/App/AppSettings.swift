@@ -847,6 +847,8 @@ class AppSettings: ObservableObject {
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
     @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
+    @AppStorage("quickNoteHotkeyKeyCode") private var _quickNoteHotkeyKeyCode: Int = 0
+    @AppStorage("quickNoteHotkeyModifiers") private var _quickNoteHotkeyModifiers: Int = 0
     @AppStorage("captureTextHotkeyKeyCode") private var _captureTextHotkeyKeyCode: Int = 0
     @AppStorage("captureTextHotkeyModifiers") private var _captureTextHotkeyModifiers: Int = 0
     @AppStorage("captureAreaHotkeyKeyCode") private var _captureAreaHotkeyKeyCode: Int = 0
@@ -1655,6 +1657,25 @@ class AppSettings: ObservableObject {
         }
     }
     var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
+
+    var quickNoteHotkeyKeyCode: UInt32 {
+        get { UInt32(_quickNoteHotkeyKeyCode) }
+        set {
+            objectWillChange.send()
+            _quickNoteHotkeyKeyCode = Int(newValue)
+        }
+    }
+    var quickNoteHotkeyModifiers: UInt32 {
+        get { UInt32(_quickNoteHotkeyModifiers) }
+        set {
+            objectWillChange.send()
+            _quickNoteHotkeyModifiers = Int(newValue)
+        }
+    }
+    var quickNoteHotkeyEnabled: Bool { _quickNoteHotkeyKeyCode != 0 }
+    var quickNoteHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: quickNoteHotkeyKeyCode, modifiers: quickNoteHotkeyModifiers)
+    }
 
     var captureTextHotkeyKeyCode: UInt32 {
         get { UInt32(_captureTextHotkeyKeyCode) }
