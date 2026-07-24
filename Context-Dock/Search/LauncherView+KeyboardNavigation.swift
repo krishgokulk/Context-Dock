@@ -547,9 +547,15 @@ extension LauncherView {
             // empty-field Left Arrow stays reserved for General Chat (handled by the
             // SwiftUI .onKeyPress(.leftArrow) below), so both start states are distinct:
             // from the bare field Right enters the capsule, Left enters General Chat.
+            // An open frontmost-app chat owns the arrow keys — cycling the app scope from
+            // inside a conversation swapped it to another app (e.g. Finder) mid-chat.
+            let inScopedChat =
+                self.shouldShowContextDockChatSheet || self.l2.chatArmed || self.l2.showChatPopover
+
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 124,
+                !inScopedChat,
                 self.focusedAppPillIndex == nil,
                 self.l2.focusedPillIndex == nil,
                 self.currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
@@ -564,6 +570,7 @@ extension LauncherView {
             if self.isGlobalContextActive || self.l2.targetApp != nil,
                 q.isEmpty,
                 event.keyCode == 123,
+                !inScopedChat,
                 self.focusedAppPillIndex == nil,
                 self.l2.focusedPillIndex == nil,
                 let scopedBundle = self.currentGlobalScopedBundleID,
