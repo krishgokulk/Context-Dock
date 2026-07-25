@@ -1728,7 +1728,11 @@ extension LauncherView {
                                     rawQueryAllowsGhost,
                                     !searchState.query.isEmpty
                                 {
-                                    // Pill ghost completion: "slee" → "slee[p]  — ↵"
+                                    // Pill ghost completion: "slee" → "slee[p] 🌙 — ↵".
+                                    // The matched command's icon shows inline (right of the
+                                    // ghost text so it never shifts the typed text) so the top
+                                    // hit reads immediately, Spotlight-style — no need to extend
+                                    // the query first.
                                     HStack(spacing: 0) {
                                         Text(searchState.query)
                                             .font(.system(size: 15))
@@ -1737,6 +1741,18 @@ extension LauncherView {
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.35))
                                             .lineLimit(1)
+                                        FileThumbnailImage(
+                                            filePath: ghost.quickLookURL?.path
+                                                ?? ghost.resolvedURL?.path,
+                                            fallbackImage: ghost.menuItemImage,
+                                            systemName: ghost.icon,
+                                            tint: accentColor(for: ghost.accentColorName),
+                                            size: 16,
+                                            cornerRadius: 4,
+                                            isApplication: ghost.rankingKind == "appLaunch"
+                                        )
+                                        .frame(width: 18, height: 18)
+                                        .padding(.leading, 8)
                                         Text("  — ↵")
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.2))
