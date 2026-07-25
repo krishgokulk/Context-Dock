@@ -39,11 +39,12 @@ final class CLIScopeTerminalManager: ObservableObject {
     func run(_ command: String) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let isFreshController = controller == nil
         let controller = ensureController()
         isExpanded = true
         // Give a freshly-created PTY a moment to finish starting its shell before the
         // command is typed, so nothing is dropped.
-        DispatchQueue.main.asyncAfter(deadline: .now() + (hasController ? 0.05 : 0.35)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isFreshController ? 0.35 : 0.05)) {
             controller.sendCommand(trimmed)
         }
     }

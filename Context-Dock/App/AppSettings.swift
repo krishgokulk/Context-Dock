@@ -1315,6 +1315,9 @@ class AppSettings: ObservableObject {
 
         // Only CLI tools need help scanning and subcommand detection.
         guard ext.kind == .cli else { return }
+        // Adding a tool to an app does not silently grant its AI agent access.
+        // The first message in that app's chat presents the one-time choice.
+        AppCLIAgentConsentStore.shared.markPending(for: ext)
         Task {
             await TerminalPackageManager.shared.refreshHelpTextByCommand(ext.toolName)
 
@@ -1515,7 +1518,11 @@ class AppSettings: ObservableObject {
     /// Used when building AI prompts — prevents hallucinations about missing tools.
     /// CLI + script extensions only (excludes .prompt — those are fetched separately).
     func installedToolExtensions(for appKey: String) -> [AppToolExtension] {
-        toolExtensions(for: appKey).filter { $0.kind != .prompt && AppSettings.isToolInstalled($0) }
+        toolExtensions(for: appKey).filter {
+            $0.kind != .prompt
+                && AppSettings.isToolInstalled($0)
+                && AppCLIAgentConsentStore.shared.isAllowed($0)
+        }
     }
 
     /// Returns all AI Prompt extensions for an app — they're always active (no install check needed).

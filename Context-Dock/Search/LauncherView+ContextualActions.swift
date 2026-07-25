@@ -3515,6 +3515,18 @@ extension LauncherView {
         guard !bundleIdentifier.isEmpty, !appName.isEmpty else { return false }
         let isCLIToolScope = bundleIdentifier.hasPrefix("cli://")
 
+        // Entering a CLI tool's scope: make sure its `--help` reference is scanned. A newly
+        // pinned binary is registered without a blocking scan (helpText empty), which left the
+        // chat model blind — it hallucinated generic scripts instead of using the real tool.
+        // Deduped + no-ops when help is already present, so this is cheap on every entry.
+        if isCLIToolScope {
+            let cliCommand = String(bundleIdentifier.dropFirst("cli://".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cliCommand.isEmpty {
+                TerminalPackageManager.shared.ensureHelpScanned(command: cliCommand)
+            }
+        }
+
         let targetApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
         })

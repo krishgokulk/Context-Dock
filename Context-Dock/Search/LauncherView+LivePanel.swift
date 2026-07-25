@@ -1723,7 +1723,11 @@ extension LauncherView {
                                         ScrollView {
                                             VStack(alignment: .leading, spacing: 8) {
                                                 ForEach(remPanelChatMessages) { msg in
-                                                    remChatBubble(msg).id(msg.id)
+                                                    if let tool = appCLIConsentTool(for: msg) {
+                                                        AppCLIAgentConsentCard(tool: tool).id(msg.id)
+                                                    } else {
+                                                        remChatBubble(msg).id(msg.id)
+                                                    }
                                                 }
                                                 if remPanelIsProcessing {
                                                     HStack(spacing: 6) {
@@ -2091,6 +2095,14 @@ extension LauncherView {
     }
 
     // Small chat bubble for the rem assistant column
+    func appCLIConsentTool(for message: AIChatMessage) -> AppToolExtension? {
+        guard let value = message.structuredData,
+              value.hasPrefix("app-cli-consent:"),
+              let id = UUID(uuidString: String(value.dropFirst("app-cli-consent:".count)))
+        else { return nil }
+        return settings.appToolExtensions.first(where: { $0.id == id })
+    }
+
     @ViewBuilder
     func remChatBubble(_ msg: AIChatMessage) -> some View {
         switch msg.role {

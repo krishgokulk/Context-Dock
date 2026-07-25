@@ -2502,7 +2502,12 @@ extension LauncherView {
                     self.globalInlineAppScope == nil
                 else { return }
 
-                var matchDockIcons = resolved
+                // The search index is intentionally lightweight and can carry a
+                // generic executable/app placeholder. Resolve only these bounded,
+                // already-matched rows on the main actor before we publish the
+                // ready state. This mirrors Spotlight's fast-results → real-icon
+                // refinement without doing bundle I/O for every keystroke.
+                var matchDockIcons = resolved.map { self.refinedMatchDockIcon($0) }
                 if let target = self.transientGlobalInlineAppScopeTarget(for: q),
                     !matchDockIcons.contains(where: { $0.bundleID == target.bundleId })
                 {
@@ -2559,6 +2564,37 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    /// Replaces an indexed fallback image with the real running/bundle icon once a
+    /// match is ready to draw. Called for at most 12 results, after the 24 ms input
+    /// coalescing pass; it is deliberately not part of the hot index query.
+    func refinedMatchDockIcon(_ item: MatchDockIcon) -> MatchDockIcon {
+        guard let bundleID = item.bundleID,
+              !bundleID.isEmpty,
+              !bundleID.hasPrefix("cli://"),
+              !bundleID.hasPrefix("syscmd://")
+        else { return item }
+
+        let icon: NSImage?
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }) {
+            icon = resolvedRunningAppIcon(for: running)
+        } else {
+            icon = resolvedApplicationIcon(bundleIdentifier: bundleID, appName: item.title)
+        }
+        guard let icon else { return item }
+        return MatchDockIcon(
+            id: item.id,
+            bundleID: item.bundleID,
+            title: item.title,
+            icon: icon,
+            isRunning: item.isRunning,
+            isExpandable: item.isExpandable,
+            score: item.score,
+            isExactAppPrefix: item.isExactAppPrefix
+        )
     }
 
     /// Stage zero of expanded Global Context search. Spotlight removes stale rows in the

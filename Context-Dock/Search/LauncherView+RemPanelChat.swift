@@ -29,6 +29,22 @@ extension LauncherView {
 
         remPanelAITask?.cancel()
         appendPanelMessage(AIChatMessage(role: .user, content: query))
+
+        // A newly linked CLI is deliberately not exposed to the model until the
+        // user makes a first-use choice. Do this before any generic AI fallback so
+        // the very first question cannot miss the tool that was just added.
+        let consentAppKey = searchState.activeSmartQueryKey
+            ?? settings.autoDetectedAppKey
+            ?? searchState.contextApp?.key
+            ?? "reminders"
+        if let tool = AppCLIAgentConsentStore.shared.nextPrompt(for: consentAppKey) {
+            appendPanelMessage(AIChatMessage(
+                role: .assistant,
+                content: "CLI access request: \(tool.toolName)",
+                structuredData: "app-cli-consent:\(tool.id.uuidString)"))
+            searchState.query = ""
+            return
+        }
         remPanelIsProcessing = true
         // Add a separator between query sessions so history is readable
         let ck = prepareScopedWorkspaceTerminal()
@@ -187,10 +203,28 @@ extension LauncherView {
                 $0.name == toolCmd || $0.command == toolCmd
             })
             let isTUI = TerminalAIBridge.shared.isTUICommand(toolCmd)
+            let hasScannedHelp = !(pkg?.helpText ?? "").isEmpty
+            // Reference not scanned yet — kick a background scan for next time, and make the
+            // model bootstrap ITSELF this turn by running `--help` first instead of guessing
+            // (an unscanned tool previously produced hallucinated generic scripts).
+            if !hasScannedHelp {
+                TerminalPackageManager.shared.ensureHelpScanned(command: toolCmd)
+            }
+            let unscannedBootstrap: String =
+                hasScannedHelp
+                ? ""
+                : """
+
+                ⚠️ NO COMMAND REFERENCE YET for '\(toolCmd)'. Do NOT guess its commands from
+                general knowledge. Your FIRST action MUST be run_command("\(toolCmd) --help 2>&1")
+                (or "\(toolCmd) help"). Read that output, then use ONLY the commands it lists.
+                If it looks like an interactive TUI, spawn_worker it instead. Never substitute an
+                unrelated generic script for what the user asked '\(toolCmd)' to do.
+                """
             // Inject the FULL scanned help tree — this is what prevents hallucination.
             // The AI must only use commands that appear here.
             let helpSnippet: String = {
-                guard let ht = pkg?.helpText, !ht.isEmpty else { return "" }
+                guard let ht = pkg?.helpText, !ht.isEmpty else { return unscannedBootstrap }
                 return
                     "\n\n══ TOOL REFERENCE (exact output of \(toolCmd) --help) ══\n\(String(ht.prefix(4000)))\n══ END TOOL REFERENCE ══"
             }()
@@ -601,6 +635,13 @@ extension LauncherView {
                 \(intentLines)
 
                 RULES:
+                - TOOL ROUTING: These user-configured tools are the authoritative route for
+                  \(appLabel). For live facts (version, status, account data, or settings),
+                  run the relevant documented CLI command first. Do NOT replace it with
+                  generic app-menu instructions or claim a native app adapter can retrieve
+                  data unless a verified native command has actually returned that data.
+                - If the relevant CLI command is not documented yet, run "<tool> --help"
+                  first, then use only the syntax it reports.
                 - For SCRIPT tools: always pass the user's FULL original query as a single argument in quotes.
                 - For CLI tools: use ONLY the exact flags and subcommands documented in AVAILABLE TOOLS above.
                   Never guess flags. If you're unsure of exact syntax, run "<tool> help <subcommand>" first.
@@ -756,11 +797,41 @@ extension LauncherView {
                 \(toolRules)
                 """
         } else {
-            // Generic fallback — no user extensions, no built-in CLI known
+            // Generic fallback — no user extensions, no built-in CLI known. This scope drives
+            // a GUI app, so the automation must act on the ALREADY-RUNNING app IN PLACE. The old
+            // prompt gave no GUI rules, so the model wrote AppleScript that `activate`d the app —
+            // launching / front-switching it (e.g. "toggle sidebar" yanked ChatGPT forward).
+            let bundleHint: String = {
+                if let b = l2.targetApp?.bundleId, !b.isEmpty { return b }
+                if let b = globalInlineAppScope?.bundleId,
+                    !b.isEmpty, !b.hasPrefix("cli://"), !b.hasPrefix("syscmd://") { return b }
+                if let path = ctx?.appPath, !path.isEmpty,
+                    let b = Bundle(url: URL(fileURLWithPath: path))?.bundleIdentifier { return b }
+                return ""
+            }()
+            let targetClause = bundleHint.isEmpty
+                ? "the process named \"\(appLabel)\""
+                : "the process whose bundle identifier is \"\(bundleHint)\" (named \"\(appLabel)\")"
             systemPrompt = """
                 You are an AI assistant for \(appLabel) inside ILauncher.
                 Only help with tasks related to \(appLabel).
                 Run shell commands via run_command (runs silently in the background — no terminal shown).
+
+                ══ GUI AUTOMATION — ACT ON THE RUNNING APP IN PLACE ══
+                \(appLabel) is already running. Drive it WITHOUT stealing focus or launching a new copy.
+                - NEVER use `activate`, `open -a`, `reopen`, or `launch`. NEVER bring the app to the front.
+                - NEVER `tell application "\(appLabel)" to <ui action>` — that activates it. Instead drive
+                  it through System Events, targeting \(targetClause):
+                    run_command("osascript -e 'tell application \\"System Events\\" to tell (first process whose \(bundleHint.isEmpty ? "name is \\\"\(appLabel)\\\"" : "bundle identifier is \\\"\(bundleHint)\\\"")) to <UI action>'")
+                - Prefer the app's OWN menu bar for commands (menu items survive across versions):
+                    …to click menu item "Toggle Sidebar" of menu "View" of menu bar 1
+                  If unsure of the exact menu path, first LIST it, then click:
+                    …to get name of every menu item of menu "View" of menu bar 1
+                - Only use keystrokes (keystroke / key code) when there is no menu item, and send them to
+                  that same process WITHOUT activating it.
+                - If the app is genuinely not running, tell the user to open it — do NOT launch it yourself.
+                - Read osascript output; if it errors (e.g. menu not found), inspect the menu tree and retry.
+
                 TIP: Assign CLI tools in Settings → App Shortcuts → \(appLabel) → AI Extensions to unlock more actions.
                 \(toolRules)
                 """

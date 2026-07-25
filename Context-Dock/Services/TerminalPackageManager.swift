@@ -515,6 +515,28 @@ class TerminalPackageManager: ObservableObject {
         await refreshHelpText(for: packages[index].id)
     }
 
+    private var autoScanInFlight: Set<String> = []
+
+    /// Fire-and-forget `--help` scan for a linked CLI whose reference is still empty.
+    /// A newly pinned binary is registered WITHOUT a blocking scan, so its `helpText` is
+    /// empty until the user hits "Scan --help". Entering the tool's scope should not chat
+    /// blind — this scans on demand (deduped) so the model gets the real command set. Safe
+    /// to call repeatedly; it no-ops once help is present or a scan is already running.
+    func ensureHelpScanned(command: String) {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty,
+            let pkg = packages.first(where: { $0.command == cmd || $0.name == cmd }),
+            (pkg.helpText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !autoScanInFlight.contains(pkg.command)
+        else { return }
+        autoScanInFlight.insert(pkg.command)
+        let target = pkg.command
+        Task { @MainActor in
+            await refreshHelpTextByCommand(target)
+            autoScanInFlight.remove(target)
+        }
+    }
+
     // MARK: - Per-App Subcommand Intelligence
 
     /// Given a CLI binary name and an app context (key + human label), returns the best
