@@ -17,11 +17,56 @@ extension LauncherView {
             ["recent", "recents", "history", "url", "urls", "bookmark", "bookmarks"].contains(query)
         guard isGlobalContextActive || scopedBrowserBundleId != nil else { return [] }
 
+        // Privacy browsers (DuckDuckGo): source history from their live History menu,
+        // never their database. Only within that browser's own scope.
+        if let bundle = scopedBrowserBundleId,
+            LiveMenuHistoryCache.usesLiveMenuHistory(bundle)
+        {
+            return buildLiveMenuHistoryPills(query: rawQuery, bundleId: bundle)
+        }
+
         return buildBrowserURLLibraryPills(
             query: query,
             scopedBrowserBundleId: isGlobalContextActive ? nil : scopedBrowserBundleId,
             requireExplicitHistoryQuery: explicitlyRequestsHistory
         )
+    }
+
+    /// History pills sourced from a browser's live History menu (see LiveMenuHistoryCache).
+    func buildLiveMenuHistoryPills(query rawQuery: String, bundleId: String) -> [DockPill] {
+        let pid = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleId)
+            .first?.processIdentifier ?? 0
+        guard pid > 0 else { return [] }
+
+        LiveMenuHistoryCache.shared.refreshIfNeeded(bundleId: bundleId, pid: pid) {
+            scheduleDockPillRebuild(
+                query: searchState.query, delayNanoseconds: 0, refreshContext: false)
+        }
+
+        let items = LiveMenuHistoryCache.shared.items(for: bundleId, matching: rawQuery, limit: 24)
+        return items.map { item in
+            let subtitle = item.section ?? item.domain ?? "History"
+            var pill = DockPill(
+                id: "live-menu-history:\(bundleId):\(item.id)",
+                name: item.title,
+                icon: "clock.arrow.circlepath",
+                accentColorName: "blue",
+                badge: subtitle,
+                execute: {
+                    LiveMenuHistoryCache.shared.open(item, bundleId: bundleId)
+                    AppDelegate.shared?.hideLauncher()
+                }
+            )
+            pill.sourceBundleId = bundleId
+            pill.rankingKind = "recentURL"
+            pill.menuItemName = item.title
+            pill.menuStatusBadge = "History"
+            if let url = item.url { pill.resolvedURL = url }
+            pill.trackingIdentifier = "live-menu-history:\(item.id)"
+            pill.searchTerms = [item.title, item.domain ?? "", "history", "recent", "menu"]
+            return pill
+        }
     }
 
     func buildBrowserURLLibraryPills(
