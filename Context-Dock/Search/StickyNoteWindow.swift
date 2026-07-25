@@ -60,12 +60,14 @@ final class StickyNotesManager {
         panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        // Hide ALL native window buttons — the SwiftUI header carries its own title and
+        // × so the native traffic lights don't float detached over the glass.
+        panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
-        // Native window tabs: new notes join the existing sticky as a tab rather
-        // than scattering separate floating windows.
-        panel.tabbingMode = .preferred
-        panel.tabbingIdentifier = "context-dock-sticky"
+        // No native window tabbing: the system tab bar is opaque and square, clashing
+        // with the borderless glass sticky. Each note is its own clean glass panel.
+        panel.tabbingMode = .disallowed
 
         let root = StickyNoteView(
             noteID: id,
@@ -89,10 +91,6 @@ final class StickyNotesManager {
         }
 
         windows[id] = panel
-        // Attach as a tab to an already-open sticky when there is one.
-        if let host = windows.first(where: { $0.key != id })?.value {
-            host.addTabbedWindow(panel, ordered: .above)
-        }
         panel.orderFrontRegardless()
     }
 
