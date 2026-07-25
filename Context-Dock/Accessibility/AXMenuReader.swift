@@ -200,6 +200,114 @@ final class AXMenuReader {
         return readChildren(of: bar, path: [], depth: 0, maxDepth: maxDepth)
     }
 
+    /// One leaf item from a live top-menu read: title, any URL the item exposes (via
+    /// AXURL or its AXHelp tooltip), the section (date-group submenu) it sits under, and
+    /// a live element ref for AX-pressing it. Used to source history from the app's own
+    /// History menu instead of reading its database (privacy-preserving).
+    struct LiveMenuURLItem {
+        let title: String
+        let url: URL?
+        let section: String?
+        let element: AXUIElement
+    }
+
+    /// Targeted read of ONE top menu's leaf items (e.g. "History") with any URL each
+    /// exposes. Bypasses the global History/Bookmarks recursion skip because it reads
+    /// only that one menu and caps breadth, so it stays cheap. The menu is read
+    /// passively from the AX tree — it does not open on screen.
+    func liveMenuURLItems(
+        for pid: pid_t, topMenuTitle: String, limit: Int = 80
+    ) -> [LiveMenuURLItem] {
+        guard let bar = menuBarElement(for: pid),
+            let topItems = childElements(of: bar)
+        else { return [] }
+        let wanted = topMenuTitle.lowercased()
+        guard let menu = topItems.first(where: {
+            (strAttr($0, kAXTitleAttribute as CFString) ?? "").lowercased() == wanted
+        }) else { return [] }
+
+        var out: [LiveMenuURLItem] = []
+        collectLiveMenuLeaves(
+            of: submenuContainer(for: menu) ?? menu,
+            section: nil, depth: 0, maxDepth: 3, limit: limit, into: &out)
+        return out
+    }
+
+    private func collectLiveMenuLeaves(
+        of parent: AXUIElement, section: String?, depth: Int, maxDepth: Int,
+        limit: Int, into out: inout [LiveMenuURLItem]
+    ) {
+        guard depth < maxDepth, out.count < limit,
+            let children = childElements(of: parent)
+        else { return }
+        for child in children {
+            if out.count >= limit { break }
+            let role = strAttr(child, kAXRoleAttribute as CFString) ?? ""
+            let title = strAttr(child, kAXTitleAttribute as CFString) ?? ""
+            if role == "AXMenu" {
+                collectLiveMenuLeaves(
+                    of: child, section: section, depth: depth, maxDepth: maxDepth,
+                    limit: limit, into: &out)
+                continue
+            }
+            guard !title.isEmpty, title != "-" else { continue }
+            // A submenu (date group like "Today") → recurse using its title as section.
+            if let sub = submenuContainerIfGroup(child) {
+                collectLiveMenuLeaves(
+                    of: sub, section: title, depth: depth + 1, maxDepth: maxDepth,
+                    limit: limit, into: &out)
+                continue
+            }
+            out.append(
+                LiveMenuURLItem(
+                    title: title, url: menuItemURL(child), section: section, element: child))
+        }
+    }
+
+    /// Returns a submenu container only when the item actually has child rows (a real
+    /// group), so leaf items with no children are treated as history entries.
+    private func submenuContainerIfGroup(_ element: AXUIElement) -> AXUIElement? {
+        if let children = childElements(of: element),
+            children.contains(where: {
+                (strAttr($0, kAXRoleAttribute as CFString) ?? "") == "AXMenuItem"
+                    || (strAttr($0, kAXRoleAttribute as CFString) ?? "") == "AXMenu"
+            })
+        {
+            return element
+        }
+        var ref: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, "AXMenu" as CFString, &ref) == .success,
+            let menu = ref
+        {
+            return unsafeBitCast(menu, to: AXUIElement.self)
+        }
+        return nil
+    }
+
+    /// A menu item's URL if it exposes one — AXURL first, then an AXHelp tooltip that
+    /// parses as an http(s) URL (how several browsers surface the page address).
+    private func menuItemURL(_ element: AXUIElement) -> URL? {
+        var ref: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXURLAttribute as CFString, &ref) == .success {
+            if let url = ref as? URL, url.scheme == "http" || url.scheme == "https" { return url }
+            if let s = ref as? String, let url = URL(string: s),
+                url.scheme == "http" || url.scheme == "https" { return url }
+        }
+        if let help = strAttr(element, kAXHelpAttribute as CFString),
+            let url = URL(string: help.trimmingCharacters(in: .whitespacesAndNewlines)),
+            url.scheme == "http" || url.scheme == "https"
+        {
+            return url
+        }
+        return nil
+    }
+
+    /// Press a menu item element directly (navigates without opening the menu on screen).
+    @discardableResult
+    func pressMenuElement(_ element: AXUIElement) -> Bool {
+        AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+    }
+
     /// Flatten the tree to all leaf menu items (no submenus), skipping separators.
     /// Falls back to AppleScript when AX returns an empty tree (Electron, Catalyst apps).
     var isScanningMenus: Bool { activeScanPID != 0 }

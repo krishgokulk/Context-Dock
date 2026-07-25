@@ -90,7 +90,9 @@ extension LauncherView {
             .background {
                 if settings.effectiveDockAtBottom {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.clear)
+                        // Match the input bar's Glass Darkness so the message/result panel
+                        // reads as the same solid glass, not a more-transparent sheet.
+                        .fill(Color.black.opacity(settings.glassDarkness * 0.22))
                         .background(GlassBackground(cornerRadius: 18, isDark: isEffectiveDark))
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay(

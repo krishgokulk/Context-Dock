@@ -13,6 +13,11 @@ import SwiftUI
 class FocusableHostingView<Content: View>: NSHostingView<Content> {
     override var acceptsFirstResponder: Bool { true }
     override func becomeFirstResponder() -> Bool { true }
+    // The launcher is a non-activating panel: without this, the first click from
+    // another app is swallowed just to make the window key, so a drag over chat text
+    // never starts a selection. Accepting first mouse lets that drag select text (and
+    // click controls) immediately.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

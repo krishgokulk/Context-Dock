@@ -1434,6 +1434,13 @@ extension LauncherView {
                     if hasAction {
                         service.runAction(command, row: row, query: self.searchState.query)
                         AppToast.show("Ran \(command.name)", icon: command.icon, tint: .blue)
+                    } else if let path = Self.customListRowOpenablePath(row) {
+                        // No row-action script authored: if the row id/icon is a real
+                        // file or app path (Applications, Downloads, Screenshots…), open
+                        // it. Makes path scopes work without requiring an undoScript.
+                        AppDelegate.shared?.holdDockThroughAppLaunch()
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                        self.forceHideLauncherAfterResultExecution()
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak launcherViewModel] in
                         guard launcherViewModel != nil else { return }
@@ -1454,10 +1461,25 @@ extension LauncherView {
             pill.sourceBundleId = scopedBundleId
             pill.sourceAppName = command.name
             pill.trackingIdentifier = "syscmd-custom:\(command.id):\(row.id)"
-            if hasAction { pill.keyboardShortcutLabel = "Run" }
+            if hasAction {
+                pill.keyboardShortcutLabel = "Run"
+            } else if Self.customListRowOpenablePath(row) != nil {
+                pill.keyboardShortcutLabel = "Open"
+            }
             pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
             return pill
         }
+    }
+
+    /// Row has no undoScript but its id/icon is a real file or app path → Enter opens it.
+    /// Returns the resolved path (id preferred over icon), or nil if neither is a path.
+    static func customListRowOpenablePath(_ row: CustomListRow) -> String? {
+        for candidate in [row.id, row.icon].compactMap({ $0 }) {
+            guard candidate.hasPrefix("/") || candidate.hasPrefix("~") else { continue }
+            let path = (candidate as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+        return nil
     }
 
     /// If `icon` looks like an SF Symbol name (no slash, no dot-app), return it.
@@ -4246,6 +4268,7 @@ extension LauncherView {
             var sel: [DockPill] = []
             sel.append(selectionScopeAskAIPill(query: q))
             sel.append(contentsOf: selectionScopeCopyPill(query: q))
+            sel.append(contentsOf: buildCustomSelectionExtensionPills(query: q, excludingTitles: extensionTitleSet))
             sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
             sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
             sel.append(contentsOf: finderFilePills)

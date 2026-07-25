@@ -328,6 +328,111 @@ extension LauncherView {
         []
     }
 
+    /// User-imported Selection Scope extensions (Create Extension → Selection Scope).
+    /// Stored in LayeredExtensionManager as l2 + category "shortcutSheet"; nothing else
+    /// renders them, so surface them here as runnable pills. Runs the script against the
+    /// FROZEN selection (effectiveShareAXContext) — live AX is the launcher by now — and
+    /// shows the script's output as a toast.
+    func buildCustomSelectionExtensionPills(
+        query: String,
+        excludingTitles: Set<String> = []
+    ) -> [DockPill] {
+        let exts = LayeredExtensionManager.shared.allExtensions.filter {
+            $0.enabled && $0.layer == .l2_context && $0.category == "shortcutSheet"
+        }
+        guard !exts.isEmpty else { return [] }
+        let normalizedQuery = normalizedDockPillText(query)
+
+        return exts.compactMap { ext -> DockPill? in
+            let normalizedTitle = normalizedDockPillText(ext.name)
+            guard !excludingTitles.contains(normalizedTitle) else { return nil }
+            guard macOSExtensionActionMatches(
+                query: normalizedQuery,
+                terms: [ext.name, ext.description] + ext.tags.map(\.rawValue) + ["selection", "extension"]
+            ) else { return nil }
+
+            var pill = DockPill(
+                id: "custom-selection-ext-\(ext.id.uuidString)",
+                name: ext.name,
+                icon: ext.icon,
+                accentColorName: "indigo",
+                badge: "Extension",
+                execute: { self.runCustomSelectionExtension(ext) }
+            )
+            pill.rankingKind = "customSelectionExtension"
+            pill.rankingScore = 92_000
+            pill.trackingIdentifier = "custom-selection-ext:\(normalizedTitle)"
+            pill.searchTerms = [ext.name, ext.description, "selection", "extension", "action"]
+            return pill
+        }
+    }
+
+    /// Run an imported selection extension against the frozen selection and toast its output.
+    private func runCustomSelectionExtension(_ ext: ILExtension) {
+        guard let script = ext.scriptContent, !script.isEmpty else { return }
+        let ctx = effectiveShareAXContext()
+        let filePaths = ctx.selectedFilePaths
+        var env: [String: String] = [
+            "CD_TEXT":      ctx.selectedText ?? "",
+            "CD_URL":       ctx.currentURL ?? "",
+            "CD_FILE":      filePaths.first ?? "",
+            "CD_FILES":     filePaths.joined(separator: "\n"),
+            "CD_APP":       ctx.appName,
+            "CD_BUNDLE":    ctx.bundleId,
+            "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
+        ]
+        let interpreter: (url: String, args: [String]) = {
+            switch ext.scriptType {
+            case .bash:        return ("/bin/zsh", ["-lc", script])
+            case .python:      return ("/usr/bin/env", ["python3", "-c", script])
+            case .applescript: return ("/usr/bin/osascript", ["-e", script])
+            case .javascript:  return ("/usr/bin/osascript", ["-l", "JavaScript", "-e", script])
+            case .swift:       return ("/usr/bin/env", ["swift", "-"])
+            }
+        }()
+        let extName = ext.name
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: interpreter.url)
+            process.arguments = interpreter.args + filePaths
+            var processEnv = ProcessInfo.processInfo.environment
+            for (k, v) in env { processEnv[k] = v }
+            process.environment = processEnv
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            let inputPipe = Pipe()
+            if ext.scriptType == .swift {
+                process.standardInput = inputPipe
+            }
+            do {
+                try process.run()
+                if ext.scriptType == .swift {
+                    inputPipe.fileHandleForWriting.write(script.data(using: .utf8) ?? Data())
+                    inputPipe.fileHandleForWriting.closeFile()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    AppToast.show("Failed: \(extName)", icon: "exclamationmark.triangle", tint: .orange)
+                }
+                return
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            _ = env  // keep env alive for the closure
+            DispatchQueue.main.async {
+                if output.isEmpty {
+                    AppToast.show("Ran \(extName)", icon: "checkmark.circle", tint: .blue)
+                } else {
+                    let shown = output.count > 120 ? String(output.prefix(120)) + "…" : output
+                    AppToast.show(shown, icon: "text.viewfinder", tint: .indigo)
+                }
+            }
+        }
+    }
+
     func macOSExtensionActionMatches(query: String, terms: [String]) -> Bool {
         guard !query.isEmpty else { return true }
         let normalizedTerms = terms.map(normalizedDockPillText).filter { !$0.isEmpty }

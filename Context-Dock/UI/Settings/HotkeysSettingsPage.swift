@@ -53,6 +53,20 @@ struct HotkeysSettingsPage: View {
                         }
                         Divider()
                         captureHotkeyRow(
+                            icon: "note.text", color: .indigo,
+                            title: "Quick Note",
+                            subtitle: "Open a floating pinned note anywhere",
+                            display: settings.quickNoteHotkeyDisplayString,
+                            clear: {
+                                settings.quickNoteHotkeyKeyCode = 0
+                                settings.quickNoteHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.quickNoteHotkeyKeyCode = $0
+                                settings.quickNoteHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "macwindow.on.rectangle", color: .cyan,
                             title: "Window Review",
                             subtitle: "Preview and restore the current app's open and minimized windows",

@@ -1,105 +1,238 @@
 // StickyNoteWindow.swift
 // Context-Dock
 //
-// Pins a Quick Note into its own floating Stickies-style window: always on top,
-// visible on every Space, and non-activating so it never steals focus from
-// Context-Dock or whatever app you're working in. Content is bound live to
-// QuickNotesStore, so edits in the sticky and in the Quick Note scope stay in sync.
+// Pins Quick Notes into ONE floating Stickies-style glass window: always on top,
+// visible on every Space, non-activating so it never steals focus. Multiple notes
+// live as custom in-app tabs inside that single window (the native NSWindow tab bar
+// is opaque and square, so it's replaced with a glass tab strip). Content is bound
+// live to QuickNotesStore, so edits in the sticky and the Quick Note scope stay in sync.
 
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
-final class StickyNotesManager {
+final class StickyNotesManager: ObservableObject {
     static let shared = StickyNotesManager()
 
-    private var windows: [UUID: NSWindow] = [:]
+    /// Notes currently open as tabs, in tab order.
+    @Published private(set) var openNoteIDs: [UUID] = []
+    /// The tab shown in the editor.
+    @Published var activeNoteID: UUID?
+
+    private var panel: NSPanel?
 
     private init() {}
 
-    func isPinned(_ id: UUID) -> Bool { windows[id] != nil }
+    func isPinned(_ id: UUID) -> Bool { openNoteIDs.contains(id) }
 
-    /// Tab labels come from NSWindow.title — keep it in sync with the note heading.
-    func updateTitle(_ id: UUID, to title: String) {
-        windows[id]?.title = title.isEmpty ? "Note" : title
-    }
-
-    /// Pin the note if it isn't already; otherwise close its sticky.
+    /// Open the note as a tab if closed; otherwise close that tab.
     func toggle(_ id: UUID) {
-        if let existing = windows[id] {
-            existing.close()
-            return
-        }
-        pin(id)
+        if openNoteIDs.contains(id) { closeTab(id) } else { pin(id) }
     }
 
+    /// Open (or focus) a note as a tab in the single sticky window.
     func pin(_ id: UUID) {
-        guard windows[id] == nil else {
-            windows[id]?.makeKeyAndOrderFront(nil)
-            return
-        }
+        ensureWindow()
+        if !openNoteIDs.contains(id) { openNoteIDs.append(id) }
+        activeNoteID = id
+        panel?.makeKeyAndOrderFront(nil)
+        panel?.orderFrontRegardless()
+    }
 
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 320),
+    /// New blank note → new tab.
+    func newTab() {
+        pin(QuickNotesStore.shared.create())
+    }
+
+    /// Close one tab; closes the whole window when the last tab goes.
+    func closeTab(_ id: UUID) {
+        guard let idx = openNoteIDs.firstIndex(of: id) else { return }
+        openNoteIDs.remove(at: idx)
+        if activeNoteID == id {
+            activeNoteID = openNoteIDs[safe: idx] ?? openNoteIDs.last
+        }
+        if openNoteIDs.isEmpty { panel?.close() }
+    }
+
+    func closeWindow() { panel?.close() }
+
+    /// Close the tab of a note that was deleted from the store.
+    func closeIfOpen(_ id: UUID) { closeTab(id) }
+
+    private func ensureWindow() {
+        guard panel == nil else { return }
+
+        let p = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 340),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.isMovableByWindowBackground = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.isReleasedWhenClosed = false
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
-        // Native window tabs: new notes join the existing sticky as a tab rather
-        // than scattering separate floating windows.
-        panel.tabbingMode = .preferred
-        panel.tabbingIdentifier = "context-dock-sticky"
+        p.titlebarAppearsTransparent = true
+        p.titleVisibility = .hidden
+        // Transparent window so the SwiftUI Liquid Glass material shows the desktop
+        // behind it — otherwise the opaque panel renders the material as solid black.
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.isMovableByWindowBackground = true
+        p.level = .floating
+        p.hidesOnDeactivate = false
+        p.isFloatingPanel = true
+        p.becomesKeyOnlyIfNeeded = true
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        p.isReleasedWhenClosed = false
+        // Hide native window buttons + tabbing — the SwiftUI header/tab strip owns all
+        // of it, so nothing opaque or square floats over the glass.
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
+        p.tabbingMode = .disallowed
 
-        let root = StickyNoteView(
-            noteID: id,
-            onClose: { [weak panel] in panel?.close() }
-        )
-        panel.contentView = NSHostingView(rootView: root)
+        p.contentView = NSHostingView(rootView: StickyRootView())
 
-        // Cascade so stacked pins don't fully overlap.
-        let offset = CGFloat(windows.count % 6) * 26
         if let screen = NSScreen.main {
             let f = screen.visibleFrame
-            panel.setFrameTopLeftPoint(
-                NSPoint(x: f.minX + 60 + offset, y: f.maxY - 60 - offset))
+            p.setFrameTopLeftPoint(NSPoint(x: f.minX + 60, y: f.maxY - 60))
         }
 
-        // Clean up our reference when the user closes the sticky.
         NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: panel, queue: .main
+            forName: NSWindow.willCloseNotification, object: p, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.windows[id] = nil }
+            MainActor.assumeIsolated {
+                self?.panel = nil
+                self?.openNoteIDs = []
+                self?.activeNoteID = nil
+            }
         }
 
-        windows[id] = panel
-        // Attach as a tab to an already-open sticky when there is one.
-        if let host = windows.first(where: { $0.key != id })?.value {
-            host.addTabbedWindow(panel, ordered: .above)
-        }
-        panel.orderFrontRegardless()
-    }
-
-    /// Close a sticky whose note was deleted.
-    func closeIfOpen(_ id: UUID) {
-        windows[id]?.close()
+        panel = p
+        p.orderFrontRegardless()
     }
 }
 
-private struct StickyNoteView: View {
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - Root (tab strip + active note)
+
+private struct StickyRootView: View {
+    @ObservedObject private var manager = StickyNotesManager.shared
+    @ObservedObject private var store = QuickNotesStore.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().opacity(0.35)
+            if let active = manager.activeNoteID {
+                StickyNoteContent(noteID: active)
+                    .id(active)
+            } else {
+                Color.clear
+            }
+        }
+        .background(stickyBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "note.text")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            // One glass chip per open note. A single tab reads as a plain title.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(manager.openNoteIDs, id: \.self) { id in
+                        tabChip(id)
+                    }
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            Button { manager.newTab() } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("New note tab")
+
+            Button { manager.closeWindow() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Close notes")
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func tabChip(_ id: UUID) -> some View {
+        let isActive = manager.activeNoteID == id
+        let single = manager.openNoteIDs.count == 1
+        return HStack(spacing: 4) {
+            Text(tabTitle(id))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+            if !single {
+                Button { manager.closeTab(id) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, single ? 0 : 8)
+        .padding(.vertical, single ? 0 : 3)
+        .background(
+            Group {
+                if !single {
+                    Capsule().fill(Color.white.opacity(isActive ? 0.14 : 0.05))
+                }
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { manager.activeNoteID = id }
+        .frame(maxWidth: single ? .infinity : 140, alignment: .leading)
+    }
+
+    private func tabTitle(_ id: UUID) -> String {
+        let text = store.notes.first(where: { $0.id == id })?.text ?? ""
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        return firstLine.isEmpty ? "Note" : firstLine
+    }
+
+    /// Follows the app's Appearance settings (Liquid Glass + Glass Darkness) so a
+    /// sticky reads as part of Context-Dock, not a yellow Stickies sheet.
+    private var stickyBackground: some View {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
+    }
+}
+
+// MARK: - Single note (editor + AI composer)
+
+private struct StickyNoteContent: View {
     let noteID: UUID
-    var onClose: () -> Void
 
     @ObservedObject private var store = QuickNotesStore.shared
     @ObservedObject private var settings = AppSettings.shared
@@ -108,47 +241,16 @@ private struct StickyNoteView: View {
     @State private var isGenerating = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "note.text")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                // New note → opens in its own sticky window (a new "tab").
-                Button {
-                    let id = store.create()
-                    StickyNotesManager.shared.pin(id)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("New note in a new window")
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            Divider().opacity(0.35)
-
+        Group {
             if store.notes.contains(where: { $0.id == noteID }) {
-                TextEditor(text: binding)
-                    .focused($focused)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .padding(10)
-                composer
+                VStack(spacing: 0) {
+                    TextEditor(text: binding)
+                        .focused($focused)
+                        .font(.system(size: 13))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                    composer
+                }
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: "trash").font(.system(size: 18))
@@ -157,11 +259,6 @@ private struct StickyNoteView: View {
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .background(stickyBackground)
-        .onAppear { StickyNotesManager.shared.updateTitle(noteID, to: title) }
-        .onChange(of: title) { _, newTitle in
-            StickyNotesManager.shared.updateTitle(noteID, to: newTitle)
         }
     }
 
@@ -245,12 +342,6 @@ private struct StickyNoteView: View {
         }
     }
 
-    private var title: String {
-        let text = store.notes.first(where: { $0.id == noteID })?.text ?? ""
-        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        return firstLine.isEmpty ? "Note" : firstLine
-    }
-
     private var binding: Binding<String> {
         Binding(
             get: { store.notes.first(where: { $0.id == noteID })?.text ?? "" },
@@ -306,13 +397,5 @@ private struct StickyNoteView: View {
             parts.append("Selected text:\n\(sel)")
         }
         append(parts.joined(separator: "\n"))
-    }
-
-    /// Follows the app's Appearance settings (Liquid Glass + Glass Darkness) so a
-    /// sticky reads as part of Context-Dock, not a yellow Stickies sheet.
-    private var stickyBackground: some View {
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .overlay(Color.black.opacity(0.15 + 0.55 * settings.glassDarkness))
     }
 }

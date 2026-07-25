@@ -5746,7 +5746,7 @@ struct AutomationImportPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Import Extension")
                         .font(.system(size: 14, weight: .bold))
-                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context, Context Dock, or Shortcut Sheet")
+                    Text("Paste AI-generated JSON — auto-detected and saved to Global Context, Context Dock, or Selection Scope")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -6707,6 +6707,9 @@ struct SystemCommandAIImport: Codable {
         var provider: String?
         var scriptType: String
         var script: String
+        // Live-scope row action (Return on a row): the script and its interpreter.
+        var undoScript: String?
+        var undoScriptType: String?
     }
 
     var version: String?
@@ -6756,13 +6759,17 @@ struct SystemCommandAIImport: Codable {
             }
 
             let icon = SFSymbolResolver.validSymbol(spec.icon, fallback: "command")
+            let undoScript = spec.undoScript?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let undoScriptType = spec.undoScriptType?.trimmingCharacters(in: .whitespacesAndNewlines)
             return SystemCommand(
                 name: name,
                 icon: icon,
                 keywords: keywords,
                 scriptType: spec.scriptType.trimmingCharacters(in: .whitespacesAndNewlines),
                 script: script,
-                description: spec.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+                description: spec.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? name,
+                undoScriptType: (undoScriptType?.isEmpty == false) ? undoScriptType! : spec.scriptType.trimmingCharacters(in: .whitespacesAndNewlines),
+                undoScript: undoScript
             )
         }
     }
