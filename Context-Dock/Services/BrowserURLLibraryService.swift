@@ -42,7 +42,7 @@ final class BrowserURLLibraryService: @unchecked Sendable {
         let bookmarksPath: String?
         let family: Family
 
-        enum Family { case safari, chromium, firefox }
+        enum Family { case safari, chromium, firefox, coreData }
     }
 
     private var cached: [BrowserURLLibraryEntry] = []
@@ -220,6 +220,13 @@ final class BrowserURLLibraryService: @unchecked Sendable {
             case .firefox:
                 entries += readFirefoxHistory(profile: profile, limit: limitPerProfile)
                 entries += readFirefoxBookmarks(profile: profile, limit: limitPerProfile)
+            case .coreData:
+                entries += readCoreDataStore(
+                    path: profile.historyPath, preferTable: "HISTORY",
+                    requireDate: true, kind: .history, profile: profile, limit: limitPerProfile)
+                entries += readCoreDataStore(
+                    path: profile.bookmarksPath, preferTable: "BOOKMARK",
+                    requireDate: false, kind: .bookmark, profile: profile, limit: 2000)
             }
         }
 
@@ -291,6 +298,24 @@ final class BrowserURLLibraryService: @unchecked Sendable {
                         bookmarksPath: places,
                         family: .firefox))
             }
+        }
+
+        // DuckDuckGo (macOS) is sandboxed and stores history/bookmarks as Core Data
+        // SQLite inside its container. Column names differ from Chromium/Firefox, so
+        // these are read by schema introspection (readCoreDataStore). Requires Full
+        // Disk Access to read another app's container; fails to empty otherwise.
+        let ddgSupport = home
+            + "/Library/Containers/com.duckduckgo.macos.browser/Data/Library/Application Support/DuckDuckGo/"
+        let ddgHistory = ddgSupport + "Database.sqlite"
+        let ddgBookmarks = ddgSupport + "Bookmarks.sqlite"
+        if fm.fileExists(atPath: ddgHistory) || fm.fileExists(atPath: ddgBookmarks) {
+            profiles.append(
+                BrowserProfile(
+                    appName: "DuckDuckGo",
+                    bundleId: "com.duckduckgo.macos.browser",
+                    historyPath: fm.fileExists(atPath: ddgHistory) ? ddgHistory : nil,
+                    bookmarksPath: fm.fileExists(atPath: ddgBookmarks) ? ddgBookmarks : nil,
+                    family: .coreData))
         }
         return profiles
     }
@@ -451,6 +476,108 @@ final class BrowserURLLibraryService: @unchecked Sendable {
                 date: unixMicrosecondsDate(row.dateValue),
                 kind: .bookmark, profile: profile)
         }
+    }
+
+    /// Read a Core Data SQLite store (e.g. DuckDuckGo) without knowing its exact
+    /// schema. Introspects the Z* tables, picks the one whose columns look like a URL
+    /// list (a *URL* column, a *TITLE* column, and — for history — a visit-date
+    /// column), preferring a table named for the kind, then selects recent rows.
+    nonisolated private static func readCoreDataStore(
+        path: String?,
+        preferTable: String,
+        requireDate: Bool,
+        kind: BrowserURLLibraryEntry.Kind,
+        profile: BrowserProfile,
+        limit: Int
+    ) -> [BrowserURLLibraryEntry] {
+        guard let path, FileManager.default.fileExists(atPath: path) else { return [] }
+        let tables = sqliteTableNames(path: path).filter { $0.uppercased().hasPrefix("Z") }
+
+        struct Candidate { let table: String; let url: String; let title: String; let date: String? }
+        var best: Candidate?
+        for table in tables {
+            let cols = sqliteColumnNames(path: path, table: table)
+            guard let urlCol = cols.first(where: { $0.uppercased().contains("URL") }) else { continue }
+            guard let titleCol = cols.first(where: { $0.uppercased().contains("TITLE") }) else { continue }
+            let dateCol =
+                cols.first(where: { $0.uppercased().contains("LASTVISIT") })
+                ?? cols.first(where: { let u = $0.uppercased(); return u.contains("VISIT") && u.contains("DATE") })
+                ?? cols.first(where: { $0.uppercased().contains("VISIT") })
+                ?? cols.first(where: { $0.uppercased().contains("DATE") })
+            if requireDate && dateCol == nil { continue }
+            let candidate = Candidate(table: table, url: urlCol, title: titleCol, date: dateCol)
+            if best == nil { best = candidate }
+            if table.uppercased().contains(preferTable) { best = candidate; break }
+        }
+        guard let b = best else { return [] }
+
+        let dateSelect = b.date != nil ? ", \"\(b.date!)\"" : ", NULL"
+        let orderBy = b.date != nil ? " ORDER BY \"\(b.date!)\" DESC" : ""
+        let sql = """
+            SELECT "\(b.url)", "\(b.title)"\(dateSelect)
+            FROM "\(b.table)"
+            WHERE "\(b.url)" IS NOT NULL AND "\(b.url)" != ''\(orderBy)
+            LIMIT \(limit)
+            """
+        return loadSQLiteRows(path: path, sql: sql).compactMap { row in
+            makeEntry(
+                title: row.title.isEmpty ? row.url : row.title,
+                urlString: row.url,
+                date: coreDataDate(row.dateValue),
+                kind: kind, profile: profile)
+        }
+    }
+
+    /// Core Data timestamps are seconds since the reference date (2001-01-01).
+    nonisolated private static func coreDataDate(_ raw: Double?) -> Date? {
+        guard let raw, raw > 0 else { return nil }
+        return Date(timeIntervalSinceReferenceDate: raw)
+    }
+
+    nonisolated private static func sqliteTableNames(path: String) -> [String] {
+        loadSQLiteScalarColumn(
+            path: path,
+            sql: "SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+    nonisolated private static func sqliteColumnNames(path: String, table: String) -> [String] {
+        // PRAGMA table_info returns name in column index 1.
+        loadSQLiteScalarColumn(
+            path: path,
+            sql: "SELECT name FROM pragma_table_info('\(table.replacingOccurrences(of: "'", with: "''"))')")
+    }
+
+    /// Open read-only and return the first text column of every row.
+    nonisolated private static func loadSQLiteScalarColumn(path: String, sql: String) -> [String] {
+        guard FileManager.default.fileExists(atPath: path),
+            var components = URLComponents(
+                url: URL(fileURLWithPath: path), resolvingAgainstBaseURL: false)
+        else { return [] }
+        components.scheme = "file"
+        components.queryItems = [
+            URLQueryItem(name: "immutable", value: "1"),
+            URLQueryItem(name: "mode", value: "ro"),
+        ]
+        guard let uri = components.url?.absoluteString else { return [] }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
+            let db
+        else { return [] }
+        defer { sqlite3_close(db) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
+        else { return [] }
+        defer { sqlite3_finalize(statement) }
+
+        var values: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let text = sqlite3_column_text(statement, 0) {
+                values.append(String(cString: text))
+            }
+        }
+        return values
     }
 
     private struct SQLiteRow {
