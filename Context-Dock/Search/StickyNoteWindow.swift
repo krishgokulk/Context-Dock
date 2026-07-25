@@ -48,6 +48,11 @@ final class StickyNotesManager {
         )
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
+        // Transparent window so the SwiftUI Liquid Glass material shows the desktop
+        // behind it — otherwise the opaque panel renders the material as solid black.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.hidesOnDeactivate = false
@@ -159,6 +164,11 @@ private struct StickyNoteView: View {
             }
         }
         .background(stickyBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
         .onAppear { StickyNotesManager.shared.updateTitle(noteID, to: title) }
         .onChange(of: title) { _, newTitle in
             StickyNotesManager.shared.updateTitle(noteID, to: newTitle)
@@ -313,6 +323,6 @@ private struct StickyNoteView: View {
     private var stickyBackground: some View {
         Rectangle()
             .fill(.ultraThinMaterial)
-            .overlay(Color.black.opacity(0.15 + 0.55 * settings.glassDarkness))
+            .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
     }
 }
