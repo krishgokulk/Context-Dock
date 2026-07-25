@@ -5667,6 +5667,16 @@ extension LauncherView {
         // Once list mode owns the shell, reserve its stable viewport immediately in both
         // Global Context and Context Dock; rows can then populate inside without resizing.
         guard rowCount > 0 else {
+            // Custom-list / CLI scopes (syscmd:// · cli://) draw their rows from a
+            // background script. With no rows yet — no match, or still loading — collapse
+            // to the input bar instead of reserving a tall empty sheet that just looks
+            // broken. The Quick Note scope renders its own editor surface (no rows), so
+            // it keeps the reserved viewport.
+            let bundle = currentGlobalScopedBundleID
+            let isExtensionListScope =
+                (bundle?.hasPrefix("syscmd://") == true || bundle?.hasPrefix("cli://") == true)
+                && activeNotepadScopeCommand == nil
+            if isExtensionListScope { return 0 }
             return usesVerticalListDockLayout ? listViewVisibleHeight : 0
         }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
