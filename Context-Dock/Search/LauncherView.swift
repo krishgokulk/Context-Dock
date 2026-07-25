@@ -2404,6 +2404,37 @@ struct LauncherView: View {
             return nil
         }
 
+        // Pure global app search: the ghost MUST resolve to the SAME app Enter launches
+        // (launchTypedAppMatchIfNeeded). Previously it fell through to crossAppMenuPills,
+        // so the ghost/icon showed an app while Enter — which runs the ghost pill first —
+        // fired an unrelated cross-app menu command, launching a random app. Build the
+        // ghost from the same app completion Enter uses so text, icon and Enter all agree.
+        if shouldUsePureGlobalAppSearch {
+            let runningOnly =
+                contextDockRunningOnlyAppMatching && !contextDockInstalledAppScopeMatching
+            guard
+                let completion = bestL2PartialAppCompletion(for: lower, runningOnly: runningOnly),
+                completion.actionQuery.isEmpty,
+                !completion.bundleId.isEmpty,
+                completion.appName.lowercased().hasPrefix(lower),
+                completion.appName.count > searchState.query.count
+            else { return nil }
+            let bid = completion.bundleId
+            let name = completion.appName
+            let iconPath =
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid)?.path ?? ""
+            return DockPill(
+                id: "global-app-ghost-\(bid)",
+                name: name,
+                icon: iconPath.isEmpty ? "app.fill" : iconPath,
+                accentColorName: nil,
+                badge: nil,
+                execute: { [self] in
+                    _ = self.launchApplication(bundleIdentifier: bid, appName: name)
+                }
+            )
+        }
+
         // Frontmost-scoped sources: cached pills + frontmost menu cache.
         // Skip in pure global app search — not frontmost-scoped there.
         if !shouldUsePureGlobalAppSearch {
