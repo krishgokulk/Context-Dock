@@ -374,7 +374,17 @@ extension LauncherView {
                 updateMeasuredGlobalListHeight(height)
             }
         } else if !presentation.showsGlobalSearch {
-            dockPillListView(pills: presentation.pills)
+            if presentation.pills.isEmpty {
+                // No pills yet (results still building on scope entry / query change).
+                // Render nothing and collapse the measured height so the glass result
+                // sheet never flashes as an empty box before rows arrive — it expands
+                // once, when there is real content to show.
+                Color.clear
+                    .frame(height: 0)
+                    .onAppear { updateMeasuredGlobalListHeight(0) }
+            } else {
+                dockPillListView(pills: presentation.pills)
+            }
         }
     }
 
