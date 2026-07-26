@@ -1735,7 +1735,7 @@ extension LauncherView {
                     responseText: response,
                     hasSelection: !self.currentAISelectionSnapshot.isEmpty
                 )
-                let cleaned = response
+                let cleaned = self.sanitizeGeneralChatAssistantText(response)
                 await MainActor.run {
                     withAnimation {
                         self.aiMode.messages.append(
@@ -1774,6 +1774,32 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    /// Strip leaked tool-call scaffolding from a general-chat answer before it is shown.
+    /// Models sometimes print their tool call as text — Anthropic-style
+    /// `<function><invoke name="mcp_call">…</invoke></function>` XML, or a bare
+    /// `{"mcp_call":…}` / TERMINAL_COMMAND blob — instead of it being executed silently.
+    /// Remove those fragments so the user sees only the prose, never raw call syntax.
+    func sanitizeGeneralChatAssistantText(_ text: String) -> String {
+        var out = text
+        let patterns = [
+            "(?s)<function>.*?</function>",
+            "(?s)<invoke\\b.*?</invoke>",
+            "(?s)<invoke\\b.*?</invoke>",
+            "(?m)^\\s*</?(?:antml:)?(?:function|invoke|parameter)\\b[^>]*>\\s*$",
+            "(?s)<parameter\\b.*?</parameter>",
+            "(?s)\\[?TERMINAL_COMMAND\\].*?\\[/TERMINAL_COMMAND\\]",
+            "(?m)^\\s*\\{\\s*\"(?:mcp_call|menu_call|adapter_call|terminal_call|capability_call)\"\\s*:[\\s\\S]*?\\}\\s*$",
+        ]
+        for pattern in patterns {
+            out = out.replacingOccurrences(
+                of: pattern, with: "", options: [.regularExpression])
+        }
+        // Collapse the blank gaps left behind.
+        out = out.replacingOccurrences(
+            of: "(?m)\\n{3,}", with: "\n\n", options: [.regularExpression])
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func restoreGeneralAIConversationIfNeeded() {
@@ -4574,11 +4600,26 @@ extension LauncherView {
         // App Adapters are General AI's explicit app-access allowlist. Block locally before
         // building or sending context, so an unconfigured app's identity/state never reaches
         // the selected provider.
+        // Selection is the access boundary — the user decides which apps General Chat may
+        // read or act on by choosing them in the app picker. If a query targets an installed
+        // app that ISN'T selected, ask the user to select it rather than silently reaching
+        // into it. This keeps answers scoped to only the chosen apps and keeps the user in
+        // full control (e.g. Notes selected, asked about Mail → prompt to select Mail).
         if currentAISelectionSnapshot.isEmpty,
             let namedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: actionQuery),
-            AppAdapterManager.shared.adapter(for: namedApp.bundleId) == nil
+            !chatFocusApps.contains(where: {
+                $0.bundleId.caseInsensitiveCompare(namedApp.bundleId) == .orderedSame
+            })
         {
-            return "\(namedApp.name) isn’t added to App Adapters, so General AI can’t access or act on that app. Add it in Settings → App Adapters → Choose App, then ask again."
+            let hasAdapter = AppAdapterManager.shared.adapter(for: namedApp.bundleId) != nil
+            if chatFocusApps.isEmpty {
+                return hasAdapter
+                    ? "To work with **\(namedApp.name)**, select it in the app picker (the apps ＋ button at the top of this chat) first — General Chat only reads the apps you choose, so you stay in control. Select \(namedApp.name), then ask again."
+                    : "**\(namedApp.name)** isn’t added yet. Add it in Settings → App Adapters → Choose App, or select it in the app picker at the top of this chat, then ask again — General Chat only touches apps you’ve chosen."
+            } else {
+                let focusNames = chatFocusApps.map(\.name).joined(separator: ", ")
+                return "This chat is focused on **\(focusNames)**. To answer about **\(namedApp.name)**, select it in the app picker (＋ apps) first — answers stay scoped to only the apps you’ve chosen, so you keep full control."
+            }
         }
 
         if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
@@ -4609,6 +4650,14 @@ extension LauncherView {
             routes over generic instructions.
             If execution is needed, do not claim completion until the DoraX approval/executor
             path succeeds.
+            Answer format: lead with a one-line headline that states the outcome (a count, a
+            status, or a direct answer). When you list items (emails, notes, files, results),
+            use a bullet per item with its key details — for mail: sender · subject · date;
+            for notes/files: title · short snippet. Keep it a tight, scannable summary, not a
+            rambling paragraph. If nothing was found, say so plainly in one line.
+            NEVER print tool-call syntax in your reply — no <function>/<invoke> XML, no raw
+            {"mcp_call":…}/{"menu_call":…} JSON. Emit a tool call only through the tool channel;
+            your visible text is prose for the user, never call scaffolding.
             \(currentDateTimeContextBlock())
             """
         // App Store picker: the user explicitly chose a running app to focus on, so
@@ -4621,11 +4670,13 @@ extension LauncherView {
 
 
             Focus apps for this conversation: \(focusList).
-            The user picked them explicitly as this conversation's scopes. Ground answers on
-            the verified context and DoraX adapter/menu/MCP capabilities supplied below.
-            You may reason across these apps and coordinate workflows between them, but only
-            claim actions that DoraX actually executes through its approval-backed tools.
-            Never produce a conversational permission request.
+            The user picked them explicitly as this conversation's scopes. Answer ONLY from
+            these apps and their verified context + DoraX adapter/menu/MCP capabilities supplied
+            below. Do NOT read or act on any other app. If the user asks about an app that is
+            NOT in this focus list, do not answer from it — tell them to select that app in the
+            app picker first. You may reason across the selected apps and coordinate workflows
+            between them, but only claim actions DoraX actually executes through its
+            approval-backed tools. Never produce a conversational permission request.
             """
             // Give the model each selected app's real capabilities (adapter actions, verified
             // menu commands, linked CLI/MCP/Shortcuts) so it drives THAT app via adapter_call /
