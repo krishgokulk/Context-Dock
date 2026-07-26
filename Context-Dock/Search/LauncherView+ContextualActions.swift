@@ -2580,6 +2580,18 @@ extension LauncherView {
                 if pillEditDistance(qt, ct) <= 2 { return true }
             }
         }
+
+        // Raycast-style fuzzy subsequence: query chars appear in order across a menu
+        // label or path, spanning word boundaries. Guarded to 3+ chars so short queries
+        // stay on the stricter prefix/substring paths above and don't match everything.
+        let compactQuery = normalizedQuery.replacingOccurrences(of: " ", with: "")
+        if compactQuery.count >= 3 {
+            let pathJoined = pathParts.joined(separator: " ")
+            for hay in ([title, pathJoined] + corpora)
+            where dockPillFuzzySubsequence(normalizedQuery, in: hay) {
+                return true
+            }
+        }
         return false
     }
 
@@ -2631,6 +2643,21 @@ extension LauncherView {
                     }
             }) {
                 score += 260 + orderedQueryTokens.count * 40
+            }
+
+            // Fuzzy-subsequence hits rank below exact/prefix/substring but above nothing,
+            // so queries like "what" still surface ordered menu matches.
+            let compactQuery = normalizedQuery.replacingOccurrences(of: " ", with: "")
+            if compactQuery.count >= 3, !title.contains(normalizedQuery) {
+                if dockPillFuzzySubsequence(normalizedQuery, in: title) {
+                    score += 180
+                } else if dockPillFuzzySubsequence(normalizedQuery, in: path)
+                    || pathParts.contains(where: {
+                        dockPillFuzzySubsequence(normalizedQuery, in: $0)
+                    })
+                {
+                    score += 90
+                }
             }
 
             if !item.isEnabled { score -= 60 }

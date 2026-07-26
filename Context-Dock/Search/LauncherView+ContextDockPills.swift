@@ -3160,6 +3160,22 @@ extension LauncherView {
         }
     }
 
+    /// Raycast-style fuzzy match: every character of `needle` appears in `haystack`
+    /// in order (not necessarily contiguous). Spaces in both are ignored so a query
+    /// can span word boundaries ("nwf" → "New Window File", "what" → "Window ... Tab").
+    func dockPillFuzzySubsequence(_ needle: String, in haystack: String) -> Bool {
+        let n = Array(needle.replacingOccurrences(of: " ", with: ""))
+        guard !n.isEmpty else { return true }
+        let h = Array(haystack.replacingOccurrences(of: " ", with: ""))
+        guard n.count <= h.count else { return false }
+        var ni = 0
+        for ch in h where ch == n[ni] {
+            ni += 1
+            if ni == n.count { return true }
+        }
+        return false
+    }
+
     /// Returns a human-readable parent menu label from an AXMenuItem path.
     /// e.g. ["File", "Open Recent", "doc.txt"] → "Open Recent"
     ///      ["Apple", "About This Mac"] → "Apple Menu"
