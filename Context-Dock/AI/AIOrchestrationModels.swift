@@ -37,6 +37,7 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case capability
     case mcp
     case terminal
+    case adapterAction
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -184,6 +185,22 @@ enum AITypedInvocationResolver {
     static func invocation(from text: String) -> AITypedInvocation? {
         if let terminal = terminalInvocation(from: text) { return terminal }
         for root in jsonObjects(in: text) {
+            // Run an installed app-adapter action (menu command, deep link, shortcut,
+            // script) by id. The executor looks up the action and gates approval from its
+            // own requiresApproval/isDestructive flags.
+            if let call = root["adapter_call"] as? [String: Any],
+                let actionId = (call["actionId"] as? String) ?? (call["action"] as? String),
+                !actionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                var args: [String: String] = ["actionId": actionId]
+                if let b = (call["bundleId"] as? String) ?? (call["app"] as? String), !b.isEmpty {
+                    args["bundleId"] = b
+                }
+                if let q = call["query"] as? String { args["query"] = q }
+                return AITypedInvocation(
+                    kind: .adapterAction, capabilityID: "adapter.run",
+                    arguments: args, requiresApproval: false)
+            }
+
             if let call = root["mcp_call"] as? [String: Any],
                let tool = call["tool"] as? String {
                 var arguments: [String: String] = [

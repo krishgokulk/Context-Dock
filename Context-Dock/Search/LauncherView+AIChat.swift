@@ -332,10 +332,20 @@ extension LauncherView {
 
         lines.append("")
         lines.append("Integrations linked to \(appName) (pick the best fit for each request):")
-        lines.append(
-            actions.isEmpty
-                ? "- Actions: none"
-                : "- Actions: " + actions.prefix(10).map(\.name).joined(separator: ", "))
+        if actions.isEmpty {
+            lines.append("- Actions: none")
+        } else {
+            lines.append(
+                "- Actions — RUN one by outputting exactly one JSON line "
+                + "{\"adapter_call\":{\"actionId\":\"<id>\"}}. When a request matches an action, "
+                + "CALL it immediately — do NOT describe it, do NOT ask \"would you like me to?\". "
+                + "Actions marked [approval] pop a native confirmation on their own, so still just "
+                + "call them. Available:")
+            for a in actions.prefix(30) {
+                let flag = (a.requiresApproval || a.isDestructive) ? " [approval]" : ""
+                lines.append("    • \(a.id) — \(a.name)\(flag)")
+            }
+        }
         lines.append(
             clis.isEmpty
                 ? "- CLI tools: none linked"
@@ -3489,6 +3499,29 @@ extension LauncherView {
                     let mcpRan = MCPRunCollector()
                     let commandExecutor: (String, String) async -> (Bool, String) = {
                         command, purpose in
+                        // Run an installed adapter action (New Board, Zoom, Delete, deep link,
+                        // shortcut, script) directly — this is the native route the model is told
+                        // to prefer over terminal. AppAdapterManager.execute shows its own approval
+                        // panel for actions flagged requiresApproval/isDestructive.
+                        if let invocation = AITypedInvocationResolver.invocation(from: command),
+                           invocation.kind == .adapterAction {
+                            let actionId = invocation.arguments["actionId"] ?? ""
+                            let bundle = (invocation.arguments["bundleId"].flatMap {
+                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
+                            guard let adapter = AppAdapterManager.shared.adapter(for: bundle),
+                                let action = adapter.actions.first(where: { $0.id == actionId })
+                            else {
+                                return (false, "No adapter action '\(actionId)' is installed for this app.")
+                            }
+                            await self.setL2LoadingStatus(
+                                "Running \(action.name)…", requestID: l2RequestID)
+                            let ctx = self.sanitizedAXContextForScope(
+                                self.axContext, scopedBundleId: bundle)
+                            let (ok, out) = await AppAdapterManager.shared.execute(
+                                action, context: ctx, targetBundleId: bundle,
+                                query: invocation.arguments["query"] ?? purpose)
+                            return (ok, out.isEmpty ? "Ran \(action.name)" : out)
+                        }
                         // The model often wraps an mcp_call inside a TERMINAL_COMMAND tag — route
                         // it to the MCP server instead of running it as a shell command (which
                         // would open Safari / do the wrong thing).

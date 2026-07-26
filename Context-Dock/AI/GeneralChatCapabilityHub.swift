@@ -538,6 +538,27 @@ final class GeneralChatCapabilityHub {
                     : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
                 label: invocation.capabilityID)
 
+        case .adapterAction:
+            let actionId = invocation.arguments["actionId"] ?? ""
+            let bundleId = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
+            guard !bundleId.isEmpty,
+                let adapter = AppAdapterManager.shared.adapter(for: bundleId),
+                let action = adapter.actions.first(where: { $0.id == actionId })
+            else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No adapter action '\(actionId)' is installed for that app. "
+                        + "Add it in Settings → App Adapters.",
+                    label: "adapter blocked")
+            }
+            let (ok, out) = await AppAdapterManager.shared.execute(
+                action, context: AXContextReader.shared.current,
+                targetBundleId: bundleId, query: invocation.arguments["query"] ?? "")
+            return ToolCallResult(
+                handled: true, success: ok,
+                output: out.isEmpty ? "Ran \(action.name)" : out,
+                label: "\(action.name) via adapter")
+
         case .terminal:
             let plan = AIActionPlan(
                 capability: "terminal.runCommand",
