@@ -1056,6 +1056,12 @@ final class AppAdapterManager: ObservableObject {
         return running
     }
 
+    /// Launch (or return the already-running) app for a bundle id, activating it. Public so
+    /// General Chat can open a picked-but-closed focus app before warming its menu cache.
+    func launchAndActivate(bundleId: String) async -> NSRunningApplication? {
+        await resolveOrLaunchTargetApp(for: bundleId)
+    }
+
     private func resolveOrLaunchTargetApp(for bundleId: String?) async -> NSRunningApplication? {
         guard let bundleId, !bundleId.isEmpty else { return nil }
 

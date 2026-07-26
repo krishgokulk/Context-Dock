@@ -1704,6 +1704,25 @@ extension LauncherView {
         submitAIQuery()
     }
 
+    /// Launch + warm the menu cache for any picked focus app that isn't running yet, so its
+    /// menu commands get listed and become callable via menu_call. Only invoked for
+    /// action-shaped queries (not plain Q&A), and skips apps whose cache is already warm.
+    func warmFocusAppMenusForAction() async {
+        for app in chatFocusApps {
+            let bundle = app.bundleId
+            guard !bundle.isEmpty, !bundle.hasPrefix("scope://") else { continue }
+            // Already warm? nothing to do.
+            let cached = AppMenuCapabilityCache.shared.menuItems(
+                bundleIdentifier: bundle, appName: app.name, query: "", maxResults: 1)
+            if !cached.isEmpty { continue }
+            await MainActor.run { aiMode.loadingStatus = "Opening \(app.name)…" }
+            guard let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundle)
+            else { continue }
+            await MainActor.run { aiMode.loadingStatus = "Reading \(app.name) menus…" }
+            await MenuWarmCacheService.shared.warm(app: running, force: true)
+        }
+    }
+
     func submitAIQuery() {
         restoreGeneralAIConversationIfNeeded()
         hydrateAISelectionContextFromVisibleSelection()
@@ -4703,6 +4722,13 @@ extension LauncherView {
             between them, but only claim actions DoraX actually executes through its
             approval-backed tools. Never produce a conversational permission request.
             """
+            // A picked app that isn't running has a COLD menu cache, so no menu commands get
+            // listed and the model can only narrate (the Clock "Starting Stopwatch…" case).
+            // For action-shaped queries, launch + warm each closed focus app first so its menu
+            // commands are listed and callable — the same warm state frontmost chat gets free.
+            if intentResolution.kind != .conversation {
+                await warmFocusAppMenusForAction()
+            }
             // Give the model each selected app's real capabilities (adapter actions, verified
             // menu commands, linked CLI/MCP/Shortcuts) so it drives THAT app via adapter_call /
             // menu_call instead of answering generically. This is what makes "general chat works
