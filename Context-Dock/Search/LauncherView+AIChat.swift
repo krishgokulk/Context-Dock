@@ -3709,6 +3709,49 @@ extension LauncherView {
                         finalResponse = resolved.answer
                         toolsRan += resolved.toolsRan
                     }
+                    // Fallback: model emitted a raw menu_call / adapter_call as its FINAL text
+                    // (narrated "I'll minimize…" + JSON) instead of routing it through the tool
+                    // loop, so the executor never ran it. Execute it now and replace the JSON
+                    // blob with a plain confirmation.
+                    if let invocation = AITypedInvocationResolver.invocation(from: finalResponse) {
+                        let scopeName = scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName
+                        if invocation.kind == .menuAction {
+                            let path = (invocation.arguments["path"] ?? "")
+                                .components(separatedBy: "\u{1F}").filter { !$0.isEmpty }
+                            let bundle = (invocation.arguments["bundleId"].flatMap {
+                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
+                            if !path.isEmpty {
+                                let label = path.joined(separator: " ▸ ")
+                                await self.setL2LoadingStatus(
+                                    "Running \(label)…", requestID: l2RequestID)
+                                let (ok, out) = await AppAdapterManager.shared.runMenuPath(
+                                    path, targetBundleId: bundle, appName: scopeName)
+                                finalResponse = ok
+                                    ? "Done — \(label)."
+                                    : (out.isEmpty ? "Couldn't run \(label)." : out)
+                                toolsRan.append(label)
+                            }
+                        } else if invocation.kind == .adapterAction {
+                            let actionId = invocation.arguments["actionId"] ?? ""
+                            let bundle = (invocation.arguments["bundleId"].flatMap {
+                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
+                            if let adapter = AppAdapterManager.shared.adapter(for: bundle),
+                                let action = adapter.actions.first(where: { $0.id == actionId }) {
+                                await self.setL2LoadingStatus(
+                                    "Running \(action.name)…", requestID: l2RequestID)
+                                let ctx = self.sanitizedAXContextForScope(
+                                    self.axContext, scopedBundleId: bundle)
+                                let (ok, out) = await AppAdapterManager.shared.execute(
+                                    action, context: ctx, targetBundleId: bundle,
+                                    query: invocation.arguments["query"] ?? query)
+                                finalResponse = ok
+                                    ? (out.isEmpty ? "Done — \(action.name)." : out)
+                                    : (out.isEmpty ? "Couldn't run \(action.name)." : out)
+                                toolsRan.append(action.name)
+                            }
+                        }
+                    }
                     await MainActor.run {
                         var msg = AIChatMessage(
                             role: .assistant, content: finalResponse, mcpToolsRan: toolsRan)
