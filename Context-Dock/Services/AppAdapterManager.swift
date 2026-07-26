@@ -833,7 +833,7 @@ final class AppAdapterManager: ObservableObject {
                 || lower.contains("download")
             return await runShell(
                 inlineScript, scriptFile: shellFile, context: context,
-                progressLabel: showsProgress ? action.name : nil)
+                progressLabel: showsProgress ? action.name : nil, query: query)
 
         case .cliTool:
             guard let command = action.cliToolCommand, !command.isEmpty else {
@@ -862,7 +862,7 @@ final class AppAdapterManager: ObservableObject {
                 return (false, "No script file defined")
             }
             let resolvedPath = inject(rawPath, context: context, query: query)
-            return await runExternalScriptFile(resolvedPath, context: context)
+            return await runExternalScriptFile(resolvedPath, context: context, query: query)
 
         case .shortcut:
             guard let name = action.shortcutName else { return (false, "No shortcut name") }
@@ -1131,7 +1131,7 @@ final class AppAdapterManager: ObservableObject {
 
     private func runShell(
         _ script: String, scriptFile: URL? = nil, context: AXContext,
-        progressLabel: String? = nil
+        progressLabel: String? = nil, query: String? = nil
     ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
@@ -1144,6 +1144,12 @@ final class AppAdapterManager: ObservableObject {
             if let url   = context.currentURL   { env["CURRENT_URL"]      = url }
             if let title = context.windowTitle  { env["WINDOW_TITLE"]     = title }
             if let sel   = context.selectedText { env["AX_SELECTED_TEXT"] = sel }
+            // The user's natural-language request, so a script-file adapter can parameterize
+            // itself ($CD_QUERY) — e.g. a weather skill reading the location from it. Opt-in:
+            // scripts that ignore it behave exactly as before.
+            if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
+                env["CD_QUERY"] = q
+            }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
             if let file = scriptFile {
@@ -1224,7 +1230,9 @@ final class AppAdapterManager: ObservableObject {
         return last
     }
 
-    private func runExternalScriptFile(_ rawPath: String, context: AXContext) async -> (Bool, String) {
+    private func runExternalScriptFile(
+        _ rawPath: String, context: AXContext, query: String? = nil
+    ) async -> (Bool, String) {
         guard let fileURL = resolveScriptFile(rawPath) ?? resolveOpenTarget(rawPath) else {
             return (false, "Invalid script file: \(rawPath)")
         }
@@ -1234,12 +1242,12 @@ final class AppAdapterManager: ObservableObject {
 
         switch fileURL.pathExtension.lowercased() {
         case "sh", "bash", "zsh":
-            return await runShell("", scriptFile: fileURL, context: context)
+            return await runShell("", scriptFile: fileURL, context: context, query: query)
         case "py":
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["python3", fileURL.path],
-                context: context
+                context: context, query: query
             )
         case "js":
             return await runJXA("", scriptFile: fileURL, context: context)
@@ -1247,16 +1255,19 @@ final class AppAdapterManager: ObservableObject {
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["ruby", fileURL.path],
-                context: context
+                context: context, query: query
             )
         case "scpt", "applescript":
             return await runAppleScript("", scriptFile: fileURL)
         default:
-            return await runProcess(executable: fileURL.path, arguments: [], context: context)
+            return await runProcess(
+                executable: fileURL.path, arguments: [], context: context, query: query)
         }
     }
 
-    private func runProcess(executable: String, arguments: [String], context: AXContext) async -> (Bool, String) {
+    private func runProcess(
+        executable: String, arguments: [String], context: AXContext, query: String? = nil
+    ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: executable)
@@ -1268,6 +1279,9 @@ final class AppAdapterManager: ObservableObject {
             if let url = context.currentURL { env["CURRENT_URL"] = url }
             if let title = context.windowTitle { env["WINDOW_TITLE"] = title }
             if let sel = context.selectedText { env["AX_SELECTED_TEXT"] = sel }
+            if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
+                env["CD_QUERY"] = q
+            }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
