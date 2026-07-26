@@ -665,6 +665,21 @@ extension LauncherView {
             : contextDockChatDraftAppName
     }
 
+    /// True when a frontmost-app chat is active AND pinned — the chip then renders a locked
+    /// pill (accent fill + `−` exit) instead of the soft frontmost chip.
+    var isFrontmostChatPinned: Bool {
+        settings.launcherPinned && !frontmostChipChatBundleID.isEmpty
+    }
+
+    /// `−` on the pinned frontmost-chat chip: unpin and drop back to menu search.
+    func exitPinnedFrontmostChat() {
+        if settings.launcherPinned {
+            settings.launcherPinned = false
+            AppDelegate.shared?.applyPersistentDockBehavior()
+        }
+        exitContextDockChatBackToContext()
+    }
+
     /// Chip icon: the chat's app icon while a chat is active, else the live frontmost.
     var frontmostChipIcon: NSImage? {
         let chatBundle = frontmostChipChatBundleID

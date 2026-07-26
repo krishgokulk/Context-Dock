@@ -1243,28 +1243,66 @@ extension LauncherView {
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
+                                if isFrontmostChatPinned {
+                                    Button {
+                                        withAnimation(
+                                            .spring(response: 0.22, dampingFraction: 0.84)
+                                        ) {
+                                            exitPinnedFrontmostChat()
+                                        }
+                                    } label: {
+                                        Image(systemName: "minus")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundStyle(chipTextColor)
+                                            .frame(width: 16, height: 16)
+                                            .background(
+                                                chipTextColor.opacity(
+                                                    systemColorScheme == .dark ? 0.14 : 0.10),
+                                                in: Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Unpin — exit \(frontmostChipName) chat")
+                                    .opacity(isHoveringFrontmostContextChip ? 1 : 0.72)
+                                }
                             }
                             .padding(.leading, 8)
-                            .padding(.trailing, isHoveringFrontmostContextChip ? 9 : 8)
+                            .padding(
+                                .trailing,
+                                isFrontmostChatPinned
+                                    ? (isHoveringFrontmostContextChip ? 8 : 6)
+                                    : (isHoveringFrontmostContextChip ? 9 : 8)
+                            )
                             .padding(.vertical, 4)
                             .fixedSize(horizontal: true, vertical: false)
                             .background(.regularMaterial, in: Capsule(style: .continuous))
                             .background(
-                                accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12),
+                                accent.opacity(
+                                    isFrontmostChatPinned
+                                        ? (systemColorScheme == .dark ? 0.28 : 0.18)
+                                        : (systemColorScheme == .dark ? 0.20 : 0.12)),
                                 in: Capsule(style: .continuous)
                             )
                             .overlay(
                                 Capsule(style: .continuous)
                                     .strokeBorder(
-                                        accent.opacity(systemColorScheme == .dark ? 0.36 : 0.24),
+                                        accent.opacity(
+                                            isFrontmostChatPinned
+                                                ? (systemColorScheme == .dark ? 0.48 : 0.34)
+                                                : (systemColorScheme == .dark ? 0.36 : 0.24)),
                                         lineWidth: 0.8)
                             )
                             .shadow(
-                                color: accent.opacity(systemColorScheme == .dark ? 0.20 : 0.12),
-                                radius: 7, x: 0, y: 2
+                                color: accent.opacity(
+                                    isFrontmostChatPinned
+                                        ? (systemColorScheme == .dark ? 0.28 : 0.16)
+                                        : (systemColorScheme == .dark ? 0.20 : 0.12)),
+                                radius: isFrontmostChatPinned ? 8 : 7, x: 0, y: 2
                             )
-                            .help("Frontmost app context")
+                            .help(isFrontmostChatPinned
+                                ? "Pinned \(frontmostChipName) chat"
+                                : "Frontmost app context")
                             .onTapGesture {
+                                if isFrontmostChatPinned { return }
                                 if !frontmost.bundleID.isEmpty {
                                     _ = activateInlineDockAppScope(
                                         bundleIdentifier: frontmost.bundleID,
