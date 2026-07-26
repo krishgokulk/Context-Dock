@@ -1225,12 +1225,7 @@ extension LauncherView {
 
                         // Soft frontmost context chip — same visual language as app scope,
                         // but not locked. Frontmost app changes still update this chip.
-                        if shouldShowFrontmostContextChip,
-                            let icon =
-                                inlineDockFeedbackAppIcon()
-                                ?? (isContextDockChatConnected ? currentBrowserPageIcon() : nil)
-                                ?? frontmost.icon
-                        {
+                        if shouldShowFrontmostContextChip, let icon = frontmostChipIcon {
                             let accent = icon.dominantSwiftUIColor
                             let chipTextColor: SwiftUI.Color =
                                 systemColorScheme == .dark
@@ -1243,7 +1238,7 @@ extension LauncherView {
                                     .frame(width: 18, height: 18)
                                     .clipShape(
                                         RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                Text(inlineDockFeedbackAppName() ?? frontmost.name)
+                                Text(frontmostChipName)
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)

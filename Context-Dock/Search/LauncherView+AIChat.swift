@@ -648,6 +648,36 @@ extension LauncherView {
         requestWindowSizeUpdate(reason: .panelChanged, animated: true)
     }
 
+    /// When a frontmost-app chat is active (armed / open / has messages), the header chip
+    /// must stay locked to the CHAT's app — otherwise it follows the live frontmost while
+    /// the placeholder still reads "Ask <chat app>", showing a mismatched chip. Empty when
+    /// no chat is active (chip then tracks the live frontmost as before).
+    var frontmostChipChatBundleID: String {
+        let a = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let active = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
+        return (active && !a.isEmpty) ? a : ""
+    }
+
+    /// Chip label: the chat's app while a chat is active, else the live frontmost.
+    var frontmostChipName: String {
+        frontmostChipChatBundleID.isEmpty
+            ? (inlineDockFeedbackAppName() ?? frontmost.name)
+            : contextDockChatDraftAppName
+    }
+
+    /// Chip icon: the chat's app icon while a chat is active, else the live frontmost.
+    var frontmostChipIcon: NSImage? {
+        let chatBundle = frontmostChipChatBundleID
+        if !chatBundle.isEmpty {
+            return resolvedApplicationIcon(
+                bundleIdentifier: chatBundle, appName: contextDockChatDraftAppName)
+                ?? frontmost.icon
+        }
+        return inlineDockFeedbackAppIcon()
+            ?? (isContextDockChatConnected ? currentBrowserPageIcon() : nil)
+            ?? frontmost.icon
+    }
+
     var contextDockChatDraftAppName: String {
         let stored = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !stored.isEmpty { return stored }
