@@ -321,6 +321,13 @@ extension LauncherView {
                     self.l2.currentTask?.cancel()
                     self.l2.currentTask = nil
                     self.exitContextDockChatBackToContext()
+                    // Backspace on an empty field fully leaves the frontmost-app chat:
+                    // also drop the pin so the launcher returns to normal menu search
+                    // (pin + scope both kept the chat open — one key clears both).
+                    if self.settings.launcherPinned {
+                        self.settings.launcherPinned = false
+                        AppDelegate.shared?.applyPersistentDockBehavior()
+                    }
                 }
                 self.isSearchFieldFocused = true
                 return nil
