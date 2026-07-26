@@ -3622,8 +3622,13 @@ STEP 1 — ASK FIRST (do not output JSON yet). Ask the user:
        - URL-scheme / deep-link docs
        - a GitHub repo or CLI docs
        - any MCP server the app offers
-Read what they share. Build ONLY from capabilities you can actually verify from those
-sources — never invent a URL scheme, menu path, or command you have not confirmed.
+Then RESEARCH EXHAUSTIVELY — don't stop at what they paste. Check every source that
+could reveal a capability: the app's official site and support/help pages, its full
+keyboard-shortcut list, documented URL schemes / deep links, its GitHub repo and any
+CLI it ships, community forums/wikis, the app's AppleScript dictionary, and MCP
+directories for a matching server. Cover the whole app, not just the one task.
+Build ONLY from capabilities you can actually verify from those sources — never invent
+a URL scheme, menu path, or command you have not confirmed.
 
 STEP 2 — DESIGN. For each task, choose the SAFEST native route, in this order:
   urlScheme (deep link)  >  menubar (a menu command — this is how you fire a keyboard
@@ -3684,6 +3689,13 @@ FIELD RULES:
 - "triggers" are the words that surface the action while typing in the dock.
 - Scripts and prompts may use context vars: $CURRENT_URL, $WINDOW_TITLE, $AX_SELECTED_TEXT,
   and $CD_QUERY (the user's natural-language request, so an action can parameterize itself).
+
+ADDING MORE LATER (incremental packs): if the user already set this app up and now wants
+MORE, keep the SAME "id" / "bundleId" and output an adapter whose "actions" contains ONLY
+the NEW actions, each with a NEW unique "actionId". Context-Dock MERGES by actionId — it
+ADDS your new actions and keeps every action already installed. Do not re-list old actions
+unless you are deliberately changing one (reuse its exact id to update it). Never send a
+shrunken pack expecting a replace; same app id = merge, always.
 
 STEP 4 — EXPLAIN. After the JSON, in one short paragraph: which routes you built, what the
 app does NOT support (be honest — e.g. "Freeform has no CLI"), and whether an official MCP

@@ -656,7 +656,6 @@ final class AppAdapterManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
         let fileName = (safeName.isEmpty ? fallback : safeName).isEmpty ? "ImportedAdapter" : (safeName.isEmpty ? fallback : safeName)
-        let fileURL = adaptersDirectory.appendingPathComponent("\(fileName).json")
         var export = adapter
         export.id = export.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.bundleId : export.id
         export.appName = export.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.id : export.appName
@@ -664,6 +663,43 @@ final class AppAdapterManager: ObservableObject {
         export.icon = export.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "app.fill" : export.icon
         export.isEnabled = true
         export.isBuiltIn = false
+
+        // MERGE into an existing pack for the same app (by actionId): the AI can send a
+        // follow-up pack with only NEW actions and Context-Dock adds them while keeping
+        // every previously-installed action. Matching ids are updated in place; the rest
+        // are preserved. (Delete the adapter first for a clean replace.)
+        if let existing = adapters.first(where: { $0.bundleId == export.bundleId }) {
+            var mergedActions = existing.actions
+            for incoming in export.actions {
+                if let idx = mergedActions.firstIndex(where: { $0.id == incoming.id }) {
+                    mergedActions[idx] = incoming
+                } else {
+                    mergedActions.append(incoming)
+                }
+            }
+            var mergedReaders = existing.contextReaders
+            for r in export.contextReaders where !mergedReaders.contains(where: { $0.id == r.id }) {
+                mergedReaders.append(r)
+            }
+            var merged = existing
+            merged.isBuiltIn = false
+            merged.isEnabled = true
+            merged.actions = mergedActions
+            merged.contextReaders = mergedReaders
+            if merged.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                merged.appName = export.appName
+            }
+            if merged.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                merged.icon = export.icon
+            }
+            let fileURL = existing.sourceFileURL
+                ?? adaptersDirectory.appendingPathComponent("\(fileName).json")
+            persistAdapter(merged, to: fileURL)
+            await loadUserAdapters()
+            return
+        }
+
+        let fileURL = adaptersDirectory.appendingPathComponent("\(fileName).json")
         persistAdapter(export, to: fileURL)
         await loadUserAdapters()
     }
