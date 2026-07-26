@@ -250,7 +250,12 @@ extension LauncherView {
         return """
 
             ══ AUTOMATION ASSISTANT MODE ══
-            When the user's request is an ACTION you can automate with AppleScript or bash:
+            LAST RESORT ONLY. If an adapter action, a verified menu command (menu_call), or a
+            linked tool (MCP/Shortcut/CLI/API) can do what the user asked, use THAT — do not
+            propose a script. Only when NONE of those fit — including cross-app actions this
+            app has no route for (e.g. "add selected text to Reminders" from a code editor) —
+            do NOT just narrate options. Instead, write the automation and propose it as a
+            saveable extension:
             1. Answer in one plain-English sentence.
             2. Immediately follow with a working script wrapped in these exact markers:
 

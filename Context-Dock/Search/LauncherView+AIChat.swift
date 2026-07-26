@@ -3335,9 +3335,14 @@ extension LauncherView {
 
         let dockCLIContextPrompt = dockScopedCLIContextPrompt(for: query, scope: dockScope)
 
-        // When no CLI tools are configured for the scoped app, offer to auto-create an extension.
+        // Offer to auto-create a saveable extension as a LAST RESORT for scoped ACTION
+        // requests — independent of whether the app has (unrelated) CLI tools linked. The
+        // appendix itself is last-resort worded and self-suppresses on questions, so it never
+        // overrides an adapter/menu/tool route; it only rescues the "no route fits, don't just
+        // narrate" case (e.g. "add selected text to Reminders" from Code, which has CLI tools
+        // but none that create reminders).
         let proposalAppendix: String = {
-            guard !dockScope.isGlobalScope, dockCLIContextPrompt.isEmpty else { return "" }
+            guard !dockScope.isGlobalScope else { return "" }
             let appName = dockScope.scopedAppName.isEmpty ? frontmost.name : dockScope.scopedAppName
             guard !appName.isEmpty else { return "" }
             return extensionProposalPromptAppendix(appName: appName, query: query)
