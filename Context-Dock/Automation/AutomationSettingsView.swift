@@ -6101,8 +6101,22 @@ struct AutomationImportPanel: View {
 
     // MARK: Logic
 
+    /// AI chat UIs (and macOS "smart quotes") turn straight quotes into curly ones, which
+    /// is invalid JSON — the #1 reason a pasted pack fails "Check format". Normalize them
+    /// back before parsing so a copy-paste from any chat just works.
+    static func normalizeSmartQuotes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\u{201C}", with: "\"")   // " left double
+            .replacingOccurrences(of: "\u{201D}", with: "\"")   // " right double
+            .replacingOccurrences(of: "\u{201E}", with: "\"")   // „ low double
+            .replacingOccurrences(of: "\u{2033}", with: "\"")   // ″ double prime
+            .replacingOccurrences(of: "\u{FF02}", with: "\"")   // ＂ fullwidth double
+            .replacingOccurrences(of: "\u{2018}", with: "'")    // ' left single
+            .replacingOccurrences(of: "\u{2019}", with: "'")    // ' right single
+            .replacingOccurrences(of: "\u{FF07}", with: "'")    // ＇ fullwidth single
+    }
+
     private func parseAndDetect(_ text: String) {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = Self.normalizeSmartQuotes(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else {
             parsed = nil
             parsedSystemCommands = []
@@ -6158,7 +6172,7 @@ struct AutomationImportPanel: View {
 
     private func pasteFromClipboard() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = Self.normalizeSmartQuotes(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.hasPrefix("{") || t.hasPrefix("```") else { return }
         jsonText = t
         parseAndDetect(t)
