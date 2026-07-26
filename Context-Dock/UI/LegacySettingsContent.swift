@@ -3607,46 +3607,89 @@ Now create one for: "<describe the command OR live scope you want>"
             id: 1,
             title: "Context Dock",
             icon: "rectangle.grid.1x2",
-            description: "Per-app actions that appear as pills only when a specific app is frontmost. Paste the JSON back here to install.",
+            description: "AI-built adapter pack for ANY app. Paste this, tell the AI the app + share its links; it researches the app and returns a ready-to-import pack. No manual Add Action.",
             prompt: """
-You generate a Context-Dock APP ADAPTER. Its actions appear as pills in the
-Context Dock ONLY when the target app is frontmost.
+You build a Context-Dock APP ADAPTER PACK — the complete, ready-to-run extension for ONE
+macOS app. The user pastes your JSON back into Context-Dock → Create Extension and it works
+immediately, appearing as actions while that app is frontmost. Do NOT skip the interview.
 
-Context variables you may use inside scripts / prompts:
-  $APP_NAME, $BUNDLE_ID, $WINDOW_TITLE, $CURRENT_URL, $AX_SELECTED_TEXT
+STEP 1 — ASK FIRST (do not output JSON yet). Ask the user:
+  1) Which app? (name, and bundle id if they know it)
+  2) What do you want it to do? (the tasks / agent behaviour you want)
+  3) Paste any references so you can research the app's REAL capabilities:
+       - the app's website / support / help page
+       - its KEYBOARD-SHORTCUTS page (each shortcut is a menu command you can trigger)
+       - URL-scheme / deep-link docs
+       - a GitHub repo or CLI docs
+       - any MCP server the app offers
+Read what they share. Build ONLY from capabilities you can actually verify from those
+sources — never invent a URL scheme, menu path, or command you have not confirmed.
 
-Output ONLY this JSON (no prose, no markdown fences):
+STEP 2 — DESIGN. For each task, choose the SAFEST native route, in this order:
+  urlScheme (deep link)  >  menubar (a menu command — this is how you fire a keyboard
+  shortcut)  >  shortcut (a Shortcuts.app shortcut)  >  applescript / jxa  >
+  scriptFile / shell (last resort)  >  aiPrompt (for "explain / summarise" tasks).
+  - Keyboard shortcuts: a "menubar" action with the exact menuPath (e.g. New Board Cmd-N
+    becomes menuPath ["File","New Board"]). Context-Dock clicks that menu item via macOS
+    Accessibility = the shortcut fires. Never synthesise raw keystrokes.
+  - Anything that writes / sends / deletes: set requiresApproval true (and isDestructive
+    true for delete), so Context-Dock shows its approval card first.
+  - If the app has a real CLI, add a "cliTool" action with the exact command. If it offers
+    an official MCP server, DON'T put it in this JSON — note it in STEP 4 so the user links
+    it in Settings.
+
+STEP 3 — OUTPUT ONE JSON (no prose, no markdown fences), exactly this shape:
 {
-  "id": "com.apple.Safari",
-  "appName": "Safari",
-  "bundleId": "com.apple.Safari",
-  "icon": "safari",
+  "id": "com.apple.freeform",
+  "appName": "Freeform",
+  "bundleId": "com.apple.freeform",
+  "icon": "square.on.square",
   "isEnabled": true,
   "actions": [
     {
-      "id": "copy-url",
-      "name": "Copy Page URL",
-      "icon": "link",
-      "description": "Copy the current tab URL.",
-      "triggers": ["url", "copy", "link"],
-      "type": "shell",
-      "script": "printf '%s' \\"$CURRENT_URL\\" | pbcopy",
+      "id": "new-board",
+      "name": "New Board",
+      "icon": "plus.square.on.square",
+      "description": "Create a new Freeform board.",
+      "triggers": ["new", "board", "create"],
+      "type": "menubar",
+      "menuPath": ["File", "New Board"],
+      "requiresApproval": false,
+      "isDestructive": false
+    },
+    {
+      "id": "open-freeform",
+      "name": "Open Freeform",
+      "icon": "square.on.square",
+      "description": "Open the Freeform app.",
+      "triggers": ["open", "freeform"],
+      "type": "urlScheme",
+      "urlScheme": "freeform://",
       "requiresApproval": false,
       "isDestructive": false
     }
   ]
 }
 
-Rules:
-- "id", "bundleId" = the app's real bundle ID; "appName" = display name.
-- Each action "type" is one of: shell, applescript, jxa, urlScheme,
-  openItem, scriptFile, shortcut, aiPrompt.
-- Set the matching payload field for the type:
-  shell/applescript/jxa → "script", urlScheme → "urlScheme",
-  shortcut → "shortcutName", aiPrompt → "aiPromptTemplate".
-- "triggers" are keywords that surface the action while typing.
+FIELD RULES:
+- Action "type" is one of: menubar, urlScheme, openItem, shortcut, applescript, jxa,
+  scriptFile, shell, cliTool, aiPrompt.
+- Set ONLY the matching payload for the type:
+    menubar    -> "menuPath" (array of the exact menu-bar titles, top to item)
+    urlScheme  -> "urlScheme"        openItem -> "urlScheme" (an app / file path)
+    shortcut   -> "shortcutName"     cliTool  -> "cliToolCommand"
+    applescript / jxa / shell -> "script"     scriptFile -> "scriptFile" (absolute path)
+    aiPrompt   -> "aiPromptTemplate"
+- "id" / "bundleId" MUST be the app's real bundle id; "appName" is the display name.
+- "triggers" are the words that surface the action while typing in the dock.
+- Scripts and prompts may use context vars: $CURRENT_URL, $WINDOW_TITLE, $AX_SELECTED_TEXT,
+  and $CD_QUERY (the user's natural-language request, so an action can parameterize itself).
 
-Now create one for: "<app name + the actions you want>"
+STEP 4 — EXPLAIN. After the JSON, in one short paragraph: which routes you built, what the
+app does NOT support (be honest — e.g. "Freeform has no CLI"), and whether an official MCP
+server exists that the user should link separately in Settings.
+
+Begin now by asking the STEP 1 questions.
 """
         ),
         Template(
