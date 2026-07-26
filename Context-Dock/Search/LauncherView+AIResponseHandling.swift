@@ -543,57 +543,10 @@ extension LauncherView {
         return output.stringValue
     }
 
-    func executeShellCommandSafely(_ command: String) async -> String {
-        // Check if this is an ilauncher-api command - handle it directly
-        if command.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("ilauncher-api ") {
-            #if DEBUG
-            print("🔧 [Shell] Detected ilauncher-api command, routing to APICommandHandler")
-            #endif
-
-            // Extract args from command
-            let cleanCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
-            let components = cleanCommand.components(separatedBy: .whitespaces)
-                .filter { !$0.isEmpty }
-
-            // Remove "ilauncher-api" prefix
-            let args = Array(components.dropFirst())
-
-            #if DEBUG
-            print("🔧 [Shell] API args: \(args)")
-            #endif
-
-            // Route to API handler
-            let result = APICommandHandler.shared.handleCommand(args)
-            #if DEBUG
-            print("✅ [Shell] API result: \(result)")
-            #endif
-
-            return result
-        }
-
-        // Otherwise execute as normal shell command
-        let task = Process()
-        let pipe = Pipe()
-
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-c", command]
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
-                return output.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                return "✅ Command executed successfully"
-            }
-        } catch {
-            return "❌ Error: \(error.localizedDescription)"
-        }
-    }
+    // NOTE: executeShellCommandSafely was removed (P0 security fix). It ran an arbitrary
+    // string through `bash -c` with ZERO classification — a loaded gun whose name implied
+    // safety. It had no callers (dead code). Any AI-reachable command execution must go
+    // through TerminalAIBridge.processAICommand, which classifies and gates on approval.
 
     func parseAIAction(_ response: String) -> AIAction? {
         // Legacy - keeping for compatibility
