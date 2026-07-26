@@ -4627,6 +4627,17 @@ extension LauncherView {
             claim actions that DoraX actually executes through its approval-backed tools.
             Never produce a conversational permission request.
             """
+            // Give the model each selected app's real capabilities (adapter actions, verified
+            // menu commands, linked CLI/MCP/Shortcuts) so it drives THAT app via adapter_call /
+            // menu_call instead of answering generically. This is what makes "general chat works
+            // only for the selected app, using its adapters" true end-to-end.
+            let inventories = chatFocusApps
+                .map { scopedAppIdentityBlock(bundleId: $0.bundleId, appName: $0.name) }
+                .filter { !$0.isEmpty }
+            if !inventories.isEmpty {
+                sysContent += "\n\n## Selected app capabilities\n"
+                    + inventories.joined(separator: "\n\n")
+            }
         }
         if !attachments.isEmpty {
             // Extract the actual content (PDF text, text/code/markdown) so on-device AI can

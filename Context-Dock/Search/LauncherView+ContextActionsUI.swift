@@ -178,7 +178,7 @@ extension LauncherView {
 
     @ViewBuilder
     var chatFocusAppPicker: some View {
-        let apps = runningAppsForChatFocus()
+        let apps = chatFocusAppRows()
         ScrollView(.vertical, showsIndicators: apps.count > 4) {
             LazyVStack(spacing: 2) {
                 ForEach(apps, id: \.bundleId) { app in
@@ -198,6 +198,15 @@ extension LauncherView {
                             Text(app.name)
                                 .font(.system(size: 13, weight: .medium))
                                 .lineLimit(1)
+                            // Green = running; grey = configured adapter, not launched yet.
+                            Circle()
+                                .fill(
+                                    app.isRunning
+                                        ? Color.green
+                                        : Color.secondary.opacity(0.35)
+                                )
+                                .frame(width: 6, height: 6)
+                                .help(app.isRunning ? "Running" : "Adapter configured — not running")
                             Spacer(minLength: 8)
                             if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
                                 Image(systemName: "checkmark")
@@ -253,6 +262,41 @@ extension LauncherView {
                 return (name, bundleId, icon)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Rows for the chat-focus picker: currently-running apps first (green dot), then apps
+    /// the user configured in Settings → App Adapters that aren't running (grey dot, below).
+    /// This lets the user scope the general chat to a configured app and start asking before
+    /// the app is even launched — the adapter/menu routes are what make the chat work.
+    func chatFocusAppRows() -> [(name: String, bundleId: String, icon: NSImage, isRunning: Bool)]
+    {
+        let running = runningAppsForChatFocus()
+        var rows: [(name: String, bundleId: String, icon: NSImage, isRunning: Bool)] =
+            running.map { (name: $0.name, bundleId: $0.bundleId, icon: $0.icon, isRunning: true) }
+        let runningIds = Set(running.map { $0.bundleId.lowercased() })
+
+        let adapterApps = AppAdapterManager.shared.adapters
+            .filter {
+                $0.isEnabled
+                    && !$0.bundleId.isEmpty
+                    && !$0.bundleId.hasPrefix("scope://")
+                    && $0.bundleId != Bundle.main.bundleIdentifier
+                    && !runningIds.contains($0.bundleId.lowercased())
+            }
+            .sorted {
+                $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
+            }
+        var seen = runningIds
+        for a in adapterApps {
+            guard seen.insert(a.bundleId.lowercased()).inserted else { continue }
+            let icon =
+                resolvedApplicationIcon(bundleIdentifier: a.bundleId, appName: a.appName)
+                ?? NSWorkspace.shared.icon(
+                    forFile: NSWorkspace.shared.urlForApplication(
+                        withBundleIdentifier: a.bundleId)?.path ?? "")
+            rows.append((name: a.appName, bundleId: a.bundleId, icon: icon, isRunning: false))
+        }
+        return rows
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
