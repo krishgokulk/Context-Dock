@@ -116,6 +116,35 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         self.requiresApproval = requiresApproval; self.isDestructive = isDestructive
         self.accentColor = accentColor
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, icon, description, triggers, category, type, menuPath, script,
+             scriptFile, urlScheme, cliToolCommand, shortcutName, aiPromptTemplate,
+             requiresApproval, isDestructive, accentColor
+    }
+
+    // Tolerant decode: AI-generated actions may omit icon/description/triggers/flags.
+    // Only id/name/type are required; everything else defaults.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "bolt"
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        triggers = try c.decodeIfPresent([String].self, forKey: .triggers) ?? []
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        type = try c.decode(AdapterActionType.self, forKey: .type)
+        menuPath = try c.decodeIfPresent([String].self, forKey: .menuPath)
+        script = try c.decodeIfPresent(String.self, forKey: .script)
+        scriptFile = try c.decodeIfPresent(String.self, forKey: .scriptFile)
+        urlScheme = try c.decodeIfPresent(String.self, forKey: .urlScheme)
+        cliToolCommand = try c.decodeIfPresent(String.self, forKey: .cliToolCommand)
+        shortcutName = try c.decodeIfPresent(String.self, forKey: .shortcutName)
+        aiPromptTemplate = try c.decodeIfPresent(String.self, forKey: .aiPromptTemplate)
+        requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval) ?? false
+        isDestructive = try c.decodeIfPresent(Bool.self, forKey: .isDestructive) ?? false
+        accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor)
+    }
 }
 
 // MARK: - AdapterContextReader
@@ -151,6 +180,26 @@ struct AppAdapter: Identifiable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, appName, bundleId, icon, isEnabled, isBuiltIn, actions, contextReaders
+    }
+
+    // Tolerant decode: AI-generated packs (Adapter Pack Builder) legitimately omit
+    // isBuiltIn / contextReaders / isEnabled / icon. Swift's synthesized Decodable would
+    // throw keyNotFound on any missing non-optional key, so every generated pack would
+    // fail to import. Decode identity strictly-ish (any of id/bundleId/appName), default
+    // everything else.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rid = try c.decodeIfPresent(String.self, forKey: .id)
+        let rbundle = try c.decodeIfPresent(String.self, forKey: .bundleId)
+        let rname = try c.decodeIfPresent(String.self, forKey: .appName)
+        bundleId = rbundle ?? rid ?? ""
+        id = rid ?? rbundle ?? ""
+        appName = rname ?? bundleId
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "app.badge"
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        isBuiltIn = try c.decodeIfPresent(Bool.self, forKey: .isBuiltIn) ?? false
+        actions = try c.decodeIfPresent([AdapterAction].self, forKey: .actions) ?? []
+        contextReaders = try c.decodeIfPresent([AdapterContextReader].self, forKey: .contextReaders) ?? []
     }
 }
 
