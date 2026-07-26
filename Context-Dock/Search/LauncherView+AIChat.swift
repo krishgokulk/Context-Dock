@@ -1443,7 +1443,8 @@ extension LauncherView {
                             AIChatMessageView(
                                 message: message,
                                 isStreaming: message.id == aiMode.streamingId,
-                                onReplaceText: selectionScopeReplaceTextAction(for: message)
+                                onReplaceText: selectionScopeReplaceTextAction(for: message),
+                                onEnableApp: { req in enableAppForGeneralChat(req) }
                             )
                             .id(message.id)
                         }
@@ -1686,6 +1687,23 @@ extension LauncherView {
     }
 
     // MARK: - AI Query Submission
+    /// One-tap "Enable <app> for this chat": add the app to the focus picker, then re-run the
+    /// original query now that it's in scope. Keeps the user in control — nothing was read
+    /// until they tapped.
+    func enableAppForGeneralChat(_ req: EnableAppRequest) {
+        if !chatFocusApps.contains(where: {
+            $0.bundleId.caseInsensitiveCompare(req.bundleId) == .orderedSame
+        }) {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                chatFocusApps.append(.init(name: req.name, bundleId: req.bundleId))
+            }
+        }
+        aiMode.pendingEnableApp = nil
+        guard !aiMode.isLoading, aiMode.streamingId == nil else { return }
+        searchState.query = req.query
+        submitAIQuery()
+    }
+
     func submitAIQuery() {
         restoreGeneralAIConversationIfNeeded()
         hydrateAISelectionContextFromVisibleSelection()
@@ -1737,11 +1755,14 @@ extension LauncherView {
                 )
                 let cleaned = self.sanitizeGeneralChatAssistantText(response)
                 await MainActor.run {
+                    let enableReq = self.aiMode.pendingEnableApp
+                    self.aiMode.pendingEnableApp = nil
                     withAnimation {
                         self.aiMode.messages.append(
                             AIChatMessage(
                                 role: .assistant, content: cleaned, appLaunches: launches,
-                                mcpToolsRan: self.aiMode.pendingToolChips))
+                                mcpToolsRan: self.aiMode.pendingToolChips,
+                                enableAppRequest: enableReq))
                         self.aiMode.pendingToolChips = []
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
@@ -4611,14 +4632,18 @@ extension LauncherView {
                 $0.bundleId.caseInsensitiveCompare(namedApp.bundleId) == .orderedSame
             })
         {
-            let hasAdapter = AppAdapterManager.shared.adapter(for: namedApp.bundleId) != nil
+            // Offer a one-tap "Enable <app> for this chat" button — approving it adds the app
+            // to the focus picker and re-runs the query, so the user grants access in one tap
+            // instead of hunting for the picker.
+            await MainActor.run {
+                aiMode.pendingEnableApp = EnableAppRequest(
+                    name: namedApp.name, bundleId: namedApp.bundleId, query: query)
+            }
             if chatFocusApps.isEmpty {
-                return hasAdapter
-                    ? "To work with **\(namedApp.name)**, select it in the app picker (the apps ＋ button at the top of this chat) first — General Chat only reads the apps you choose, so you stay in control. Select \(namedApp.name), then ask again."
-                    : "**\(namedApp.name)** isn’t added yet. Add it in Settings → App Adapters → Choose App, or select it in the app picker at the top of this chat, then ask again — General Chat only touches apps you’ve chosen."
+                return "**\(namedApp.name)** isn’t in this chat’s scope yet. General Chat only reads the apps you choose, so you stay in control — enable it below to let me answer about \(namedApp.name)."
             } else {
                 let focusNames = chatFocusApps.map(\.name).joined(separator: ", ")
-                return "This chat is focused on **\(focusNames)**. To answer about **\(namedApp.name)**, select it in the app picker (＋ apps) first — answers stay scoped to only the apps you’ve chosen, so you keep full control."
+                return "This chat is focused on **\(focusNames)**. To answer about **\(namedApp.name)**, enable it below — answers stay scoped to only the apps you’ve chosen, so you keep full control."
             }
         }
 

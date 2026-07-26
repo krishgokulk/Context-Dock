@@ -87,11 +87,21 @@ struct AIModeState {
     var selectionURL: String? = nil
     // Awaiting user confirmation before sending an AI result via Share (two-step "Send via X?").
     var pendingShare: PendingSelectionShare? = nil
+    // Set when a query targeted an app the user hasn't selected — the answer bubble shows a
+    // one-tap "Enable <app> for this chat" button that adds it to the picker and re-runs.
+    var pendingEnableApp: EnableAppRequest? = nil
 }
 
 struct PendingSelectionShare: Equatable {
     let text: String
     let destination: String
+}
+
+/// A one-tap offer to scope the chat to an app the user asked about but hasn't selected.
+struct EnableAppRequest: Equatable {
+    let name: String
+    let bundleId: String
+    let query: String
 }
 
 /// Tiny planner-progress model for General AI Chat's DoraX Action Chat pipeline. Ordered

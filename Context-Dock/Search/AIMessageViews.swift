@@ -172,6 +172,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var attachments: [URL]  // Files the user attached to this message (shown as chips)
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
+    var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
 
     enum ChatRole {
         case user
@@ -183,7 +184,8 @@ struct AIChatMessage: Identifiable, Equatable {
     init(
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
+        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
+        enableAppRequest: EnableAppRequest? = nil
     ) {
         self.id = UUID()
         self.role = role
@@ -195,13 +197,15 @@ struct AIChatMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.appLaunches = appLaunches
         self.mcpToolsRan = mcpToolsRan
+        self.enableAppRequest = enableAppRequest
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
     init(
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
+        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
+        enableAppRequest: EnableAppRequest? = nil
     ) {
         self.id = id
         self.role = role
@@ -213,6 +217,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.appLaunches = appLaunches
         self.mcpToolsRan = mcpToolsRan
+        self.enableAppRequest = enableAppRequest
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -284,6 +289,8 @@ struct AIChatMessageView: View {
     var onInstallProposal: ((String) -> Void)? = nil
     var onRunOnceProposal: ((String) -> Void)? = nil
     var onReplaceText: (() -> Void)? = nil
+    /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
+    var onEnableApp: ((EnableAppRequest) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
@@ -330,6 +337,38 @@ struct AIChatMessageView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var enableAppButton: some View {
+        if let req = message.enableAppRequest {
+            Button {
+                onEnableApp?(req)
+            } label: {
+                HStack(spacing: 6) {
+                    if let icon = NSWorkspace.shared.urlForApplication(
+                        withBundleIdentifier: req.bundleId).map({
+                            NSWorkspace.shared.icon(forFile: $0.path)
+                        })
+                    {
+                        Image(nsImage: icon)
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 15, height: 15)
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    } else {
+                        Image(systemName: "plus.app")
+                    }
+                    Text("Enable \(req.name) for this chat").fontWeight(.semibold)
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(providerColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(providerColor.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -448,6 +487,10 @@ struct AIChatMessageView: View {
 
                 if !message.appLaunches.isEmpty {
                     appLaunchButtons
+                }
+
+                if message.enableAppRequest != nil {
+                    enableAppButton
                 }
 
                 if message.role == .assistant, let onReplaceText, !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
