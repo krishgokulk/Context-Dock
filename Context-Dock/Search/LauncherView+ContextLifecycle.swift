@@ -882,6 +882,24 @@ extension LauncherView {
                 }
 
                 if appChanged {
+                    // Frontmost-app chat that is NOT pinned must not linger on the previous
+                    // app when the user switches apps/desktops (otherwise the header chip
+                    // follows the new app while the placeholder still says "Ask Code"). Exit
+                    // it. A pinned chat stays locked to the app it was pinned for.
+                    let chatApp = l2.chatDraftBundleId
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let frontmostChatActive =
+                        l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
+                    if frontmostChatActive, !settings.launcherPinned,
+                        !chatApp.isEmpty, chatApp != bundleID
+                    {
+                        l2.isLoading = false
+                        l2.currentTask?.cancel()
+                        l2.currentTask = nil
+                        l2.chatMessages = []
+                        disarmContextDockChat()
+                    }
+
                     l2.appCompletion = nil
                     l2.focusedPillIndex = nil
                     l2.pillNavViaKeyboard = false
