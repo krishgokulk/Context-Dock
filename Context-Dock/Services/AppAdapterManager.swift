@@ -341,6 +341,74 @@ final class AppAdapterManager: ObservableObject {
         return result
     }
 
+    // MARK: - Menu command (universal control surface)
+
+    /// Click a verified app menu item by its menu path — the route the scoped/general AI
+    /// chat uses to actually DO things (Minimize, New Tab, Export…) instead of narrating.
+    /// Safe items run immediately; destructive-sounding paths (Close, Quit, Delete…) prompt
+    /// once, and approving one remembers it ("allow always") so it runs unattended next time.
+    func runMenuPath(
+        _ path: [String], targetBundleId: String, appName: String
+    ) async -> (Bool, String) {
+        let cleaned = path
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return (false, "No menu path given") }
+
+        let label = cleaned.joined(separator: " ▸ ")
+        let consent = AppMenuConsentStore.shared
+        let needsApproval =
+            consent.isDestructive(path: cleaned)
+            && !consent.isAllowed(bundleId: targetBundleId, path: cleaned)
+
+        let action = AdapterAction(
+            id: "menu:\(targetBundleId):\(cleaned.joined(separator: ">"))",
+            name: label,
+            icon: "filemenu.and.selection",
+            description: "Menu command in \(appName.isEmpty ? "the app" : appName)",
+            type: .menubar,
+            menuPath: cleaned,
+            requiresApproval: needsApproval,
+            isDestructive: consent.isDestructive(path: cleaned))
+
+        if needsApproval {
+            let adp = AppAdapter(
+                id: targetBundleId, appName: appName.isEmpty ? targetBundleId : appName,
+                bundleId: targetBundleId, icon: "app.badge",
+                isBuiltIn: false, actions: [action])
+            return await withCheckedContinuation { continuation in
+                let request = AdapterActionRequest(
+                    action: action,
+                    adapter: adp,
+                    onApprove: { [weak self] in
+                        Task { [weak self] in
+                            await MainActor.run { self?.pendingApproval = nil }
+                            // Approving a destructive menu command grants "allow always"
+                            // so DoraX runs it unattended next time.
+                            AppMenuConsentStore.shared.allowAlways(
+                                bundleId: targetBundleId, path: cleaned)
+                            let result = await self?.runAction(
+                                action, context: AXContext.empty, targetBundleId: targetBundleId)
+                                ?? (false, "")
+                            await MainActor.run { self?.lastResult = result }
+                            continuation.resume(returning: result)
+                        }
+                    },
+                    onDeny: { [weak self] in
+                        Task { @MainActor in self?.pendingApproval = nil }
+                        continuation.resume(returning: (false, "Cancelled"))
+                    }
+                )
+                Task { @MainActor in self.pendingApproval = request }
+            }
+        }
+
+        let result = await runAction(
+            action, context: AXContext.empty, targetBundleId: targetBundleId)
+        await MainActor.run { self.lastResult = result }
+        return result
+    }
+
     // MARK: - Toggle
 
     func setEnabled(_ enabled: Bool, for bundleId: String) {

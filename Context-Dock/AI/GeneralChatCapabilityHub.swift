@@ -559,6 +559,27 @@ final class GeneralChatCapabilityHub {
                 output: out.isEmpty ? "Ran \(action.name)" : out,
                 label: "\(action.name) via adapter")
 
+        case .menuAction:
+            let path = (invocation.arguments["path"] ?? "")
+                .components(separatedBy: "\u{1F}")
+                .filter { !$0.isEmpty }
+            let bundleId = invocation.arguments["bundleId"]
+                ?? invocation.arguments["bundleID"]
+                ?? AXContextReader.shared.current.bundleId
+            guard !path.isEmpty, !bundleId.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No menu path or app given for the menu command.",
+                    label: "menu blocked")
+            }
+            let (ok, out) = await AppAdapterManager.shared.runMenuPath(
+                path, targetBundleId: bundleId,
+                appName: AXContextReader.shared.current.appName)
+            return ToolCallResult(
+                handled: true, success: ok,
+                output: out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out,
+                label: "\(path.joined(separator: " ▸ ")) via menu")
+
         case .terminal:
             let plan = AIActionPlan(
                 capability: "terminal.runCommand",

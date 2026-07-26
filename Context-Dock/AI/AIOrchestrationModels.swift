@@ -38,6 +38,7 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case mcp
     case terminal
     case adapterAction
+    case menuAction
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -199,6 +200,35 @@ enum AITypedInvocationResolver {
                 return AITypedInvocation(
                     kind: .adapterAction, capabilityID: "adapter.run",
                     arguments: args, requiresApproval: false)
+            }
+
+            // Click a verified app menu item by its menu path — the universal control
+            // surface. Accepts {"menu_call":{"path":["Window","Minimize"]}} or a
+            // {"menu_call":{"menu":"Window > Minimize"}} string. The executor resolves the
+            // path against the app's cached menu and gates approval for destructive items.
+            if let call = root["menu_call"] as? [String: Any] {
+                var path: [String] = []
+                if let arr = call["path"] as? [String] {
+                    path = arr
+                } else if let str = (call["menu"] as? String) ?? (call["path"] as? String) {
+                    path = str
+                        .components(separatedBy: CharacterSet(charactersIn: ">›/|"))
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                }
+                let cleaned = path
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if !cleaned.isEmpty {
+                    var args: [String: String] = ["path": cleaned.joined(separator: "\u{1F}")]
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String),
+                        !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .menuAction, capabilityID: "app.menu.click",
+                        arguments: args, requiresApproval: false)
+                }
             }
 
             if let call = root["mcp_call"] as? [String: Any],

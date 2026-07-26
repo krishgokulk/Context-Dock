@@ -365,6 +365,33 @@ extension LauncherView {
         if skillCount > 0 {
             lines.append("- Skills: \(skillCount) active (their instructions follow below)")
         }
+
+        // Verified menu commands — the universal control surface. Any app can be driven
+        // through its own menu bar even with zero linked adapters, so this is how the chat
+        // DOES things (Minimize, New Tab, Export, Close…) instead of narrating a shortcut.
+        if !bundleId.isEmpty {
+            let menuItems = AppMenuCapabilityCache.shared.menuItems(
+                bundleIdentifier: bundleId, appName: appName, query: "", maxResults: 60)
+            let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
+            if !leaves.isEmpty {
+                lines.append(
+                    "- Menu commands — RUN one by outputting exactly one JSON line "
+                    + "{\"menu_call\":{\"path\":[\"Window\",\"Minimize\"]}} using the FULL path "
+                    + "below. When a request maps to a menu command, CALL it immediately — do "
+                    + "NOT tell the user which keyboard shortcut to press, do NOT ask permission "
+                    + "(destructive commands like Close/Quit/Delete pop their own confirmation). "
+                    + "Available menu commands:")
+                var seen = Set<String>()
+                for item in leaves {
+                    let key = item.path.joined(separator: " > ").lowercased()
+                    guard seen.insert(key).inserted else { continue }
+                    let shortcut = item.shortcutDisplay.map { " (\($0))" } ?? ""
+                    lines.append("    • \(item.path.joined(separator: " ▸ "))\(shortcut)")
+                    if seen.count >= 50 { break }
+                }
+            }
+        }
+
         lines.append("")
         lines.append(
             "Tool choice order: adapter/native action → MCP tool → API/Shortcut → verified live app menu → linked CLI fallback → answer from "
@@ -3548,6 +3575,27 @@ extension LauncherView {
                         // shortcut, script) directly — this is the native route the model is told
                         // to prefer over terminal. AppAdapterManager.execute shows its own approval
                         // panel for actions flagged requiresApproval/isDestructive.
+                        // Click a verified app menu item (Minimize, New Tab, Export…) — the
+                        // universal control surface. Works for any app even with zero linked
+                        // adapters, so the chat DOES the task instead of narrating a shortcut.
+                        if let invocation = AITypedInvocationResolver.invocation(from: command),
+                           invocation.kind == .menuAction {
+                            let path = (invocation.arguments["path"] ?? "")
+                                .components(separatedBy: "\u{1F}")
+                                .filter { !$0.isEmpty }
+                            let bundle = (invocation.arguments["bundleId"].flatMap {
+                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
+                            guard !path.isEmpty else {
+                                return (false, "No menu path given.")
+                            }
+                            await self.setL2LoadingStatus(
+                                "Running \(path.joined(separator: " ▸ "))…", requestID: l2RequestID)
+                            let (ok, out) = await AppAdapterManager.shared.runMenuPath(
+                                path, targetBundleId: bundle,
+                                appName: scopedAppName.isEmpty
+                                    ? (frontmostName ?? frontmost.name) : scopedAppName)
+                            return (ok, out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out)
+                        }
                         if let invocation = AITypedInvocationResolver.invocation(from: command),
                            invocation.kind == .adapterAction {
                             let actionId = invocation.arguments["actionId"] ?? ""
