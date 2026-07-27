@@ -325,8 +325,19 @@ extension LauncherView {
         }
     }
 
-    @ViewBuilder
     var windowReviewScopeView: some View {
+        windowReviewScopeBody
+            // Selecting an app / starting a search grows the dock from the compact bar to the
+            // preview panel; deselecting shrinks it back.
+            .onChange(of: windowReviewFocusedID) { _, _ in
+                if searchState.activeSmartQueryKey == "windows" {
+                    requestWindowSizeUpdate(reason: .panelChanged)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var windowReviewScopeBody: some View {
         let items = windowSwitcherItems
         let apps = windowSwitcherApps
         if items.isEmpty {

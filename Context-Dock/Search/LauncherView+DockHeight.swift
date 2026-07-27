@@ -5,6 +5,16 @@ extension LauncherView {
         DockHeightResolver.resolve(currentDockHeightMetrics)
     }
 
+    /// Compact smart scopes reserve 450 for their list. The window switcher instead stays a
+    /// compact bar (just the app row) until the user selects an app or searches — then it grows
+    /// to show the window previews.
+    private var compactSmartScopePanelHeight: CGFloat {
+        guard searchState.activeSmartQueryKey == "windows" else { return 450 }
+        let searching = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let appSelected = windowReviewFocusedID != nil
+        return (searching || appSelected) ? 450 : 132
+    }
+
     var currentDockHeightPreset: DockHeightPreset {
         DockHeightResolver.resolvePreset(currentDockHeightPresetMetrics)
     }
@@ -47,6 +57,7 @@ extension LauncherView {
                 && !isCompactSmartScope
                 && shouldShowContextDockAppPanel,
             compactSmartScope: isCompactSmartScope,
+            compactScopePanelHeight: compactSmartScopePanelHeight,
             mediaHasDuration: mediaObserver.duration > 0,
             contextDockChatMessageCount: l2.chatMessages.count,
             listViewDockHeight: listViewDockHeight,

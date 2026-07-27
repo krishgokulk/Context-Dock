@@ -76,6 +76,9 @@ struct DockHeightMetrics {
     var aiMessageCount: Int
     var showsContextDockAppPanel: Bool
     var compactSmartScope: Bool
+    /// Panel height reserved for a compact smart scope. Defaults to 450, but the window
+    /// switcher shrinks it to a compact bar when idle (app row only, nothing selected).
+    var compactScopePanelHeight: CGFloat = 450
     var mediaHasDuration: Bool
     var contextDockChatMessageCount: Int
     var listViewDockHeight: CGFloat
@@ -200,7 +203,7 @@ struct DockHeightResolver {
         }
 
         if metrics.compactSmartScope {
-            let panelHeight: CGFloat = 450
+            let panelHeight: CGFloat = metrics.compactScopePanelHeight
             let panelGap: CGFloat = 8
             return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
                 + panelHeight + panelGap
