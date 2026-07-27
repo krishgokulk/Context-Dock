@@ -284,7 +284,7 @@ extension LauncherView {
                                 .foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    .frame(maxWidth: .infinity).frame(height: 300).padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity).frame(height: 168).padding(.horizontal, 14)
 
                     Text("\(group.name) — \(tab.title.isEmpty ? tab.domain : tab.title)")
                         .font(.system(size: 12, weight: .medium))
@@ -322,7 +322,7 @@ extension LauncherView {
                                 .padding(10)
                         }
                     }
-                    .frame(maxWidth: .infinity).frame(height: 300).padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity).frame(height: 168).padding(.horizontal, 14)
 
                     Text("\(group.name)\(preview.map { " — \($0.title)" } ?? "")")
                         .font(.system(size: 12, weight: .medium))
