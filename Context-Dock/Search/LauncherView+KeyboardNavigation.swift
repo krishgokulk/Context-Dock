@@ -1418,7 +1418,7 @@ extension LauncherView {
             }
             .onKeyPress(.upArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    appSwitcherCycleWindow(-1)
+                    windowSwitcherUpDown(-1)
                     return .handled
                 }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
@@ -1475,7 +1475,7 @@ extension LauncherView {
             }
             .onKeyPress(.downArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    appSwitcherCycleWindow(1)
+                    windowSwitcherUpDown(1)
                     return .handled
                 }
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
@@ -1968,7 +1968,7 @@ extension LauncherView {
             // chat. With text or a scope chip present it stays a normal cursor/scope key.
             .onKeyPress(.leftArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    appSwitcherCycleApp(-1)
+                    windowSwitcherLeftRight(-1)
                     return .handled
                 }
                 if searchState.activeSmartQueryKey == "clipboard",
@@ -1998,7 +1998,7 @@ extension LauncherView {
             // use Right Arrow for app scope navigation.
             .onKeyPress(.rightArrow) {
                 if searchState.activeSmartQueryKey == "windows" {
-                    appSwitcherCycleApp(1)
+                    windowSwitcherLeftRight(1)
                     return .handled
                 }
                 if activeNotepadScopeCommand != nil { return .ignored }

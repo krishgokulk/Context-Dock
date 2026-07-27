@@ -125,6 +125,14 @@ extension LauncherView {
         let items = windowSwitcherItems
         guard !items.isEmpty else { return false }
         let focused = windowReviewFocusedID
+        // App-level focus (no window picked yet): first Enter drills into the app's windows.
+        if let focused, focused.hasPrefix("app:") {
+            let app = String(focused.dropFirst(4))
+            if let first = windowsForApp(app).first {
+                windowReviewFocusedID = first.id
+                return true
+            }
+        }
         guard let item = items.first(where: { $0.id == focused }) ?? items.first else {
             return false
         }
@@ -214,6 +222,23 @@ extension LauncherView {
         return out.map { (name: $0.0, icon: $0.1) }
     }
 
+    /// Non-empty query → the input is searching every window; show a flat results grid.
+    var windowSwitcherIsSearching: Bool {
+        !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The app currently focused in the row. "app:<name>" focus = app level (compact, its
+    /// windows popped below); a "window:" focus resolves to its owning app.
+    var windowSwitcherFocusedAppName: String? {
+        guard let fid = windowReviewFocusedID else { return windowSwitcherApps.first?.name }
+        if fid.hasPrefix("app:") { return String(fid.dropFirst(4)) }
+        return windowSwitcherItems.first { $0.id == fid }?.appName
+    }
+
+    func windowsForApp(_ name: String) -> [WindowSwitcherItem] {
+        windowSwitcherItems.filter { $0.appName == name }
+    }
+
     func windowSwitcherIndex() -> Int {
         windowSwitcherItems.firstIndex { $0.id == windowReviewFocusedID } ?? 0
     }
@@ -227,23 +252,64 @@ extension LauncherView {
         isSearchFieldFocused = false
     }
 
-    /// ↑/↓/←/→ move one window in the flat list.
-    func appSwitcherCycleWindow(_ dir: Int) {
-        windowSwitcherSelect(windowSwitcherIndex() + dir)
-    }
-
-    /// Tab jumps to the first window of the next/previous app (alt-tab feel).
+    /// Tab / ←/→ at app level cycle apps; while searching, move through the flat results.
     func appSwitcherCycleApp(_ dir: Int) {
-        let items = windowSwitcherItems
-        guard !items.isEmpty else { return }
+        if windowSwitcherIsSearching {
+            windowSwitcherSelect(windowSwitcherIndex() + dir)
+            return
+        }
         let apps = windowSwitcherApps.map(\.name)
         guard !apps.isEmpty else { return }
-        let curApp = items[min(windowSwitcherIndex(), items.count - 1)].appName
-        let curAppIdx = apps.firstIndex(of: curApp) ?? 0
-        let nextApp = apps[((curAppIdx + dir) % apps.count + apps.count) % apps.count]
-        if let firstIdx = items.firstIndex(where: { $0.appName == nextApp }) {
-            windowSwitcherSelect(firstIdx)
+        let cur = windowSwitcherFocusedAppName ?? apps[0]
+        let ci = apps.firstIndex(of: cur) ?? 0
+        let next = apps[((ci + dir) % apps.count + apps.count) % apps.count]
+        windowReviewFocusedID = "app:\(next)"  // app-level: windows pop below, none focused yet
+        isKeyboardNavigation = true
+        isSearchFieldFocused = false
+    }
+
+    /// ←/→: while a window is focused, move within that app's windows; else cycle apps.
+    func windowSwitcherLeftRight(_ dir: Int) {
+        if windowSwitcherIsSearching {
+            windowSwitcherSelect(windowSwitcherIndex() + dir)
+            return
         }
+        if let fid = windowReviewFocusedID, fid.hasPrefix("window:"),
+            let app = windowSwitcherFocusedAppName {
+            let wins = windowsForApp(app)
+            let idx = wins.firstIndex { $0.id == fid } ?? 0
+            let n = min(max(idx + dir, 0), wins.count - 1)
+            if wins.indices.contains(n) { windowReviewFocusedID = wins[n].id }
+            isKeyboardNavigation = true
+            isSearchFieldFocused = false
+        } else {
+            appSwitcherCycleApp(dir)
+        }
+    }
+
+    /// ↓ drills into the selected app's windows (or next window); ↑ steps back to the app row.
+    func windowSwitcherUpDown(_ dir: Int) {
+        if windowSwitcherIsSearching {
+            windowSwitcherSelect(windowSwitcherIndex() + dir)
+            return
+        }
+        guard let app = windowSwitcherFocusedAppName else { return }
+        let wins = windowsForApp(app)
+        guard !wins.isEmpty else { return }
+        let fid = windowReviewFocusedID
+        if fid == nil || fid!.hasPrefix("app:") {
+            if dir > 0 { windowReviewFocusedID = wins[0].id }  // down → into windows
+        } else {
+            let idx = wins.firstIndex { $0.id == fid } ?? 0
+            if dir < 0, idx == 0 {
+                windowReviewFocusedID = "app:\(app)"  // up from first → back to app row
+            } else {
+                let n = min(max(idx + dir, 0), wins.count - 1)
+                windowReviewFocusedID = wins[n].id
+            }
+        }
+        isKeyboardNavigation = true
+        isSearchFieldFocused = false
     }
 
     func windowSwitcherActivate(_ item: WindowSwitcherItem) {
@@ -263,7 +329,6 @@ extension LauncherView {
     var windowReviewScopeView: some View {
         let items = windowSwitcherItems
         let apps = windowSwitcherApps
-        let focused = windowReviewFocusedID ?? items.first?.id
         if items.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: "macwindow.on.rectangle")
@@ -271,68 +336,99 @@ extension LauncherView {
                 Text(searchState.query.isEmpty ? "No open windows" : "No matching windows")
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 140)
+            .frame(maxWidth: .infinity, minHeight: 120)
+        } else if windowSwitcherIsSearching {
+            // Searching: flat grid of every matching window/tab across all apps.
+            let focused = windowReviewFocusedID ?? items.first?.id
+            VStack(spacing: 0) {
+                windowSwitcherGrid(items, focused: focused)
+            }.padding(.vertical, 12)
         } else {
+            // Idle: compact — just the app row; the focused app's windows pop below it.
+            let focusedApp = windowSwitcherFocusedAppName
+            let appWindows = focusedApp.map(windowsForApp) ?? []
+            let focused = windowReviewFocusedID
+            let windowFocused = focused?.hasPrefix("window:") == true
+            // Compact until the user picks an app: windows pop below only after a selection.
+            let showWindows = focused != nil && !appWindows.isEmpty
             VStack(spacing: 12) {
-                // Quick app-jump row directly under the input.
-                let focusedApp = items.first { $0.id == focused }?.appName
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(apps, id: \.name) { app in
-                            Button { appSwitcherJumpToApp(app.name) } label: {
-                                VStack(spacing: 4) {
-                                    if let icon = app.icon {
-                                        Image(nsImage: icon).resizable().scaledToFit()
-                                            .frame(width: 40, height: 40)
-                                    } else {
-                                        Image(systemName: "app.dashed").font(.system(size: 30))
-                                    }
-                                    Text(app.name)
-                                        .font(.system(size: 9,
-                                            weight: app.name == focusedApp ? .semibold : .medium))
-                                        .foregroundStyle(app.name == focusedApp ? .primary : .secondary)
-                                        .lineLimit(1).frame(maxWidth: 66)
-                                }
-                                .padding(.horizontal, 7).padding(.vertical, 5)
-                                .background(
-                                    app.name == focusedApp
-                                        ? Color.accentColor.opacity(0.16) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                        .strokeBorder(
-                                            app.name == focusedApp
-                                                ? Color.accentColor.opacity(0.8) : .clear,
-                                            lineWidth: 1.5))
+                            Button { appSwitcherFocusApp(app.name) } label: {
+                                appRowIcon(app, selected: focused != nil && app.name == focusedApp)
                             }
                             .buttonStyle(.plain)
                         }
                     }.padding(.horizontal, 14).padding(.top, 2)
                 }
 
-                // Compact grid of all matching windows/tabs.
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 176, maximum: 240), spacing: 10)],
-                            spacing: 10
-                        ) {
-                            ForEach(items) { item in
-                                windowSwitcherCard(item, selected: item.id == focused)
-                                    .id(item.id)
-                            }
-                        }
-                        .padding(.horizontal, 14).padding(.bottom, 6)
-                    }
-                    .frame(maxHeight: 360)
-                    .onChange(of: windowReviewFocusedID) { _, id in
-                        guard let id else { return }
-                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
-                    }
+                // Windows of the selected app pop in below the row (compact).
+                if showWindows {
+                    windowSwitcherGrid(appWindows, focused: windowFocused ? focused : nil)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(.vertical, 12)
+            .animation(.easeOut(duration: 0.16), value: focused)
         }
+    }
+
+    @ViewBuilder
+    func windowSwitcherGrid(_ items: [WindowSwitcherItem], focused: String?) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 176, maximum: 240), spacing: 10)],
+                    spacing: 10
+                ) {
+                    ForEach(items) { item in
+                        windowSwitcherCard(item, selected: item.id == focused)
+                            .id(item.id)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.bottom, 6)
+            }
+            .frame(maxHeight: 340)
+            .onChange(of: windowReviewFocusedID) { _, id in
+                guard let id, id.hasPrefix("window:") || id.hasPrefix("tab:") else { return }
+                withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    func appRowIcon(_ app: (name: String, icon: NSImage?), selected: Bool) -> some View {
+        VStack(spacing: 4) {
+            if let icon = app.icon {
+                Image(nsImage: icon).resizable().scaledToFit().frame(width: 44, height: 44)
+            } else {
+                Image(systemName: "app.dashed").font(.system(size: 32))
+            }
+            Text(app.name)
+                .font(.system(size: 9, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .lineLimit(1).frame(maxWidth: 70)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(
+            selected ? Color.accentColor.opacity(0.16) : .clear,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selected ? Color.accentColor.opacity(0.85) : .clear, lineWidth: 1.5))
+    }
+
+    /// Focus an app at app-level (pops its windows below); clicking again drills into them.
+    func appSwitcherFocusApp(_ name: String) {
+        if windowSwitcherFocusedAppName == name,
+            let first = windowsForApp(name).first,
+            windowReviewFocusedID?.hasPrefix("window:") != true {
+            windowReviewFocusedID = first.id
+        } else {
+            windowReviewFocusedID = "app:\(name)"
+        }
+        isKeyboardNavigation = true
+        isSearchFieldFocused = false
     }
 
     func appSwitcherJumpToApp(_ name: String) {
