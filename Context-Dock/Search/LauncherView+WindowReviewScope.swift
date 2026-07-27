@@ -125,11 +125,12 @@ extension LauncherView {
         let items = windowSwitcherItems
         guard !items.isEmpty else { return false }
         let focused = windowReviewFocusedID
-        // App-level focus (no window picked yet): first Enter drills into the app's windows.
+        // App-level focus: Enter activates the app's front window directly (Global-Context feel,
+        // no drill step). Click a specific thumbnail to pick a different window.
         if let focused, focused.hasPrefix("app:") {
             let app = String(focused.dropFirst(4))
             if let first = windowsForApp(app).first {
-                windowReviewFocusedID = first.id
+                windowSwitcherActivate(first)
                 return true
             }
         }
@@ -334,29 +335,13 @@ extension LauncherView {
         }
     }
 
-    /// ↓ drills into the selected app's windows (or next window); ↑ steps back to the app row.
+    /// Behaves like Global Context: ←/→ switch apps, no up/down drilling. While searching, ↑/↓
+    /// still step through the flat results; otherwise they are a no-op (down arrow unused).
     func windowSwitcherUpDown(_ dir: Int) {
         if windowSwitcherIsSearching {
             windowSwitcherSelect(windowSwitcherIndex() + dir)
-            return
         }
-        guard let app = windowSwitcherFocusedAppName else { return }
-        let wins = windowsForApp(app)
-        guard !wins.isEmpty else { return }
-        let fid = windowReviewFocusedID
-        if fid == nil || fid!.hasPrefix("app:") {
-            if dir > 0 { windowReviewFocusedID = wins[0].id }  // down → into windows
-        } else {
-            let idx = wins.firstIndex { $0.id == fid } ?? 0
-            if dir < 0, idx == 0 {
-                windowReviewFocusedID = "app:\(app)"  // up from first → back to app row
-            } else {
-                let n = min(max(idx + dir, 0), wins.count - 1)
-                windowReviewFocusedID = wins[n].id
-            }
-        }
-        isKeyboardNavigation = true
-        isSearchFieldFocused = false
+        // Idle: intentionally no-op — the switcher navigates apps with ←/→ only.
     }
 
     func windowSwitcherActivate(_ item: WindowSwitcherItem) {
@@ -483,43 +468,52 @@ extension LauncherView {
 
     func windowSwitcherCard(_ item: WindowSwitcherItem, selected: Bool) -> some View {
         Button { windowSwitcherActivate(item) } label: {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(item.isTab ? Color.blue.opacity(0.08) : Color.primary.opacity(0.05))
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(item.isTab ? Color.blue.opacity(0.10) : Color.primary.opacity(0.06))
                     if let thumb = item.thumb {
                         Image(decorative: thumb, scale: 1).resizable().scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .padding(3)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .padding(4)
                     } else if let icon = item.appIcon {
-                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 40, height: 40)
+                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 46, height: 46)
+                            .opacity(0.9)
                     }
                     if item.minimized {
                         Text("Minimized").font(.system(size: 8, weight: .semibold))
-                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(.ultraThinMaterial, in: Capsule())
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                            .padding(6)
+                            .padding(7)
                     }
                 }
-                .frame(height: 108)
-                HStack(spacing: 5) {
+                .frame(height: 128)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+                HStack(spacing: 6) {
                     if let icon = item.appIcon {
-                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 14, height: 14)
+                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 15, height: 15)
                     }
                     Text(item.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                        .foregroundStyle(selected ? .primary : .secondary)
                 }
+                .padding(.horizontal, 2)
             }
-            .padding(4)
+            .padding(5)
             .background(
-                selected ? Color.accentColor.opacity(0.18) : .clear,
-                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                selected ? Color.accentColor.opacity(0.16) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .strokeBorder(
-                        selected ? Color.accentColor.opacity(0.85) : .clear, lineWidth: 2))
+                        selected ? Color.accentColor.opacity(0.9) : Color.clear, lineWidth: 2))
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.14), value: selected)
     }
 
     @ViewBuilder
