@@ -39,7 +39,9 @@ final class ScreenCaptureService: @unchecked Sendable {
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
             switch kind {
             case .screenshot:
-                process.arguments = ["-x", url.path]
+                // No -x: let screencapture play the native shutter sound so the user gets
+                // audible feedback that the full-screen shot was taken.
+                process.arguments = [url.path]
             case .text, .area:
                 process.arguments = ["-i", url.path]
             }
@@ -72,6 +74,7 @@ final class ScreenCaptureService: @unchecked Sendable {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.setString(text, forType: .string)
+                    NSSound(named: "Tink")?.play()
                 }
             case .area, .screenshot:
                 guard let image = NSImage(data: data) else { return }
@@ -79,6 +82,9 @@ final class ScreenCaptureService: @unchecked Sendable {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.writeObjects([image])
+                    // Audible "copied to clipboard" confirmation so the user knows the shot
+                    // landed on the clipboard (and in our clipboard history via the monitor).
+                    NSSound(named: "Tink")?.play()
                 }
             }
         }

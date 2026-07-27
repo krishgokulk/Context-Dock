@@ -461,6 +461,14 @@ extension LauncherView {
             return
         }
 
+        // Image entries: write the actual image(s), never the placeholder/OCR text — otherwise
+        // pasting an image gave a string instead of the picture.
+        let images = entries.compactMap { $0.imageData.flatMap(NSImage.init(data:)) }
+        if !images.isEmpty, images.count == entries.count {
+            pasteboard.writeObjects(images)
+            return
+        }
+
         let text = entries.map { entry -> String in
             if !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return entry.text

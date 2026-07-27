@@ -1916,7 +1916,9 @@ extension LauncherView {
         if let image = NSImage(pasteboard: pb),
             let tiffData = image.tiffRepresentation
         {
-            addClipboardEntry(text: "Image copied to clipboard", filePaths: [], imageData: tiffData)
+            // Empty text — the entry IS the image (preview shows "Image", OCR fills ocrText).
+            // A placeholder string here used to get pasted instead of the actual image.
+            addClipboardEntry(text: "", filePaths: [], imageData: tiffData)
             return true
         }
 
