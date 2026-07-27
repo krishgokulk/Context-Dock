@@ -3614,9 +3614,14 @@ extension LauncherView {
                             ? (frontmostName ?? frontmost.name) : scopedAppName
                     )
                 }
+                // Capture Text / screenshots / uploaded files attached via the + menu — inject
+                // so the scoped agentic model actually receives what the user captured (images
+                // are OCR'd since sendWithTools can't send vision). Without this the chip showed
+                // but the content never reached the model.
+                let attachmentBlock = contextDockChatAttachmentPromptBlock()
                 let activeContextPrompt = [
                     identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
-                    mcpBlock, browserPageBlock, skillsBlock,
+                    mcpBlock, browserPageBlock, skillsBlock, attachmentBlock,
                 ]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n")
