@@ -857,6 +857,25 @@ class AppSettings: ObservableObject {
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
     @AppStorage("windowReviewHotkeyKeyCode") private var _windowReviewHotkeyKeyCode: Int = 0
     @AppStorage("windowReviewHotkeyModifiers") private var _windowReviewHotkeyModifiers: Int = 0
+
+    /// Folder where Capture Area / Screenshot images are saved. Empty = ~/Pictures (default).
+    @AppStorage("captureSaveFolderPath") private var _captureSaveFolderPath: String = ""
+    var captureSaveFolderPath: String {
+        get { _captureSaveFolderPath }
+        set { objectWillChange.send(); _captureSaveFolderPath = newValue }
+    }
+    /// Resolved save directory — the chosen folder if valid, else ~/Pictures.
+    var captureSaveDirectory: URL {
+        if !_captureSaveFolderPath.isEmpty {
+            let url = URL(fileURLWithPath: _captureSaveFolderPath, isDirectory: true)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                return url
+            }
+        }
+        return FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()

@@ -125,6 +125,10 @@ struct HotkeysSettingsPage: View {
                     .padding(.vertical, 4)
                 }
 
+                CardSection(title: "Capture Save Folder", systemImage: "folder") {
+                    captureSaveFolderRow
+                }
+
                 CardSection(title: "Context Dock", systemImage: "rectangle.grid.1x2.fill") {
                     VStack(spacing: 0) {
                         HotkeysInfoRow(keys: "⌘R", action: "Refresh Context — re-scan the frontmost app's live menus")
@@ -150,6 +154,42 @@ struct HotkeysSettingsPage: View {
             }
             .padding(28)
         }
+    }
+
+    private var captureSaveFolderRow: some View {
+        let path = settings.captureSaveFolderPath
+        let displayName = path.isEmpty
+            ? "Pictures (default)"
+            : URL(fileURLWithPath: path).lastPathComponent
+        return HStack(spacing: 12) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 16)).foregroundStyle(.blue)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Save captured screenshots to")
+                    .font(.system(size: 13, weight: .medium))
+                Text(displayName)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if !path.isEmpty {
+                Button("Reset") { settings.captureSaveFolderPath = "" }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Button("Choose…") {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.allowsMultipleSelection = false
+                panel.prompt = "Choose"
+                panel.message = "Choose a folder for Capture Area / Screenshot images"
+                if panel.runModal() == .OK, let url = panel.url {
+                    settings.captureSaveFolderPath = url.path
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 6).padding(.horizontal, 4)
     }
 
     private func captureHotkeyRow(

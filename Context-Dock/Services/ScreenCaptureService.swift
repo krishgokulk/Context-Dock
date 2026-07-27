@@ -19,14 +19,15 @@ final class ScreenCaptureService: @unchecked Sendable {
             case .text: isSavedImage = false
             }
             let url: URL
-            if isSavedImage,
-                let pictures = FileManager.default.urls(
-                    for: .picturesDirectory, in: .userDomainMask).first
-            {
+            if isSavedImage {
+                // User-selected folder (Settings → Hotkeys), falling back to ~/Pictures.
+                let dir = await MainActor.run { AppSettings.shared.captureSaveDirectory }
+                try? FileManager.default.createDirectory(
+                    at: dir, withIntermediateDirectories: true)
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
                 let name = "Screenshot \(formatter.string(from: Date()))-\(UUID().uuidString.prefix(4)).png"
-                url = pictures.appendingPathComponent(name)
+                url = dir.appendingPathComponent(name)
             } else {
                 url = FileManager.default.temporaryDirectory
                     .appendingPathComponent("context-dock-hotkey-capture-\(UUID().uuidString).png")
