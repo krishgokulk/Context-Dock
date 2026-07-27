@@ -2454,6 +2454,11 @@ extension LauncherView {
                                     .buttonStyle(.plain)
                                     .help("Exit selection scope")
                                 }
+                            } else if isCompactSmartScope
+                                && searchState.activeSmartQueryKey == "windows" {
+                                // Window switcher: running-window capsule inline in the input row
+                                // (Global-Context style), instead of an icon row below.
+                                windowSwitcherTrailingCapsule
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {

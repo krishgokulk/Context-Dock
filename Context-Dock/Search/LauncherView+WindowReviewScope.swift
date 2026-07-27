@@ -260,12 +260,59 @@ extension LauncherView {
         }
         let apps = windowSwitcherApps.map(\.name)
         guard !apps.isEmpty else { return }
+        // From the idle bar (no selection) the first ← / → focuses the FIRST app rather than
+        // skipping to the second, so the previews expand for app #1.
+        if windowReviewFocusedID == nil {
+            windowReviewFocusedID = "app:\(apps[0])"
+            isKeyboardNavigation = true
+            isSearchFieldFocused = false
+            return
+        }
         let cur = windowSwitcherFocusedAppName ?? apps[0]
         let ci = apps.firstIndex(of: cur) ?? 0
         let next = apps[((ci + dir) % apps.count + apps.count) % apps.count]
         windowReviewFocusedID = "app:\(next)"  // app-level: windows pop below, none focused yet
         isKeyboardNavigation = true
         isSearchFieldFocused = false
+    }
+
+    /// Compact running-window capsule shown INSIDE the input row (Global-Context style): a
+    /// row of running-app icons with a green dot. Clicking one selects it and expands its
+    /// window snapshots below. Right-arrow from the empty field focuses the first icon.
+    var windowSwitcherTrailingCapsule: some View {
+        let apps = windowSwitcherApps
+        let focusedApp = windowReviewFocusedID != nil ? windowSwitcherFocusedAppName : nil
+        return HStack(spacing: 5) {
+            ForEach(apps.prefix(7), id: \.name) { app in
+                Button { appSwitcherFocusApp(app.name) } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        if let icon = app.icon {
+                            Image(nsImage: icon).resizable().scaledToFit()
+                                .frame(width: 26, height: 26)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        } else {
+                            Image(systemName: "app.dashed").font(.system(size: 20))
+                        }
+                        Circle().fill(Color.green).frame(width: 5, height: 5)
+                            .overlay(Circle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
+                            .offset(x: 1, y: 1)
+                    }
+                    .padding(3)
+                    .background(
+                        app.name == focusedApp ? Color.accentColor.opacity(0.22) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(
+                                app.name == focusedApp ? Color.accentColor.opacity(0.85) : .clear,
+                                lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .help(app.name)
+            }
+        }
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(.regularMaterial, in: Capsule(style: .continuous))
     }
 
     /// ←/→: while a window is focused, move within that app's windows; else cycle apps.
@@ -339,7 +386,6 @@ extension LauncherView {
     @ViewBuilder
     private var windowReviewScopeBody: some View {
         let items = windowSwitcherItems
-        let apps = windowSwitcherApps
         if items.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: "macwindow.on.rectangle")
@@ -355,33 +401,20 @@ extension LauncherView {
                 windowSwitcherGrid(items, focused: focused)
             }.padding(.vertical, 12)
         } else {
-            // Idle: compact — just the app row; the focused app's windows pop below it.
+            // Idle: the app capsule lives in the input row (trailing). Here we only show the
+            // selected app's window snapshots below — nothing until an app is picked, so the
+            // idle surface is just the compact bar.
             let focusedApp = windowSwitcherFocusedAppName
-            let appWindows = focusedApp.map(windowsForApp) ?? []
+            let appWindows = (windowReviewFocusedID != nil ? focusedApp.map(windowsForApp) : nil) ?? []
             let focused = windowReviewFocusedID
             let windowFocused = focused?.hasPrefix("window:") == true
-            // Compact until the user picks an app: windows pop below only after a selection.
-            let showWindows = focused != nil && !appWindows.isEmpty
-            VStack(spacing: 12) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(apps, id: \.name) { app in
-                            Button { appSwitcherFocusApp(app.name) } label: {
-                                appRowIcon(app, selected: focused != nil && app.name == focusedApp)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }.padding(.horizontal, 14).padding(.top, 2)
-                }
-
-                // Windows of the selected app pop in below the row (compact).
-                if showWindows {
-                    windowSwitcherGrid(appWindows, focused: windowFocused ? focused : nil)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
+            if !appWindows.isEmpty {
+                windowSwitcherGrid(appWindows, focused: windowFocused ? focused : nil)
+                    .padding(.vertical, 10)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                Color.clear.frame(height: 0)
             }
-            .padding(.vertical, 12)
-            .animation(.easeOut(duration: 0.16), value: focused)
         }
     }
 

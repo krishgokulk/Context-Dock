@@ -10,9 +10,11 @@ extension LauncherView {
     /// to show the window previews.
     private var compactSmartScopePanelHeight: CGFloat {
         guard searchState.activeSmartQueryKey == "windows" else { return 450 }
+        // Idle: app capsule lives in the input row, nothing below → just the bar (0 panel).
+        // Selecting an app or searching drops the window snapshots below → full panel.
         let searching = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let appSelected = windowReviewFocusedID != nil
-        return (searching || appSelected) ? 450 : 132
+        return (searching || appSelected) ? 420 : 0
     }
 
     var currentDockHeightPreset: DockHeightPreset {
