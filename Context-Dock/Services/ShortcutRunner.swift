@@ -240,6 +240,19 @@ class ShortcutRunner {
         print("🎯 [ShortcutRunner] DIRECT MODE - Running '\(shortcutName)' with direct input")
         #endif
 
+        // Multiple files: the `shortcuts` CLI's --input-path takes ONE path. Passing several
+        // as newline text made the shortcut receive path STRINGS instead of the actual images
+        // — so a "Convert Photos" shortcut found no image input and popped the share sheet.
+        // Run the shortcut once per file (each as a real --input-path file) and aggregate.
+        if case .files(let urls) = input, urls.count > 1 {
+            var outputs: [String] = []
+            for url in urls {
+                let out = try await runDirectly(shortcutName, with: .files([url]))
+                if !out.isEmpty { outputs.append(out) }
+            }
+            return outputs.joined(separator: "\n")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
         
