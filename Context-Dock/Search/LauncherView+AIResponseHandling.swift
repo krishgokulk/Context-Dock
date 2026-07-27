@@ -282,6 +282,51 @@ extension LauncherView {
             """
     }
 
+    /// Selection-Scope variant of the automation appendix. Prefers an existing Selection Scope
+    /// extension, and only when none fit does it write the automation and propose it as a
+    /// saveable extension keyed on the selected content ({file}/{selectedText}), so it reappears
+    /// for that file type / selection next time.
+    func selectionScopeExtensionProposalAppendix(query: String) -> String {
+        let q = query.lowercased()
+        let isQuestion =
+            q.hasSuffix("?") || q.hasPrefix("what") || q.hasPrefix("how")
+            || q.hasPrefix("why") || q.hasPrefix("explain") || q.hasPrefix("tell")
+            || q.hasPrefix("describe") || q.hasPrefix("who") || q.hasPrefix("when")
+        guard !isQuestion else { return "" }
+        return """
+
+            ══ SELECTION-SCOPE AUTOMATION ══
+            LAST RESORT ONLY. First use an existing Selection Scope extension or a built-in macOS
+            tool (sips for image conversion/resize, markitdown for documents, Vision OCR, ditto/zip
+            for archives). Only when NONE fit — and the request is an ACTION on the selection — do
+            NOT just narrate steps. Write the automation and propose it as a saveable extension:
+            1. Answer in one plain-English sentence.
+            2. Immediately follow with a working script wrapped in these exact markers:
+
+            <<EXTENSION_PROPOSAL>>
+            {
+              "type": "extension_proposal",
+              "name": "<short verb-noun name, e.g. Convert DNG to JPEG>",
+              "description": "<one-line description>",
+              "scriptType": "bash",
+              "script": "<complete, runnable script — NO placeholders, NO TODOs>",
+              "layer": "selection",
+              "triggers": [{"type": "fileType", "value": "<selected file extension, e.g. dng>"}],
+              "icon": "<SF Symbol name>"
+            }
+            <<END_PROPOSAL>>
+
+            RULES:
+            - Operate on the selected content: use {file} for the selected file/folder path,
+              {selectedText} for selected text, {url} for a link. Never hardcode a path.
+            - Prefer a built-in tool (sips, markitdown, ditto, qlmanage) over installing anything.
+            - If it needs a CLI that may be missing, START the script by checking it:
+              `command -v <tool> >/dev/null 2>&1 || { echo "<tool> not installed — run: brew install <formula>"; exit 1; }`.
+            - The script must be 100% complete and run as-is. If you can't write a working script,
+              omit the proposal block entirely and say what IS possible.
+            """
+    }
+
     /// After an AI response arrives, extract any embedded proposal, strip the markers from the
     /// displayed text, and return an updated message tagged for the extension card UI.
     func tagMessageWithProposal(_ msg: AIChatMessage) -> AIChatMessage {
@@ -430,12 +475,17 @@ extension LauncherView {
             conditions: finalConditions, conditionLogic: .any, pills: [pill], priority: 10
         )
         AppSettings.shared.addAXRule(rule)
-        l2.chatMessages.append(
-            AIChatMessage(
-                role: .assistant,
-                content:
-                    "**\(proposal.name)** saved as a Context Trigger. Type \"\(proposal.name.lowercased())\" anytime to run it instantly."
-            ))
+        let confirmation = AIChatMessage(
+            role: .assistant,
+            content:
+                "**\(proposal.name)** saved as an extension. It runs automatically when its "
+                + "selection/context matches, or type \"\(proposal.name.lowercased())\" to run it.")
+        // Route the confirmation to whichever chat raised the proposal.
+        if aiMode.isActive {
+            aiMode.messages.append(confirmation)
+        } else {
+            l2.chatMessages.append(confirmation)
+        }
     }
 
     func extractExtensionName(from code: String) -> String {

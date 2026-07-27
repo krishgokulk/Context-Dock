@@ -1443,6 +1443,8 @@ extension LauncherView {
                             AIChatMessageView(
                                 message: message,
                                 isStreaming: message.id == aiMode.streamingId,
+                                onInstallProposal: { json in installFromProposal(json) },
+                                onRunOnceProposal: { json in runOnceFromProposal(json) },
                                 onReplaceText: selectionScopeReplaceTextAction(for: message),
                                 onEnableApp: { req in enableAppForGeneralChat(req) }
                             )
@@ -1777,11 +1779,14 @@ extension LauncherView {
                     let enableReq = self.aiMode.pendingEnableApp
                     self.aiMode.pendingEnableApp = nil
                     withAnimation {
-                        self.aiMode.messages.append(
-                            AIChatMessage(
-                                role: .assistant, content: cleaned, appLaunches: launches,
-                                mcpToolsRan: self.aiMode.pendingToolChips,
-                                enableAppRequest: enableReq))
+                        // Auto-create: if the AI proposed a runnable extension (no route fit),
+                        // tag the message so it shows Run once / Save buttons instead of just
+                        // describing a script.
+                        let baseMsg = AIChatMessage(
+                            role: .assistant, content: cleaned, appLaunches: launches,
+                            mcpToolsRan: self.aiMode.pendingToolChips,
+                            enableAppRequest: enableReq)
+                        self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
@@ -4788,6 +4793,10 @@ extension LauncherView {
         )
         if !selectionContextBlock.isEmpty {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
+            // Auto-create: when the user's selection-scope request has no built-in/linked route,
+            // don't just narrate — write the automation and propose it as a saveable extension
+            // (Run once / Save). Reuses the same proposal card the frontmost chat uses.
+            sysContent += selectionScopeExtensionProposalAppendix(query: query)
         }
 
         if !chatFocusApps.isEmpty {
