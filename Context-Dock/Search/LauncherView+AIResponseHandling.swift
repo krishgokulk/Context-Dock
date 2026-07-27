@@ -282,6 +282,42 @@ extension LauncherView {
             """
     }
 
+    /// Deterministic file-operation routing for selected files. Injected so the model stops
+    /// asking "which tool?" and just uses the built-in macOS tool that always exists — sips for
+    /// image conversion/resize, markitdown/qlmanage for documents, ditto for archives — running
+    /// once per selected file. Only falls back to a linked CLI when no built-in can do it.
+    func selectionFileOperationGuidance() -> String {
+        let files = aiMode.selectionFiles
+        guard !files.isEmpty else { return "" }
+        let exts = Set(files.map { $0.pathExtension.lowercased() })
+        let imageExts: Set<String> = [
+            "png", "jpg", "jpeg", "gif", "tiff", "tif", "bmp", "heic", "heif", "webp",
+            "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "raw",
+        ]
+        let hasImages = !exts.isDisjoint(with: imageExts)
+        var lines: [String] = [
+            "",
+            "══ FILE ACTIONS (selected files: \(files.count)) ══",
+            "Use the built-in macOS tool — do NOT ask the user which tool, and do NOT reach for",
+            "ImageMagick/other installs when a built-in can do it. Run once PER selected file and",
+            "write the output next to the source. Report each file done.",
+        ]
+        if hasImages {
+            lines.append(
+                "- Image format convert/resize → `sips`. Convert to JPEG: "
+                + "`sips -s format jpeg \"<file>\" --out \"<file-without-ext>.jpg\"` "
+                + "(png→`format png`, heic→`format heic`). sips reads RAW (dng/cr2/nef/arw) too, "
+                + "so RAW→JPEG is just sips — never ImageMagick. Resize: `sips -Z <maxpx> \"<file>\"`.")
+        }
+        lines.append(
+            "- Documents (pdf/docx/pptx/xlsx) → `markitdown \"<file>\"`; text/preview → `qlmanage -p`.")
+        lines.append("- Archive/zip → `ditto -c -k --keepParent \"<file>\" \"<file>.zip\".")
+        lines.append(
+            "For multiple files, convert EACH one (loop or repeat the command); never emit one "
+            + "command that only handles the first file.")
+        return lines.joined(separator: "\n")
+    }
+
     /// Selection-Scope variant of the automation appendix. Prefers an existing Selection Scope
     /// extension, and only when none fit does it write the automation and propose it as a
     /// saveable extension keyed on the selected content ({file}/{selectedText}), so it reappears

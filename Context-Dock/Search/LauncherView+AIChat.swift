@@ -4793,6 +4793,9 @@ extension LauncherView {
         )
         if !selectionContextBlock.isEmpty {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
+            // Deterministic built-in routing for selected files (sips/markitdown/ditto), so
+            // "convert to jpeg" just runs sips per file instead of asking which tool.
+            sysContent += selectionFileOperationGuidance()
             // Auto-create: when the user's selection-scope request has no built-in/linked route,
             // don't just narrate — write the automation and propose it as a saveable extension
             // (Run once / Save). Reuses the same proposal card the frontmost chat uses.
