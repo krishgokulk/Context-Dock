@@ -1500,6 +1500,11 @@ extension LauncherView {
         guard hasSelectionScopeSurface,
             message.role == .assistant,
             message.id != aiMode.streamingId,
+            // Text selections only, and only when the source field can be written back to —
+            // otherwise the button offered a paste that had nowhere to land (files, folders,
+            // read-only views).
+            aiMode.selectionFiles.isEmpty,
+            selectionScopeSourceAcceptsReplacement,
             aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         else { return nil }
         let replacement = cleanedNativeWritingToolOutput(message.content)
@@ -1878,10 +1883,15 @@ extension LauncherView {
 
     func hydrateAISelectionContextFromVisibleSelection() {
         if aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-            if let text = frozenSelectionFullText ?? frozenSelectionText {
+            // Only a TEXT payload may seed selectionText. A file/folder payload's frozenText is a
+            // display label ("Screenshot"), and feeding it in as selected content made the model
+            // answer about the word instead of the folder — and lit up "Replace text".
+            if case .text(let text)? = effectiveSelectionForScope {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { aiMode.selectionText = trimmed }
-            } else if case .textSelected(let text) = currentContext {
+            } else if case .textSelected(let text) = currentContext,
+                effectiveSelectionForScope == nil
+            {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { aiMode.selectionText = trimmed }
             }
@@ -1889,6 +1899,38 @@ extension LauncherView {
         if aiMode.selectionFiles.isEmpty {
             aiMode.selectionFiles = effectiveSelectedFileURLsForConversation()
         }
+        selectionScopeSourceAcceptsReplacement = selectionSourceAcceptsTextReplacement()
+    }
+
+    /// Whether the app the selection came from can actually take the answer back. Checks the AX
+    /// focused element of the source app for a settable selected-text/value attribute — a Mail
+    /// compose body or editor says yes, a Finder icon view or read-only web page says no.
+    func selectionSourceAcceptsTextReplacement() -> Bool {
+        guard aiMode.selectionFiles.isEmpty else { return false }
+        guard aiMode.selectionText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else { return false }
+        let sourceBundleId = selectionScopePayload?.sourceBundleId
+        let app =
+            AppDelegate.shared?.previousFrontmostApp
+            ?? NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == sourceBundleId
+            }
+        guard let pid = app?.processIdentifier,
+            let element = currentFocusedElement(in: pid)
+        else { return false }
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable)
+            == .success, settable.boolValue
+        {
+            return true
+        }
+        settable = false
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable)
+            == .success, settable.boolValue, isEditableAXElement(element)
+        {
+            return true
+        }
+        return false
     }
 
     func userQueryWithExplicitSelection(_ query: String) -> String {
@@ -1935,6 +1977,12 @@ extension LauncherView {
             parts.append("Selection page: \(pageURL)")
         }
         if !snapshot.files.isEmpty {
+            // Filesystem facts FIRST. analyzeFiles only yields readable text, so a selected
+            // folder (or any binary) contributed nothing and the model answered "contents
+            // unknown" / "0 bytes". These lines are the ground truth for size/count questions.
+            let facts = selectionFileSystemFactsBlock(
+                Array(snapshot.files.prefix(fileLimit)), compact: compact)
+            if !facts.isEmpty { parts.append(facts) }
             let blocks = ContextDetector.shared.analyzeFiles(Array(snapshot.files.prefix(fileLimit))).compactMap {
                 item -> String? in
                 guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1949,6 +1997,113 @@ extension LauncherView {
             }
         }
         return parts.joined(separator: "\n\n")
+    }
+
+    /// Ground truth about the selected files/folders: real sizes, item counts, dates, and a
+    /// sample of a folder's contents. Without this the model can only see filenames and starts
+    /// guessing ("empty or inaccessible") for exactly the questions selections invite.
+    func selectionFileSystemFactsBlock(_ urls: [URL], compact: Bool) -> String {
+        guard !urls.isEmpty else { return "" }
+        let childSample = compact ? 10 : 25
+        var lines: [String] = ["Selected item facts (verified from disk — trust these numbers):"]
+        let fm = FileManager.default
+        for url in urls {
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                lines.append("- \(url.path) — missing (no longer on disk)")
+                continue
+            }
+            let values = try? url.resourceValues(forKeys: [
+                .contentModificationDateKey, .creationDateKey, .fileSizeKey,
+            ])
+            let modified = values?.contentModificationDate.map { Self.selectionDateFormatter.string(from: $0) }
+            if isDirectory.boolValue {
+                let stats = directorySelectionStats(url)
+                var line = "- \(url.path) — folder, \(stats.topLevelCount) items at top level"
+                if stats.totalFiles > 0 {
+                    line += ", \(stats.totalFiles) files total"
+                    line += ", \(ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file))"
+                    if stats.truncated { line += " (scan capped — totals are a lower bound)" }
+                }
+                if let modified { line += ", modified \(modified)" }
+                lines.append(line)
+                if !stats.sampleNames.isEmpty {
+                    let sample = stats.sampleNames.prefix(childSample).joined(separator: ", ")
+                    lines.append("  contents sample: \(sample)")
+                }
+                if let newest = stats.newestName, let oldest = stats.oldestName, newest != oldest {
+                    lines.append("  newest: \(newest) · oldest: \(oldest)")
+                }
+            } else {
+                var line = "- \(url.path) — file"
+                if let size = values?.fileSize {
+                    line += ", \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
+                }
+                if let modified { line += ", modified \(modified)" }
+                lines.append(line)
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static let selectionDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    /// Recursive size/count scan with a hard budget so a huge folder can't stall the ask.
+    private func directorySelectionStats(_ url: URL) -> (
+        topLevelCount: Int, totalFiles: Int, totalBytes: Int64, truncated: Bool,
+        sampleNames: [String], newestName: String?, oldestName: String?
+    ) {
+        let fm = FileManager.default
+        let topLevel =
+            (try? fm.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles])) ?? []
+        let sampleNames = topLevel.prefix(40).map(\.lastPathComponent)
+
+        var newest: (name: String, date: Date)?
+        var oldest: (name: String, date: Date)?
+        for child in topLevel.prefix(500) {
+            guard let date = (try? child.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            else { continue }
+            if newest == nil || date > newest!.date { newest = (child.lastPathComponent, date) }
+            if oldest == nil || date < oldest!.date { oldest = (child.lastPathComponent, date) }
+        }
+
+        var totalFiles = 0
+        var totalBytes: Int64 = 0
+        var truncated = false
+        // Hard caps: this runs on the main actor while composing the prompt, so a huge tree
+        // (someone selects their home folder) must degrade to a lower bound, never stall the ask.
+        let scanLimit = 20_000
+        let deadline = Date().addingTimeInterval(0.4)
+        if let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        {
+            for case let file as URL in enumerator {
+                if totalFiles >= scanLimit || Date() > deadline {
+                    truncated = true
+                    break
+                }
+                guard let values = try? file.resourceValues(forKeys: [
+                    .fileSizeKey, .isRegularFileKey,
+                ]), values.isRegularFile == true else { continue }
+                totalFiles += 1
+                totalBytes += Int64(values.fileSize ?? 0)
+            }
+        }
+        return (
+            topLevel.count, totalFiles, totalBytes, truncated, sampleNames,
+            newest?.name, oldest?.name
+        )
     }
 
     func selectionRequestNeedsCapabilities(_ query: String) -> Bool {

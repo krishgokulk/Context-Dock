@@ -1139,6 +1139,7 @@ extension LauncherView {
 
     func handleLauncherWindowOpened() {
         beginMouseDrivenInteractionGrace()
+        resetStaleSmartScopeStateForFreshOpen()
         // Resume an ACTIVE frontmost-app chat instead of disarming it: wiping the
         // draft scope here re-keyed the session to the new frontmost app (Finder),
         // which swapped a mid-flight MinkNote/Code conversation for an empty one.
@@ -1281,6 +1282,27 @@ extension LauncherView {
             isSearchBarExpanded = true
         }
         requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    /// A plain launcher open (⌥⌥ / launch hotkey) is never a scope resume. Clipboard, Window
+    /// Review and Selection scopes live in SwiftUI @State that survives hiding the window, so
+    /// without this the next open silently reopened whatever scope the user last left. Scope
+    /// hotkeys set `pendingSmartScopeKey` before showing the window and re-post their activation
+    /// after this handler, so they are unaffected.
+    func resetStaleSmartScopeStateForFreshOpen() {
+        guard AppDelegate.shared?.pendingSmartScopeKey == nil else { return }
+        let hadScope =
+            selectionScopePayload != nil
+            || searchState.activeSmartQueryKey != nil
+            || windowReviewFocusedID != nil
+        guard hadScope else { return }
+        selectionScopePayload = nil
+        selectionScopeSheetCollapsed = false
+        searchState.activeSmartQueryKey = nil
+        searchState.contextApp = nil
+        windowReviewFocusedID = nil
+        AppDelegate.shared?.smartScopeActive = false
+        AppDelegate.shared?.clearSmartScopeState()
     }
 
     /// Hotkey-driven Selection Scope (Settings → Hotkeys → Selection Scope). Explicit intent, so

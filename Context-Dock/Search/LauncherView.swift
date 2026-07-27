@@ -175,6 +175,9 @@ struct LauncherView: View {
     /// matching the idle launcher shell. Typing — or ↓ — unfolds the actions sheet. Entering the
     /// scope from the selection button keeps the sheet open immediately, as before.
     @State var selectionScopeSheetCollapsed = false
+    /// True only when the frozen selection came from a writable text control, so "Replace text"
+    /// is offered for a Mail draft or code editor but not for Finder files or a read-only page.
+    @State var selectionScopeSourceAcceptsReplacement = false
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     // Visible shell height is staged separately from the NSWindow's target capacity so the

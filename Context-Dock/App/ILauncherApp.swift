@@ -1909,11 +1909,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// launcher does not auto-hide when another app takes focus.
     var smartScopeActive = false
     private var activeSmartScopeKey: String?
+    /// Non-nil only while a hotkey-driven scope open is in flight. The window-open handler reads
+    /// it to tell "open because a scope was requested" from a plain launcher open, which must
+    /// never resume the scope the user was last in.
+    var pendingSmartScopeKey: String?
 
     /// UI exited a smart scope surface — forget the key so the same hotkey re-enters the scope
     /// instead of reading as a second press and closing the dock.
     func clearSmartScope(key: String) {
         guard activeSmartScopeKey == key else { return }
+        activeSmartScopeKey = nil
+        smartScopeActive = false
+    }
+
+    /// Drop any remembered scope — used when a plain launcher open resets the surface.
+    func clearSmartScopeState() {
         activeSmartScopeKey = nil
         smartScopeActive = false
     }
@@ -1931,6 +1941,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func presentSmartScope(_ notificationName: Notification.Name, key: String) {
         smartScopeActive = true
         activeSmartScopeKey = key
+        pendingSmartScopeKey = key
         smartScopeActivationGeneration &+= 1
         let generation = smartScopeActivationGeneration
         DispatchQueue.main.async {
@@ -1952,8 +1963,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.showLauncher()
             }
             DispatchQueue.main.async {
-                guard generation == self.smartScopeActivationGeneration else { return }
+                guard generation == self.smartScopeActivationGeneration else {
+                    self.pendingSmartScopeKey = nil
+                    return
+                }
                 NotificationCenter.default.post(name: notificationName, object: nil)
+                self.pendingSmartScopeKey = nil
             }
         }
     }
