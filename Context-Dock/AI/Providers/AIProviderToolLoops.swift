@@ -205,6 +205,7 @@ extension AIProviderService {
         timeout: TimeInterval = 60,
         extraHeaders: [String: String] = [:],
         transport: any OpenAIToolTransport,
+        imageAttachments: [URL] = [],
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -214,7 +215,21 @@ extension AIProviderService {
         for msg in history.suffix(10).filter({ $0.role != .system }) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
-        messages.append(["role": "user", "content": message])
+        // Vision: when the user attached/captured images, send the first user turn as a
+        // text+image content array so the model actually sees them (not just OCR text).
+        let openAIImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if openAIImageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = [["type": "text", "text": message]]
+            for block in openAIImageBlocks {
+                content.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:\(block.mediaType);base64,\(block.data)"],
+                ])
+            }
+            messages.append(["role": "user", "content": content])
+        }
 
         let allTools = ToolDefinitions.openAI + customTools
 
@@ -323,6 +338,7 @@ extension AIProviderService {
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         model: String,
+        imageAttachments: [URL] = [],
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -332,7 +348,23 @@ extension AIProviderService {
         for msg in history.suffix(10).filter({ $0.role != .system }) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
-        messages.append(["role": "user", "content": message])
+        // Vision: attach captured/uploaded images as image blocks before the text so the
+        // model sees them, not just their OCR text.
+        let anthropicImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if anthropicImageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = anthropicImageBlocks.map { block in
+                [
+                    "type": "image",
+                    "source": [
+                        "type": "base64", "media_type": block.mediaType, "data": block.data,
+                    ],
+                ]
+            }
+            content.append(["type": "text", "text": message])
+            messages.append(["role": "user", "content": content])
+        }
 
         for _ in 0..<maxIterations {
             let body: [String: Any] = [
@@ -420,6 +452,7 @@ extension AIProviderService {
         commandExecutor: @escaping (String, String) async -> (Bool, String),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
+        imageAttachments: [URL] = [],
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -433,7 +466,13 @@ extension AIProviderService {
             let role = msg.role == .assistant ? "model" : "user"
             contents.append(["role": role, "parts": [["text": msg.content]]])
         }
-        contents.append(["role": "user", "parts": [["text": message]]])
+        // Vision: add inline image parts alongside the text so Gemini sees the captures.
+        let geminiImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        var userParts: [[String: Any]] = [["text": message]]
+        for block in geminiImageBlocks {
+            userParts.append(["inline_data": ["mime_type": block.mediaType, "data": block.data]])
+        }
+        contents.append(["role": "user", "parts": userParts])
 
         for _ in 0..<maxIterations {
             let body: [String: Any] = [

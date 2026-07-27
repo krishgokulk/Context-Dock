@@ -274,7 +274,7 @@ extension LauncherView {
                     }
                 },
                 onCaptureArea: {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         notepadAttachments.append(url)
                     }
                 },
@@ -353,7 +353,7 @@ extension LauncherView {
                     }
                 },
                 onCaptureArea: {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         notepadAttachments.append(url)
                     }
                 },

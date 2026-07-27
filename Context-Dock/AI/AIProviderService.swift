@@ -1113,6 +1113,7 @@ class AIProviderService: ObservableObject {
         maxIterations: Int = 5,
         systemPromptOverride: String? = nil,
         additionalSystemPrompt: String? = nil,
+        imageAttachments: [URL] = [],
         simulateAllTools: Bool = false
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -1143,6 +1144,7 @@ class AIProviderService: ObservableObject {
                 model: AppSettings.shared.selectedOpenAIModel.isEmpty
                     ? "gpt-4o-mini" : AppSettings.shared.selectedOpenAIModel,
                 transport: OpenAIToolProviderAdapter(),
+                imageAttachments: imageAttachments,
                 simulateAllTools: simulateAllTools
             )
 
@@ -1159,6 +1161,7 @@ class AIProviderService: ObservableObject {
                 model: AppSettings.shared.selectedAnthropicModel.isEmpty
                     ? AnthropicModelCatalog.defaultModelID
                     : AppSettings.shared.selectedAnthropicModel,
+                imageAttachments: imageAttachments,
                 simulateAllTools: simulateAllTools
             )
 
@@ -1172,6 +1175,7 @@ class AIProviderService: ObservableObject {
                 history: conversationHistory, commandExecutor: commandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
+                imageAttachments: imageAttachments,
                 simulateAllTools: simulateAllTools
             )
 

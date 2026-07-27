@@ -930,7 +930,7 @@ extension LauncherView {
                 }
             } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
             Button {
-                captureScreenshotToAttachments(interactive: true) { url in
+                captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                     contextDockChatFiles.append(url)
                 }
             } label: { Label("Capture Area", systemImage: "crop") }
@@ -3619,6 +3619,14 @@ extension LauncherView {
                 // are OCR'd since sendWithTools can't send vision). Without this the chip showed
                 // but the content never reached the model.
                 let attachmentBlock = contextDockChatAttachmentPromptBlock()
+                // Image captures/uploads go to the model as REAL vision (not just OCR) for
+                // vision-capable cloud providers via sendWithTools(imageAttachments:).
+                let scopedImageExts: Set<String> = [
+                    "png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp",
+                ]
+                let scopedImageAttachments = contextDockChatFiles.filter {
+                    scopedImageExts.contains($0.pathExtension.lowercased())
+                }
                 let activeContextPrompt = [
                     identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
                     mcpBlock, browserPageBlock, skillsBlock, attachmentBlock,
@@ -3765,7 +3773,8 @@ extension LauncherView {
                         apiKey: apiKey,
                         conversationHistory: chatHistory,
                         commandExecutor: commandExecutor,
-                        additionalSystemPrompt: activeContextPrompt.isEmpty ? nil : activeContextPrompt
+                        additionalSystemPrompt: activeContextPrompt.isEmpty ? nil : activeContextPrompt,
+                        imageAttachments: scopedImageAttachments
                     )
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }

@@ -41,6 +41,24 @@ enum AIAttachmentPreparer {
         }
     }
 
+    /// Same as `imageBlocks(for:)` but from raw file URLs — used by the agentic tool loops
+    /// (sendWithTools) which carry attachment URLs, not AIAttachment values. Non-image URLs
+    /// are dropped; non-native formats are transcoded to PNG.
+    static func imageBlocks(forURLs urls: [URL]) -> [(data: String, mediaType: String)] {
+        let imageExts: Set<String> = [
+            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp",
+        ]
+        return urls.compactMap { url in
+            let ext = url.pathExtension.lowercased()
+            guard imageExts.contains(ext) else { return nil }
+            if nativeImageExtensions.contains(ext), let data = try? Data(contentsOf: url) {
+                return (data.base64EncodedString(), mediaType(forExtension: ext))
+            }
+            guard let png = pngData(from: url) else { return nil }
+            return (png.base64EncodedString(), "image/png")
+        }
+    }
+
     private static func mediaType(forExtension ext: String) -> String {
         switch ext {
         case "png": return "image/png"

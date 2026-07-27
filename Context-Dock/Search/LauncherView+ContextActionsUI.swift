@@ -70,7 +70,7 @@ extension LauncherView {
                     }
                 } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
                 Button {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         withAnimation { aiMode.attachments.append(url) }
                     }
                 } label: { Label("Capture Area", systemImage: "crop") }
@@ -320,15 +320,24 @@ extension LauncherView {
         return panel.runModal() == .OK ? panel.urls : []
     }
 
-    /// Capture a screenshot via `screencapture` — full screen (`-x`) or an
-    /// interactive region (`-i`) — and hand the PNG to `append` on the main actor.
-    /// Requires Screen Recording permission; a denied capture simply writes nothing.
+    /// Capture a screenshot via `screencapture` and hand the PNG to `append` on the main
+    /// actor. Modes: full screen (`-x`), interactive area (`-i`, drag a region), or
+    /// window-first (`-i -W`, which starts in window-selection mode — hover highlights each
+    /// window and a click captures it, and the user can still press Space/drag for a custom
+    /// area). Requires Screen Recording permission; a denied capture simply writes nothing.
     func captureScreenshotToAttachments(
-        interactive: Bool, append: @escaping (URL) -> Void
+        interactive: Bool, windowFirst: Bool = false, append: @escaping (URL) -> Void
     ) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
-        var args = interactive ? ["-i"] : ["-x"]
+        var args: [String]
+        if interactive {
+            // -W starts interaction in window mode: highlighted windows, click to capture;
+            // Space or a drag falls back to custom-area selection.
+            args = windowFirst ? ["-i", "-W"] : ["-i"]
+        } else {
+            args = ["-x"]
+        }
         args.append(url.path)
         Task.detached {
             let process = Process()
