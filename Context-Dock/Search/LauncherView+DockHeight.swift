@@ -17,6 +17,14 @@ extension LauncherView {
         return (searching || appSelected) ? 420 : 0
     }
 
+    /// True when the window switcher is showing just its compact input bar (capsule inline, no
+    /// panel below). Used to drop the .large preset floor (460) that caused the half-sheet.
+    private var windowSwitcherIsIdleBar: Bool {
+        guard searchState.activeSmartQueryKey == "windows" else { return false }
+        let searching = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !searching && windowReviewFocusedID == nil
+    }
+
     var currentDockHeightPreset: DockHeightPreset {
         DockHeightResolver.resolvePreset(currentDockHeightPresetMetrics)
     }
@@ -84,7 +92,8 @@ extension LauncherView {
             selectionScopeAIChat: hasSelectionScopeSurface && aiMode.isActive,
             showsFinderSearchResultsPanel: shouldShowFinderSearchResultsPanel(for: searchState.query),
             showsContextDockAppPanel: pureGlobalCompactTyping ? false : shouldShowContextDockAppPanel,
-            compactSmartScope: isCompactSmartScope,
+            // Idle window switcher = compact bar; don't let it force the .large (460) floor.
+            compactSmartScope: isCompactSmartScope && !windowSwitcherIsIdleBar,
             resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
             loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             searchBarExpanded: isSearchBarExpanded,
