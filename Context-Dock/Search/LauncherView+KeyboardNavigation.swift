@@ -535,6 +535,15 @@ extension LauncherView {
             let q = self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
 
+            // Compact (hotkey-opened) Selection Scope: ↓ unfolds the actions sheet, mirroring the
+            // ↓ expansion in Global Context. Typing does the same via the query change.
+            if event.keyCode == 125, self.hasSelectionScopeSurface,
+                self.selectionScopeSheetCollapsed
+            {
+                self.expandSelectionScopeSheet()
+                return nil
+            }
+
             if event.keyCode == 36, self.aiMode.isActive {
                 self.submitAIQuery()
                 return nil

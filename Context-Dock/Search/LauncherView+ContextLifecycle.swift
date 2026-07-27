@@ -1289,6 +1289,12 @@ extension LauncherView {
     /// cached first, then re-applies once a fresh selection-only read lands.
     func activateSelectionScopeFromHotkey() {
         AppDelegate.shared?.smartScopeActive = true
+        // Open as the compact input bar, not the full actions sheet — same shell as the idle
+        // launcher. The sheet unfolds on the first keystroke or ↓.
+        selectionScopeSheetCollapsed = true
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
         withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
@@ -1325,6 +1331,15 @@ extension LauncherView {
             }
         }
         activateSearchField()
+    }
+
+    /// Unfolds a hotkey-opened Selection Scope from the compact bar into its actions sheet.
+    func expandSelectionScopeSheet() {
+        guard selectionScopeSheetCollapsed else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+            selectionScopeSheetCollapsed = false
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
     }
 
     private func applySelectionScopePayload(_ snapshot: GlobalContextActivation) {

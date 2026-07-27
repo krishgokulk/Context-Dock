@@ -171,6 +171,10 @@ struct LauncherView: View {
     /// selection jumped surfaces, and clicking the selection icon in Context Dock threw the user
     /// out of it.
     @State var selectionScopePayload: GlobalContextActivation?
+    /// Hotkey-opened Selection Scope starts as a bare compact bar (input + selection pill only),
+    /// matching the idle launcher shell. Typing — or ↓ — unfolds the actions sheet. Entering the
+    /// scope from the selection button keeps the sheet open immediately, as before.
+    @State var selectionScopeSheetCollapsed = false
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     // Visible shell height is staged separately from the NSWindow's target capacity so the
@@ -573,10 +577,17 @@ struct LauncherView: View {
             shouldShowL2UnifiedDockRow
         else { return false }
 
-        // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
-        // an empty query — so it's visible the moment the launcher opens with a selection.
+        // Selection Scope shows its result sheet (Ask AI + actions + share) on an empty query too,
+        // except when it was opened by the dedicated hotkey — that entry starts as a compact bar
+        // and unfolds on the first keystroke (or ↓).
         if hasSelectionScopeSurface {
-            return !aiMode.isActive
+            guard !aiMode.isActive else { return false }
+            if selectionScopeSheetCollapsed,
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                return false
+            }
+            return true
         }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2695,6 +2706,7 @@ struct LauncherView: View {
         // Hotkey-opened scopes park their key on the delegate; drop it so the shortcut re-enters
         // Selection Scope instead of reading as a toggle-off and hiding the dock.
         AppDelegate.shared?.clearSmartScope(key: "selection")
+        selectionScopeSheetCollapsed = false
         let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
             if let payload = payloadToKeepLive {
