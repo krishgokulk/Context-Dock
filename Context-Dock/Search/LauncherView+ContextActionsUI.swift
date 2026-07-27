@@ -320,25 +320,39 @@ extension LauncherView {
         return panel.runModal() == .OK ? panel.urls : []
     }
 
-    /// Capture a screenshot via `screencapture` and hand the PNG to `append` on the main
-    /// actor. Modes: full screen (`-x`), interactive area (`-i`, drag a region), or
-    /// window-first (`-i -W`, which starts in window-selection mode — hover highlights each
-    /// window and a click captures it, and the user can still press Space/drag for a custom
-    /// area). Requires Screen Recording permission; a denied capture simply writes nothing.
+    /// Capture a screenshot and hand the PNG to `append` on the main actor. Modes:
+    /// full screen (`-x`); interactive area (`-i`, drag a region); or `windowFirst`, which
+    /// uses our custom overlay (InteractiveCaptureOverlay) — hover a window to highlight and
+    /// click it, or move over the empty desktop to auto-switch to a crosshair for a custom
+    /// area, with NO Space key. Requires Screen Recording permission; a denied capture writes
+    /// nothing.
     func captureScreenshotToAttachments(
         interactive: Bool, windowFirst: Bool = false, append: @escaping (URL) -> Void
     ) {
+        // Post-capture: mirror to clipboard (like Capture Text) then hand back the URL.
+        let deliver: (URL?) -> Void = { url in
+            guard let url,
+                FileManager.default.fileExists(atPath: url.path),
+                (try? Data(contentsOf: url))?.isEmpty == false
+            else { return }
+            if let image = NSImage(contentsOf: url) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.writeObjects([image])
+            }
+            append(url)
+        }
+
+        // Window-first uses the custom overlay: cursor over a window → window capture; over
+        // the desktop → crosshair area capture. No Space toggle.
+        if interactive, windowFirst {
+            InteractiveCaptureOverlay.capture(completion: deliver)
+            return
+        }
+
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
-        var args: [String]
-        if interactive {
-            // -W starts interaction in window mode: highlighted windows, click to capture;
-            // Space or a drag falls back to custom-area selection.
-            args = windowFirst ? ["-i", "-W"] : ["-i"]
-        } else {
-            args = ["-x"]
-        }
-        args.append(url.path)
+        let args: [String] = (interactive ? ["-i"] : ["-x"]) + [url.path]
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -349,20 +363,7 @@ extension LauncherView {
             } catch {
                 return
             }
-            if FileManager.default.fileExists(atPath: url.path),
-                (try? Data(contentsOf: url))?.isEmpty == false
-            {
-                await MainActor.run {
-                    // Also put the shot on the clipboard so it can be pasted anywhere,
-                    // matching Capture Text's behaviour.
-                    if let image = NSImage(contentsOf: url) {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.writeObjects([image])
-                    }
-                    append(url)
-                }
-            }
+            await MainActor.run { deliver(url) }
         }
     }
 
