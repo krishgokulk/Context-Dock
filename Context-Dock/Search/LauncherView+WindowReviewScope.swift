@@ -122,29 +122,14 @@ extension LauncherView {
     }
 
     func executeFocusedWindowReviewItem() -> Bool {
-        let ids = windowReviewNavigationIDs
-        guard !ids.isEmpty else { return false }
-        let focused = windowReviewFocusedID ?? ids.first!
-        if focused.hasPrefix("tab:"),
-            let tab = filteredWindowReviewSafariTabs.first(where: { "tab:\($0.id)" == focused }) {
-            AppDelegate.shared?.smartScopeActive = false
-            AppDelegate.shared?.hideLauncher()
-            SafariTabManager.shared.switchTo(tab)
-            return true
+        let items = windowSwitcherItems
+        guard !items.isEmpty else { return false }
+        let focused = windowReviewFocusedID
+        guard let item = items.first(where: { $0.id == focused }) ?? items.first else {
+            return false
         }
-        for group in filteredWindowReviewGroups {
-            if let preview = group.windows.first(where: {
-                "window:\(group.id):\($0.id)" == focused
-            }) {
-                AppDelegate.shared?.smartScopeActive = false
-                AppDelegate.shared?.hideLauncher()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    windowReviewService.focus(preview, in: group.app)
-                }
-                return true
-            }
-        }
-        return false
+        windowSwitcherActivate(item)
+        return true
     }
 
     func quickLookFocusedWindowReviewItem() -> Bool {
@@ -169,256 +154,230 @@ extension LauncherView {
         return false
     }
 
-    // MARK: - Compact App Switcher (alt-tab layout)
+    // MARK: - Compact Window Switcher / Searcher
 
-    /// All running apps (unfiltered). The app row always shows every app so typing in the input
-    /// filters the selected app's TABS/windows instead of hiding apps from the row.
-    var appSwitcherAllGroups: [WindowReviewGroup] { windowReviewService.reviewGroups }
+    /// One row per open window (and, for a browser, per open tab) across ALL apps. The input
+    /// searches every window by app name + window title (+ tab title/url), so this is a flat
+    /// window switcher, not an app-at-a-time picker.
+    struct WindowSwitcherItem: Identifiable {
+        let id: String            // "window:pid:winid" or "tab:tabid"
+        let appName: String
+        let title: String
+        let appIcon: NSImage?
+        let thumb: CGImage?
+        let isTab: Bool
+        let minimized: Bool
+        let group: WindowReviewGroup?
+        let tab: SafariTab?
+    }
 
     func appSwitcherIsBrowser(_ g: WindowReviewGroup) -> Bool {
         (g.app.bundleIdentifier ?? "").lowercased().contains("safari")
     }
 
-    /// Query-filtered tabs for a browser group (Safari). Typing in the input filters these.
-    func appSwitcherTabs(for g: WindowReviewGroup) -> [SafariTab] {
-        appSwitcherIsBrowser(g) ? filteredWindowReviewSafariTabs : []
-    }
-
-    func appSwitcherSelectedGroupIndex() -> Int {
-        let groups = appSwitcherAllGroups
-        guard let fid = windowReviewFocusedID else { return 0 }
-        if fid.hasPrefix("tab:") {
-            return groups.firstIndex(where: appSwitcherIsBrowser) ?? 0
+    var windowSwitcherItems: [WindowSwitcherItem] {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        func matches(_ fields: [String]) -> Bool {
+            q.isEmpty || fields.contains { $0.lowercased().contains(q) }
         }
-        return groups.firstIndex { g in
-            g.windows.contains { "window:\(g.id):\($0.id)" == fid }
-        } ?? 0
-    }
-
-    /// Index of the focused content item (tab for a browser, else window) in the group.
-    func appSwitcherSelectedContentIndex(in g: WindowReviewGroup) -> Int {
-        guard let fid = windowReviewFocusedID else { return 0 }
-        let tabs = appSwitcherTabs(for: g)
-        if !tabs.isEmpty { return tabs.firstIndex { "tab:\($0.id)" == fid } ?? 0 }
-        return g.windows.firstIndex { "window:\(g.id):\($0.id)" == fid } ?? 0
-    }
-
-    func selectAppSwitcher(appIndex: Int, contentIndex: Int) {
-        let groups = appSwitcherAllGroups
-        guard !groups.isEmpty else { return }
-        let ai = ((appIndex % groups.count) + groups.count) % groups.count
-        let g = groups[ai]
-        let tabs = appSwitcherTabs(for: g)
-        if !tabs.isEmpty {
-            let ti = ((contentIndex % tabs.count) + tabs.count) % tabs.count
-            windowReviewFocusedID = "tab:\(tabs[ti].id)"
-        } else if !g.windows.isEmpty {
-            let wi = ((contentIndex % g.windows.count) + g.windows.count) % g.windows.count
-            windowReviewFocusedID = "window:\(g.id):\(g.windows[wi].id)"
-        } else {
-            return
+        var items: [WindowSwitcherItem] = []
+        for g in windowReviewService.reviewGroups {
+            if appSwitcherIsBrowser(g), !safariTabPickerTabs.isEmpty {
+                // Browser → each tab is a switchable item.
+                for t in safariTabPickerTabs where matches([g.name, t.title, t.url, t.domain]) {
+                    items.append(.init(
+                        id: "tab:\(t.id)", appName: g.name,
+                        title: t.title.isEmpty ? t.domain : t.title,
+                        appIcon: g.icon, thumb: nil, isTab: true, minimized: false,
+                        group: g, tab: t))
+                }
+            } else {
+                for w in g.windows where matches([g.name, w.title]) {
+                    items.append(.init(
+                        id: "window:\(g.id):\(w.id)", appName: g.name,
+                        title: w.title.isEmpty ? g.name : w.title,
+                        appIcon: g.icon, thumb: w.image, isTab: false, minimized: w.minimized,
+                        group: g, tab: nil))
+                }
+            }
         }
+        return items
+    }
+
+    /// Unique app names in item order — used for the quick app-jump row.
+    var windowSwitcherApps: [(name: String, icon: NSImage?)] {
+        var seen = Set<String>()
+        var out: [(String, NSImage?)] = []
+        for it in windowSwitcherItems where seen.insert(it.appName).inserted {
+            out.append((it.appName, it.appIcon))
+        }
+        return out.map { (name: $0.0, icon: $0.1) }
+    }
+
+    func windowSwitcherIndex() -> Int {
+        windowSwitcherItems.firstIndex { $0.id == windowReviewFocusedID } ?? 0
+    }
+
+    func windowSwitcherSelect(_ idx: Int) {
+        let items = windowSwitcherItems
+        guard !items.isEmpty else { return }
+        let i = ((idx % items.count) + items.count) % items.count
+        windowReviewFocusedID = items[i].id
         isKeyboardNavigation = true
         isSearchFieldFocused = false
     }
 
-    func appSwitcherCycleApp(_ dir: Int) {
-        guard !appSwitcherAllGroups.isEmpty else { return }
-        selectAppSwitcher(appIndex: appSwitcherSelectedGroupIndex() + dir, contentIndex: 0)
+    /// ↑/↓/←/→ move one window in the flat list.
+    func appSwitcherCycleWindow(_ dir: Int) {
+        windowSwitcherSelect(windowSwitcherIndex() + dir)
     }
 
-    func appSwitcherCycleWindow(_ dir: Int) {
-        let groups = appSwitcherAllGroups
-        guard !groups.isEmpty else { return }
-        let ai = appSwitcherSelectedGroupIndex()
-        selectAppSwitcher(
-            appIndex: ai,
-            contentIndex: appSwitcherSelectedContentIndex(in: groups[ai]) + dir)
+    /// Tab jumps to the first window of the next/previous app (alt-tab feel).
+    func appSwitcherCycleApp(_ dir: Int) {
+        let items = windowSwitcherItems
+        guard !items.isEmpty else { return }
+        let apps = windowSwitcherApps.map(\.name)
+        guard !apps.isEmpty else { return }
+        let curApp = items[min(windowSwitcherIndex(), items.count - 1)].appName
+        let curAppIdx = apps.firstIndex(of: curApp) ?? 0
+        let nextApp = apps[((curAppIdx + dir) % apps.count + apps.count) % apps.count]
+        if let firstIdx = items.firstIndex(where: { $0.appName == nextApp }) {
+            windowSwitcherSelect(firstIdx)
+        }
+    }
+
+    func windowSwitcherActivate(_ item: WindowSwitcherItem) {
+        AppDelegate.shared?.smartScopeActive = false
+        AppDelegate.shared?.hideLauncher()
+        if let tab = item.tab {
+            SafariTabManager.shared.switchTo(tab)
+        } else if let group = item.group,
+            let w = group.windows.first(where: { "window:\(group.id):\($0.id)" == item.id }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                windowReviewService.focus(w, in: group.app)
+            }
+        }
     }
 
     @ViewBuilder
     var windowReviewScopeView: some View {
-        let groups = appSwitcherAllGroups
-        if groups.isEmpty {
+        let items = windowSwitcherItems
+        let apps = windowSwitcherApps
+        let focused = windowReviewFocusedID ?? items.first?.id
+        if items.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: "macwindow.on.rectangle")
-                    .font(.system(size: 28)).foregroundStyle(.secondary)
+                    .font(.system(size: 26)).foregroundStyle(.secondary)
                 Text(searchState.query.isEmpty ? "No open windows" : "No matching windows")
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 180)
+            .frame(maxWidth: .infinity, minHeight: 140)
         } else {
-            let ai = min(appSwitcherSelectedGroupIndex(), groups.count - 1)
-            let group = groups[ai]
-            let tabs = appSwitcherTabs(for: group)
-            let ci = appSwitcherSelectedContentIndex(in: group)
-            VStack(spacing: 14) {
-                // App row — directly below the input (the alt-tab strip).
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(Array(groups.enumerated()), id: \.element.id) { idx, g in
-                                appSwitcherAppIcon(g, selected: idx == ai)
-                                    .id("app:\(g.id)")
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
-                    }
-                    .onChange(of: windowReviewFocusedID) { _, _ in
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            proxy.scrollTo("app:\(group.id)", anchor: .center)
-                        }
-                    }
-                }
-
-                if !tabs.isEmpty {
-                    // Browser: big preview of the focused tab + a tabs strip the input filters.
-                    let tab = tabs.indices.contains(ci) ? tabs[ci] : tabs[0]
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.blue.opacity(0.08))
-                        VStack(spacing: 10) {
-                            Image(systemName: tab.icon).font(.system(size: 46)).foregroundStyle(.blue)
-                            Text(tab.domain).font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    .frame(maxWidth: .infinity).frame(height: 168).padding(.horizontal, 14)
-
-                    Text("\(group.name) — \(tab.title.isEmpty ? tab.domain : tab.title)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary).lineLimit(1).padding(.horizontal, 14)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(tabs.enumerated()), id: \.element.id) { idx, t in
-                                appSwitcherTabThumb(t, selected: idx == ci)
-                            }
-                        }.padding(.horizontal, 14)
-                    }
-                } else {
-                    // App windows: big preview of the focused window + a strip when >1.
-                    let wi = min(ci, max(group.windows.count - 1, 0))
-                    let preview = group.windows.indices.contains(wi) ? group.windows[wi] : nil
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
-                        if let image = preview?.image {
-                            Image(decorative: image, scale: 1)
-                                .resizable().scaledToFit()
-                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                .padding(8)
-                        } else if let icon = group.icon {
-                            Image(nsImage: icon).resizable().scaledToFit()
-                                .frame(width: 90, height: 90)
-                        }
-                        if preview?.minimized == true {
-                            Text("Minimized")
-                                .font(.system(size: 10, weight: .semibold))
-                                .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                                .padding(10)
-                        }
-                    }
-                    .frame(maxWidth: .infinity).frame(height: 168).padding(.horizontal, 14)
-
-                    Text("\(group.name)\(preview.map { " — \($0.title)" } ?? "")")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary).lineLimit(1).padding(.horizontal, 14)
-
-                    if group.windows.count > 1 {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(group.windows.enumerated()), id: \.element.id) { idx, w in
-                                    appSwitcherWindowThumb(w, group: group, selected: idx == wi)
+            VStack(spacing: 12) {
+                // Quick app-jump row directly under the input.
+                let focusedApp = items.first { $0.id == focused }?.appName
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(apps, id: \.name) { app in
+                            Button { appSwitcherJumpToApp(app.name) } label: {
+                                VStack(spacing: 4) {
+                                    if let icon = app.icon {
+                                        Image(nsImage: icon).resizable().scaledToFit()
+                                            .frame(width: 40, height: 40)
+                                    } else {
+                                        Image(systemName: "app.dashed").font(.system(size: 30))
+                                    }
+                                    Text(app.name)
+                                        .font(.system(size: 9,
+                                            weight: app.name == focusedApp ? .semibold : .medium))
+                                        .foregroundStyle(app.name == focusedApp ? .primary : .secondary)
+                                        .lineLimit(1).frame(maxWidth: 66)
                                 }
-                            }.padding(.horizontal, 14)
+                                .padding(.horizontal, 7).padding(.vertical, 5)
+                                .background(
+                                    app.name == focusedApp
+                                        ? Color.accentColor.opacity(0.16) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .strokeBorder(
+                                            app.name == focusedApp
+                                                ? Color.accentColor.opacity(0.8) : .clear,
+                                            lineWidth: 1.5))
+                            }
+                            .buttonStyle(.plain)
                         }
+                    }.padding(.horizontal, 14).padding(.top, 2)
+                }
+
+                // Compact grid of all matching windows/tabs.
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 176, maximum: 240), spacing: 10)],
+                            spacing: 10
+                        ) {
+                            ForEach(items) { item in
+                                windowSwitcherCard(item, selected: item.id == focused)
+                                    .id(item.id)
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.bottom, 6)
+                    }
+                    .frame(maxHeight: 360)
+                    .onChange(of: windowReviewFocusedID) { _, id in
+                        guard let id else { return }
+                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
             }
-            .padding(.vertical, 14)
+            .padding(.vertical, 12)
         }
     }
 
-    func appSwitcherTabThumb(_ tab: SafariTab, selected: Bool) -> some View {
-        Button {
-            AppDelegate.shared?.smartScopeActive = false
-            AppDelegate.shared?.hideLauncher()
-            SafariTabManager.shared.switchTo(tab)
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.blue.opacity(0.08))
-                VStack(spacing: 5) {
-                    Image(systemName: tab.icon).font(.system(size: 22)).foregroundStyle(.blue)
-                    Text(tab.title.isEmpty ? tab.domain : tab.title)
-                        .font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
-                        .lineLimit(1).frame(maxWidth: 120)
-                }
-            }
-            .frame(width: 132, height: 82)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(
-                        selected ? Color.accentColor.opacity(0.85) : Color.clear, lineWidth: 2))
+    func appSwitcherJumpToApp(_ name: String) {
+        if let idx = windowSwitcherItems.firstIndex(where: { $0.appName == name }) {
+            windowSwitcherSelect(idx)
         }
-        .buttonStyle(.plain)
     }
 
-    func appSwitcherAppIcon(_ group: WindowReviewGroup, selected: Bool) -> some View {
-        Button {
-            selectAppSwitcher(
-                appIndex: appSwitcherAllGroups.firstIndex { $0.id == group.id } ?? 0,
-                contentIndex: 0)
-        } label: {
-            VStack(spacing: 5) {
-                if let icon = group.icon {
-                    Image(nsImage: icon).resizable().scaledToFit().frame(width: 52, height: 52)
-                } else {
-                    Image(systemName: "app.dashed").font(.system(size: 40))
+    func windowSwitcherCard(_ item: WindowSwitcherItem, selected: Bool) -> some View {
+        Button { windowSwitcherActivate(item) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(item.isTab ? Color.blue.opacity(0.08) : Color.primary.opacity(0.05))
+                    if let thumb = item.thumb {
+                        Image(decorative: thumb, scale: 1).resizable().scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .padding(3)
+                    } else if let icon = item.appIcon {
+                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 40, height: 40)
+                    }
+                    if item.minimized {
+                        Text("Minimized").font(.system(size: 8, weight: .semibold))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(6)
+                    }
                 }
-                Text(group.name)
-                    .font(.system(size: 10, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(selected ? .primary : .secondary)
-                    .lineLimit(1).frame(maxWidth: 76)
+                .frame(height: 108)
+                HStack(spacing: 5) {
+                    if let icon = item.appIcon {
+                        Image(nsImage: icon).resizable().scaledToFit().frame(width: 14, height: 14)
+                    }
+                    Text(item.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                }
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(4)
             .background(
                 selected ? Color.accentColor.opacity(0.18) : .clear,
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .strokeBorder(
                         selected ? Color.accentColor.opacity(0.85) : .clear, lineWidth: 2))
-        }
-        .buttonStyle(.plain)
-    }
-
-    func appSwitcherWindowThumb(
-        _ w: RunningAppWindowPreview, group: WindowReviewGroup, selected: Bool
-    ) -> some View {
-        Button {
-            selectAppSwitcher(
-                appIndex: appSwitcherAllGroups.firstIndex { $0.id == group.id } ?? 0,
-                contentIndex: group.windows.firstIndex { $0.id == w.id } ?? 0)
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-                if let image = w.image {
-                    Image(decorative: image, scale: 1).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .padding(3)
-                }
-            }
-            .frame(width: 132, height: 82)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(
-                        selected ? Color.accentColor.opacity(0.85) : Color.clear, lineWidth: 2))
         }
         .buttonStyle(.plain)
     }
