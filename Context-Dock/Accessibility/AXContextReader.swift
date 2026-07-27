@@ -144,7 +144,11 @@ final class AXContextReader {
     /// Reads ONLY the current selection (selected text + Finder file selection) and merges it
     /// into `current`. Used after the lightweight open-path refresh so Context Dock can show a
     /// selection chip/button without paying for a full menu/URL read on first paint.
-    func refreshSelectionOnly(from app: NSRunningApplication) {
+    /// - Parameter includeFinderFiles: when false, skips the Finder AppleScript read (which
+    ///   runs on the main thread and can block for 100s of ms). Pass false on the hotkey→open
+    ///   path so the window paints instantly; Finder selection is stable across focus changes,
+    ///   so the async open pass re-reads it a beat later without losing anything.
+    func refreshSelectionOnly(from app: NSRunningApplication, includeFinderFiles: Bool = true) {
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
         var ctx = current
@@ -159,7 +163,7 @@ final class AXContextReader {
         } else {
             ctx.selectedText = nil
         }
-        if app.bundleIdentifier == "com.apple.finder" {
+        if includeFinderFiles, app.bundleIdentifier == "com.apple.finder" {
             let paths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
             if !paths.isEmpty || app.isActive {
                 ctx.selectedFilePaths = paths

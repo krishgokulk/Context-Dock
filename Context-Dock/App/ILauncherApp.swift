@@ -2106,9 +2106,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // and BEFORE our panel steals focus. Many apps (TextEdit, plenty of native text
             // views) report a nil AXFocusedUIElement once they're inactive, so reading after we
             // activate silently returns nothing — that's why Selection Scope worked in some apps
-            // and not others. This is the cheap AX read only (focused element + selected text);
-            // the heavy detector (AppleScript/PDF/OCR) stays deferred below so open never blocks.
-            AXContextReader.shared.refreshSelectionOnly(from: currentApp)
+            // and not others. This is the cheap AX read only (focused element + selected text).
+            // The Finder file read is AppleScript (main-thread, 100s of ms) and would block the
+            // window from painting, so it's skipped here — Finder keeps its selection across
+            // focus changes, so the async open pass re-reads the files a beat later without loss.
+            AXContextReader.shared.refreshSelectionOnly(from: currentApp, includeFinderFiles: false)
             // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
             DispatchQueue.main.async {
                 ContextDockEnvironment.shared.frontmostAppDidChange(
