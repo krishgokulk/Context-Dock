@@ -3583,11 +3583,15 @@ extension LauncherView {
             && (!isGlobalContextActive
                 || currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true)
+        // Selection Scope draws its own capsule in the leading slot (selectionContextChip),
+        // so the standalone purple selection glyph must not also render — one pill, not two.
+        let selectionChipOwnsLeadingSlot = hasSelectionScopeSurface && showContextInDock
         let expandedScopeOwnsLeadingSlot =
             isSearchBarExpanded
             && (compactScopeKey != nil
                 || l2.targetApp != nil
                 || inlineScopeOwnsText
+                || selectionChipOwnsLeadingSlot
                 || shouldShowFrontmostContextChip)
         return expandedScopeOwnsLeadingSlot || (shouldShowFrontmostContextChip && showContextInDock)
     }

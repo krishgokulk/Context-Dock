@@ -1092,6 +1092,9 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .activateWindowReviewScope)) { _ in
                 activateWindowReviewScope()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .activateSelectionScope)) { _ in
+                activateSelectionScopeFromHotkey()
+            }
             .onChange(of: currentContext.description) { _, _ in
                 // Trigger smooth expansion when context is detected
                 if settings.enableContextAIExtensions {
@@ -1252,6 +1255,9 @@ extension LauncherView {
         // ("comp" → Compress).
         // Grace-gated: the window is opened at launch and zeroed the moment the user exits the
         // scope, so the second (post-lightweight) re-assert can't drag them back in.
+        // A dedicated Selection Scope shortcut means the user opts in explicitly — the plain
+        // launcher open then stays a launcher instead of a live selection hijacking the sheet.
+        guard !settings.selectionScopeHotkeyEnabled else { return }
         guard Date() < launchSelectionScopeGraceUntil,
             !globalContextActivationHasFrozenPayload,
             l2.targetApp == nil,
@@ -1274,6 +1280,60 @@ extension LauncherView {
             showContextInDock = true
             isSearchBarExpanded = true
         }
+        requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    /// Hotkey-driven Selection Scope (Settings → Hotkeys → Selection Scope). Explicit intent, so
+    /// unlike the launch-time path it re-enters a previously dismissed selection and is not gated
+    /// on the open grace window. The AX read can lag the keypress, so it applies what is already
+    /// cached first, then re-applies once a fresh selection-only read lands.
+    func activateSelectionScopeFromHotkey() {
+        AppDelegate.shared?.smartScopeActive = true
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            searchState.activeSmartQueryKey = nil
+            searchState.contextApp = nil
+            searchState.isInSmartMode = false
+            l2.targetApp = nil
+            l2.chatArmed = false
+            l2.showChatPopover = false
+            showContextInDock = true
+            showMediaLayer = false
+            showFolderPreview = false
+            aiMode.isActive = false
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            isSearchBarExpanded = true
+        }
+        // The user asked for this selection by name — a previous dismissal must not filter it out.
+        dismissedFinderSelectionSignature = nil
+        suppressedAutomaticFinderSelectionSignature = nil
+
+        if let snapshot = currentSelectionActivationSnapshot(refresh: true) {
+            applySelectionScopePayload(snapshot)
+        }
+        if let app = AppDelegate.shared?.previousFrontmostApp {
+            Task.detached(priority: .userInitiated) {
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
+                let selectionCtx = await AXContextReader.shared.current
+                await MainActor.run {
+                    self.axContext = selectionCtx
+                    if let snapshot = self.currentSelectionActivationSnapshot(refresh: false) {
+                        self.applySelectionScopePayload(snapshot)
+                    }
+                }
+            }
+        }
+        activateSearchField()
+    }
+
+    private func applySelectionScopePayload(_ snapshot: GlobalContextActivation) {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            selectionScopePayload = snapshot
+            showContextInDock = true
+            isSearchBarExpanded = true
+        }
+        scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
         requestWindowSizeUpdate(reason: .modeChanged)
     }
 

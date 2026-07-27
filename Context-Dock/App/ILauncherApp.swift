@@ -277,6 +277,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
     var windowReviewHotKeyRef: EventHotKeyRef?
+    var selectionScopeHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
@@ -1464,13 +1465,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             captureHotkeyEventHandlerRef = nil
         }
         for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef,
-                    windowReviewHotKeyRef] {
+                    windowReviewHotKeyRef, selectionScopeHotKeyRef] {
             if let ref { UnregisterEventHotKey(ref) }
         }
         captureTextHotKeyRef = nil
         captureAreaHotKeyRef = nil
         captureScreenshotHotKeyRef = nil
         windowReviewHotKeyRef = nil
+        selectionScopeHotKeyRef = nil
     }
 
     func registerCaptureHotkeys() {
@@ -1480,6 +1482,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.captureAreaHotkeyKeyCode,
             settings.captureScreenshotHotkeyKeyCode,
             settings.windowReviewHotkeyKeyCode,
+            settings.selectionScopeHotkeyKeyCode,
         ].contains { $0 != 0 }
         guard configured else { return }
 
@@ -1500,6 +1503,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
             case 44: AppDelegate.shared?.activateWindowReviewScope()
+            case 45: AppDelegate.shared?.activateSelectionScope()
             default: return OSStatus(eventNotHandledErr)
             }
             return noErr
@@ -1533,6 +1537,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             RegisterEventHotKey(
                 settings.windowReviewHotkeyKeyCode, settings.windowReviewHotkeyModifiers,
                 id, GetApplicationEventTarget(), 0, &windowReviewHotKeyRef)
+        }
+        if settings.selectionScopeHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 45)
+            RegisterEventHotKey(
+                settings.selectionScopeHotkeyKeyCode, settings.selectionScopeHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &selectionScopeHotKeyRef)
         }
     }
 
@@ -1883,10 +1893,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         presentSmartScope(.activateWindowReviewScope, key: "windows")
     }
 
+    /// Global hotkey → open the dock directly in Selection Scope for whatever the frontmost
+    /// app has selected. Deliberately separate from the launcher hotkey: a plain launcher open
+    /// must stay a launcher (typing an app name), never get hijacked by a live selection.
+    func activateSelectionScope() {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        if toggleOffSmartScopeIfActive("selection") { return }
+        presentSmartScope(.activateSelectionScope, key: "selection")
+    }
+
     /// True while a compact scope (Clipboard / Notifications) is showing, so the
     /// launcher does not auto-hide when another app takes focus.
     var smartScopeActive = false
     private var activeSmartScopeKey: String?
+
+    /// UI exited a smart scope surface — forget the key so the same hotkey re-enters the scope
+    /// instead of reading as a second press and closing the dock.
+    func clearSmartScope(key: String) {
+        guard activeSmartScopeKey == key else { return }
+        activeSmartScopeKey = nil
+        smartScopeActive = false
+    }
 
     private func toggleOffSmartScopeIfActive(_ key: String) -> Bool {
         guard activeSmartScopeKey == key, launcherWindow?.isVisible == true else { return false }

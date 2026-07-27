@@ -857,6 +857,8 @@ class AppSettings: ObservableObject {
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
     @AppStorage("windowReviewHotkeyKeyCode") private var _windowReviewHotkeyKeyCode: Int = 0
     @AppStorage("windowReviewHotkeyModifiers") private var _windowReviewHotkeyModifiers: Int = 0
+    @AppStorage("selectionScopeHotkeyKeyCode") private var _selectionScopeHotkeyKeyCode: Int = 0
+    @AppStorage("selectionScopeHotkeyModifiers") private var _selectionScopeHotkeyModifiers: Int = 0
 
     /// Folder where Capture Area / Screenshot images are saved. Empty = ~/Pictures (default).
     @AppStorage("captureSaveFolderPath") private var _captureSaveFolderPath: String = ""
@@ -1735,6 +1737,18 @@ class AppSettings: ObservableObject {
         get { UInt32(_windowReviewHotkeyModifiers) }
         set { objectWillChange.send(); _windowReviewHotkeyModifiers = Int(newValue) }
     }
+    /// Dedicated Selection Scope shortcut. When set, the normal launcher open no longer
+    /// auto-enters Selection Scope (that hijacked plain app launches); the selection is
+    /// only frozen into a scope when this shortcut fires.
+    var selectionScopeHotkeyKeyCode: UInt32 {
+        get { UInt32(_selectionScopeHotkeyKeyCode) }
+        set { objectWillChange.send(); _selectionScopeHotkeyKeyCode = Int(newValue) }
+    }
+    var selectionScopeHotkeyModifiers: UInt32 {
+        get { UInt32(_selectionScopeHotkeyModifiers) }
+        set { objectWillChange.send(); _selectionScopeHotkeyModifiers = Int(newValue) }
+    }
+    var selectionScopeHotkeyEnabled: Bool { _selectionScopeHotkeyKeyCode != 0 }
 
     init() {
         migrateAIKeysToKeychain()
@@ -2442,6 +2456,10 @@ class AppSettings: ObservableObject {
     var windowReviewHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: windowReviewHotkeyKeyCode, modifiers: windowReviewHotkeyModifiers)
+    }
+    var selectionScopeHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: selectionScopeHotkeyKeyCode, modifiers: selectionScopeHotkeyModifiers)
     }
 
     // Computed property to get hotkey display string

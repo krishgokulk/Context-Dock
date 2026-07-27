@@ -67,6 +67,22 @@ struct HotkeysSettingsPage: View {
                             })
                         Divider()
                         captureHotkeyRow(
+                            icon: "text.cursor", color: .green,
+                            title: "Selection Scope",
+                            subtitle: settings.selectionScopeHotkeyEnabled
+                                ? "Open the dock scoped to the current selection — a plain launch stays a launcher"
+                                : "Open the dock scoped to selected files or text. Unset: a selection auto-scopes on every launch",
+                            display: settings.selectionScopeHotkeyDisplayString,
+                            clear: {
+                                settings.selectionScopeHotkeyKeyCode = 0
+                                settings.selectionScopeHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.selectionScopeHotkeyKeyCode = $0
+                                settings.selectionScopeHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "macwindow.on.rectangle", color: .cyan,
                             title: "Window Review",
                             subtitle: "Preview and restore the current app's open and minimized windows",

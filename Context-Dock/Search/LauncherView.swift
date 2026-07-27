@@ -2675,6 +2675,7 @@ struct LauncherView: View {
         if !dismissedFinderPaths.isEmpty {
             dismissedFinderSelectionSignature = finderSelectionSignature(dismissedFinderPaths)
         }
+        AppDelegate.shared?.clearSmartScope(key: "selection")
         withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
             currentContext = .none
             globalContextActivation = nil
@@ -2691,6 +2692,9 @@ struct LauncherView: View {
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
+        // Hotkey-opened scopes park their key on the delegate; drop it so the shortcut re-enters
+        // Selection Scope instead of reading as a toggle-off and hiding the dock.
+        AppDelegate.shared?.clearSmartScope(key: "selection")
         let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
             if let payload = payloadToKeepLive {
@@ -2743,27 +2747,57 @@ struct LauncherView: View {
     func selectionChipView(icon: String, label: String, onDismiss: @escaping () -> Void)
         -> some View
     {
-        HStack(spacing: 4) {
+        // One capsule owns the leading slot in Selection Scope — same shape language as the
+        // app/clipboard scope chips, green accent. The standalone leading glyph is suppressed
+        // by shouldHideStandaloneLeadingIcon(compactScopeKey:) so this is the only selection mark.
+        let accent = SwiftUI.Color.green
+        let chipTextColor: SwiftUI.Color =
+            systemColorScheme == .dark
+            ? SwiftUI.Color.white.opacity(0.94)
+            : SwiftUI.Color.black.opacity(0.82)
+        HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.green.opacity(0.85))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 18, height: 18)
             Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.primary.opacity(0.75))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(chipTextColor)
                 .lineLimit(1)
-                .frame(maxWidth: 130)
+                .truncationMode(.middle)
+                .frame(maxWidth: 180, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             Button(action: onDismiss) {
                 Image(systemName: "minus")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(chipTextColor)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        chipTextColor.opacity(systemColorScheme == .dark ? 0.14 : 0.10),
+                        in: Circle())
             }
             .buttonStyle(.plain)
+            .help("Remove selection scope")
+            .opacity(0.72)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(Color.green.opacity(0.10), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.green.opacity(0.25), lineWidth: 0.5))
-        .transition(.scale(scale: 0.85).combined(with: .opacity))
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .background(
+            accent.opacity(systemColorScheme == .dark ? 0.26 : 0.16),
+            in: Capsule(style: .continuous)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    accent.opacity(systemColorScheme == .dark ? 0.46 : 0.32), lineWidth: 0.8)
+        )
+        .shadow(
+            color: accent.opacity(systemColorScheme == .dark ? 0.26 : 0.14),
+            radius: 8, x: 0, y: 2
+        )
+        .transition(.scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
     }
 
     // Shared condition: whether any results panel should be visible.
