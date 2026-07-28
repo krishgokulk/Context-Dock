@@ -3704,7 +3704,7 @@ extension LauncherView {
         }
         remPanelAITask?.cancel()
         remPanelIsProcessing = false
-        selectedClipboardEntryIDs.removeAll()
+        clearClipboardSelection()
         focusedClipboardEntryIndex = nil
         clipboardSourcePillFocusIndex = nil
         clipboardSourceFilterBundleId = ""

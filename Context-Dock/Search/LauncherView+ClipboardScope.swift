@@ -319,7 +319,7 @@ extension LauncherView {
     func clipboardHistoryRowContent(_ entry: ClipboardEntry) -> some View {
         HStack(spacing: 10) {
             ZStack(alignment: .bottomTrailing) {
-                if let imageData = entry.imageData, let image = NSImage(data: imageData) {
+                if entry.isImage, let image = clipboardEntryImage(for: entry) {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -427,71 +427,78 @@ extension LauncherView {
     }
 
     func copyClipboardEntryToPasteboard(_ entry: ClipboardEntry) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        if let imageData = entry.imageData,
-            let image = NSImage(data: imageData)
-        {
-            pasteboard.writeObjects([image])
-        } else if !entry.filePaths.isEmpty {
-            let urls = entry.filePaths.map { URL(fileURLWithPath: $0) }
-            pasteboard.writeObjects(urls as [NSURL])
-            pasteboard.setString(entry.filePaths.joined(separator: "\n"), forType: .string)
-        } else {
-            pasteboard.setString(entry.text, forType: .string)
-        }
+        writeClipboardEntriesToPasteboard([entry])
     }
 
+    /// Puts one *or many* clips on the pasteboard.
+    ///
+    /// Multi-clip writes are built as one `NSPasteboardItem` per clip, so Finder receives
+    /// every file URL (previously a `writeObjects` + `setString` mix clobbered the first
+    /// item and Finder pasted a single file, or a path string). The joined text
+    /// representation rides on the first item so plain-text targets still paste all of it.
     func writeClipboardEntriesToPasteboard(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        if entries.count == 1, let entry = entries.first {
-            copyClipboardEntryToPasteboard(entry)
-            return
-        }
-
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
+        // The always-on monitor must not re-import what we just wrote — a clip re-entering
+        // its own history churns the list (and the image blob behind it) for no reason.
+        defer { lastCheckedPasteboardCount = pasteboard.changeCount }
 
         let fileURLs = entries.flatMap { entry in
             entry.filePaths.map { URL(fileURLWithPath: $0) }
         }
-        if !fileURLs.isEmpty, fileURLs.count == entries.reduce(0, { $0 + $1.filePaths.count }) {
-            pasteboard.writeObjects(fileURLs as [NSURL])
-            pasteboard.setString(fileURLs.map(\.path).joined(separator: "\n"), forType: .string)
+        let images: [NSImage] = entries.compactMap {
+            clipboardImageData(for: $0).flatMap(NSImage.init(data:))
+        }
+        let joinedText = clipboardContextText(from: entries)
+
+        // Files win when every selected clip is a file clip: Finder/Mail/upload fields
+        // all expect fileURL items, and pasting the paths as text is never what was meant.
+        if !fileURLs.isEmpty, images.isEmpty {
+            var items: [NSPasteboardItem] = []
+            for (index, url) in fileURLs.enumerated() {
+                let item = NSPasteboardItem()
+                item.setString(url.absoluteString, forType: .fileURL)
+                if index == 0 {
+                    item.setString(fileURLs.map(\.path).joined(separator: "\n"), forType: .string)
+                }
+                items.append(item)
+            }
+            pasteboard.writeObjects(items)
             return
         }
 
-        // Image entries: write the actual image(s), never the placeholder/OCR text — otherwise
-        // pasting an image gave a string instead of the picture.
-        let images = entries.compactMap { $0.imageData.flatMap(NSImage.init(data:)) }
+        // Image clips write the actual picture(s), never the "Image" placeholder or the
+        // OCR text — pasting an image used to hand the target a string.
         if !images.isEmpty, images.count == entries.count {
             pasteboard.writeObjects(images)
             return
         }
 
-        let text = entries.map { entry -> String in
-            if !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return entry.text
-            }
-            if !entry.ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return entry.ocrText
-            }
-            if !entry.filePaths.isEmpty {
-                return entry.filePaths.joined(separator: "\n")
-            }
-            return entry.preview
+        // Mixed selection: text first (that is what a paste into a document should yield),
+        // with any file URLs appended as extra items for file-aware targets.
+        var items: [NSPasteboardItem] = []
+        if !joinedText.isEmpty {
+            let item = NSPasteboardItem()
+            item.setString(joinedText, forType: .string)
+            items.append(item)
         }
-        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        .joined(separator: "\n\n")
-
-        if !text.isEmpty {
-            pasteboard.setString(text, forType: .string)
+        for url in fileURLs {
+            let item = NSPasteboardItem()
+            item.setString(url.absoluteString, forType: .fileURL)
+            items.append(item)
         }
+        if items.isEmpty, let image = images.first {
+            pasteboard.writeObjects([image])
+            return
+        }
+        guard !items.isEmpty else { return }
+        pasteboard.writeObjects(items)
     }
 
     func selectedClipboardEntriesForPaste(fallback entry: ClipboardEntry? = nil) -> [ClipboardEntry] {
         let entries = visibleClipboardEntriesForScope()
-        let selected = entries.filter { selectedClipboardEntryIDs.contains($0.id) }
+        let selected = orderedSelectedClipboardEntries(from: entries)
         if !selected.isEmpty {
             return selected
         }
@@ -503,9 +510,27 @@ extension LauncherView {
         return [entries[index]]
     }
 
+    /// Selected clips in the order the user picked them, falling back to list order for
+    /// anything selected before the order was tracked.
+    func orderedSelectedClipboardEntries(from entries: [ClipboardEntry]) -> [ClipboardEntry] {
+        let selected = entries.filter { selectedClipboardEntryIDs.contains($0.id) }
+        guard selected.count > 1 else { return selected }
+        let rank = Dictionary(
+            clipboardSelectionOrder.enumerated().map { ($0.element, $0.offset) },
+            uniquingKeysWith: { first, _ in first })
+        let listRank = Dictionary(
+            selected.enumerated().map { ($0.element.id, $0.offset) },
+            uniquingKeysWith: { first, _ in first })
+        return selected.sorted { a, b in
+            let ra = rank[a.id] ?? (clipboardSelectionOrder.count + (listRank[a.id] ?? 0))
+            let rb = rank[b.id] ?? (clipboardSelectionOrder.count + (listRank[b.id] ?? 0))
+            return ra < rb
+        }
+    }
+
     func selectedClipboardEntriesForContext() -> [ClipboardEntry] {
         let relevant = relevantClipboardHistory()
-        let selected = relevant.filter { selectedClipboardEntryIDs.contains($0.id) }
+        let selected = orderedSelectedClipboardEntries(from: relevant)
         if !selected.isEmpty { return selected }
         let filtered = visibleClipboardEntriesForScope()
         let index = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? 0
@@ -579,7 +604,15 @@ extension LauncherView {
 
         let targetApp = AppDelegate.shared?.previousFrontmostApp
         let targetPID = targetApp?.processIdentifier ?? 0
-        selectedClipboardEntryIDs.removeAll()
+        if entries.count > 1 {
+            let fileCount = entries.reduce(0) { $0 + $1.filePaths.count }
+            let allFiles = entries.allSatisfy { !$0.filePaths.isEmpty }
+            let label = allFiles ? "\(fileCount) files" : "\(entries.count) clips"
+            AppToast.show(
+                "Pasted \(label)\(targetApp?.localizedName.map { " into \($0)" } ?? "")",
+                icon: "doc.on.clipboard.fill", tint: .green)
+        }
+        clearClipboardSelection()
         hideLauncherAfterResultExecution()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
@@ -619,8 +652,8 @@ extension LauncherView {
             }
         }
 
-        if let imageData = entry.imageData,
-            let url = temporaryClipboardDragFile(data: imageData, fileExtension: "tiff"),
+        if let imageData = clipboardImageData(for: entry),
+            let url = temporaryClipboardDragFile(data: imageData, fileExtension: "png"),
             let provider = NSItemProvider(contentsOf: url)
         {
             return provider
@@ -877,7 +910,7 @@ extension LauncherView {
                 // Writing one file per row here blocks the main thread before scrolling.
                 filePath: entry.filePaths.first,
                 contactData: nil,
-                displayBadges: entry.ocrText.isEmpty ? [] : ["OCR"],
+                displayBadges: clipboardEntryBadges(entry),
                 showsTypeLabel: false,
                 dismissesLauncher: false,
                 dragProvider: {
@@ -1441,7 +1474,7 @@ extension LauncherView {
         if let cached = ClipboardScopeRenderCache.thumbnails.object(forKey: cacheKey) {
             return cached
         }
-        if let imageData = entry.imageData,
+        if let imageData = clipboardImageData(for: entry),
             let source = CGImageSourceCreateWithData(imageData as CFData, nil),
             let thumbnail = CGImageSourceCreateThumbnailAtIndex(
                 source,
@@ -1469,14 +1502,24 @@ extension LauncherView {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let entries = relevantClipboardHistory()
         guard !q.isEmpty, q != "clip", q != "clipboard" else { return entries }
+        // Matching against the rendered subtitle used to rebuild a relative-date string
+        // per entry per keystroke; the same fields are already covered below.
         return entries.filter {
             $0.preview.lowercased().contains(q)
                 || $0.text.lowercased().contains(q)
                 || $0.ocrText.lowercased().contains(q)
                 || $0.filePaths.joined(separator: " ").lowercased().contains(q)
                 || $0.sourceAppName.lowercased().contains(q)
-                || clipboardEntrySubtitle($0).lowercased().contains(q)
         }
+    }
+
+    /// Row badges: "Capture" marks clips this app produced (Capture Text / Capture Area),
+    /// "OCR" marks an image whose text Vision has already read out.
+    func clipboardEntryBadges(_ entry: ClipboardEntry) -> [String] {
+        var badges: [String] = []
+        if entry.isScreenCapture { badges.append("Capture") }
+        if !entry.ocrText.isEmpty { badges.append("OCR") }
+        return badges
     }
 
     func buildClipboardHistoryPills(query q: String) -> [DockPill] {
@@ -1486,7 +1529,7 @@ extension LauncherView {
                 id: "clipboard-history-\(entry.id.uuidString)",
                 name: entry.preview.isEmpty ? "Clipboard Item" : entry.preview,
                 icon: entry.icon,
-                accentColorName: entry.imageData != nil
+                accentColorName: entry.isImage
                     ? "purple" : (entry.fileCount > 0 ? "green" : "blue"),
                 badge: clipboardEntrySubtitle(entry),
                 execute: {
@@ -1652,7 +1695,7 @@ extension LauncherView {
             return entry.filePaths.map { ($0 as NSString).lastPathComponent }
                 .joined(separator: ", ")
         }
-        return entry.imageData != nil ? "Image" : "Empty"
+        return entry.isImage ? "Image" : "Empty"
     }
 
 
@@ -1665,8 +1708,10 @@ extension LauncherView {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Button("Clear") {
+                ClipboardImageStore.delete(
+                    fileNames: clipboardHistory.compactMap(\.imageFileName))
                 clipboardHistory.removeAll()
-                selectedClipboardEntryIDs.removeAll()
+                clearClipboardSelection()
                 focusedClipboardEntryIndex = nil
                 savePersistedClipboardHistory()
                 syncVisibleClipboardStateAfterPrune()
@@ -1721,9 +1766,9 @@ extension LauncherView {
             systemIcon: entry.icon,
             image: clipboardEntryImage(for: entry),
             sourceImage: clipboardSourceIcon(for: entry),
-            accentColorName: entry.imageData != nil
+            accentColorName: entry.isImage
                 ? "purple" : (entry.fileCount > 0 ? "green" : "blue"),
-            badges: entry.ocrText.isEmpty ? [] : ["OCR"],
+            badges: clipboardEntryBadges(entry),
             isFocused: focusedClipboardEntryIndex == index || searchState.selectedIndex == index
                 || selectedClipboardEntryIDs.contains(entry.id),
             quickLookURL: entry.filePaths.first.map { URL(fileURLWithPath: $0) },
@@ -1743,7 +1788,9 @@ extension LauncherView {
             },
             remove: {
                 clipboardHistory.removeAll { $0.id == entry.id }
+                ClipboardImageStore.delete(fileNames: [entry.imageFileName].compactMap { $0 })
                 selectedClipboardEntryIDs.remove(entry.id)
+                clipboardSelectionOrder.removeAll { $0 == entry.id }
                 expandedClipboardEntryIDs.remove(entry.id)
                 savePersistedClipboardHistory()
                 syncVisibleClipboardStateAfterPrune()
@@ -1884,24 +1931,42 @@ extension LauncherView {
         searchState.selectedIndex = index
         if selectedClipboardEntryIDs.contains(entry.id) {
             selectedClipboardEntryIDs.remove(entry.id)
+            clipboardSelectionOrder.removeAll { $0 == entry.id }
         } else {
-            selectedClipboardEntryIDs.insert(entry.id)
+            selectClipboardEntry(entry.id)
         }
+    }
+
+    func selectClipboardEntry(_ id: UUID) {
+        guard !selectedClipboardEntryIDs.contains(id) else { return }
+        selectedClipboardEntryIDs.insert(id)
+        clipboardSelectionOrder.append(id)
+    }
+
+    func clearClipboardSelection() {
+        selectedClipboardEntryIDs.removeAll()
+        clipboardSelectionOrder.removeAll()
     }
 
     func extendClipboardSelection(direction: Int) {
         let entries = visibleClipboardEntriesForScope()
         guard !entries.isEmpty else {
             focusedClipboardEntryIndex = nil
-            selectedClipboardEntryIDs.removeAll()
+            clearClipboardSelection()
             return
         }
 
         let current = focusedClipboardEntryIndex ?? searchState.selectedIndex ?? (direction < 0 ? entries.count : -1)
+        // The row the user is standing on is part of the range — without this anchor,
+        // Cmd+Down from the first clip selected only the *second* one, so Enter pasted
+        // a single clip when the user had clearly picked two.
+        if entries.indices.contains(current) {
+            selectClipboardEntry(entries[current].id)
+        }
         let next = min(max(current + direction, 0), entries.count - 1)
         focusedClipboardEntryIndex = next
         searchState.selectedIndex = next
-        selectedClipboardEntryIDs.insert(entries[next].id)
+        selectClipboardEntry(entries[next].id)
         isKeyboardNavigation = true
         beginMouseDrivenInteractionGrace(0.6)
         refreshQuickLookPreviewForCurrentFocusIfVisible()
@@ -1934,8 +1999,8 @@ extension LauncherView {
             .appendingPathComponent("ContextDockClipboardQuickLook", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        if let imageData = entry.imageData {
-            let url = directory.appendingPathComponent("\(entry.id.uuidString).tiff")
+        if let imageData = clipboardImageData(for: entry) {
+            let url = directory.appendingPathComponent("\(entry.id.uuidString).png")
             try? imageData.write(to: url, options: .atomic)
             return url
         }
@@ -2054,7 +2119,7 @@ extension LauncherView {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color.primary.opacity(0.06))
-                    if let imageData = entry.imageData, let image = NSImage(data: imageData) {
+                    if entry.isImage, let image = clipboardEntryImage(for: entry) {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)

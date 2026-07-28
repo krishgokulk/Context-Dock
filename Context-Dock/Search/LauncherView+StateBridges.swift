@@ -619,9 +619,24 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.clipboardExpiryTimer = newValue }
     }
 
+    var clipboardMonitorTimer: Timer? {
+        get { globalContextViewModel.clipboardMonitorTimer }
+        nonmutating set { globalContextViewModel.clipboardMonitorTimer = newValue }
+    }
+
     var clipboardIndicatorHideTask: Task<Void, Never>? {
         get { globalContextViewModel.clipboardIndicatorHideTask }
         nonmutating set { globalContextViewModel.clipboardIndicatorHideTask = newValue }
+    }
+
+    var clipboardSaveTask: Task<Void, Never>? {
+        get { globalContextViewModel.clipboardSaveTask }
+        nonmutating set { globalContextViewModel.clipboardSaveTask = newValue }
+    }
+
+    var clipboardSelectionOrder: [UUID] {
+        get { globalContextViewModel.clipboardSelectionOrder }
+        nonmutating set { globalContextViewModel.clipboardSelectionOrder = newValue }
     }
 
     var clipboardDropTargetVisible: Bool {

@@ -36,10 +36,21 @@ extension LauncherView {
         let text: String
         let timestamp: Date
         var filePaths: [String] = []
+        /// Full image bytes, held in memory only for the newest clips. Older clips keep
+        /// their blob in `ClipboardImageStore` and load it on demand — see `imageFileName`.
+        /// Never persisted inside the history JSON (that used to rewrite tens of MB of
+        /// base64 on every single copy).
         var imageData: Data? = nil
+        /// PNG sidecar name in `ClipboardImageStore`; the durable form of `imageData`.
+        var imageFileName: String? = nil
         var ocrText: String = ""
         var sourceAppName: String = ""
         var sourceBundleId: String = ""
+        /// Produced by Capture Text / Capture Area / Screenshot rather than a Cmd-C.
+        var isScreenCapture: Bool = false
+        /// Stable de-duplication key. Persisted because an image clip's bytes are lazy —
+        /// hashing `imageData` at compare time stopped working once blobs moved to disk.
+        var contentHash: String = ""
 
         init(
             id: UUID = UUID(),
@@ -47,21 +58,67 @@ extension LauncherView {
             timestamp: Date,
             filePaths: [String] = [],
             imageData: Data? = nil,
+            imageFileName: String? = nil,
             ocrText: String = "",
             sourceAppName: String = "",
-            sourceBundleId: String = ""
+            sourceBundleId: String = "",
+            isScreenCapture: Bool = false,
+            contentHash: String = ""
         ) {
             self.id = id
             self.text = text
             self.timestamp = timestamp
             self.filePaths = filePaths
             self.imageData = imageData
+            self.imageFileName = imageFileName
             self.ocrText = ocrText
             self.sourceAppName = sourceAppName
             self.sourceBundleId = sourceBundleId
+            self.isScreenCapture = isScreenCapture
+            self.contentHash = contentHash
         }
 
-        var isImage: Bool { imageData != nil }
+        enum CodingKeys: String, CodingKey {
+            case id, text, timestamp, filePaths, imageData, imageFileName
+            case ocrText, sourceAppName, sourceBundleId, isScreenCapture, contentHash
+        }
+
+        /// Decoding still reads `imageData` so histories written by older builds keep
+        /// their images (they get migrated to a sidecar blob on the next save); encoding
+        /// deliberately drops it. Every optional-with-default key decodes leniently so a
+        /// history written by an older build never fails to load as a whole.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+            timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+            filePaths = try container.decodeIfPresent([String].self, forKey: .filePaths) ?? []
+            imageData = try container.decodeIfPresent(Data.self, forKey: .imageData)
+            imageFileName = try container.decodeIfPresent(String.self, forKey: .imageFileName)
+            ocrText = try container.decodeIfPresent(String.self, forKey: .ocrText) ?? ""
+            sourceAppName = try container.decodeIfPresent(String.self, forKey: .sourceAppName) ?? ""
+            sourceBundleId =
+                try container.decodeIfPresent(String.self, forKey: .sourceBundleId) ?? ""
+            isScreenCapture =
+                try container.decodeIfPresent(Bool.self, forKey: .isScreenCapture) ?? false
+            contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash) ?? ""
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(text, forKey: .text)
+            try container.encode(timestamp, forKey: .timestamp)
+            try container.encode(filePaths, forKey: .filePaths)
+            try container.encodeIfPresent(imageFileName, forKey: .imageFileName)
+            try container.encode(ocrText, forKey: .ocrText)
+            try container.encode(sourceAppName, forKey: .sourceAppName)
+            try container.encode(sourceBundleId, forKey: .sourceBundleId)
+            try container.encode(isScreenCapture, forKey: .isScreenCapture)
+            try container.encode(contentHash, forKey: .contentHash)
+        }
+
+        var isImage: Bool { imageData != nil || imageFileName != nil }
         var isURL: Bool {
             filePaths.isEmpty && !isImage && URL(string: text)?.scheme != nil
                 && text.contains("://")

@@ -3407,7 +3407,7 @@ struct LauncherView: View {
             clearPinnedResults()
             searchState.results = []
             searchState.selectedIndex = nil
-            selectedClipboardEntryIDs.removeAll()
+            clearClipboardSelection()
             focusedClipboardEntryIndex = nil
             livePanelVisible = false
             if !preserveQuery {
