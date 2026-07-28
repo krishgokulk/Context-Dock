@@ -1074,7 +1074,7 @@ struct AIProviderSettingsView: View {
                 endpointBinding: $settings.claudeBridgeEndpoint,
                 modelBinding: $settings.claudeBridgeModelID,
                 defaultEndpoint: "http://localhost:8317/v1",
-                defaultModel: "claude-3-5-sonnet-20241022",
+                defaultModel: "claude-opus-4-8",
                 vibeProxyNote: "Claude Pro → VibeProxy :8317 → DoraX. Your existing subscription pays."
             )
         case .chatGPTBridge:

@@ -370,30 +370,58 @@ extension AIProviderService {
             messages.append(["role": "user", "content": content])
         }
 
+        let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
+
         for _ in 0..<maxIterations {
-            let body: [String: Any] = [
+            var body: [String: Any] = [
                 "model": model,
                 "system": contextPrompt,
                 "messages": messages,
                 "tools": ToolDefinitions.anthropic + customTools,
-                "max_tokens": 1024
+                // 1024 was far too small for an agentic loop: on models that think by default
+                // it caps thinking AND the reply together, so answers were cut mid-sentence
+                // and a truncated tool_use block ended the loop with no error.
+                "max_tokens": 16000,
             ]
+            if usesAdaptiveThinking {
+                // Claude decides how much to think per step. `effort` is the depth/spend dial;
+                // high is the right floor for tool-driven work.
+                body["thinking"] = ["type": "adaptive"]
+                body["output_config"] = ["effort": "high"]
+            }
             let decoded = try await AnthropicToolProviderAdapter().send(apiKey: apiKey, body: body)
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
+
+            // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
+            // empty or partial, so reading it as an answer produces a blank or half reply.
+            if decoded.stop_reason == "refusal" {
+                let partial = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+                return (
+                    partial.isEmpty
+                        ? "The provider declined this request."
+                        : "The provider declined this request partway through:\n\n\(partial)",
+                    executedCommands
+                )
+            }
 
             if toolUseBlocks.isEmpty {
                 let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
             }
 
-            // Echo full assistant content block array back
+            // Echo the full assistant content array back. Thinking blocks must round-trip
+            // unchanged (signature included) or the next turn is rejected — dropping them is
+            // what makes adaptive thinking break a tool loop instead of improving it.
             let assistantBlocks: [[String: Any]] = decoded.content.map { block in
                 var d: [String: Any] = ["type": block.type]
                 if let t = block.text  { d["text"] = t }
                 if let id = block.id   { d["id"] = id }
                 if let n = block.name  { d["name"] = n }
                 if let input = block.input { d["input"] = input.mapValues { $0.value } }
+                if let thinking = block.thinking { d["thinking"] = thinking }
+                if let signature = block.signature { d["signature"] = signature }
+                if let data = block.data { d["data"] = data }
                 return d
             }
             messages.append(["role": "assistant", "content": assistantBlocks])

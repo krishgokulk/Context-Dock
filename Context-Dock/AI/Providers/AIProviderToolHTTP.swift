@@ -45,6 +45,12 @@ struct AnthropicToolResponse: Codable {
         let id: String?
         let name: String?
         let input: [String: AIProviderAnyCodable]?
+        // Thinking blocks must be echoed back VERBATIM on the next turn of a tool loop —
+        // signature included. Anthropic rejects modified or dropped thinking blocks, so a
+        // decoder that silently loses these fields makes adaptive thinking unusable.
+        let thinking: String?
+        let signature: String?
+        let data: String?
     }
 }
 

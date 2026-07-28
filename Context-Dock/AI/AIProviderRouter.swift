@@ -306,7 +306,9 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
                 "model": configuration.modelID,
                 "system": contextPrompt,
                 "messages": messages,
-                "max_tokens": 1024,
+                // Was 1024 — long answers were cut mid-sentence. Models that think by
+                // default spend part of this budget before writing a word.
+                "max_tokens": 8192,
             ]
         )
         let response = try JSONDecoder().decode(Response.self, from: data)

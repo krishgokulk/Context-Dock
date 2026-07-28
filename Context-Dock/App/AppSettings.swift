@@ -1038,8 +1038,10 @@ class AppSettings: ObservableObject {
     // Subscription bridge endpoints (VibeProxy default: localhost:8317)
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"
+    // claude-3-5-sonnet-20241022 was retired in Oct 2025 and 404s on the real API; bridges
+    // that pass the model string through were failing on first use with a stale default.
     @AppStorage("claudeBridgeModelID") var claudeBridgeModelID: String =
-        "claude-3-5-sonnet-20241022"
+        "claude-opus-4-8"
     @AppStorage("chatGPTBridgeEndpoint") var chatGPTBridgeEndpoint: String =
         "http://localhost:8317/v1"
     @AppStorage("chatGPTBridgeModelID") var chatGPTBridgeModelID: String = "gpt-4o"
