@@ -3530,6 +3530,13 @@ extension LauncherView {
         if let ordered = orderedGlobalContextMatchDockIcons(for: q, limit: 1).first {
             return ordered
         }
+        // Fast-match fallback. The grouped navigation state is prepared in the
+        // background, so while typing it is usually nil — the capsule already renders
+        // the fast match icons at that point, and without this the leading slot fell
+        // back to the DoraX glyph while the top match sat in the capsule.
+        if let fast = fastGlobalContextLeadingMatchIcon(for: q) {
+            return fast
+        }
         if let target = transientGlobalInlineAppScopeTarget(for: q) {
             let icon =
                 FileManager.default.fileExists(atPath: target.appPath)
@@ -3567,6 +3574,62 @@ extension LauncherView {
             )
         }
         return nil
+    }
+
+    /// Top icon of the fast-match pass — the same ordered source the capsule renders,
+    /// so promoting it here and dropping it from the capsule keeps exactly one copy.
+    /// Falls back to the sticky icon during the ~30 ms window where a keystroke has
+    /// cleared the snapshot and the new fast matches have not landed yet.
+    func fastGlobalContextLeadingMatchIcon(for query: String) -> MatchDockIcon? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty, isGlobalContextActive, shouldUsePureGlobalAppSearch else { return nil }
+        // Mirror the grouped list's `strongCommandMatch` rule: a Global Command whose
+        // name prefix-matches outranks every app row there, so the leading icon must
+        // show it too. The fast index ranks commands below prefix apps, which is why
+        // "sle" previewed App Store while ↓/Enter both ran Sleep.
+        if let command = strongGlobalCommandMatch(for: q) {
+            return command
+        }
+        if globalContextViewModel.typingSnapshot.query == q,
+            let first = globalContextViewModel.typingSnapshot.matchDockIcons.first
+        {
+            return first
+        }
+        return globalContextViewModel.stickyLeadingMatchIcon
+    }
+
+    /// Global Command whose name prefix-matches the query — the same row the grouped
+    /// list promotes to the top (`strongCommandMatch`) and Enter executes.
+    func strongGlobalCommandMatch(for query: String) -> MatchDockIcon? {
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty else { return nil }
+        guard let row = globalSystemCommandScopeMatches(for: q, limit: 1).first,
+            normalizedDockPillText(row.title).hasPrefix(q),
+            let icon = row.icon
+        else { return nil }
+        return MatchDockIcon(
+            id: row.id,
+            bundleID: row.id.hasPrefix("syscmd://") ? row.id : nil,
+            title: row.title,
+            icon: icon,
+            isRunning: false,
+            isExpandable: false,
+            score: 97_000,
+            isExactAppPrefix: true
+        )
+    }
+
+    /// Identity check used to keep the leading input icon out of the capsule — same
+    /// row id, or the same app/command behind two differently-built icons.
+    func matchDockIcon(_ icon: MatchDockIcon, isSameAs other: MatchDockIcon?) -> Bool {
+        guard let other else { return false }
+        if icon.id == other.id { return true }
+        if let lhs = icon.bundleID?.lowercased(), !lhs.isEmpty,
+            let rhs = other.bundleID?.lowercased(), !rhs.isEmpty
+        {
+            return lhs == rhs
+        }
+        return false
     }
 
     func focusedGlobalGroupedMatchDockIcon(for query: String) -> MatchDockIcon? {
@@ -3625,33 +3688,35 @@ extension LauncherView {
         let orderedIcons = orderedGlobalContextMatchDockIcons(for: q, limit: 4)
         let transientScopeBundleID =
             transientGlobalInlineAppScopeTarget(for: q)?.bundleId.lowercased()
-        let scopedMode = globalInlineAppScope != nil || l2.targetApp != nil || transientScopeBundleID != nil
         let scopedBundleID = currentGlobalScopedBundleID?.lowercased() ?? transientScopeBundleID
-        let capsuleIcons =
-            scopedMode
-            ? Array(
-                orderedIcons
-                    .filter { $0.bundleID?.lowercased() != scopedBundleID }
-                    .prefix(3))
-            : Array(orderedIcons.dropFirst())
         let idleIcons = scopedBundleID == nil
             ? idleContextMatchDockIcons
             : idleContextMatchDockIcons.filter {
                 $0.bundleID?.lowercased() != scopedBundleID
             }
-        let icons =
-            q.isEmpty
-            ? idleIcons
-            : (orderedIcons.isEmpty
-                ? Array(globalContextViewModel.typingSnapshot.matchDockIcons.prefix(3))
-                : capsuleIcons)
+        // The leading input icon and this capsule render ONE ordered list. Whatever the
+        // input icon is showing is removed here by identity — not by position — so the
+        // top match never appears twice, no matter which source resolved it (grouped
+        // row, fast match, Global Command, or the active scope chip).
+        let fastIcons = globalContextViewModel.typingSnapshot.matchDockIcons
+        let sourceIcons = orderedIcons.isEmpty ? fastIcons : orderedIcons
+        let leadingIcon = q.isEmpty ? nil : leadingGlobalContextMatchIcon(for: q)
+        let withoutLeading = sourceIcons.filter { !matchDockIcon($0, isSameAs: leadingIcon) }
+        let capsuleIcons = Array(
+            withoutLeading
+                .filter { scopedBundleID == nil || $0.bundleID?.lowercased() != scopedBundleID }
+                .prefix(3))
+        let icons = q.isEmpty ? idleIcons : capsuleIcons
         let cachedState = cachedVisibleGlobalGroupedListNavigationState(for: q)
+        let leadingConsumedCount = sourceIcons.count - withoutLeading.count
+        let visibleTotal =
+            orderedIcons.isEmpty
+            ? fastIcons.count
+            : (cachedState?.totalCount ?? orderedIcons.count)
         let overflow =
             q.isEmpty
             ? 0
-            : (orderedIcons.isEmpty
-                ? globalContextViewModel.typingSnapshot.matchDockOverflowCount
-                : max(0, (cachedState?.totalCount ?? orderedIcons.count) - orderedIcons.count))
+            : max(0, visibleTotal - capsuleIcons.count - leadingConsumedCount)
         ContextMatchDock(
             phase: phase,
             icons: isSearching ? [] : icons,

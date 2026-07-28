@@ -136,6 +136,10 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var typingSnapshot = GlobalContextTypingSnapshot()
     @Published var preparedResults: GlobalContextPreparedResults?
     @Published var isResolvingFastMatches = false
+    /// Last resolved top match icon. Held across the in-flight window of a keystroke
+    /// (where `typingSnapshot.matchDockIcons` is momentarily empty) so the leading
+    /// input icon never blinks back to the DoraX glyph while the user types.
+    @Published var stickyLeadingMatchIcon: MatchDockIcon?
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0

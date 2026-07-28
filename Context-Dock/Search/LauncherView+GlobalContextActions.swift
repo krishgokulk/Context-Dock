@@ -2451,6 +2451,7 @@ extension LauncherView {
             globalContextViewModel.idleCollapseTask?.cancel()
             globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.stickyLeadingMatchIcon = nil
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
             globalContextViewModel.prepareTask = nil
@@ -2462,6 +2463,7 @@ extension LauncherView {
             globalContextViewModel.idleCollapseTask?.cancel()
             globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.stickyLeadingMatchIcon = nil
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
             globalContextViewModel.prepareTask = nil
@@ -2543,6 +2545,10 @@ extension LauncherView {
 
                 let hasExpandableMatch = matchDockIcons.contains { $0.isExpandable }
                 self.globalContextViewModel.isResolvingFastMatches = false
+                // Top match owns the leading input icon (Spotlight behaviour). Written
+                // on every resolve, so an empty result clears it instead of stranding
+                // the previous query's icon.
+                self.globalContextViewModel.stickyLeadingMatchIcon = matchDockIcons.first
                 self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
                     query: q,
                     phase: wasExpanded
