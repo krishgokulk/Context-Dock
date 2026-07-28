@@ -276,7 +276,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var captureTextHotKeyRef: EventHotKeyRef?
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
-    var windowReviewHotKeyRef: EventHotKeyRef?
     var selectionScopeHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
     var lastHotkeyFiredAt: TimeInterval = 0
@@ -1489,13 +1488,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             captureHotkeyEventHandlerRef = nil
         }
         for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef,
-                    windowReviewHotKeyRef, selectionScopeHotKeyRef] {
+                    selectionScopeHotKeyRef] {
             if let ref { UnregisterEventHotKey(ref) }
         }
         captureTextHotKeyRef = nil
         captureAreaHotKeyRef = nil
         captureScreenshotHotKeyRef = nil
-        windowReviewHotKeyRef = nil
         selectionScopeHotKeyRef = nil
     }
 
@@ -1505,7 +1503,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.captureTextHotkeyKeyCode,
             settings.captureAreaHotkeyKeyCode,
             settings.captureScreenshotHotkeyKeyCode,
-            settings.windowReviewHotkeyKeyCode,
             settings.selectionScopeHotkeyKeyCode,
         ].contains { $0 != 0 }
         guard configured else { return }
@@ -1526,7 +1523,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 41: ScreenCaptureService.shared.capture(.text)
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
-            case 44: AppDelegate.shared?.activateWindowReviewScope()
             case 45: AppDelegate.shared?.activateSelectionScope()
             default: return OSStatus(eventNotHandledErr)
             }
@@ -1555,12 +1551,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.captureScreenshotHotkeyKeyCode,
                 settings.captureScreenshotHotkeyModifiers,
                 id, GetApplicationEventTarget(), 0, &captureScreenshotHotKeyRef)
-        }
-        if settings.windowReviewHotkeyKeyCode != 0 {
-            let id = EventHotKeyID(signature: signature, id: 44)
-            RegisterEventHotKey(
-                settings.windowReviewHotkeyKeyCode, settings.windowReviewHotkeyModifiers,
-                id, GetApplicationEventTarget(), 0, &windowReviewHotKeyRef)
         }
         if settings.selectionScopeHotkeyKeyCode != 0 {
             let id = EventHotKeyID(signature: signature, id: 45)
@@ -1906,15 +1896,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastHotkeyFiredAt = now
         if toggleOffSmartScopeIfActive("clipboard") { return }
         presentSmartScope(.activateClipboardScope, key: "clipboard")
-    }
-
-    func activateWindowReviewScope() {
-        guard settings.enableLayer2 else { return }
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        if toggleOffSmartScopeIfActive("windows") { return }
-        presentSmartScope(.activateWindowReviewScope, key: "windows")
     }
 
     /// Global hotkey → open the dock directly in Selection Scope for whatever the frontmost

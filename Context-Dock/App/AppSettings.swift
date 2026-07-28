@@ -855,8 +855,6 @@ class AppSettings: ObservableObject {
     @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
     @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
-    @AppStorage("windowReviewHotkeyKeyCode") private var _windowReviewHotkeyKeyCode: Int = 0
-    @AppStorage("windowReviewHotkeyModifiers") private var _windowReviewHotkeyModifiers: Int = 0
     @AppStorage("selectionScopeHotkeyKeyCode") private var _selectionScopeHotkeyKeyCode: Int = 0
     @AppStorage("selectionScopeHotkeyModifiers") private var _selectionScopeHotkeyModifiers: Int = 0
 
@@ -1731,14 +1729,6 @@ class AppSettings: ObservableObject {
         get { UInt32(_captureScreenshotHotkeyModifiers) }
         set { objectWillChange.send(); _captureScreenshotHotkeyModifiers = Int(newValue) }
     }
-    var windowReviewHotkeyKeyCode: UInt32 {
-        get { UInt32(_windowReviewHotkeyKeyCode) }
-        set { objectWillChange.send(); _windowReviewHotkeyKeyCode = Int(newValue) }
-    }
-    var windowReviewHotkeyModifiers: UInt32 {
-        get { UInt32(_windowReviewHotkeyModifiers) }
-        set { objectWillChange.send(); _windowReviewHotkeyModifiers = Int(newValue) }
-    }
     /// Dedicated Selection Scope shortcut. When set, the normal launcher open no longer
     /// auto-enters Selection Scope (that hijacked plain app launches); the selection is
     /// only frozen into a scope when this shortcut fires.
@@ -2454,10 +2444,6 @@ class AppSettings: ObservableObject {
         hotkeyDisplayString(
             keyCode: captureScreenshotHotkeyKeyCode,
             modifiers: captureScreenshotHotkeyModifiers)
-    }
-    var windowReviewHotkeyDisplayString: String {
-        hotkeyDisplayString(
-            keyCode: windowReviewHotkeyKeyCode, modifiers: windowReviewHotkeyModifiers)
     }
     var selectionScopeHotkeyDisplayString: String {
         hotkeyDisplayString(

@@ -1097,9 +1097,6 @@ extension LauncherView {
             .onReceive(ClipboardIngestBus.shared.captures) { payload in
                 handleClipboardCapture(payload)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .activateWindowReviewScope)) { _ in
-                activateWindowReviewScope()
-            }
             .onReceive(NotificationCenter.default.publisher(for: .activateSelectionScope)) { _ in
                 activateSelectionScopeFromHotkey()
             }
@@ -1303,24 +1300,22 @@ extension LauncherView {
         requestWindowSizeUpdate(reason: .modeChanged)
     }
 
-    /// A plain launcher open (⌥⌥ / launch hotkey) is never a scope resume. Clipboard, Window
-    /// Review and Selection scopes live in SwiftUI @State that survives hiding the window, so
-    /// without this the next open silently reopened whatever scope the user last left. Scope
-    /// hotkeys set `pendingSmartScopeKey` before showing the window and re-post their activation
-    /// after this handler, so they are unaffected.
+    /// A plain launcher open (⌥⌥ / launch hotkey) is never a scope resume. Clipboard and
+    /// Selection scopes live in SwiftUI @State that survives hiding the window, so without this
+    /// the next open silently reopened whatever scope the user last left. Scope hotkeys set
+    /// `pendingSmartScopeKey` before showing the window and re-post their activation after this
+    /// handler, so they are unaffected.
     func resetStaleSmartScopeStateForFreshOpen() {
         guard AppDelegate.shared?.pendingSmartScopeKey == nil else { return }
         let hadScope =
             selectionScopePayload != nil
             || searchState.activeSmartQueryKey != nil
-            || windowReviewFocusedID != nil
         guard hadScope else { return }
         if selectionScopePayload != nil { exitSelectionScopeAIChat() }
         selectionScopePayload = nil
         selectionScopeSheetCollapsed = false
         searchState.activeSmartQueryKey = nil
         searchState.contextApp = nil
-        windowReviewFocusedID = nil
         AppDelegate.shared?.smartScopeActive = false
         AppDelegate.shared?.clearSmartScopeState()
     }

@@ -1168,9 +1168,8 @@ extension LauncherView {
 
                         if let compactScopeKey, showContextInDock, isSearchBarExpanded {
                             let isClipboard = compactScopeKey == "clipboard"
-                            let isWindows = compactScopeKey == "windows"
-                            let label = isClipboard ? "Clipboard" : (isWindows ? "Window Preview" : "Notifications")
-                            let symbol = isClipboard ? "doc.on.clipboard" : (isWindows ? "macwindow.on.rectangle" : "bell.badge")
+                            let label = isClipboard ? "Clipboard" : "Notifications"
+                            let symbol = isClipboard ? "doc.on.clipboard" : "bell.badge"
                             let accent =
                                 isClipboard ? SwiftUI.Color.blue : SwiftUI.Color.accentColor
                             let chipTextColor: SwiftUI.Color =
@@ -2467,11 +2466,6 @@ extension LauncherView {
                                     .buttonStyle(.plain)
                                     .help("Exit selection scope")
                                 }
-                            } else if isCompactSmartScope
-                                && searchState.activeSmartQueryKey == "windows" {
-                                // Window switcher: running-window capsule inline in the input row
-                                // (Global-Context style), instead of an icon row below.
-                                windowSwitcherTrailingCapsule
                             } else if isGlobalContextActive {
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
@@ -2803,8 +2797,6 @@ extension LauncherView {
                 Group {
                     if searchState.activeSmartQueryKey == "clipboard" {
                         clipboardScopeView
-                    } else if searchState.activeSmartQueryKey == "windows" {
-                        windowReviewScopeView
                     } else {
                         notificationScopeView
                     }

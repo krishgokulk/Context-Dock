@@ -83,20 +83,6 @@ struct HotkeysSettingsPage: View {
                             })
                         Divider()
                         captureHotkeyRow(
-                            icon: "macwindow.on.rectangle", color: .cyan,
-                            title: "Window Review",
-                            subtitle: "Preview and restore the current app's open and minimized windows",
-                            display: settings.windowReviewHotkeyDisplayString,
-                            clear: {
-                                settings.windowReviewHotkeyKeyCode = 0
-                                settings.windowReviewHotkeyModifiers = 0
-                            },
-                            apply: {
-                                settings.windowReviewHotkeyKeyCode = $0
-                                settings.windowReviewHotkeyModifiers = $1
-                            })
-                        Divider()
-                        captureHotkeyRow(
                             icon: "text.viewfinder", color: .blue,
                             title: "Capture Text",
                             subtitle: "Select text on screen, OCR it, and save it to Clipboard",

@@ -5,25 +5,8 @@ extension LauncherView {
         DockHeightResolver.resolve(currentDockHeightMetrics)
     }
 
-    /// Compact smart scopes reserve 450 for their list. The window switcher instead stays a
-    /// compact bar (just the app row) until the user selects an app or searches — then it grows
-    /// to show the window previews.
-    private var compactSmartScopePanelHeight: CGFloat {
-        guard searchState.activeSmartQueryKey == "windows" else { return 450 }
-        // Idle: app capsule lives in the input row, nothing below → just the bar (0 panel).
-        // Selecting an app or searching drops the window snapshots below → full panel.
-        let searching = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let appSelected = windowReviewFocusedID != nil
-        return (searching || appSelected) ? 420 : 0
-    }
-
-    /// True when the window switcher is showing just its compact input bar (capsule inline, no
-    /// panel below). Used to drop the .large preset floor (460) that caused the half-sheet.
-    private var windowSwitcherIsIdleBar: Bool {
-        guard searchState.activeSmartQueryKey == "windows" else { return false }
-        let searching = !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return !searching && windowReviewFocusedID == nil
-    }
+    /// Compact smart scopes reserve 450 for their list.
+    private var compactSmartScopePanelHeight: CGFloat { 450 }
 
     var currentDockHeightPreset: DockHeightPreset {
         DockHeightResolver.resolvePreset(currentDockHeightPresetMetrics)
@@ -92,8 +75,7 @@ extension LauncherView {
             selectionScopeAIChat: hasSelectionScopeSurface && aiMode.isActive,
             showsFinderSearchResultsPanel: shouldShowFinderSearchResultsPanel(for: searchState.query),
             showsContextDockAppPanel: pureGlobalCompactTyping ? false : shouldShowContextDockAppPanel,
-            // Idle window switcher = compact bar; don't let it force the .large (460) floor.
-            compactSmartScope: isCompactSmartScope && !windowSwitcherIsIdleBar,
+            compactSmartScope: isCompactSmartScope,
             resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
             loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             searchBarExpanded: isSearchBarExpanded,
