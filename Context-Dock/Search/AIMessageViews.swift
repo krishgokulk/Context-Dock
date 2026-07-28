@@ -173,6 +173,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
+    var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
 
     enum ChatRole {
         case user
@@ -185,7 +186,7 @@ struct AIChatMessage: Identifiable, Equatable {
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
-        enableAppRequest: EnableAppRequest? = nil
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = []
     ) {
         self.id = UUID()
         self.role = role
@@ -198,6 +199,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.appLaunches = appLaunches
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
+        self.trace = trace
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
@@ -205,7 +207,7 @@ struct AIChatMessage: Identifiable, Equatable {
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
-        enableAppRequest: EnableAppRequest? = nil
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = []
     ) {
         self.id = id
         self.role = role
@@ -218,6 +220,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.appLaunches = appLaunches
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
+        self.trace = trace
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -296,6 +299,7 @@ struct AIChatMessageView: View {
     /// Both nil (General Chat) → renders exactly as before, no avatars.
     var userAvatarSymbol: String? = nil
     var assistantAvatarImage: NSImage? = nil
+    @State private var isTraceExpanded = false
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -390,6 +394,53 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Collapsed record of how the answer was routed. Every line is real work the app did
+    /// (catalog size, chosen path, executed row) — never model reasoning.
+    @ViewBuilder
+    private var routerTraceView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                    isTraceExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isTraceExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("\(message.trace.count) step\(message.trace.count == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            if isTraceExpanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(message.trace.enumerated()), id: \.offset) { _, step in
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .fill(Color.secondary.opacity(0.45))
+                                .frame(width: 4, height: 4)
+                                .padding(.top, 5)
+                            Text(step)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.leading, 10)
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
     @ViewBuilder
     private var attachmentChips: some View {
         let alignment: HorizontalAlignment = message.role == .user ? .trailing : .leading
@@ -429,6 +480,10 @@ struct AIChatMessageView: View {
                 // Attachment chips (files the user attached to this message)
                 if !message.attachments.isEmpty {
                     attachmentChips
+                }
+                // Routing trace ("Matching 31 actions…", "Best path: Share · Notes")
+                if message.role == .assistant, !message.trace.isEmpty {
+                    routerTraceView
                 }
                 // MCP tool-run chips ("ran <tool> via <server>")
                 if !message.mcpToolsRan.isEmpty {

@@ -1773,7 +1773,17 @@ extension LauncherView {
                     attachments: pendingAttachments,
                     providerSelection: providerSelection
                 )
-                let launches = self.referencedAppLaunches(for: query)
+                // "Open in <App>" buttons are keyword-derived, so in Selection Scope they used to
+                // appear next to answers where nothing ran — a receipt for work that never
+                // happened. Attach them only when a route actually executed.
+                let launches = await MainActor.run { () -> [AppLaunchAction] in
+                    if self.hasSelectionScopeSurface,
+                        self.selectionRouterExecutedRouteTitle == nil
+                    {
+                        return []
+                    }
+                    return self.referencedAppLaunches(for: query)
+                }
                 let shareInvocation = AITypedInvocationResolver.shareInvocation(
                     query: query,
                     responseText: response,
@@ -1790,9 +1800,11 @@ extension LauncherView {
                         let baseMsg = AIChatMessage(
                             role: .assistant, content: cleaned, appLaunches: launches,
                             mcpToolsRan: self.aiMode.pendingToolChips,
-                            enableAppRequest: enableReq)
+                            enableAppRequest: enableReq,
+                            trace: self.aiMode.routerTrace)
                         self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
+                        self.aiMode.routerTrace = []
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
                     }
@@ -4816,6 +4828,27 @@ extension LauncherView {
             explicitlyRequested: false
         ) ? ContextCollector.shared.snapshot() : nil
 
+        // ── Selection Scope router ───────────────────────────────────────────────────────
+        // Action requests on a selection are resolved against the rows the result sheet
+        // already exposes (share destinations, extensions, app menus, Shortcuts, built-ins)
+        // and EXECUTED, instead of being narrated by a model with no tools. Returns nil for
+        // questions, transforms and unroutable requests, which continue down the answer path.
+        let selectionScopeActive = await MainActor.run { hasSelectionScopeSurface }
+        if selectionScopeActive {
+            await MainActor.run {
+                selectionRouterExecutedRouteTitle = nil
+                selectionRouterNoRouteNote = nil
+                aiMode.routerTrace = []
+            }
+            if let routed = await runSelectionActionRouter(
+                query: actionQuery,
+                providerSelection: providerSelection
+            ) {
+                await MainActor.run { aiMode.loadingStatus = nil }
+                return routed
+            }
+        }
+
         // App Adapters are General AI's explicit app-access allowlist. Block locally before
         // building or sending context, so an unconfigured app's identity/state never reaches
         // the selected provider.
@@ -4948,6 +4981,29 @@ extension LauncherView {
         )
         if !selectionContextBlock.isEmpty {
             sysContent += "\n\n## Explicit Selection Scope\n" + selectionContextBlock
+            // Reaching this point means the router did NOT execute anything: either the request
+            // was a question, or no row in the sheet could perform it. Saying "saved" / "sent"
+            // here would be a lie the UI then dressed up with an Open-in-App button.
+            let routerNote = await MainActor.run { selectionRouterNoRouteNote }
+            sysContent += """
+
+
+                ══ EXECUTION TRUTH ══
+                You have NOT run anything for this message. Never state or imply that a file was \
+                saved, sent, shared, created, renamed, converted or moved. Do not write "Saved \
+                to…", "Sent to…" or "Done". If the user asked for an action, say plainly that it \
+                did not run and why, then offer the concrete next step.
+                """
+            if let routerNote, !routerNote.isEmpty {
+                sysContent += """
+
+
+                    ══ ROUTER RESULT ══
+                    \(routerNote) Tell the user which capability is missing in one sentence, then \
+                    follow the SELECTION-SCOPE AUTOMATION rules below to propose a saveable \
+                    Selection Scope extension that would perform it next time.
+                    """
+            }
             // Deterministic built-in routing for selected files (sips/markitdown/ditto), so
             // "convert to jpeg" just runs sips per file instead of asking which tool.
             sysContent += selectionFileOperationGuidance()

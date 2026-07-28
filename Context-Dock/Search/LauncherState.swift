@@ -72,6 +72,9 @@ struct AIModeState {
     var loadingStatus: String? = nil
     /// Tool chips collected during the current request, attached to the final answer.
     var pendingToolChips: [String] = []
+    /// Ordered routing steps for the current request ("Matching 31 actions…", "Best path: …").
+    /// Attached to the answer so the trace survives the loading indicator disappearing.
+    var routerTrace: [String] = []
     /// Minimal DoraX Action Chat execution state (planner stages + discovered routes +
     /// chosen route). Nil when no action is in flight. Deliberately tiny — a launcher
     /// progress strip, not an IDE "thinking" log.
