@@ -151,6 +151,90 @@ struct InlinePrivacyApprovalCard: View {
     }
 }
 
+/// Adapter / menu-command approval rendered inside the conversation. Same decision as the
+/// floating `AdapterApprovalPopupView`, but it stays in the chat that asked for it instead of
+/// throwing a second window over the dock.
+struct InlineAdapterApprovalCard: View {
+    let request: AdapterActionRequest
+
+    private var detailLine: String {
+        switch request.action.type {
+        case .menubar:
+            return request.action.menuPath?.joined(separator: " ▸ ") ?? request.action.name
+        case .applescript: return "AppleScript"
+        case .jxa: return "JXA script"
+        case .shell: return "Shell command"
+        case .cliTool: return request.action.cliToolCommand ?? "CLI tool"
+        case .urlScheme: return request.action.urlScheme ?? "Open URL"
+        case .openItem, .scriptFile:
+            return request.action.scriptFile ?? request.action.script ?? "Open item"
+        case .shortcut: return request.action.shortcutName ?? "Shortcut"
+        case .aiPrompt: return "AI prompt"
+        case .pageJS: return "Page JavaScript"
+        }
+    }
+
+    private var accent: Color { request.action.isDestructive ? .orange : .accentColor }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(
+                    systemName: request.action.isDestructive
+                        ? "exclamationmark.triangle.fill" : "cursorarrow.click"
+                )
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accent)
+                Text(request.action.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(request.adapter.appName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07), in: Capsule())
+            }
+            Text(detailLine)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            if !request.action.description.isEmpty {
+                Text(request.action.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            HStack(spacing: 8) {
+                Button("Cancel") { request.onDeny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button(request.action.isDestructive ? "Allow" : "Run") { request.onApprove() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(accent, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(accent.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
 struct AIPrivacyApprovalView: View {
     let pending: AIPrivacyApprovalCenter.PendingApproval
 

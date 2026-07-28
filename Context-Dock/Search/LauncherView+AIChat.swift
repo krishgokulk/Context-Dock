@@ -1324,6 +1324,11 @@ extension LauncherView {
                                     }
                                 }
 
+                                if let pendingAdapterApproval {
+                                    InlineAdapterApprovalCard(request: pendingAdapterApproval)
+                                        .id("adapter-approval")
+                                }
+
                                 if let gap = pendingCapabilityGap {
                                     CapabilityGapCard(
                                         gap: gap,
@@ -1494,6 +1499,10 @@ extension LauncherView {
                         if let pendingPrivacyApproval {
                             InlinePrivacyApprovalCard(pending: pendingPrivacyApproval)
                                 .id("privacy-approval")
+                        }
+                        if let pendingAdapterApproval {
+                            InlineAdapterApprovalCard(request: pendingAdapterApproval)
+                                .id("adapter-approval")
                         }
                         if let pending = aiMode.pendingShare {
                             selectionShareConfirmCard(pending)

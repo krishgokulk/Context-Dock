@@ -1481,7 +1481,7 @@ extension LauncherView {
                 includeRunningCachedMenus: true
             )
             : []
-        let rankedAppRows: [SearchResult] = {
+        let appResults: [SearchResult] = {
             let runningRows =
                 isTerminationQuery
                 ? globalRunningAppQuitMatches(for: q, limit: appRowLimit)
@@ -1529,9 +1529,6 @@ extension LauncherView {
                 limit: appRowLimit
             )
         }()
-        // The row the user is spelling out leads the sheet, so the highlighted row,
-        // Enter and the leading input icon are always the same thing.
-        let appResults = promotingNamePrefixRow(rankedAppRows, query: q, limit: appRowLimit)
         // 1-char queries: apps/commands only. From 2 chars onward the hot index can
         // cheaply include running/cached menu hits too, so "sl" is not command-only.
         if q.count < 2, !isTerminationQuery {
@@ -1613,37 +1610,6 @@ extension LauncherView {
 
     func globalAppRowsBeginWithSystemCommand(_ rows: [SearchResult]) -> Bool {
         rows.first?.id.hasPrefix("syscmd://") == true
-    }
-
-    /// Moves the row whose own name starts with the typed text to the head — and pulls
-    /// it back from a wider app query when the row budget (4 rows for menu-intent
-    /// queries) dropped it. Without this, "hom" ranked Safari's Home menu command above
-    /// Home.app, so the sheet highlighted — and Enter ran — the wrong thing.
-    func promotingNamePrefixRow(
-        _ rows: [SearchResult],
-        query: String,
-        limit: Int
-    ) -> [SearchResult] {
-        let q = normalizedDockPillText(query)
-        guard !q.isEmpty, q.count >= 2 else { return rows }
-        if let head = rows.first, normalizedDockPillText(head.title).hasPrefix(q) {
-            return rows
-        }
-        if let index = rows.firstIndex(where: {
-            normalizedDockPillText($0.title).hasPrefix(q)
-        }) {
-            var promoted = rows
-            promoted.insert(promoted.remove(at: index), at: 0)
-            return promoted
-        }
-        let wider = instantGlobalApplicationMatches(for: query, limit: max(limit, 12))
-        guard let match = wider.first(where: {
-            $0.type == .application && normalizedDockPillText($0.title).hasPrefix(q)
-        }) else { return rows }
-        let matchKey = globalApplicationIdentityKey(for: match)
-        var promoted = rows.filter { globalApplicationIdentityKey(for: $0) != matchKey }
-        promoted.insert(match, at: 0)
-        return Array(promoted.prefix(max(limit, 1)))
     }
 
     func globalAppRowsContainStrongApplicationMatch(

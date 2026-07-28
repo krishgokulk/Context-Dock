@@ -190,6 +190,9 @@ struct LauncherView: View {
     /// Cloud-consent request rendered inline in the chat (instead of the floating window)
     /// whenever a chat surface is already on screen.
     @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
+    /// Adapter / menu-command approval rendered inline in the chat (instead of the
+    /// floating panel) whenever a chat surface is already on screen.
+    @State var pendingAdapterApproval: AdapterActionRequest?
     /// "This scope has no tool for that" offer — link an installed CLI, or install one.
     @State var pendingCapabilityGap: CapabilityGapService.Gap?
     @State var capabilityGapWorking = false
@@ -1353,9 +1356,28 @@ struct LauncherView: View {
         }
         .onReceive(adapterManager.$pendingApproval) { pending in
             DispatchQueue.main.async {
+                // A chat surface on screen owns the approval: a separate floating panel
+                // covered the dock and split the conversation the request came from.
+                let chatSurfaceVisible =
+                    aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
                 if let pending {
-                    openAdapterApprovalWindow(request: pending)
+                    if chatSurfaceVisible {
+                        AdapterApprovalWindowHost.close()
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            pendingAdapterApproval = pending
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    } else {
+                        pendingAdapterApproval = nil
+                        openAdapterApprovalWindow(request: pending)
+                    }
                 } else {
+                    if pendingAdapterApproval != nil {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                            pendingAdapterApproval = nil
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    }
                     AdapterApprovalWindowHost.close()
                 }
             }

@@ -426,17 +426,6 @@ extension LauncherView {
                         return nil
                     }
                     let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
-                    let query = self.searchState.query
-                    // No grouped sheet yet: run whatever the leading input icon is
-                    // previewing, resolved by the same rule — otherwise Enter launched
-                    // a different app than the icon and ghost text showed.
-                    if let primary = self.primaryMatchDockIcon(in: matchIcons, for: query),
-                        self.normalizedDockPillText(primary.title)
-                            .hasPrefix(self.normalizedDockPillText(query))
-                    {
-                        self.executeMatchDockIcon(primary)
-                        return nil
-                    }
                     let exactLaunchIcons = matchIcons.filter {
                         $0.isExactAppPrefix && !$0.isExpandable
                     }
@@ -583,6 +572,23 @@ extension LauncherView {
 
             if event.keyCode == 36, self.aiMode.isActive {
                 self.submitAIQuery()
+                return nil
+            }
+
+            // General Chat before the first send: Enter reaches the model only through the
+            // field's .onSubmit, so it dies whenever the field lost first responder — the
+            // provider picker's NSMenu takes key focus and SwiftUI does not reliably hand
+            // it back. Runs only while the field is NOT first responder, so the focused
+            // path still goes through .onSubmit and can never double-send.
+            if event.keyCode == 36,
+                self.currentDockSurfaceMode == .generalChat,
+                !(NSApp.keyWindow?.firstResponder is NSTextView),
+                !q.isEmpty
+            {
+                if !self.launchTypedAppMatchIfNeeded() {
+                    self.submitAIQuery()
+                }
+                self.ensureSearchInputFocusReady()
                 return nil
             }
 

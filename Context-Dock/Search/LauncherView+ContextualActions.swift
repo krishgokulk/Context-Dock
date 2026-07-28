@@ -5318,7 +5318,40 @@ extension LauncherView {
 
         let visibleMenuMatches: [AXMenuItem] = {
             if shouldSuppressMenuForContext { return [] }
-            return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
+            let base = hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
+            // A scope chip on screen means the dock belongs to exactly ONE app. When that
+            // app has no menu match, the generic branches above fall back to the FRONTMOST
+            // app's live menus — a "Caffeine" chip listed Safari's Quit items. Drop any row
+            // that didn't come from the scoped app.
+            let chip: (bundleId: String, appName: String)? = {
+                if let target = l2.targetApp, !target.bundleId.isEmpty {
+                    return (target.bundleId, target.name)
+                }
+                if let inline = globalInlineAppScope, !inline.bundleId.isEmpty {
+                    return (inline.bundleId, inline.appName)
+                }
+                if isExplicitAppScope, !scopedBundleId.isEmpty {
+                    return (scopedBundleId, scopedAppName)
+                }
+                return nil
+            }()
+            guard let chip, !chip.bundleId.hasPrefix("cli://"),
+                chip.bundleId != frontmost.bundleID
+            else { return base }
+            let chipPID = NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == chip.bundleId && !$0.isTerminated
+            }?.processIdentifier
+            return base.filter { item in
+                if item.sourcePID != 0 {
+                    // Cached rows for a closed app carry pid 0 — only live rows are checked.
+                    return item.sourcePID == chipPID
+                }
+                if !item.sourceAppName.isEmpty {
+                    return item.sourceAppName.caseInsensitiveCompare(chip.appName)
+                        == .orderedSame
+                }
+                return true
+            }
         }()
 
         // Always offer "Search <App> for <query>" while typing in a scoped app — not
