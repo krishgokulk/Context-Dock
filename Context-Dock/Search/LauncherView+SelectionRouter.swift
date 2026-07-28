@@ -34,31 +34,62 @@ extension LauncherView {
     // MARK: - Intent
 
     func classifySelectionQueryIntent(_ query: String) -> SelectionQueryIntent {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return .question }
-        let questionLeads = [
-            "what", "why", "how many", "how much", "how big", "when", "who", "which",
-            "explain", "describe", "tell me", "summar", "is this", "are these", "does this",
-            "size of", "count of",
+        // "can you add this to reminders" is a request, not a question. Strip the polite wrapper
+        // before judging, or every phrased-as-a-favour action reads as something to answer.
+        let politeLeads = [
+            "can you ", "could you ", "would you ", "will you ", "please ", "pls ",
+            "i want you to ", "i need you to ", "help me ", "hey ",
         ]
-        if q.hasSuffix("?") { return .question }
-        if questionLeads.contains(where: { q.hasPrefix($0) || q.contains($0) }) {
-            // "summarize and send to notes" is still an action — a destination verb wins.
-            if !selectionActionVerbs.contains(where: { q.contains($0) }) { return .question }
+        var strippedPolite = false
+        var changed = true
+        while changed {
+            changed = false
+            for lead in politeLeads where q.hasPrefix(lead) {
+                q = String(q.dropFirst(lead.count))
+                strippedPolite = true
+                changed = true
+            }
         }
-        let transformVerbs = ["rewrite", "reword", "rephrase", "translate", "proofread", "fix grammar"]
-        if transformVerbs.contains(where: { q.contains($0) }) { return .transform }
-        if selectionActionVerbs.contains(where: { q.contains($0) }) { return .action }
-        return .question
+        let trailing = CharacterSet(charactersIn: " .!")
+        let core = q.trimmingCharacters(in: trailing)
+        guard !core.isEmpty else { return .question }
+
+        let transformVerbs = [
+            "rewrite", "reword", "rephrase", "translate", "proofread", "fix grammar",
+        ]
+        if transformVerbs.contains(where: { core.contains($0) }) { return .transform }
+
+        // An action verb anywhere wins: "summarize and send to notes" is a send.
+        if selectionActionVerbs.contains(where: { core.contains($0) }) { return .action }
+
+        let questionLeads = [
+            "what", "why", "how many", "how much", "how big", "how do", "when", "who", "which",
+            "explain", "describe", "tell me", "summar", "is this", "are these", "does this",
+            "size of", "count of", "about this",
+        ]
+        if questionLeads.contains(where: { core.hasPrefix($0) || core.contains($0) }) {
+            return .question
+        }
+        // "…?" only means a question once no action verb matched.
+        if query.trimmingCharacters(in: .whitespaces).hasSuffix("?") { return .question }
+        // A stripped "can you …" with no recognised verb is still a request for something to
+        // happen — let the router look for a route rather than answering.
+        return strippedPolite ? .action : .question
     }
 
     private var selectionActionVerbs: [String] {
         [
-            "share", "send", "airdrop", "email", "mail", "message", "post",
+            "share", "send", "airdrop", "email", "mail", "message", "post", "text ",
             "compress", "zip", "archive", "unzip", "extract",
             "convert", "resize", "export", "rename", "duplicate", "move", "copy",
-            "delete", "trash", "tag", "open", "run", "save", "add to", "put in",
-            "print", "upload", "quick look", "preview", "info", "reveal", "ocr",
+            "delete", "trash", "tag", "open", "run", "print", "upload", "ocr",
+            "quick look", "preview", "info", "reveal",
+            // Capture / scheduling destinations. These are the verbs users actually type at a
+            // selection ("add this to reminders", "remind me at 10pm", "save to notes").
+            "save", "add to", "add this", "put in", "put this", "note this", "make a note",
+            "remind", "reminder", "schedule", "calendar", "event", "todo", "to-do", "task",
         ]
     }
 
