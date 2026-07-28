@@ -3591,11 +3591,41 @@ extension LauncherView {
             return command
         }
         if globalContextViewModel.typingSnapshot.query == q,
-            let first = globalContextViewModel.typingSnapshot.matchDockIcons.first
+            let primary = primaryMatchDockIcon(
+                in: globalContextViewModel.typingSnapshot.matchDockIcons,
+                for: q
+            )
         {
-            return first
+            return primary
         }
         return globalContextViewModel.stickyLeadingMatchIcon
+    }
+
+    /// Spotlight's rule: when the typed text is a prefix of a match's OWN name, that
+    /// match is the primary hit. An app called "Home" therefore beats Safari's "Home"
+    /// menu command, which the raw index ranks by menu-hit count and can float above
+    /// it — that mismatch is what showed the Safari icon while the ghost read "home".
+    /// Launchable rows win ties against expandable menu owners.
+    func primaryMatchDockIcon(in icons: [MatchDockIcon], for query: String) -> MatchDockIcon? {
+        guard !icons.isEmpty else { return nil }
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty else { return icons.first }
+        if let head = icons.first, !head.isExpandable,
+            normalizedDockPillText(head.title).hasPrefix(q)
+        {
+            return head
+        }
+        if let launchable = icons.first(where: {
+            !$0.isExpandable && normalizedDockPillText($0.title).hasPrefix(q)
+        }) {
+            return launchable
+        }
+        if let anyPrefix = icons.first(where: {
+            normalizedDockPillText($0.title).hasPrefix(q)
+        }) {
+            return anyPrefix
+        }
+        return icons.first
     }
 
     /// Global Command whose name prefix-matches the query — the same row the grouped

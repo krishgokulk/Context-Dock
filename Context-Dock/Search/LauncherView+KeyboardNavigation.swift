@@ -426,6 +426,17 @@ extension LauncherView {
                         return nil
                     }
                     let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons
+                    let query = self.searchState.query
+                    // No grouped sheet yet: run whatever the leading input icon is
+                    // previewing, resolved by the same rule — otherwise Enter launched
+                    // a different app than the icon and ghost text showed.
+                    if let primary = self.primaryMatchDockIcon(in: matchIcons, for: query),
+                        self.normalizedDockPillText(primary.title)
+                            .hasPrefix(self.normalizedDockPillText(query))
+                    {
+                        self.executeMatchDockIcon(primary)
+                        return nil
+                    }
                     let exactLaunchIcons = matchIcons.filter {
                         $0.isExactAppPrefix && !$0.isExpandable
                     }
