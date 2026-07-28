@@ -40,14 +40,16 @@ final class CapabilityGapService {
     }
 
     private let catalog: [KnownTool] = [
+        // Order matters: the first entry whose keyword appears wins, so "download … as mp3" must
+        // reach yt-dlp before any transcoding tool claims the "mp3" keyword.
         KnownTool(
-            keywords: ["download", "video", "mp3", "mp4", "audio", "youtube", "playlist", "rip"],
+            keywords: ["download", "youtube", "playlist", "rip ", "save video", "save audio"],
             command: "yt-dlp", formula: "yt-dlp",
-            rationale: "yt-dlp downloads video and audio from web pages."),
+            rationale: "yt-dlp downloads video and audio from web pages, including audio-only extraction."),
         KnownTool(
             keywords: ["convert video", "transcode", "trim video", "gif from", "ffmpeg", "mux"],
             command: "ffmpeg", formula: "ffmpeg",
-            rationale: "ffmpeg converts and edits audio/video files."),
+            rationale: "ffmpeg converts and edits audio/video files that are already on disk."),
         KnownTool(
             keywords: ["clone", "repo", "repository", "git ", "checkout", "pull request"],
             command: "git", formula: "git",
@@ -79,7 +81,35 @@ final class CapabilityGapService {
         }
         if linked.contains(where: { matches($0, query: normalized) }) { return nil }
 
-        // 2. Installed somewhere on this Mac but not linked to this scope.
+        // 2. Known task → known tool, FIRST. The generic scorer ranks by keyword overlap, so
+        //    "download this video as mp3" scored HandBrakeCLI (video, convert) above yt-dlp and
+        //    offered to link a transcoder for a download. When the task is one we recognise, the
+        //    tool is not a guess.
+        if let known = catalog.first(where: { tool in
+            tool.keywords.contains { normalized.contains($0) }
+        }) {
+            if let installed = manager.packages.first(where: {
+                $0.command == known.command && $0.isInstalled
+            }) {
+                guard !installed.contextAppBundleIds.contains(bundleID) else { return nil }
+                return Gap(
+                    query: query,
+                    bundleID: bundleID,
+                    appName: appName,
+                    resolution: .linkInstalledTool(
+                        packageID: installed.id, command: installed.command, appName: appName),
+                    rationale: known.rationale)
+            }
+            return Gap(
+                query: query,
+                bundleID: bundleID,
+                appName: appName,
+                resolution: .installTool(
+                    command: known.command, formula: known.formula, appName: appName),
+                rationale: known.rationale)
+        }
+
+        // 3. Unrecognised task: fall back to the generic scorer over installed tools.
         if let installed = manager.findPackageForQuery(query),
             installed.isInstalled,
             !installed.contextAppBundleIds.contains(bundleID)
@@ -94,22 +124,7 @@ final class CapabilityGapService {
                     ? "\(installed.command) is installed but not available in the \(appName) scope."
                     : installed.description)
         }
-
-        // 3. Nothing installed fits — name the tool that would.
-        guard let known = catalog.first(where: { tool in
-            tool.keywords.contains { normalized.contains($0) }
-        }) else { return nil }
-        // Guard against proposing an install for something already present under another name.
-        if manager.packages.contains(where: { $0.command == known.command && $0.isInstalled }) {
-            return nil
-        }
-        return Gap(
-            query: query,
-            bundleID: bundleID,
-            appName: appName,
-            resolution: .installTool(
-                command: known.command, formula: known.formula, appName: appName),
-            rationale: known.rationale)
+        return nil
     }
 
     private func matches(_ package: TerminalPackage, query: String) -> Bool {

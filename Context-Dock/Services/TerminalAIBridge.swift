@@ -265,8 +265,32 @@ class TerminalAIBridge: ObservableObject {
             currentCommand = nil
         }
 
+        // Long jobs (downloads, transcodes, clones) produce nothing visible until they finish —
+        // the chat says "downloading…" and then the app looks idle for minutes. Post a running
+        // entry so the work is visible in the notification scope while it happens.
+        let progressLabel = Self.longRunningLabel(for: command)
+        var progressID: UUID?
+        if let progressLabel {
+            progressID = ILauncherNotificationManager.shared.post(
+                title: progressLabel,
+                body: "Running… \(command.prefix(80))",
+                icon: "arrow.down.circle",
+                accentColor: "blue")
+        }
+
         // Execute in terminal if available, otherwise background
         let (output, exitCode) = await executeInTerminalOrBackground(command)
+
+        if let progressID { ILauncherNotificationManager.shared.remove(progressID) }
+        if let progressLabel {
+            ILauncherNotificationManager.shared.post(
+                title: exitCode == 0 ? "\(progressLabel) finished" : "\(progressLabel) failed",
+                body: exitCode == 0
+                    ? "Completed in \(Int(Date().timeIntervalSince(startTime)))s"
+                    : String(output.suffix(160)),
+                icon: exitCode == 0 ? "checkmark.circle" : "exclamationmark.triangle",
+                accentColor: exitCode == 0 ? "green" : "red")
+        }
 
         let duration = Date().timeIntervalSince(startTime)
         lastOutput = output
@@ -367,6 +391,26 @@ class TerminalAIBridge: ObservableObject {
 
     /// Best-effort: find the file a download/convert command produced, from its
     /// output ("Destination: …", "Merging formats into …") or its output argument.
+    /// Human label for jobs worth showing progress for. Downloads, transcodes and clones can run
+    /// for minutes; everything else finishes fast enough that a notification would be noise.
+    static func longRunningLabel(for command: String) -> String? {
+        let lowered = command.lowercased()
+        let jobs: [(needle: String, label: String)] = [
+            ("yt-dlp", "Download"),
+            ("youtube-dl", "Download"),
+            ("ffmpeg", "Convert"),
+            ("handbrakecli", "Convert"),
+            ("git clone", "Clone"),
+            ("brew install", "Install"),
+            ("brew upgrade", "Upgrade"),
+            ("curl ", "Download"),
+            ("wget ", "Download"),
+            ("ditto ", "Archive"),
+            ("rsync", "Sync"),
+        ]
+        return jobs.first { lowered.contains($0.needle) }?.label
+    }
+
     static func detectProducedFile(command: String, output: String) -> URL? {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser

@@ -82,14 +82,18 @@ final class ILauncherNotificationManager: ObservableObject {
     // MARK: - Posting
 
     /// Post an in-app notification (badge + panel entry).
+    /// Returns the new entry's id so callers running long work can replace their own
+    /// "running…" row with a result instead of leaving it behind.
+    @discardableResult
     func post(title: String, body: String,
               icon: String = "bell.fill", accentColor: String = "blue",
-              action: (() -> Void)? = nil) {
+              action: (() -> Void)? = nil) -> UUID {
         let n = ILauncherNotification(title: title, body: body,
                                       icon: icon, accentColor: accentColor, action: action)
         notifications.insert(n, at: 0)
         // Cap at 50 entries
         if notifications.count > 50 { notifications = Array(notifications.prefix(50)) }
+        return n.id
     }
 
     /// Post both a system banner and an in-app notification.
