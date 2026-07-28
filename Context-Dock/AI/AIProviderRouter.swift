@@ -175,6 +175,25 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
         )
     }
 
+    /// Appended to the system prompt for every OpenAI-compatible endpoint. Subscription bridges
+    /// (VibeProxy → Claude Pro / ChatGPT Plus) serve a coding agent whose own tools run in the
+    /// proxy's sandbox, not on the user's Mac — so left alone it "verifies" by shelling out to
+    /// find/ls in the wrong filesystem and reports the file missing. Point it back at the
+    /// context it was given, and at the one channel that can actually reach this machine.
+    static let hostRuntimeNote = """
+
+
+        ── DoraX runtime ──
+        You are answering inside DoraX on the user's Mac. Any tools you normally have (bash,
+        file read/write, search) run somewhere else and cannot see this Mac — never use them to
+        verify or look for something, and never report a file or page as missing based on them.
+        Everything above is read live from the user's machine and is authoritative. If a fact you
+        need is not there, say it is unavailable rather than searching for it.
+        To make something happen on this Mac, emit the typed JSON call described above (for
+        example {"terminal_call":{"command":"…","purpose":"…"}}); DoraX executes it after the
+        user approves.
+        """
+
     static func sendCompatible(
         request: AIRequest,
         contextPrompt: String,
@@ -187,7 +206,9 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
         if !configuration.apiKey.isEmpty {
             headers["Authorization"] = "Bearer \(configuration.apiKey)"
         }
-        var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
+        var messages: [[String: Any]] = [
+            ["role": "system", "content": contextPrompt + Self.hostRuntimeNote]
+        ]
         messages += request.history.suffix(10)
             .filter { $0.role != .system }
             .map { ["role": $0.role.rawValue, "content": $0.content] }
@@ -212,7 +233,10 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
                 "messages": messages,
                 // No temperature: newer Claude models served through OpenAI-compatible
                 // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": 1000,
+                // 1000 was too tight for subscription bridges: those serve an agent that
+                // narrates before it acts, so replies were cut mid-sentence — and a truncated
+                // {"terminal_call":…} line silently degrades into prose that never executes.
+                "max_tokens": 4096,
             ]
         )
         let response = try JSONDecoder().decode(OpenAIResponse.self, from: data)

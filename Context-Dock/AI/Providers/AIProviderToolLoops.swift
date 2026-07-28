@@ -211,7 +211,11 @@ extension AIProviderService {
 
         var executedCommands: [ExecutedCommand] = []
 
-        var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
+        // Subscription bridges serve a coding agent with its own sandboxed tools; without this
+        // it "checks" the wrong filesystem instead of using the tools we hand it below.
+        var messages: [[String: Any]] = [
+            ["role": "system", "content": contextPrompt + OpenAICompatibleProviderAdapter.hostRuntimeNote]
+        ]
         for msg in history.suffix(10).filter({ $0.role != .system }) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
