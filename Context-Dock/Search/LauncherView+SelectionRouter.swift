@@ -127,6 +127,39 @@ extension LauncherView {
         }
     }
 
+    // MARK: - Enter
+
+    /// Enter in Selection Scope runs the highlighted row, or the first row when nothing is
+    /// highlighted. Previously it went through `executeFirstOrFocusedPill`, which bails unless
+    /// `focusedPillIndex` is set — so Enter did nothing until the user pressed ↓ first, even
+    /// though the first row renders pre-selected.
+    @discardableResult
+    func executeSelectionScopeSubmit() -> Bool {
+        guard hasSelectionScopeSurface else { return false }
+        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return false }
+
+        let normalized = query.lowercased()
+        let rendered = renderedOrderDockPills(for: normalized)
+        let pills = rendered.isEmpty ? buildDockPills(query: normalized) : rendered
+        let target: DockPill? = {
+            if let index = l2.focusedPillIndex, index < pills.count, !pills[index].isSeparator {
+                return pills[index]
+            }
+            return pills.first { !$0.isSeparator }
+        }()
+        guard let target else {
+            // No rows at all (shouldn't happen — Ask AI is the floor) — go to chat directly.
+            enterSelectionChat(initialQuery: query)
+            return true
+        }
+        l2.focusedPillIndex = nil
+        l2.pillNavViaKeyboard = false
+        executeDockPill(target)
+        searchState.query = ""
+        return true
+    }
+
     // MARK: - File operation routes
 
     /// Finder-style file work the sheet has no single row for ("move to pictures", "rename to X").

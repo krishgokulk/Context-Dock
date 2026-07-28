@@ -566,10 +566,17 @@ extension LauncherView {
             || name.hasPrefix("search ")
     }
 
-    /// Retired. Selection Scope always renders an "Ask AI" row, so a separate sparkles button in
-    /// the input — which appeared exactly when the row was missing — is a second, competing entry
-    /// point for the same thing.
-    var shouldShowSelectionCompactAIAction: Bool { false }
+    /// Sparkles affordance in the input while typing in Selection Scope. It marks what Enter
+    /// does — Ask AI is the first row — rather than appearing only when rows are missing, which
+    /// is what made it read as an auto-switch into chat.
+    var shouldShowSelectionCompactAIAction: Bool {
+        guard hasSelectionScopeSurface,
+            !aiMode.isActive,
+            !l2.isLoading,
+            lockedFindToken == nil
+        else { return false }
+        return !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var shouldShowCompactAIActionButton: Bool {
         shouldShowSelectionCompactAIAction || shouldShowContextDockAIQueryFallback

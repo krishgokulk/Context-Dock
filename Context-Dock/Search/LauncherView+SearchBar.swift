@@ -2236,6 +2236,12 @@ extension LauncherView {
 		                                                handleL2QuerySkippingMenuRouter(trimmed)
 		                                                return
 		                                            }
+                                            // Selection Scope: run the highlighted row, else the
+                                            // first one (Ask AI when nothing else matched). No ↓
+                                            // required — the first row is already the default.
+                                            if executeSelectionScopeSubmit() {
+                                                return
+                                            }
 	                                            if shouldShowSelectionCompactAIAction
 	                                                || shouldShowContextDockAIQueryFallback
 	                                            {
