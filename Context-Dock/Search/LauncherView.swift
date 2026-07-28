@@ -599,15 +599,10 @@ struct LauncherView: View {
             guard !aiMode.isActive else { return false }
             let selectionQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
             if selectionQuery.isEmpty { return !selectionScopeSheetCollapsed }
-            // Typing with nothing matching stays on the compact glowing bar. The Ask AI row is
-            // always present, so it can't count as a match — otherwise every keystroke opened a
-            // sheet holding one row, which is the flicker the shell used to have. Enter then
-            // runs Ask AI and the chat expands the sheet in one motion.
-            return stableVisibleDockPills(for: selectionQuery).contains { pill in
-                !pill.isSeparator
-                    && pill.rankingKind != "selectionAI"
-                    && pill.id != "selection-ask-ai"
-            }
+            // Any typed query opens the sheet. With no menu/extension match it holds just the
+            // Ask AI row, which is the stable way into selection-grounded chat — one row is a
+            // destination, not an empty state.
+            return true
         }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

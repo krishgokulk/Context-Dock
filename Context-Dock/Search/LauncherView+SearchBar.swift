@@ -3203,7 +3203,19 @@ extension LauncherView {
         l2.focusedPillIndex == nil && focusedScopedMenuPill != nil
     }
 
-    func scheduleDeferredQueryChange(from _: String, to newValue: String) {
+    func scheduleDeferredQueryChange(from oldValue: String, to newValue: String) {
+        // Selection Scope opens/closes its sheet on the empty↔typing boundary. That transition
+        // used to wait out the 85 ms query defer plus the 55 ms pill rebuild before anything
+        // resized, so the first keystroke felt like a stutter. Drive the shell straight from the
+        // keystroke — the Ask AI row is always there, so there is nothing to wait for.
+        if hasSelectionScopeSurface {
+            let wasEmpty = oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let isEmptyNow = newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if wasEmpty != isEmptyNow {
+                requestWindowSizeUpdate(
+                    reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+            }
+        }
         // Pure, unscoped Global Context already publishes input state immediately and runs
         // matching through its detached pipeline. Scheduling the generic L2 handler as well
         // duplicated the search 85 ms later on the main actor and made fast typing/backspace

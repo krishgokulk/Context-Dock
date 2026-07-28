@@ -50,7 +50,14 @@ extension LauncherView {
             }
         }
 
-        updateWindowSize(animated: animated, debounceNanoseconds: debounceNanoseconds)
+        // A preset/mode change IS the expand-collapse transition. Debouncing it let SwiftUI paint
+        // the sheet first and grow the shell ~50ms later, which reads as the sheet flickering in
+        // before the window catches up. Only steady-state churn (list height settling while
+        // typing) keeps the debounce.
+        let isSurfaceTransition = presetChanged || modeChanged
+        updateWindowSize(
+            animated: animated,
+            debounceNanoseconds: isSurfaceTransition ? 0 : debounceNanoseconds)
     }
 
     // MARK: - Dock pill arrow-key navigation
