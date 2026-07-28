@@ -285,7 +285,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// While in the future, a global-context app launch is morphing into that app's Context
     /// Dock — result-execution hides are skipped so the dock stays instead of hide+relaunch.
     var suppressResultHideUntil: Date = .distantPast
-    private var smartScopeActivationGeneration = 0
+    /// Bumped per scope activation. The launcher view reads it so the open handler and the
+    /// activation notification can't both enter the same scope twice (which repainted the shell).
+    private(set) var smartScopeActivationGeneration = 0
     var doubleOptionMonitor: Any?
     var doubleOptionLocalMonitor: Any?
     var lastOptionPressTime: TimeInterval = 0
@@ -1902,6 +1904,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
         if toggleOffSmartScopeIfActive("selection") { return }
+        // Read the selection BEFORE the panel appears, while the source app is still frontmost.
+        // The launcher then paints Selection Scope on its first frame instead of showing Context
+        // Dock and swapping once an async AX read lands.
+        if let source = NSWorkspace.shared.frontmostApplication,
+            source.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            AXContextReader.shared.refreshSelectionOnly(from: source)
+        }
         presentSmartScope(.activateSelectionScope, key: "selection")
     }
 

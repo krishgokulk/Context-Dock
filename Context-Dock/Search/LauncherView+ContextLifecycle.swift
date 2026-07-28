@@ -1160,7 +1160,16 @@ extension LauncherView {
             requestWindowSizeUpdate(reason: .modeChanged)
         }
 
-        let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
+        // Opening straight into Selection Scope: enter it now, on this frame. Waiting for the
+        // posted activation meant the shell painted Context Dock (frontmost chip + its menu rows)
+        // first and visibly swapped a moment later.
+        let openingIntoSelectionScope = AppDelegate.shared?.pendingSmartScopeKey == "selection"
+        if openingIntoSelectionScope {
+            activateSelectionScopeFromHotkey()
+        }
+
+        let openingForDockContext =
+            !openingIntoSelectionScope && (AppDelegate.shared?.isDockContextMode ?? true)
         globalContextActivation = nil
         // The hotkey open posts .activateContextDock twice (immediately, then +0.05s), and each
         // nils the activation. Selection Scope is established asynchronously once the AX read
@@ -1226,7 +1235,9 @@ extension LauncherView {
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
                     self.axContext = newCtx
-                    if !self.contextDockIsFrontmostApplication {
+                    // Selection Scope owns the surface — re-seating frontmost context here
+                    // rebuilt the frontmost app's rows underneath it mid-open.
+                    if !self.contextDockIsFrontmostApplication, !self.hasSelectionScopeSurface {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
                     // The lightweight pass can land after the user began typing; re-assert the
@@ -1311,6 +1322,18 @@ extension LauncherView {
     /// on the open grace window. The AX read can lag the keypress, so it applies what is already
     /// cached first, then re-applies once a fresh selection-only read lands.
     func activateSelectionScopeFromHotkey() {
+        // The hotkey enters the scope twice — once from the window-open handler (first frame, so
+        // Context Dock never paints) and once from the posted activation. Both carry the same
+        // activation generation; the second only refreshes the frozen payload with whatever the
+        // slower AX read found, instead of resetting the surface under the user.
+        let generation = AppDelegate.shared?.smartScopeActivationGeneration ?? 0
+        if lastAppliedSelectionActivation == generation, hasSelectionScopeSurface {
+            if let snapshot = currentSelectionActivationSnapshot(refresh: false) {
+                applySelectionScopePayload(snapshot)
+            }
+            return
+        }
+        lastAppliedSelectionActivation = generation
         AppDelegate.shared?.smartScopeActive = true
         // Open as the compact input bar, not the full actions sheet — same shell as the idle
         // launcher. The sheet unfolds on the first keystroke or ↓.

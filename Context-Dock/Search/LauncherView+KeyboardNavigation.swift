@@ -201,6 +201,26 @@ extension LauncherView {
                 return nil
             }
 
+            // Backspace on an empty field in Selection Scope leaves the scope AND dismisses the
+            // dock — the scope IS the surface, so dropping the user into an empty Context Dock
+            // is a dead end. Must be handled here for the same reason as the compact scopes
+            // above: the field editor eats Backspace before .onKeyPress or the NC route runs.
+            if event.keyCode == 51,
+                self.hasSelectionScopeSurface,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+            {
+                self.dismissSelectionAndStayInGlobalContext()
+                self.isSearchFieldFocused = false
+                AppDelegate.shared?.hideLauncher(force: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                    AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+                        .activateIgnoringOtherApps
+                    ])
+                }
+                return nil
+            }
+
             let routingMode = self.keyRoutingMode
             if let routedEvent = self.handleTopLevelKeyRouting(event, mode: routingMode) {
                 return routedEvent

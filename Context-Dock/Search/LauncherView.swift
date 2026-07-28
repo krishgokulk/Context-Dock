@@ -184,6 +184,9 @@ struct LauncherView: View {
     /// Set when the router checked the whole catalog and found no route — turns the fallback
     /// answer into "here's the gap, here's the extension" instead of a guess.
     @State var selectionRouterNoRouteNote: String?
+    /// Activation generation already entered, so the window-open handler and the posted
+    /// activation don't both rebuild the surface for one hotkey press.
+    @State var lastAppliedSelectionActivation: Int = -1
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     // Visible shell height is staged separately from the NSWindow's target capacity so the
@@ -755,7 +758,20 @@ struct LauncherView: View {
             return current
         }
         if hasSelectionScopeSurface {
-            return current
+            // Hold the previous matching rows while a keystroke rebuild is still resolving —
+            // otherwise the sheet blanks between snapshots and the rows visibly jump.
+            guard isResolvingDockPills(for: q) else { return current }
+            let previous = selectionScopedDockPills(cachedDockPills).filter { pill in
+                guard !pill.isSeparator else { return false }
+                return dockPillHasQuerySignal(
+                    pill,
+                    query: q,
+                    rawQuery: q,
+                    scopedBundleId: "com.apple.finder",
+                    scopedAppName: "Finder"
+                )
+            }
+            return previous.contains(where: { !$0.isSeparator }) ? previous : current
         }
         let preview = selectionScopedDockPills(contextDockPreviewPills(for: query))
         if preview.contains(where: { !$0.isSeparator }) {
