@@ -1789,7 +1789,14 @@ extension LauncherView {
                     responseText: response,
                     hasSelection: !self.currentAISelectionSnapshot.isEmpty
                 )
-                let cleaned = self.sanitizeGeneralChatAssistantText(response)
+                var cleaned = self.sanitizeGeneralChatAssistantText(response)
+                // Selection Scope: nothing executed → the answer may not read like a receipt.
+                cleaned = await MainActor.run { () -> String in
+                    guard self.hasSelectionScopeSurface,
+                        self.selectionRouterExecutedRouteTitle == nil
+                    else { return cleaned }
+                    return self.enforceNoFalseSelectionSuccess(cleaned)
+                }
                 await MainActor.run {
                     let enableReq = self.aiMode.pendingEnableApp
                     self.aiMode.pendingEnableApp = nil

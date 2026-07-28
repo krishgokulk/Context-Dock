@@ -2696,6 +2696,7 @@ struct LauncherView: View {
             dismissedFinderSelectionSignature = finderSelectionSignature(dismissedFinderPaths)
         }
         AppDelegate.shared?.clearSmartScope(key: "selection")
+        if hasSelectionScopeSurface { exitSelectionScopeAIChat() }
         withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
             currentContext = .none
             globalContextActivation = nil
@@ -2716,6 +2717,7 @@ struct LauncherView: View {
         // Selection Scope instead of reading as a toggle-off and hiding the dock.
         AppDelegate.shared?.clearSmartScope(key: "selection")
         selectionScopeSheetCollapsed = false
+        exitSelectionScopeAIChat()
         let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
             if let payload = payloadToKeepLive {

@@ -130,6 +130,87 @@ extension LauncherView {
         }
     }
 
+    // MARK: - File operation routes
+
+    /// Finder-style file work the sheet has no single row for ("move to pictures", "rename to X").
+    /// These run through FileManager/NSWorkspace — see SelectionFileOperations for why that beats
+    /// shelling out to mv/cp or scripting Finder.
+    var selectionFileOperationRoutes: [(id: String, title: String, args: String)] {
+        [
+            ("fileop.move", "Move to folder", "destination (folder name or path)"),
+            ("fileop.copy", "Copy to folder", "destination (folder name or path)"),
+            ("fileop.rename", "Rename", "name (new file name, single item only)"),
+            ("fileop.duplicate", "Duplicate", "—"),
+            ("fileop.trash", "Move to Trash", "—"),
+            ("fileop.newfolder", "New folder containing the selection", "name (folder name)"),
+            ("fileop.tag", "Add Finder tag", "tags (comma separated)"),
+            ("fileop.reveal", "Reveal in Finder", "—"),
+        ]
+    }
+
+    func selectionFileOperationPromptBlock() -> String {
+        selectionFileOperationRoutes
+            .map { "- id: \($0.id) | \($0.title) | File operation | args: \($0.args)" }
+            .joined(separator: "\n")
+    }
+
+    /// Executes a `fileop.*` route and reports exactly what the filesystem did.
+    func runSelectionFileOperation(id: String, args: [String: String]) async -> String? {
+        let urls = await MainActor.run { effectiveSelectedFileURLsForConversation() }
+        guard !urls.isEmpty else { return nil }
+        let ops = SelectionFileOperations.shared
+
+        let result: SelectionFileOperationResult
+        switch id {
+        case "fileop.move", "fileop.copy":
+            let raw = args["destination"] ?? ""
+            guard let directory = ops.resolveDestinationDirectory(raw) else {
+                await selectionRouterStep("Destination \"\(raw)\" did not resolve — nothing moved")
+                return "I did not move anything: \"\(raw)\" is not a folder I can resolve. "
+                    + "Give me a folder name (Pictures, Downloads, Desktop) or a full path."
+            }
+            await selectionRouterStep(
+                "\(id == "fileop.move" ? "Moving" : "Copying") \(urls.count) item(s) → \(directory.lastPathComponent)…"
+            )
+            result = id == "fileop.move"
+                ? ops.move(urls, to: directory)
+                : ops.copy(urls, to: directory)
+        case "fileop.rename":
+            await selectionRouterStep("Renaming…")
+            result = ops.rename(urls, to: args["name"] ?? "")
+        case "fileop.duplicate":
+            await selectionRouterStep("Duplicating \(urls.count) item(s)…")
+            result = ops.duplicate(urls)
+        case "fileop.trash":
+            await selectionRouterStep("Moving \(urls.count) item(s) to Trash…")
+            result = ops.trash(urls)
+        case "fileop.newfolder":
+            await selectionRouterStep("Creating folder…")
+            result = ops.newFolder(named: args["name"] ?? "", containing: urls)
+        case "fileop.tag":
+            let tags = (args["tags"] ?? "").split(separator: ",").map(String.init)
+            await selectionRouterStep("Tagging \(urls.count) item(s)…")
+            result = ops.tag(urls, names: tags)
+        case "fileop.reveal":
+            await selectionRouterStep("Revealing in Finder…")
+            result = await MainActor.run { ops.reveal(urls) }
+        default:
+            return nil
+        }
+
+        let title = selectionFileOperationRoutes.first { $0.id == id }?.title ?? id
+        await MainActor.run {
+            aiMode.pendingToolChips = [title]
+            selectionRouterExecutedRouteTitle = result.success ? title : nil
+        }
+        guard result.success else {
+            await selectionRouterStep("\(title) did not complete")
+            return "**\(title) did not run.** \(result.summary)"
+        }
+        await selectionRouterStep("\(title) completed")
+        return "**\(title)**\n\n\(result.summary)"
+    }
+
     // MARK: - Router
 
     /// Runs the ordered Ask AI flow. Returns the final answer when a route ran (or when the
@@ -173,6 +254,7 @@ extension LauncherView {
         // 4 — model picks one id from the catalog. It may answer only with the JSON below.
         await selectionRouterStep("Choosing the best path…")
         let catalogBlock = await MainActor.run { selectionCatalogPromptBlock(catalog) }
+        let fileOpsBlock = payloadKind == "files" ? selectionFileOperationPromptBlock() : ""
         let systemPrompt = """
             You are DoraX's Selection Scope router. The user has \(payloadKind) selected and asked \
             for an ACTION. Below is the COMPLETE list of actions available for this selection — \
@@ -181,9 +263,11 @@ extension LauncherView {
 
             Available routes:
             \(catalogBlock)
+            \(fileOpsBlock.isEmpty ? "" : "\n" + fileOpsBlock)
 
             Reply with ONE line of JSON and nothing else:
             {"selection_action":{"id":"<exact id from the list>"}}
+            {"selection_action":{"id":"fileop.move","args":{"destination":"Pictures"}}}
             or, when NOTHING in the list performs the request:
             {"selection_action":{"id":"none","reason":"<short reason>"}}
 
@@ -191,6 +275,7 @@ extension LauncherView {
             - The id must be copied exactly from the list. Never invent one.
             - Pick the route whose effect matches the request, not one that merely shares a word.
             - The route must accept \(payloadKind) (or "any").
+            - Include "args" only for routes that list them, using the exact key names shown.
             - Prefer a single route. Do not explain, do not add prose.
             """
         let request = AIRequestBuilder.aiChat(text: query, history: [])
@@ -211,8 +296,17 @@ extension LauncherView {
             return nil
         }
 
-        guard let chosenID = parseSelectionRouteID(from: raw) else {
+        guard let choice = parseSelectionRoute(from: raw) else {
             await selectionRouterStep("No usable route returned — falling back to a plain answer")
+            return nil
+        }
+        let chosenID = choice.id
+        if chosenID.hasPrefix("fileop.") {
+            await selectionRouterStep("Best path: File operation · \(chosenID)")
+            if let answer = await runSelectionFileOperation(id: chosenID, args: choice.args) {
+                return answer
+            }
+            await selectionRouterStep("File operation could not run — falling back to an answer")
             return nil
         }
         guard chosenID != "none" else {
@@ -262,6 +356,50 @@ extension LauncherView {
         return "Ran **\(title)**\(label.isEmpty ? "" : " on \(label)")."
     }
 
+    /// Last line of defence for the execution-truth rule. When Selection Scope answered an action
+    /// request without running anything, a model can still open with "IMG_4588.jpg moved to
+    /// Pictures — Done." — prose that reads exactly like a receipt. Stamp the truth on top rather
+    /// than letting the claim stand alone.
+    func enforceNoFalseSelectionSuccess(_ text: String) -> String {
+        let head = String(text.prefix(240)).lowercased()
+        let claims = [
+            "moved to", "saved to", "sent to", "shared to", "copied to", "renamed to",
+            "added to", "created ", "deleted", "compressed", "converted", "uploaded",
+            "has been moved", "has been saved", "successfully",
+        ]
+        guard claims.contains(where: head.contains) else { return text }
+        return """
+            **Nothing ran.** No action in this selection's sheet performs that, so DoraX did not \
+            change anything. What follows is a suggestion, not a result.
+
+            \(text)
+            """
+    }
+
+    /// Leaving Selection Scope ends its conversation too — the chat is grounded in a selection
+    /// that no longer applies, so keeping it would answer the next selection with stale content.
+    func exitSelectionScopeAIChat() {
+        aiMode.currentTask?.cancel()
+        aiMode.currentTask = nil
+        aiMode.isActive = false
+        aiMode.messages = []
+        aiMode.isLoading = false
+        aiMode.loadingStatus = nil
+        aiMode.streamingId = nil
+        aiMode.pendingToolChips = []
+        aiMode.routerTrace = []
+        aiMode.pendingShare = nil
+        aiMode.pendingEnableApp = nil
+        aiMode.attachments = []
+        aiMode.selectionText = nil
+        aiMode.selectionFiles = []
+        aiMode.selectionURL = nil
+        selectionRouterExecutedRouteTitle = nil
+        selectionRouterNoRouteNote = nil
+        hasUserSentMessageInCurrentSession = false
+        clearGeneralAIConversation()
+    }
+
     /// One step of the live trace: shown next to the typing indicator now, kept on the answer
     /// afterwards. Every line describes work the app performed, never model reasoning.
     func selectionRouterStep(_ text: String) async {
@@ -286,19 +424,49 @@ extension LauncherView {
         return ""
     }
 
-    /// Pulls the id out of `{"selection_action":{"id":"…"}}`, tolerating code fences and prose.
-    func parseSelectionRouteID(from response: String) -> String? {
-        guard let range = response.range(of: "\"selection_action\"") else { return nil }
-        let tail = response[range.upperBound...]
-        guard let idRange = tail.range(of: "\"id\"") else { return nil }
-        let afterID = tail[idRange.upperBound...]
-        guard let colon = afterID.firstIndex(of: ":") else { return nil }
-        let valuePart = afterID[afterID.index(after: colon)...]
-        guard let openQuote = valuePart.firstIndex(of: "\"") else { return nil }
-        let valueStart = valuePart.index(after: openQuote)
-        guard let closeQuote = valuePart[valueStart...].firstIndex(of: "\"") else { return nil }
-        let id = String(valuePart[valueStart..<closeQuote])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return id.isEmpty ? nil : id
+    /// Pulls the route out of `{"selection_action":{"id":"…","args":{…}}}`, tolerating code
+    /// fences and surrounding prose by scanning for the balanced object.
+    func parseSelectionRoute(from response: String) -> (id: String, args: [String: String])? {
+        guard let keyRange = response.range(of: "\"selection_action\"") else { return nil }
+        // Walk back to the enclosing "{", then forward to its matching "}".
+        guard let objectStart = response[..<keyRange.lowerBound].lastIndex(of: "{") else {
+            return nil
+        }
+        var depth = 0
+        var objectEnd: String.Index?
+        var index = objectStart
+        while index < response.endIndex {
+            let character = response[index]
+            if character == "{" { depth += 1 }
+            if character == "}" {
+                depth -= 1
+                if depth == 0 {
+                    objectEnd = response.index(after: index)
+                    break
+                }
+            }
+            index = response.index(after: index)
+        }
+        guard let objectEnd,
+            let data = String(response[objectStart..<objectEnd]).data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let action = root["selection_action"] as? [String: Any],
+            let id = (action["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !id.isEmpty
+        else { return nil }
+
+        var args: [String: String] = [:]
+        if let rawArgs = action["args"] as? [String: Any] {
+            for (key, value) in rawArgs {
+                if let string = value as? String {
+                    args[key] = string
+                } else if let array = value as? [String] {
+                    args[key] = array.joined(separator: ",")
+                } else {
+                    args[key] = String(describing: value)
+                }
+            }
+        }
+        return (id, args)
     }
 }

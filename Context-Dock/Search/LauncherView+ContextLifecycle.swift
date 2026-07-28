@@ -1296,6 +1296,7 @@ extension LauncherView {
             || searchState.activeSmartQueryKey != nil
             || windowReviewFocusedID != nil
         guard hadScope else { return }
+        if selectionScopePayload != nil { exitSelectionScopeAIChat() }
         selectionScopePayload = nil
         selectionScopeSheetCollapsed = false
         searchState.activeSmartQueryKey = nil
