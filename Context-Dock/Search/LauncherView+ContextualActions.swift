@@ -4143,7 +4143,10 @@ extension LauncherView {
                 refreshContext: refreshContext,
                 cachedPills: cachedDockPills,
                 previewPills: contextDockPreviewPills(for: query),
-                isQuestionStyle: isQuestionStyleDockQuery(query)
+                // Selection Scope never takes the question-style short-circuit. That path wipes
+                // the pill cache before buildDockPills runs, so "what im…" produced no rows at
+                // all — including the Ask AI row this scope is supposed to always show.
+                isQuestionStyle: isQuestionStyleDockQuery(query) && !hasSelectionScopeSurface
             ),
             viewModel: contextDockViewModel,
             actions: ContextDockPillCoordinator.Actions(
