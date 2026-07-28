@@ -566,18 +566,10 @@ extension LauncherView {
             || name.hasPrefix("search ")
     }
 
-    var shouldShowSelectionCompactAIAction: Bool {
-        guard hasSelectionScopeSurface,
-            !aiMode.isActive,
-            !l2.isLoading,
-            lockedFindToken == nil
-        else { return false }
-
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return false }
-        if isResolvingDockPills(for: q.lowercased()) { return false }
-        return !currentVisibleDockPills(for: q).contains { !$0.isSeparator }
-    }
+    /// Retired. Selection Scope always renders an "Ask AI" row, so a separate sparkles button in
+    /// the input — which appeared exactly when the row was missing — is a second, competing entry
+    /// point for the same thing.
+    var shouldShowSelectionCompactAIAction: Bool { false }
 
     var shouldShowCompactAIActionButton: Bool {
         shouldShowSelectionCompactAIAction || shouldShowContextDockAIQueryFallback
@@ -597,14 +589,10 @@ extension LauncherView {
     /// Context Dock: when a typed query matches no real menu command, auto-arm the frontmost
     /// app chat (so the bar reads "Ask <App> — press Enter to send" with just the pin icon)
     /// instead of surfacing a chat-connect icon. Guards against arming mid-resolution.
-    func autoArmContextDockChatForNoMenuMatch() {
-        guard shouldShowContextDockAIQueryFallback else { return }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty, !isResolvingDockPills(for: q) else { return }
-        guard !l2.chatArmed, !l2.showChatPopover, !l2.isLoading else { return }
-        armContextDockChat()
-        l2.chatAutoArmedForNoMenuMatch = true
-    }
+    /// Retired. A query with no menu match now surfaces an "Ask AI" row in the result sheet;
+    /// arming the app chat from underneath the user swapped the whole outer shell mid-typing.
+    /// Chat stays explicit — the "+" button, or running that row.
+    func autoArmContextDockChatForNoMenuMatch() {}
 
     /// Global Context inline app scope (right-arrow into a running app, e.g. Tailscale): when
     /// the typed query filters to no real menu command, auto-arm the scoped app's chat — same
@@ -633,13 +621,9 @@ extension LauncherView {
         return visible.allSatisfy(isSearchOnlyDockPill)
     }
 
-    func autoArmGlobalInlineScopeChatForNoMenuMatch() {
-        guard shouldAutoArmGlobalInlineScopeChat,
-            let target = currentGlobalScopedChatTarget
-        else { return }
-        armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
-        l2.chatAutoArmedForNoMenuMatch = true
-    }
+    /// Retired for the same reason as the Context Dock variant: entering an app scope and typing
+    /// something unmatched should not silently become a chat session.
+    func autoArmGlobalInlineScopeChatForNoMenuMatch() {}
 
     func armGlobalInlineScopeChat(_ scope: GlobalInlineAppScope) {
         armGlobalScopedChat(appName: scope.appName, bundleId: scope.bundleId)

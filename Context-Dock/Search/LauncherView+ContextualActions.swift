@@ -4315,7 +4315,7 @@ extension LauncherView {
             sel.append(contentsOf: finderMenuPills)
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-            return dedupeRankedDockPills(
+            let rankedSelection = dedupeRankedDockPills(
                 rankDockPills(
                     sel,
                     rawQuery: q,
@@ -4326,6 +4326,13 @@ extension LauncherView {
                     includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
             )
+            // Ask AI is the floor row of this scope, not a search result: ranking dropped it for
+            // any query whose words it doesn't carry ("what", "about this file"), which left an
+            // expanded-but-empty sheet. Re-seat it whenever ranking filtered it out.
+            if rankedSelection.contains(where: { $0.rankingKind == "selectionAI" }) {
+                return rankedSelection
+            }
+            return [selectionScopeAskAIPill(query: q)] + rankedSelection
         }
 
         if isQuestionStyleDockQuery(q) { return [] }
