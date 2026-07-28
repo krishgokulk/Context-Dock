@@ -196,13 +196,31 @@ struct NotepadScopeView: View {
                 }
                 Spacer()
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(store.notes) { note in
-                            noteRow(note)
+                // ↑/↓ move the selection through the whole list, so the list has to
+                // follow it — without this the highlight walked off-screen and the
+                // editor changed under a list that never moved.
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(store.notes) { note in
+                                noteRow(note)
+                                    .id(note.id)
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .onChange(of: selectedNoteID) { _, newValue in
+                        guard let newValue else { return }
+                        // nil anchor scrolls the minimum distance needed, so a
+                        // already-visible row does not jump to the middle.
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            proxy.scrollTo(newValue, anchor: nil)
                         }
                     }
-                    .padding(6)
+                    .onAppear {
+                        guard let id = selectedNoteID else { return }
+                        proxy.scrollTo(id, anchor: nil)
+                    }
                 }
             }
         }
