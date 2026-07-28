@@ -597,12 +597,17 @@ struct LauncherView: View {
         // and unfolds on the first keystroke (or ↓).
         if hasSelectionScopeSurface {
             guard !aiMode.isActive else { return false }
-            if selectionScopeSheetCollapsed,
-                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                return false
+            let selectionQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if selectionQuery.isEmpty { return !selectionScopeSheetCollapsed }
+            // Typing with nothing matching stays on the compact glowing bar. The Ask AI row is
+            // always present, so it can't count as a match — otherwise every keystroke opened a
+            // sheet holding one row, which is the flicker the shell used to have. Enter then
+            // runs Ask AI and the chat expands the sheet in one motion.
+            return stableVisibleDockPills(for: selectionQuery).contains { pill in
+                !pill.isSeparator
+                    && pill.rankingKind != "selectionAI"
+                    && pill.id != "selection-ask-ai"
             }
-            return true
         }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

@@ -1,6 +1,7 @@
 import AddressBook
 import AppIntents
 import AppKit
+
 import Combine
 import Contacts
 import Darwin
@@ -10,6 +11,12 @@ import Quartz
 import SwiftTerm
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// Coalesces global-search index rebuilds. Extensions can't hold stored state, and the rebuild
+/// is main-thread work heavy enough to show up in spin reports, so the clock lives here.
+enum GlobalSearchIndexThrottle {
+    @MainActor static var lastRebuild: Date = .distantPast
+}
 import Vision
 
 extension LauncherView {
@@ -3107,6 +3114,12 @@ extension LauncherView {
     func rebuildGlobalSearchIndex() {
         let started = Date()
         guard !allApplications.isEmpty || !runningRegularApps.isEmpty else { return }
+        // Rebuilding walks every cached menu snapshot and re-grams it on the main thread —
+        // spin reports caught it holding the main queue for ~0.5s. The open path alone asks for
+        // two rebuilds (frontmost warm, then the recent-app warm a second later), and every
+        // reopen asks again. Coalesce: at most one rebuild per 8s.
+        guard Date().timeIntervalSince(GlobalSearchIndexThrottle.lastRebuild) > 8 else { return }
+        GlobalSearchIndexThrottle.lastRebuild = Date()
         GlobalSearchIndexStatus.shared.begin(message: "Building Global Context index...")
 
         var docs: [GlobalSearchService.SearchDocument] = []
