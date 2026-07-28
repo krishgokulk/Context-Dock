@@ -838,8 +838,9 @@ extension LauncherView {
 
                 // A selection belongs to the app it was made in. When the frontmost app
                 // actually changes, drop the previous app's cached selection so its
-                // selection button/scope doesn't linger in every other app.
-                if appChanged {
+                // selection button/scope doesn't linger in every other app. A locked chat
+                // keeps its selection — that text/file IS the conversation's payload.
+                if appChanged, !isContextDockChatLocked {
                     liveDockSelectionPreviewText = nil
                     axContext.selectedText = nil
                     axContext.selectedFilePaths = []
@@ -881,25 +882,21 @@ extension LauncherView {
                     return
                 }
 
-                if appChanged {
-                    // Frontmost-app chat that is NOT pinned must not linger on the previous
-                    // app when the user switches apps/desktops (otherwise the header chip
-                    // follows the new app while the placeholder still says "Ask Code"). Exit
-                    // it. A pinned chat stays locked to the app it was pinned for.
-                    let chatApp = l2.chatDraftBundleId
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let frontmostChatActive =
-                        l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
-                    if frontmostChatActive, !settings.launcherPinned,
-                        !chatApp.isEmpty, chatApp != bundleID
-                    {
-                        l2.isLoading = false
-                        l2.currentTask?.cancel()
-                        l2.currentTask = nil
-                        l2.chatMessages = []
-                        disarmContextDockChat()
+                // A frontmost-app chat is a locked conversation: it belongs to the app it was
+                // started for. Switching apps, clicking away or changing Spaces must not wipe
+                // its messages, retarget its scope or rebuild the other app's menus underneath
+                // it — only an explicit exit (Escape / backspace / the `−` chip) ends it.
+                // Menu search (chat not locked) keeps following the frontmost app below.
+                if isContextDockChatLocked {
+                    syncScopeChatSpaceHold()
+                    syncL2DockSession(force: l2.activeDockSessionKey == nil)
+                    if AppDelegate.shared?.launcherWindow?.isVisible == true {
+                        DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
                     }
+                    return
+                }
 
+                if appChanged {
                     l2.appCompletion = nil
                     l2.focusedPillIndex = nil
                     l2.pillNavViaKeyboard = false

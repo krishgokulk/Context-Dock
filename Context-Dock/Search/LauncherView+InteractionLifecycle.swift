@@ -713,6 +713,13 @@ extension LauncherView {
                     return
                 }
 
+                // A locked frontmost-app chat owns the dock. Do not repoint frontmost
+                // metadata, re-detect context or reload the new app's menus underneath a
+                // live conversation — the contextEnv path applies the same lock.
+                if isContextDockChatLocked {
+                    return
+                }
+
                 // Update frontmost app info
                 frontmost.name = appName
                 frontmost.bundleID = bundleID

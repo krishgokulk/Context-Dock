@@ -119,6 +119,30 @@ extension LauncherView {
         l2.chatArmed || l2.showChatPopover
     }
 
+    /// A frontmost-app chat owns the dock: the conversation is bound to the app it was
+    /// started for and must survive app switches, Space switches and focus loss. Only an
+    /// explicit exit (Escape, backspace, the `−` chip, Clear) ends it. Menu search — this
+    /// property false — keeps following the frontmost app as usual.
+    var isContextDockChatLocked: Bool {
+        showContextInDock
+            && !showMediaLayer
+            && !aiMode.isActive
+            && !isGlobalContextActive
+            && !l2.chatDismissed
+            && (l2.chatArmed || l2.showChatPopover || l2.isLoading || !l2.chatMessages.isEmpty)
+            // A chat auto-armed only because a query matched no menu item is not a session
+            // the user started — it must not pin the dock to an app.
+            && !(l2.chatAutoArmedForNoMenuMatch && l2.chatMessages.isEmpty && !l2.isLoading)
+    }
+
+    /// Single writer for `AppDelegate.scopeChatSpaceHold`. Every state change that can
+    /// start or end a scope / scoped chat routes through here, so the hold can never be
+    /// left stale (dock stuck across Spaces) or cleared mid-chat (dock vanishes on click).
+    func syncScopeChatSpaceHold() {
+        AppDelegate.shared?.scopeChatSpaceHold =
+            currentGlobalScopedBundleID != nil || isContextDockChatLocked
+    }
+
     /// Stores the measured intrinsic height of the active chat conversation and re-fits the window
     /// so the sheet exactly matches the content (no clipped messages, no empty box).
     func updateMeasuredChatContentHeight(_ height: CGFloat) {
@@ -756,6 +780,7 @@ extension LauncherView {
         l2.chatDismissed = true
         l2.chatDraftAppName = ""
         l2.chatDraftBundleId = ""
+        syncScopeChatSpaceHold()
         requestWindowSizeUpdate(reason: .panelChanged)
     }
 
@@ -790,6 +815,7 @@ extension LauncherView {
         l2.chatDismissed = true
         l2.chatDraftAppName = ""
         l2.chatDraftBundleId = ""
+        syncScopeChatSpaceHold()
         l2.appCompletion = nil
         l2.showResultsPopover = false
         l2.focusedPillIndex = nil
@@ -809,17 +835,21 @@ extension LauncherView {
     /// bound to the frontmost app fall out to Global Context.
     func exitContextDockChatBackToContext() {
         // Scoped chat over → release the hold so normal click-away hiding resumes.
-        AppDelegate.shared?.scopeChatSpaceHold = false
+        defer { syncScopeChatSpaceHold() }
         let chatApp = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         let frontApp = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopedApp = l2.targetApp?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // Bound to the frontmost app when the chat draft OR the locked scope IS the
         // frontmost app — either way, exiting must land on that app's menu search,
         // never Global Context.
+        // A frontmost-app chat now survives app switches, so its draft bundle may name the
+        // app the chat STARTED in rather than the live frontmost one. With no explicit
+        // scope (l2.targetApp / global inline scope) exiting still belongs on the CURRENT
+        // frontmost app's menu search — never a drop into Global Context.
         let boundToFrontmost =
             !frontApp.isEmpty
             && (l2.targetApp == nil || scopedApp == frontApp)
-            && (chatApp.isEmpty || chatApp == frontApp)
+            && (chatApp.isEmpty || chatApp == frontApp || allGlobalInlineAppScopes.isEmpty)
         if boundToFrontmost {
             exitContextDockChatSheet()
             l2.targetApp = nil

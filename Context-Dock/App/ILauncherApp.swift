@@ -1194,16 +1194,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleActiveSpaceChanged(_ notification: Notification) {
         guard let window = launcherWindow, window.isVisible else { return }
-        // Bottom dock AND a persistent floating dock (Pin / Always-Float) stay put across
-        // Spaces. A transient floating dock is manual — don't follow the user to a new Space.
-        guard dockJoinsAllSpaces else { return }
-        // Suppress the resign-key hide the Space switch triggers, so the dock doesn't
-        // blink out and reappear.
+        // A Space/desktop switch is NEVER a click-away gesture — it only looks like one
+        // because macOS resigns key focus. Suppress the resign-key hide in every mode so
+        // the dock never blinks out on a desktop switch. A dock that joins all Spaces stays
+        // put; a transient floating dock rides along via .moveToActiveSpace.
         suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
-        applyPersistentDockBehavior()
+        if dockJoinsAllSpaces {
+            applyPersistentDockBehavior()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
             self.reinforceFloatingDockWindow(reason: "active Space changed", activate: false)
+            self.adoptMenuBarOwnerAfterSpaceChange()
+        }
+    }
+
+    /// After a Space switch macOS usually hands the menu bar to a different app WITHOUT
+    /// posting `didActivateApplication` (our panel keeps key focus), so menu search would
+    /// keep showing the old desktop's app. Re-read the menu bar owner and push it down.
+    /// A locked frontmost-app chat ignores this on the view side and stays on its app.
+    private func adoptMenuBarOwnerAfterSpaceChange() {
+        guard let target = menuBarOwningUserFacingApplication(),
+            target.bundleIdentifier != Bundle.main.bundleIdentifier,
+            !target.isTerminated
+        else { return }
+        guard target.bundleIdentifier != previousFrontmostApp?.bundleIdentifier else { return }
+        recordFrontmostApp(target)
+        ContextDockEnvironment.shared.frontmostAppDidChange(
+            name: target.localizedName ?? "",
+            bundleID: target.bundleIdentifier ?? ""
+        )
+        Task { @MainActor in
+            MenuWarmCacheService.shared.frontmostAppDidChange(target)
         }
     }
 
@@ -2304,6 +2326,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.orderFrontRegardless()
             return
         }
+        // An active scope / frontmost-app chat owns the dock. windowDidResignKey already
+        // guards this, but every other soft-hide path (action executed, app activated,
+        // context switch) reached hideLauncher() directly and tore the conversation down.
+        if !force && scopeChatSpaceHold {
+            window.alphaValue = 1
+            applyPersistentDockBehavior()
+            window.orderFrontRegardless()
+            return
+        }
         // Pinned: stay floating over every app — even after actions run. Only a
         // forced hide (Escape / hotkey toggle) dismisses, which also unpins.
         if !force && settings.launcherPinned {
@@ -2314,6 +2345,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.launcherPinned = false
             smartScopeActive = false
             activeSmartScopeKey = nil
+            // Escape / hotkey ends the session outright — release the scope-chat hold so a
+            // later reopen starts unheld instead of floating on every Space forever.
+            scopeChatSpaceHold = false
         }
         if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
             window.alphaValue = 1

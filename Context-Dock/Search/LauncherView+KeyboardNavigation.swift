@@ -10,8 +10,7 @@ extension LauncherView {
         // Keep the dock floating across Spaces while a scope / scoped chat is active,
         // so switching desktops doesn't leave it on the old Space (reads as "hidden").
         // Cleared automatically once the scope is exited.
-        AppDelegate.shared?.scopeChatSpaceHold =
-            currentGlobalScopedBundleID != nil || l2.chatArmed || shouldShowContextDockChatSheet
+        syncScopeChatSpaceHold()
 
         if isGlobalContextActive,
             globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
