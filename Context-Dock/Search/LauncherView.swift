@@ -190,6 +190,9 @@ struct LauncherView: View {
     /// Cloud-consent request rendered inline in the chat (instead of the floating window)
     /// whenever a chat surface is already on screen.
     @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
+    /// "This scope has no tool for that" offer — link an installed CLI, or install one.
+    @State var pendingCapabilityGap: CapabilityGapService.Gap?
+    @State var capabilityGapWorking = false
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     // Visible shell height is staged separately from the NSWindow's target capacity so the

@@ -1324,6 +1324,16 @@ extension LauncherView {
                                     }
                                 }
 
+                                if let gap = pendingCapabilityGap {
+                                    CapabilityGapCard(
+                                        gap: gap,
+                                        isWorking: capabilityGapWorking,
+                                        onPrimary: { resolveCapabilityGap(gap) },
+                                        onDismiss: { dismissCapabilityGap() }
+                                    )
+                                    .id("capability-gap")
+                                }
+
                                 if let pending = taskExecutor.pendingToolChoice {
                                     ToolSelectionInlineView(
                                         pending: pending,
@@ -2904,6 +2914,76 @@ extension LauncherView {
         handleL2Query(query, skipMenuRouter: true)
     }
 
+    /// Closes the offered capability gap, then re-runs the request that exposed it — so the user
+    /// presses one button and gets the thing they asked for, not a confirmation dialog and a
+    /// second attempt they have to type again.
+    func resolveCapabilityGap(_ gap: CapabilityGapService.Gap) {
+        guard !capabilityGapWorking else { return }
+        capabilityGapWorking = true
+        let service = CapabilityGapService.shared
+
+        switch gap.resolution {
+        case .linkInstalledTool(let packageID, let command, _):
+            service.link(packageID: packageID, to: gap.bundleID)
+            finishCapabilityGap(gap, note: "Linked \(command) to \(gap.appName).")
+
+        case .installTool(let command, let formula, _):
+            Task { @MainActor in
+                l2.isLoading = true
+                l2.loadingStatus = "Installing \(formula)…"
+                // Runs through the normal command approval + execution path, so the user still
+                // sees and approves the exact brew command.
+                let result = await TerminalAIBridge.shared.processAICommand(
+                    "brew install \(formula)",
+                    purpose: "Install \(formula) so \(gap.appName) can \(gap.query)")
+                l2.loadingStatus = nil
+                l2.isLoading = false
+                guard result.success else {
+                    capabilityGapWorking = false
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "\(formula) was not installed, so nothing ran.\n\n"
+                                + String(result.output.prefix(600)),
+                            isError: true))
+                    pendingCapabilityGap = nil
+                    persistActiveL2DockSession()
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                    return
+                }
+                // Pick the new binary up before linking it.
+                _ = await TerminalPackageManager.shared.scanForInstalledTools()
+                let linked = service.linkCommand(command, to: gap.bundleID)
+                finishCapabilityGap(
+                    gap,
+                    note: linked
+                        ? "Installed \(formula) and linked \(command) to \(gap.appName)."
+                        : "Installed \(formula). It could not be linked automatically — add it in Settings → Automation → CLI Tools.")
+            }
+        }
+    }
+
+    private func finishCapabilityGap(_ gap: CapabilityGapService.Gap, note: String) {
+        capabilityGapWorking = false
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            pendingCapabilityGap = nil
+        }
+        l2.chatMessages.append(AIChatMessage(role: .assistant, content: note))
+        persistActiveL2DockSession()
+        // Re-run the original request now that the scope owns the tool.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.handleL2Query(gap.query, skipMenuRouter: true)
+        }
+    }
+
+    func dismissCapabilityGap() {
+        capabilityGapWorking = false
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            pendingCapabilityGap = nil
+        }
+        requestWindowSizeUpdate(reason: .chatChanged)
+    }
+
     func handleL2Query(_ query: String) {
         handleL2Query(query, skipMenuRouter: false)
     }
@@ -3175,6 +3255,23 @@ extension LauncherView {
             dockScope.isExplicitAppScope
             && !scopedBundleId.isEmpty
             && !scopedAppName.isEmpty
+
+        // Capability gap: the request needs a CLI this scope cannot reach. Offer the one action
+        // that closes it (link it, or install then link) instead of spending a provider call on
+        // an answer that can only say "open Terminal yourself".
+        let gapBundleId = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        let gapAppName = scopedAppName.isEmpty ? frontmost.name : scopedAppName
+        if pendingCapabilityGap == nil,
+            let gap = CapabilityGapService.shared.resolve(
+                query: query, bundleID: gapBundleId, appName: gapAppName)
+        {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                pendingCapabilityGap = gap
+            }
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
         // Global context + live selection or clipboard → query is about the content; skip app routing
         let globalSelectionActive =
             dockScope.isGlobalScope
