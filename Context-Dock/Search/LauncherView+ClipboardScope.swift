@@ -1943,6 +1943,28 @@ extension LauncherView {
         clipboardSelectionOrder.append(id)
     }
 
+    /// Clipboard Scope is a standalone surface reached by its own hotkey, never a layer
+    /// stacked on Context Dock — leaving it closes the dock and hands focus back to the
+    /// app the user came from, instead of dropping them into a Context Dock they never
+    /// asked for. Returns false when the scope isn't open so callers fall through.
+    @discardableResult
+    func exitClipboardScopeClosingLauncher() -> Bool {
+        guard searchState.activeSmartQueryKey == "clipboard" else { return false }
+        clearSearchContext()
+        clipboardSourcePillFocusIndex = nil
+        clipboardSourceFilterBundleId = ""
+        clipboardSourceFilterName = ""
+        expandedClipboardEntryIDs.removeAll()
+        AppDelegate.shared?.smartScopeActive = false
+        AppDelegate.shared?.hideLauncher(force: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+                .activateIgnoringOtherApps
+            ])
+        }
+        return true
+    }
+
     func clearClipboardSelection() {
         selectedClipboardEntryIDs.removeAll()
         clipboardSelectionOrder.removeAll()

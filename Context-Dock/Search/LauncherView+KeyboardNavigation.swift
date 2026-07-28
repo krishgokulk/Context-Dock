@@ -1895,6 +1895,8 @@ extension LauncherView {
                         query: searchState.query, delayNanoseconds: 0, refreshContext: false)
                     return .handled
                 }
+                // Clipboard Scope closes the dock outright rather than falling back.
+                if exitClipboardScopeClosingLauncher() { return .handled }
                 // App scope or app panel: ESC exits scope and returns to L1 (stays open)
                 if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
                     || searchState.contextApp != nil
@@ -1937,8 +1939,9 @@ extension LauncherView {
                 if activeNotepadScopeCommand != nil { return .ignored }
                 let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
-                    // Backspace on an empty field leaves a compact scope (Clipboard,
-                    // Notifications) — same step-out gesture the other surfaces use.
+                    // Backspace on an empty field leaves a compact scope. Clipboard exits
+                    // the dock entirely; Notifications still steps out to the surface below.
+                    if exitClipboardScopeClosingLauncher() { return .handled }
                     if searchState.activeSmartQueryKey != nil {
                         clearSearchContext()
                         isSearchFieldFocused = true

@@ -689,6 +689,7 @@ extension LauncherView {
                     }
                     return
                 }
+                if exitClipboardScopeClosingLauncher() { return }
                 if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
                     || searchState.contextApp != nil
                 {
@@ -722,8 +723,9 @@ extension LauncherView {
                 else {
                     return
                 }
-                // Compact scopes (Clipboard / Notifications) step out first — backspace
-                // on their empty field returns to the surface underneath.
+                // Compact scopes step out first. Clipboard leaves the dock completely;
+                // Notifications returns to the surface underneath.
+                if exitClipboardScopeClosingLauncher() { return }
                 if searchState.activeSmartQueryKey != nil {
                     clearSearchContext()
                     isSearchFieldFocused = true
