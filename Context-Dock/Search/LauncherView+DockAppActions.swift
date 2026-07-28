@@ -167,11 +167,11 @@ extension LauncherView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             DockActionFeedback.complete(switchId)
         }
-        // Un-minimize the app's windows and centre once restored. Minimized windows
-        // animate back in asynchronously, so this polls until a real window appears
-        // instead of firing one premature attempt that finds only a minimized frame
-        // (which used to surface a spurious "No window found" toast and skip centring).
-        WindowManagementService.shared.centerAfterActivate(app)
+        // Un-minimize the app's windows and raise them — never move or resize. Minimized
+        // windows animate back in asynchronously, so this polls until a real window
+        // appears instead of firing one premature attempt that finds only a minimized
+        // frame.
+        WindowManagementService.shared.restoreAfterActivate(app)
         // Don't steal focus back — the activated app should remain frontmost
     }
 
