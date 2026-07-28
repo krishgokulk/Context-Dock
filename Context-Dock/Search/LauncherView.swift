@@ -187,6 +187,9 @@ struct LauncherView: View {
     /// Activation generation already entered, so the window-open handler and the posted
     /// activation don't both rebuild the surface for one hotkey press.
     @State var lastAppliedSelectionActivation: Int = -1
+    /// Cloud-consent request rendered inline in the chat (instead of the floating window)
+    /// whenever a chat surface is already on screen.
+    @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
     // Visible shell height is staged separately from the NSWindow's target capacity so the
@@ -808,10 +811,10 @@ struct LauncherView: View {
         let appName = l2.targetApp?.name ?? frontmost.name
         var pill = DockPill(
             id: "context-fallback-ai-\(normalizedDockPillText(q))",
-            name: "Ask \(appName)",
-            icon: "bubble.left.and.bubble.right",
+            name: q.isEmpty ? "Ask AI" : "Ask AI: \(q)",
+            icon: "sparkles",
             accentColorName: "purple",
-            badge: nil,
+            badge: appName.isEmpty ? nil : appName,
             execute: {
                 guard !q.isEmpty else { return }
                 dismissMediaLayer()
@@ -1362,9 +1365,28 @@ struct LauncherView: View {
             }
         }
         .onReceive(AIPrivacyApprovalCenter.shared.$pending) { pending in
+            // Prefer the inline card whenever a chat surface is on screen — a separate floating
+            // window covered the dock and hid the context the question is about.
+            let chatSurfaceVisible =
+                aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
             if let pending {
-                openAIPrivacyApprovalWindow(pending: pending)
+                if chatSurfaceVisible {
+                    AIPrivacyApprovalWindowHost.close()
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        pendingPrivacyApproval = pending
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                } else {
+                    pendingPrivacyApproval = nil
+                    openAIPrivacyApprovalWindow(pending: pending)
+                }
             } else {
+                if pendingPrivacyApproval != nil {
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                        pendingPrivacyApproval = nil
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                }
                 AIPrivacyApprovalWindowHost.close()
             }
         }

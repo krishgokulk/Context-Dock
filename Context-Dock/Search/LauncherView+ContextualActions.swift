@@ -5732,10 +5732,23 @@ extension LauncherView {
         // keep the Finder/menu surface broad. The selection state should feel like the native
         // menu bar after selecting a file: File/Edit/View/Go/Window/Help commands stay available,
         // while app launch/recent-app rows are still removed by the selection-scoped filter.
-        guard hasSelectionScopeSurface && !isExplicitAppScope else {
-            return enabled
-        }
-        return selectionScopedDockPills(enabled)
+        let resolved: [DockPill] =
+            (hasSelectionScopeSurface && !isExplicitAppScope)
+            ? selectionScopedDockPills(enabled)
+            : enabled
+        if resolved.contains(where: { !$0.isSeparator }) { return resolved }
+
+        // No match. Keep the result sheet open with an "Ask AI" row instead of collapsing the
+        // surface (which made the shell jump between bar and sheet while typing) or auto-arming
+        // the app chat (which swapped the whole outer layer out from under the query).
+        guard showContextInDock,
+            !isGlobalContextActive,
+            !hasSelectionScopeSurface,  // Selection Scope already floors with its own Ask AI row
+            !isFinderDesktopOnlyMode,
+            !isCompactSmartScope,
+            !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return resolved }
+        return [contextDockNoResultFallbackPill(for: q)]
     }
 
 }

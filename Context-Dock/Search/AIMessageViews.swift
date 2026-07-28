@@ -99,6 +99,58 @@ struct AICapabilityApprovalView: View {
     }
 }
 
+/// Inline consent card. The same decision as `AIPrivacyApprovalView`, rendered inside the chat
+/// instead of a separate floating window — a modal panel over the dock broke the flow and hid
+/// the very context the user is being asked about.
+struct InlinePrivacyApprovalCard: View {
+    let pending: AIPrivacyApprovalCenter.PendingApproval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "lock.trianglebadge.exclamationmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("Send this context to \(pending.provider.displayName)?")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            Text(pending.contextDescription)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            Text("Selected text, files or contact data leaves this Mac.")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange.opacity(0.9))
+            HStack(spacing: 8) {
+                Button("Cancel") { AIPrivacyApprovalCenter.shared.deny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button("Send") { AIPrivacyApprovalCenter.shared.approve() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(Color.accentColor, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
 struct AIPrivacyApprovalView: View {
     let pending: AIPrivacyApprovalCenter.PendingApproval
 

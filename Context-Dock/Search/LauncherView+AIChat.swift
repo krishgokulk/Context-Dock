@@ -1460,6 +1460,10 @@ extension LauncherView {
                             .padding(.horizontal, 4)
                             .id("loading")
                         }
+                        if let pendingPrivacyApproval {
+                            InlinePrivacyApprovalCard(pending: pendingPrivacyApproval)
+                                .id("privacy-approval")
+                        }
                         if let pending = aiMode.pendingShare {
                             selectionShareConfirmCard(pending)
                                 .id("pending-share")

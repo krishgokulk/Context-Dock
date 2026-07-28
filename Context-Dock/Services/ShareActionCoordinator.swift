@@ -37,11 +37,36 @@ final class ShareActionCoordinator {
     /// the share sheet inline as pills instead of bouncing to NSSharingServicePicker.
     func shareDestinations(items: [Any]) -> [ShareDestinationEntry] {
         guard !items.isEmpty else { return [] }
-        return NSSharingService.sharingServices(forItems: items).compactMap { service in
+        // `sharingServices(forItems:)` walks every installed share extension, which costs tens of
+        // milliseconds. The pill pipeline calls this on every keystroke, so cache per payload for
+        // a short window — long enough to keep typing smooth, short enough that installing or
+        // removing an extension shows up almost immediately.
+        let signature = shareItemsSignature(items)
+        if let cached = destinationCache[signature],
+            Date().timeIntervalSince(cached.timestamp) < 20
+        {
+            return cached.entries
+        }
+        let entries = NSSharingService.sharingServices(forItems: items).compactMap {
+            service -> ShareDestinationEntry? in
             let title = service.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty else { return nil }
             return ShareDestinationEntry(title: title, image: service.image, service: service)
         }
+        if destinationCache.count > 8 { destinationCache.removeAll() }
+        destinationCache[signature] = (entries, Date())
+        return entries
+    }
+
+    private var destinationCache: [String: (entries: [ShareDestinationEntry], timestamp: Date)] = [:]
+
+    private func shareItemsSignature(_ items: [Any]) -> String {
+        items.map { item -> String in
+            if let url = item as? URL { return url.path }
+            if let string = item as? String { return "text:\(string.count)" }
+            return String(describing: type(of: item))
+        }
+        .joined(separator: "|")
     }
 
     func presentSharingPicker(
