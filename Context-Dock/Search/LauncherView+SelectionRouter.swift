@@ -19,9 +19,9 @@ import SwiftUI
 extension LauncherView {
 
     enum SelectionQueryIntent {
-        case question   // "size of this folder" — answer from facts, never execute
-        case action     // "airdrop this", "save to quick note" — must route or say it can't
+        case action     // an unmistakable verb ("airdrop this", "compress") — route immediately
         case transform  // "rewrite this" — text in, text out
+        case undecided  // everything else — the model decides, from the catalog
     }
 
     struct SelectionRouteCandidate {
@@ -33,63 +33,29 @@ extension LauncherView {
 
     // MARK: - Intent
 
+    /// Only a fast path, never the decision-maker. An unmistakable verb skips the routing call
+    /// entirely (free, instant); everything else is `undecided` and goes to the model WITH the
+    /// catalog, which is the thing that actually understands "can you add this to reminders".
+    /// Deliberately no question-word or politeness lists: those were guesses about phrasing, and
+    /// every guess that missed silently turned a request into an answer.
     func classifySelectionQueryIntent(_ query: String) -> SelectionQueryIntent {
-        var q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return .question }
-        // "can you add this to reminders" is a request, not a question. Strip the polite wrapper
-        // before judging, or every phrased-as-a-favour action reads as something to answer.
-        let politeLeads = [
-            "can you ", "could you ", "would you ", "will you ", "please ", "pls ",
-            "i want you to ", "i need you to ", "help me ", "hey ",
-        ]
-        var strippedPolite = false
-        var changed = true
-        while changed {
-            changed = false
-            for lead in politeLeads where q.hasPrefix(lead) {
-                q = String(q.dropFirst(lead.count))
-                strippedPolite = true
-                changed = true
-            }
-        }
-        let trailing = CharacterSet(charactersIn: " .!")
-        let core = q.trimmingCharacters(in: trailing)
-        guard !core.isEmpty else { return .question }
-
+        let core = query.trimmingCharacters(in: CharacterSet(charactersIn: " .!?\n"))
+            .lowercased()
+        guard !core.isEmpty else { return .undecided }
         let transformVerbs = [
             "rewrite", "reword", "rephrase", "translate", "proofread", "fix grammar",
         ]
         if transformVerbs.contains(where: { core.contains($0) }) { return .transform }
-
-        // An action verb anywhere wins: "summarize and send to notes" is a send.
         if selectionActionVerbs.contains(where: { core.contains($0) }) { return .action }
-
-        let questionLeads = [
-            "what", "why", "how many", "how much", "how big", "how do", "when", "who", "which",
-            "explain", "describe", "tell me", "summar", "is this", "are these", "does this",
-            "size of", "count of", "about this",
-        ]
-        if questionLeads.contains(where: { core.hasPrefix($0) || core.contains($0) }) {
-            return .question
-        }
-        // "…?" only means a question once no action verb matched.
-        if query.trimmingCharacters(in: .whitespaces).hasSuffix("?") { return .question }
-        // A stripped "can you …" with no recognised verb is still a request for something to
-        // happen — let the router look for a route rather than answering.
-        return strippedPolite ? .action : .question
+        return .undecided
     }
 
+    /// Verbs so unambiguous that matching one is worth skipping a model round-trip. Missing a
+    /// verb here costs latency, never correctness — the model still sees the request.
     private var selectionActionVerbs: [String] {
         [
-            "share", "send", "airdrop", "email", "mail", "message", "post", "text ",
-            "compress", "zip", "archive", "unzip", "extract",
-            "convert", "resize", "export", "rename", "duplicate", "move", "copy",
-            "delete", "trash", "tag", "open", "run", "print", "upload", "ocr",
-            "quick look", "preview", "info", "reveal",
-            // Capture / scheduling destinations. These are the verbs users actually type at a
-            // selection ("add this to reminders", "remind me at 10pm", "save to notes").
-            "save", "add to", "add this", "put in", "put this", "note this", "make a note",
-            "remind", "reminder", "schedule", "calendar", "event", "todo", "to-do", "task",
+            "share", "airdrop", "compress", "zip", "unzip", "rename", "duplicate",
+            "trash", "move to", "copy to", "reveal", "quick look",
         ]
     }
 
@@ -251,12 +217,10 @@ extension LauncherView {
         providerSelection: AIProviderSelection
     ) async -> String? {
         let intent = await MainActor.run { classifySelectionQueryIntent(query) }
-        // Questions and text transforms are answered, not executed.
-        guard intent == .action else {
-            await selectionRouterStep(
-                intent == .question
-                    ? "Read as a question — answering from the selection, not running anything"
-                    : "Read as a text transform — no action route needed")
+        // Text transforms are answered, not executed. Everything else — including anything the
+        // fast path could not name — goes to the model with the catalog.
+        guard intent != .transform else {
+            await selectionRouterStep("Read as a text transform — no action route needed")
             return nil
         }
 
@@ -287,10 +251,11 @@ extension LauncherView {
         let catalogBlock = await MainActor.run { selectionCatalogPromptBlock(catalog) }
         let fileOpsBlock = payloadKind == "files" ? selectionFileOperationPromptBlock() : ""
         let systemPrompt = """
-            You are DoraX's Selection Scope router. The user has \(payloadKind) selected and asked \
-            for an ACTION. Below is the COMPLETE list of actions available for this selection — \
-            share destinations, installed extensions, app menu commands, Shortcuts and built-in \
-            tools. These are the only things that can run.
+            You are DoraX's Selection Scope router. The user has \(payloadKind) selected. Decide \
+            whether their message asks for something to HAPPEN, and if so which of the actions \
+            below performs it. Below is the COMPLETE list available for this selection — share \
+            destinations, installed extensions, app menu commands, Shortcuts and built-in tools. \
+            These are the only things that can run.
 
             Available routes:
             \(catalogBlock)
@@ -299,14 +264,20 @@ extension LauncherView {
             Reply with ONE line of JSON and nothing else:
             {"selection_action":{"id":"<exact id from the list>"}}
             {"selection_action":{"id":"fileop.move","args":{"destination":"Pictures"}}}
-            or, when NOTHING in the list performs the request:
+            or, when the message asks a QUESTION about the selection, or nothing in the list \
+            performs it:
+            {"selection_action":{"id":"none","reason":"question"}}
             {"selection_action":{"id":"none","reason":"<short reason>"}}
 
             Rules:
+            - Judge intent from meaning, not phrasing. "can you add this to reminders", "add this \
+              to reminders", "remind me about this at 10pm" are all the same request.
             - The id must be copied exactly from the list. Never invent one.
             - Pick the route whose effect matches the request, not one that merely shares a word.
             - The route must accept \(payloadKind) (or "any").
             - Include "args" only for routes that list them, using the exact key names shown.
+            - A request to know something ("what is this", "how big is it") is a question — \
+              return none with reason "question" so it gets answered instead of executed.
             - Prefer a single route. Do not explain, do not add prose.
             """
         let request = AIRequestBuilder.aiChat(text: query, history: [])
@@ -341,6 +312,11 @@ extension LauncherView {
             return nil
         }
         guard chosenID != "none" else {
+            // The model read it as a question — answer it, and say nothing about missing routes.
+            if choice.args["reason"]?.lowercased().contains("question") == true {
+                await selectionRouterStep("Read as a question — answering from the selection")
+                return nil
+            }
             // 6 — nothing fits. Fall through so the answer path explains the gap and offers the
             // extension proposal, with the catalog size stated so the reply isn't a bare "no".
             await MainActor.run {
@@ -487,6 +463,9 @@ extension LauncherView {
         else { return nil }
 
         var args: [String: String] = [:]
+        // "reason" rides alongside "id", not inside "args" — fold it in so callers can tell a
+        // question ("none", reason: question) from a genuine capability gap.
+        if let reason = action["reason"] as? String { args["reason"] = reason }
         if let rawArgs = action["args"] as? [String: Any] {
             for (key, value) in rawArgs {
                 if let string = value as? String {
