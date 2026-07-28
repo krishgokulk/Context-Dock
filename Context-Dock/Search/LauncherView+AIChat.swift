@@ -2235,6 +2235,17 @@ extension LauncherView {
             lines.append(ax.contextSummary)
         }
 
+        // Browser in front but no address resolved: say so. Silence let the model fill the gap
+        // from page text or the window title and present the result as the URL.
+        if isContextDockBrowserBundle(bundleID),
+            !AXContext.looksLikeWebAddress(ax.currentURL ?? "")
+        {
+            if lines.isEmpty { lines.append("## Frontmost App Context") }
+            lines.append(
+                "Current URL: unavailable — the page address could not be read. "
+                + "Say it is unavailable; never infer or reconstruct it.")
+        }
+
         if !adapterContextData.isEmpty {
             if lines.isEmpty { lines.append("## Frontmost App Context") }
             lines.append("## Deep Local App Context")
@@ -3681,17 +3692,31 @@ extension LauncherView {
             !dockScope.isGlobalScope,
             isContextDockBrowserBundle(frontmost.bundleID)
         {
-            let liveURL = axContext.currentURL ?? frontmost.bundleID
-            if case .url = currentContext { /* already set */
-            } else {
-                currentContext = .url(liveURL)
-            }
-            // Prime the AXWebReader cache for on-device AI if needed
-            if let browser = AppDelegate.shared?.previousFrontmostApp, !liveURL.isEmpty {
-                let pid = browser.processIdentifier
-                if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
-                    Task { @MainActor in
-                        AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+            // NEVER substitute the bundle id for an address. The old `?? frontmost.bundleID`
+            // put "com.apple.Safari" into the prompt as if it were the page URL, so the model
+            // either reasoned about a fake address or (correctly) called it out as a
+            // placeholder. If the AX read hasn't landed, ask the browser directly; if that
+            // fails too, leave the context alone so the prompt simply has no URL.
+            let cachedURL = axContext.currentURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let liveURL: String? = {
+                if let cachedURL, !cachedURL.isEmpty, cachedURL != frontmost.bundleID {
+                    return cachedURL
+                }
+                return ContextDetector.shared.liveBrowserURL(bundleId: frontmost.bundleID)
+            }()
+            if let liveURL, !liveURL.isEmpty {
+                if axContext.currentURL != liveURL { axContext.currentURL = liveURL }
+                if case .url = currentContext { /* already set */
+                } else {
+                    currentContext = .url(liveURL)
+                }
+                // Prime the AXWebReader cache for on-device AI if needed
+                if let browser = AppDelegate.shared?.previousFrontmostApp {
+                    let pid = browser.processIdentifier
+                    if AXWebReader.shared.cachedSnapshot(for: pid)?.text.isEmpty != false {
+                        Task { @MainActor in
+                            AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
+                        }
                     }
                 }
             }

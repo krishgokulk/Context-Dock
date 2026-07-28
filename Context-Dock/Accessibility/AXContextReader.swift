@@ -55,7 +55,12 @@ struct AXContext {
         var parts: [String] = []
         parts.append("Frontmost App: \(appName) (\(bundleId))")
         if let t = windowTitle,  !t.isEmpty { parts.append("Window Title: \(t)") }
-        if let u = currentURL,   !u.isEmpty { parts.append("Current URL: \(u)") }
+        // Only publish something that is actually an address. A bundle id ("com.apple.Safari")
+        // reaching this line reads as a URL to the model, which then reasons about a page that
+        // does not exist — better to omit the field than to state a placeholder as fact.
+        if let u = currentURL, AXContext.looksLikeWebAddress(u) {
+            parts.append("Current URL: \(u)")
+        }
         if let s = selectedText, !s.isEmpty {
             let preview = s.count > 400 ? String(s.prefix(400)) + "…" : s
             parts.append("Selected Text: \(preview)")
@@ -63,6 +68,17 @@ struct AXContext {
         if let r = focusedElementRole, !r.isEmpty { parts.append("Focused Element: \(r)") }
         if !menuItems.isEmpty { parts.append("Menu Items: \(menuItems.count)") }
         return parts.joined(separator: "\n")
+    }
+
+    /// True only for something a browser could actually be showing. Rejects bundle ids, which
+    /// several call sites used as a "we don't know the URL yet" stand-in.
+    static func looksLikeWebAddress(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains(" ") else { return false }
+        if value.contains("://") { return true }
+        if value.lowercased().hasPrefix("www.") { return true }
+        // "com.apple.Safari" has dots but no path and a reverse-DNS shape — not an address.
+        return false
     }
 }
 
