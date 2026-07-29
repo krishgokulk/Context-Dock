@@ -66,13 +66,15 @@ class LayeredExtensionManager: ObservableObject {
     func loadExtensions() async {
         let libPath = libraryBasePath  // capture let-constant; safe across threads
 
-        // Run all disk I/O on a background thread
-        let metadataURLs = await Task.detached(priority: .userInitiated) { [libPath] in
+        // Run all disk I/O on a background thread — including the per-extension reads.
+        // Decoding used to run here on the MainActor: a single read that blocks (a file in a
+        // TCC-protected location, an evicted iCloud file, a stalled mount) froze the main
+        // thread before the menu bar item and hotkeys were installed, so the app looked
+        // launched but had no icon and answered nothing, not even Quit.
+        let discovered = await Task.detached(priority: .userInitiated) { [libPath] in
             LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
+                .compactMap { LayeredExtensionManager.loadExtensionFromMetadata($0) }
         }.value
-        let discovered = metadataURLs.compactMap {
-            LayeredExtensionManager.loadExtensionFromMetadata($0)
-        }
         let scanned = await Task.detached(priority: .userInitiated) {
             let s = LayeredExtensionManager.loadScanned()
             return s
@@ -132,7 +134,7 @@ class LayeredExtensionManager: ObservableObject {
         return discovered
     }
 
-    private static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
+    private nonisolated static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
         do {
             let data = try Data(contentsOf: metadataURL)
             var ext = try JSONDecoder().decode(ILExtension.self, from: data)
