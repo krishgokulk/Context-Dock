@@ -186,7 +186,14 @@ struct DockHeightResolver {
         }
         // Fixed header (~52) above a scroll capped at 400; measured is the message height only.
         let header: CGFloat = 52
-        let scroll = min(max(metrics.measuredChatContentHeight, 60), 400)
+        // Terminal expansion trades transcript viewport for terminal viewport. This
+        // keeps the whole CLI workspace bounded instead of stacking two full panels.
+        let maxSheetContent: CGFloat = 620
+        let availableScroll = max(
+            120,
+            maxSheetContent - bars - header - 18 - metrics.cliTerminalReservedHeight
+        )
+        let scroll = min(max(metrics.measuredChatContentHeight, 60), min(400, availableScroll))
         return bars + header + scroll + 18 + metrics.cliTerminalReservedHeight
     }
 

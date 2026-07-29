@@ -103,9 +103,15 @@ struct ShellCommandTool: Tool {
     let description = "Run a shell command on the user's Mac with the normal approval flow and return the output. Use for file operations, searching, git commands, and CLI tools."
 
     private let recorder: OnDeviceToolRunRecorder?
+    private let allowedExecutable: String?
 
-    fileprivate init(axContext: AXContext, recorder: OnDeviceToolRunRecorder? = nil) {
+    fileprivate init(
+        axContext: AXContext,
+        recorder: OnDeviceToolRunRecorder? = nil,
+        allowedExecutable: String? = nil
+    ) {
         self.recorder = recorder
+        self.allowedExecutable = allowedExecutable
     }
 
     @Generable
@@ -117,6 +123,11 @@ struct ShellCommandTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No shell command provided." }
+        if let allowedExecutable,
+            !Self.isCommand(command, forExecutable: allowedExecutable)
+        {
+            return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
+        }
 
         let (success, output) = await TerminalCommandExecutor.shared.run(
             command,
@@ -131,12 +142,30 @@ struct ShellCommandTool: Tool {
         }
         return trimmedOutput.isEmpty ? "❌ Command failed." : "❌ \(trimmedOutput)"
     }
+
+    private static func isCommand(_ command: String, forExecutable executable: String) -> Bool {
+        // A CLI scope deliberately has no shell escape hatch. Inspect the first command
+        // segment so `mole …` is valid while `mo …`, `date`, pipes, and chained commands
+        // are rejected before they can execute.
+        guard !command.contains(";") && !command.contains("|") && !command.contains("&&")
+            && !command.contains("||")
+        else { return false }
+        guard let first = command.split(whereSeparator: \.isWhitespace).first else { return false }
+        let basename = (String(first) as NSString).lastPathComponent
+        return basename.caseInsensitiveCompare(executable) == .orderedSame
+    }
 }
 
 @available(macOS 26.0, *)
 struct SpawnWorkerTool: Tool {
     let name = "spawn_worker"
     let description = "Launch a long-running or interactive terminal command in the current live terminal and return a worker ID immediately."
+
+    private let allowedExecutable: String?
+
+    init(allowedExecutable: String? = nil) {
+        self.allowedExecutable = allowedExecutable
+    }
 
     @Generable
     struct Arguments {
@@ -155,6 +184,11 @@ struct SpawnWorkerTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No worker command provided." }
+        if let allowedExecutable,
+            !Self.isCommand(command, forExecutable: allowedExecutable)
+        {
+            return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
+        }
 
         let purpose = arguments.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         let workerID = await TerminalCommandExecutor.shared.spawnWorker(
@@ -162,6 +196,15 @@ struct SpawnWorkerTool: Tool {
             purpose: purpose.isEmpty ? "On-device AI worker" : purpose
         )
         return "✅ Worker started: \(workerID)"
+    }
+
+    private static func isCommand(_ command: String, forExecutable executable: String) -> Bool {
+        guard !command.contains(";") && !command.contains("|") && !command.contains("&&")
+            && !command.contains("||")
+        else { return false }
+        guard let first = command.split(whereSeparator: \.isWhitespace).first else { return false }
+        let basename = (String(first) as NSString).lastPathComponent
+        return basename.caseInsensitiveCompare(executable) == .orderedSame
     }
 }
 
@@ -1027,10 +1070,10 @@ final class OnDeviceToolSession {
     ) -> [any Tool] {
         // For cli:// adapter scopes, only expose shell tool — no app menu / AX tools needed.
         if let cliCmd = cliAdapterCommand(for: bundleId) {
-            _ = cliCmd  // used in system prompt, not needed here
             return [
-                ShellCommandTool(axContext: axContext, recorder: recorder),
-                SpawnWorkerTool(),
+                ShellCommandTool(
+                    axContext: axContext, recorder: recorder, allowedExecutable: cliCmd),
+                SpawnWorkerTool(allowedExecutable: cliCmd),
             ]
         }
 
@@ -1113,7 +1156,12 @@ final class OnDeviceToolSession {
             You are a CLI assistant for '\(command)'. \
             Only answer questions about '\(command)' and generate '\(command)' commands. \
             Always use run_shell_command to run '\(command)' commands and return the real output — \
-            never guess or fabricate results. Always ask for approval before running destructive commands.
+            never guess or fabricate results. Never substitute an alias or a different executable. \
+            If no help reference is included below, first run '\(command) --help'; this is the only safe \
+            discovery command. Do not claim a subcommand or option exists until help output confirms it. \
+            If the included help does not support a request, say so plainly; do not invent a command. \
+            Do not merely print a command in prose when it can be run: call run_shell_command so \
+            Context Dock can request approval and show the real result.
             """
         if let helpSnippet = pkg?.helpTextForPrompt {
             prompt += "\n\n## \(command) --help\n\(helpSnippet)"

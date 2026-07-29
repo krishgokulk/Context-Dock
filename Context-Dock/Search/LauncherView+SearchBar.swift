@@ -1514,6 +1514,10 @@ extension LauncherView {
                             let suppressScopedResultPreview =
                                 (showContextInDock && currentGlobalScopedBundleID != nil)
                                 || searchState.activeSmartQueryKey != nil
+                                // A cli:// scope is a command workspace. It must never inherit
+                                // a Global Context result selection, whose generic </> glyph
+                                // falsely looks like an executable action beside the scoped input.
+                                || isCLIToolScopeLocked
                             let focusedDockPill =
                                 allGlobalInlineAppScopes.isEmpty && !aiFallbackActive
                                     && !suppressScopedResultPreview

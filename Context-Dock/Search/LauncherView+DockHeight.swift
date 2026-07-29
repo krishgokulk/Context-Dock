@@ -38,7 +38,7 @@ extension LauncherView {
             && globalContextViewModel.typingSnapshot.phase != .expanded
         let cliTerminalReservedHeight: CGFloat = {
             guard isInCLIToolScope else { return 0 }
-            let terminal = CLIScopeTerminalManager.shared
+            let terminal = cliScopeTerminal
             // Header + vertical padding when collapsed; bounded body when expanded.
             return terminal.isExpanded ? terminal.height + 54 : 42
         }()

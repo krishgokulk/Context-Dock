@@ -112,6 +112,7 @@ struct LauncherView: View {
     @ObservedObject var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject var terminalBridge = TerminalAIBridge.shared
     @ObservedObject var terminalPackageManager = TerminalPackageManager.shared
+    @ObservedObject var cliScopeTerminal = CLIScopeTerminalManager.shared
     @ObservedObject var adapterManager = AppAdapterManager.shared
 
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared

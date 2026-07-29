@@ -1367,8 +1367,9 @@ extension LauncherView {
                                 updateMeasuredChatContentHeight(height)
                             }
                         }
-                        // Hug short chats, scroll long ones — frame to the measured height, capped.
-                        .frame(height: min(max(measuredChatContentHeight, 1), 400))
+                        // When the scoped terminal opens, chat yields viewport height to it
+                        // and stays bottom-anchored, like coding-agent transcript panes.
+                        .frame(height: min(max(measuredChatContentHeight, 1), contextDockChatScrollHeight))
                         .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
                                 if let last = l2.chatMessages.last {
@@ -1379,6 +1380,12 @@ extension LauncherView {
                         .onChange(of: l2.isLoading) { _, newValue in
                             if newValue {
                                 withAnimation { proxy.scrollTo("l2loading", anchor: .bottom) }
+                            }
+                        }
+                        .onChange(of: cliScopeTerminal.isExpanded) { _, _ in
+                            guard let last = l2.chatMessages.last else { return }
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
                     }
@@ -1420,6 +1427,12 @@ extension LauncherView {
             return true
         }
         return false
+    }
+
+    var contextDockChatScrollHeight: CGFloat {
+        guard isInCLIToolScope, cliScopeTerminal.isExpanded else { return 400 }
+        // Leave enough history visible above the terminal while keeping the total sheet compact.
+        return 180
     }
 
     /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
@@ -4246,7 +4259,12 @@ extension LauncherView {
                         return scopedConversationContext
                     }()
                     // Prepend date/time as a lightweight header so the model knows current time
-                    let dateHeader = await MainActor.run { self.currentDateTimeContextBlock() }
+                    // A CLI scope already has a strict, help-grounded system prompt. Adding
+                    // date/time there encouraged the on-device model to call `date` for a
+                    // confirmation such as "yes", instead of continuing the scoped tool flow.
+                    let dateHeader = cliCommand == nil
+                        ? await MainActor.run { self.currentDateTimeContextBlock() }
+                        : ""
                     let onDeviceMessage =
                         dateHeader.isEmpty ? query : "\(dateHeader)\n\nUser request: \(query)"
 
@@ -4928,17 +4946,45 @@ extension LauncherView {
             return openBrowserTabsAnswer(query: normalized, bundleId: requestedBundle)
         }
 
+        // A question carries a subject ("github", "docs") or none at all. Anything left
+        // after stripping question scaffolding is the subject; "what is my last visited
+        // site?" must leave NOTHING, not the fragment "is last" — searching the library
+        // for that matched no row and reported a false empty result.
         let stopWords: Set<String> = [
-            "a", "about", "all", "any", "are", "bookmark", "bookmarks", "browser",
-            "browsing", "did", "do", "have", "history", "i", "in", "ive", "my", "page",
-            "pages", "recent", "recently", "safari", "show", "site", "the", "today",
-            "visit", "visited", "website", "what", "which", "yesterday",
+            "a", "about", "after", "all", "am", "an", "and", "any", "anything", "are",
+            "as", "at", "back", "be", "been", "before", "bookmark", "bookmarked",
+            "bookmarks", "browse", "browsed", "browser", "browsers", "browsing", "but",
+            "by", "can", "check", "day", "days", "did", "do", "does", "domain", "domains",
+            "earlier", "find", "for", "from", "get", "give", "go", "going", "gone", "had",
+            "has", "have", "history", "hour", "hours", "how", "i", "im", "in", "is",
+            "it", "its", "ive", "just", "last", "latest", "link", "links", "list",
+            "many", "me", "month", "months", "morning", "most", "much", "my", "new",
+            "newest", "night", "of", "on", "one", "open", "opened", "or", "page", "pages",
+            "past", "please", "recent", "recently", "search", "see", "session",
+            "sessions", "show", "site", "sites", "so", "some", "tab", "tabs", "tell",
+            "that", "the", "their", "them", "there", "these", "this", "those", "time",
+            "times", "to", "today", "url", "urls", "visit", "visited", "visits", "was",
+            "web", "webpage", "webpages", "website", "websites", "week", "weeks", "went",
+            "were", "what", "whats", "when", "where", "which", "who", "with", "yesterday",
+            "you", "your",
+        ]
+        // Browser names are scope, never search terms.
+        let browserNames: Set<String> = [
+            "safari", "chrome", "chromium", "brave", "edge", "arc", "firefox", "orion",
         ]
         let searchTerm = normalized
             .split { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" }
             .map(String.init)
-            .filter { !stopWords.contains($0) }
+            .filter { token in
+                token.count >= 3 && !stopWords.contains(token) && !browserNames.contains(token)
+            }
             .joined(separator: " ")
+        // "last / latest / most recent" asks for the single newest row, not a list.
+        let wantsSingleLatest =
+            normalized.contains("last visited") || normalized.contains("latest")
+            || normalized.contains("most recent") || normalized.contains("newest")
+            || normalized.contains("last site") || normalized.contains("last page")
+            || normalized.contains("last url")
         let dateWindow = Self.browserLibraryDateWindow(for: normalized)
         // A date-bounded question ("yesterday") needs the whole window, not the top few.
         let fetchLimit = dateWindow != nil ? 400 : (requireAppAdapter && requestedBundle == nil ? 200 : 40)
@@ -4947,6 +4993,17 @@ extension LauncherView {
             matching: libraryQuery,
             bundleId: requestedBundle,
             limit: fetchLimit)
+        // A subject that matches nothing is still a real question about the library
+        // ("what did I read about swiftui?" with no swiftui visit). Fall back to the
+        // recency listing so the answer describes what IS there instead of stopping at
+        // a bare "nothing matching".
+        if entries.isEmpty, !searchTerm.isEmpty {
+            entries = await BrowserURLLibraryService.shared.refreshedEntries(
+                matching: wantsBookmarks ? "bookmarks" : "history",
+                bundleId: requestedBundle,
+                limit: fetchLimit)
+            unmatchedSubject = searchTerm
+        }
         if requireAppAdapter, requestedBundle == nil {
             entries = entries.filter { allowedBrowserBundles.contains($0.browserBundleId) }
         }
