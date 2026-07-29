@@ -4873,34 +4873,6 @@ extension LauncherView {
         return readShapes.contains(where: normalized.contains)
     }
 
-    /// Date window a history question asks for ("yesterday", "today", "last week").
-    /// `nil` means no time constraint.
-    static func browserLibraryDateWindow(for normalized: String) -> (start: Date, end: Date)? {
-        let cal = Calendar.current
-        let now = Date()
-        let todayStart = cal.startOfDay(for: now)
-        if normalized.contains("yesterday") {
-            guard let start = cal.date(byAdding: .day, value: -1, to: todayStart) else { return nil }
-            return (start, todayStart)
-        }
-        if normalized.contains("today") || normalized.contains("so far today") {
-            return (todayStart, now)
-        }
-        if normalized.contains("last week") || normalized.contains("past week")
-            || normalized.contains("this week") || normalized.contains("last 7 days")
-        {
-            guard let start = cal.date(byAdding: .day, value: -7, to: todayStart) else { return nil }
-            return (start, now)
-        }
-        if normalized.contains("last month") || normalized.contains("past month")
-            || normalized.contains("last 30 days")
-        {
-            guard let start = cal.date(byAdding: .day, value: -30, to: todayStart) else { return nil }
-            return (start, now)
-        }
-        return nil
-    }
-
     @MainActor
     func localBrowserHistoryAnswer(
         query: String,
@@ -4934,58 +4906,23 @@ extension LauncherView {
             return "\(appName) isn’t added to App Adapters, so General AI can’t read its local history."
         }
 
+        // What the question actually asks for — parsed by the on-device model, else the
+        // user's selected provider, else a deterministic heuristic. Only the sentence is
+        // parsed; the library rows below never reach a model.
+        let intent = await BrowserLibraryIntentParser.shared.intent(for: normalized)
+
         // Open tabs are live app state, not library data — answer them from the browser
         // itself. "show all opened tabs" used to reach the executable planner and open a
         // NEW tab instead of listing the existing ones.
-        let wantsTabs = normalized.contains("tab")
-        let wantsBookmarks = normalized.contains("bookmark")
-        let wantsHistory =
-            !wantsTabs && !wantsBookmarks
-            || normalized.contains("history") || normalized.contains("visit")
-        if wantsTabs, !wantsHistory, !wantsBookmarks {
-            return openBrowserTabsAnswer(query: normalized, bundleId: requestedBundle)
+        if intent.source == .tabs {
+            return openBrowserTabsAnswer(intent: intent, bundleId: requestedBundle)
         }
+        let wantsBookmarks = intent.source == .bookmarks
+        let wantsHistory = !wantsBookmarks
 
-        // A question carries a subject ("github", "docs") or none at all. Anything left
-        // after stripping question scaffolding is the subject; "what is my last visited
-        // site?" must leave NOTHING, not the fragment "is last" — searching the library
-        // for that matched no row and reported a false empty result.
-        let stopWords: Set<String> = [
-            "a", "about", "after", "all", "am", "an", "and", "any", "anything", "are",
-            "as", "at", "back", "be", "been", "before", "bookmark", "bookmarked",
-            "bookmarks", "browse", "browsed", "browser", "browsers", "browsing", "but",
-            "by", "can", "check", "day", "days", "did", "do", "does", "domain", "domains",
-            "earlier", "find", "for", "from", "get", "give", "go", "going", "gone", "had",
-            "has", "have", "history", "hour", "hours", "how", "i", "im", "in", "is",
-            "it", "its", "ive", "just", "last", "latest", "link", "links", "list",
-            "many", "me", "month", "months", "morning", "most", "much", "my", "new",
-            "newest", "night", "of", "on", "one", "open", "opened", "or", "page", "pages",
-            "past", "please", "recent", "recently", "search", "see", "session",
-            "sessions", "show", "site", "sites", "so", "some", "tab", "tabs", "tell",
-            "that", "the", "their", "them", "there", "these", "this", "those", "time",
-            "times", "to", "today", "url", "urls", "visit", "visited", "visits", "was",
-            "web", "webpage", "webpages", "website", "websites", "week", "weeks", "went",
-            "were", "what", "whats", "when", "where", "which", "who", "with", "yesterday",
-            "you", "your",
-        ]
-        // Browser names are scope, never search terms.
-        let browserNames: Set<String> = [
-            "safari", "chrome", "chromium", "brave", "edge", "arc", "firefox", "orion",
-        ]
-        let searchTerm = normalized
-            .split { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" }
-            .map(String.init)
-            .filter { token in
-                token.count >= 3 && !stopWords.contains(token) && !browserNames.contains(token)
-            }
-            .joined(separator: " ")
-        // "last / latest / most recent" asks for the single newest row, not a list.
-        let wantsSingleLatest =
-            normalized.contains("last visited") || normalized.contains("latest")
-            || normalized.contains("most recent") || normalized.contains("newest")
-            || normalized.contains("last site") || normalized.contains("last page")
-            || normalized.contains("last url")
-        let dateWindow = Self.browserLibraryDateWindow(for: normalized)
+        let searchTerm = intent.subject
+        let wantsSingleLatest = intent.wantsLatest
+        let dateWindow = intent.dateWindow
         // A date-bounded question ("yesterday") needs the whole window, not the top few.
         let fetchLimit = dateWindow != nil ? 400 : (requireAppAdapter && requestedBundle == nil ? 200 : 40)
         let libraryQuery = searchTerm.isEmpty ? (wantsBookmarks ? "bookmarks" : "history") : searchTerm
@@ -5051,8 +4988,8 @@ extension LauncherView {
 
         // "what is my last visited site?" wants one row, not a list.
         if wantsSingleLatest, unmatchedSubject.isEmpty, let newest = entries.first {
-            let copied = copyBrowserLinksIfRequested(
-                query: normalized, urls: [newest.url.absoluteString])
+            let copied = copyBrowserLinks(
+                requested: intent.copyToClipboard, urls: [newest.url.absoluteString])
             return "Your most recent visit: \(row(newest))" + copied
         }
 
@@ -5062,8 +4999,8 @@ extension LauncherView {
         let countLabel =
             entries.count == 1 ? "one matching \(noun)" : "\(entries.count) matching \(noun)s"
         let more = entries.count > shown.count ? "\n…and \(entries.count - shown.count) more." : ""
-        let copied = copyBrowserLinksIfRequested(
-            query: normalized, urls: shown.map(\.url.absoluteString))
+        let copied = copyBrowserLinks(
+            requested: intent.copyToClipboard, urls: shown.map(\.url.absoluteString))
         let lead =
             unmatchedSubject.isEmpty
             ? "I checked the local browser-\(subjectLabel) cache and found \(countLabel):"
@@ -5075,7 +5012,9 @@ extension LauncherView {
     /// Every open tab of the scoped browser (or Safari when unscoped), read live via the
     /// same AppleScript readers the dock already uses.
     @MainActor
-    private func openBrowserTabsAnswer(query: String, bundleId: String?) -> String {
+    private func openBrowserTabsAnswer(
+        intent: BrowserLibraryIntent, bundleId: String?
+    ) -> String {
         let detector = ContextDetector.shared
         let target = bundleId ?? "com.apple.Safari"
         let tabs: [BrowserTab]
@@ -5100,7 +5039,8 @@ extension LauncherView {
             return "- [\(title)](\(tab.url))"
         }
         let more = tabs.count > 40 ? "\n…and \(tabs.count - 40) more." : ""
-        let copied = copyBrowserLinksIfRequested(query: query, urls: tabs.map(\.url))
+        let copied = copyBrowserLinks(
+            requested: intent.copyToClipboard, urls: tabs.map(\.url))
         let countLabel = tabs.count == 1 ? "one open tab" : "\(tabs.count) open tabs"
         return "\(browserName) has \(countLabel):\n\n" + lines.joined(separator: "\n") + more
             + copied
@@ -5109,11 +5049,8 @@ extension LauncherView {
     /// "…copy to clipboard" is part of the same read request — honour it here instead of
     /// letting the executable planner take over the whole query.
     @MainActor
-    private func copyBrowserLinksIfRequested(query: String, urls: [String]) -> String {
-        guard query.contains("clipboard") || query.contains("copy them")
-            || query.contains("copy the links") || query.contains("copy all")
-        else { return "" }
-        guard !urls.isEmpty else { return "" }
+    private func copyBrowserLinks(requested: Bool, urls: [String]) -> String {
+        guard requested, !urls.isEmpty else { return "" }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(urls.joined(separator: "\n"), forType: .string)
