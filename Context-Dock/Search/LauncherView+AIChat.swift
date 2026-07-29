@@ -4989,6 +4989,7 @@ extension LauncherView {
         // A date-bounded question ("yesterday") needs the whole window, not the top few.
         let fetchLimit = dateWindow != nil ? 400 : (requireAppAdapter && requestedBundle == nil ? 200 : 40)
         let libraryQuery = searchTerm.isEmpty ? (wantsBookmarks ? "bookmarks" : "history") : searchTerm
+        var unmatchedSubject = ""
         var entries = await BrowserURLLibraryService.shared.refreshedEntries(
             matching: libraryQuery,
             bundleId: requestedBundle,
@@ -5036,26 +5037,39 @@ extension LauncherView {
         formatter.locale = .autoupdatingCurrent
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        let shown = Array(entries.prefix(dateWindow != nil ? 25 : 8))
-        let lines = shown.map { entry in
+        func row(_ entry: BrowserURLLibraryEntry) -> String {
             let rawTitle = entry.title.isEmpty ? entry.domain : entry.title
             let title = rawTitle
                 .replacingOccurrences(of: "[", with: "(")
                 .replacingOccurrences(of: "]", with: ")")
             if entry.kind == .bookmark {
-                return "- [\(title)](\(entry.url.absoluteString)) — \(entry.browserName) bookmark"
+                return "[\(title)](\(entry.url.absoluteString)) — \(entry.browserName) bookmark"
             }
             let date = entry.visitDate.map(formatter.string(from:)) ?? "date unavailable"
-            return "- [\(title)](\(entry.url.absoluteString)) — \(entry.browserName), \(date)"
+            return "[\(title)](\(entry.url.absoluteString)) — \(entry.browserName), \(date)"
         }
+
+        // "what is my last visited site?" wants one row, not a list.
+        if wantsSingleLatest, unmatchedSubject.isEmpty, let newest = entries.first {
+            let copied = copyBrowserLinksIfRequested(
+                query: normalized, urls: [newest.url.absoluteString])
+            return "Your most recent visit: \(row(newest))" + copied
+        }
+
+        let shown = Array(entries.prefix(dateWindow != nil ? 25 : 8))
+        let lines = shown.map { "- " + row($0) }
         let noun = wantsBookmarks && !wantsHistory ? "bookmark" : "visit"
         let countLabel =
             entries.count == 1 ? "one matching \(noun)" : "\(entries.count) matching \(noun)s"
         let more = entries.count > shown.count ? "\n…and \(entries.count - shown.count) more." : ""
         let copied = copyBrowserLinksIfRequested(
             query: normalized, urls: shown.map(\.url.absoluteString))
-        return "I checked the local browser-\(subjectLabel) cache and found \(countLabel):\n\n"
-            + lines.joined(separator: "\n") + more + copied
+        let lead =
+            unmatchedSubject.isEmpty
+            ? "I checked the local browser-\(subjectLabel) cache and found \(countLabel):"
+            : "Nothing in the local browser-\(subjectLabel) cache matches “\(unmatchedSubject)”. "
+                + "The most recent entries are:"
+        return lead + "\n\n" + lines.joined(separator: "\n") + more + copied
     }
 
     /// Every open tab of the scoped browser (or Safari when unscoped), read live via the
