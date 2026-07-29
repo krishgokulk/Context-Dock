@@ -14,8 +14,33 @@ extension LauncherView {
             // stays in the cached AX context after switching to another app, so without
             // this the selection button lingered in every app.
             && selectionBelongsToFrontmostApp
-            && (liveDockSelectionPreviewText != nil
-                || currentSelectionActivationSnapshot(refresh: false) != nil)
+            && (liveDockSelectionPreviewText != nil || hasSelectionForTrailingButton)
+    }
+
+    /// Cheap "is there a selection?" test for the view body. The old check built a whole
+    /// `GlobalContextActivation` — which stats every selected path through `selectionSymbol`
+    /// (`FileManager.fileExists` + `resourceValues`) — on EVERY re-render, so each keystroke in
+    /// Context Dock paid disk I/O for a Selection Scope affordance. Same conditions, no FS work,
+    /// no allocation.
+    var hasSelectionForTrailingButton: Bool {
+        if !axContext.selectedFilePaths.isEmpty,
+            !isDismissedFinderSelection(axContext.selectedFilePaths)
+        {
+            return true
+        }
+        if let text = axContext.selectedText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        switch currentContext {
+        case .filesSelected(let urls):
+            return !urls.isEmpty && !isDismissedFinderSelection(urls)
+        case .textSelected(let text):
+            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .url(let url):
+            return !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        default:
+            return false
+        }
     }
 
     /// True when the cached selection was read from the app that is currently frontmost

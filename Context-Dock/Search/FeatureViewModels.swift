@@ -182,6 +182,8 @@ final class ContextDockViewModel: ObservableObject {
     @Published var contextMenuPills: [AXMenuItem] = []
     @Published var previousEnabledIDs: Set<UUID> = []
     @Published var lastFinderSelectionRefresh: Date = .distantPast
+    /// Backup-poll throttle for the live selection read (event path is unthrottled).
+    @Published var lastLiveSelectionPoll: Date = .distantPast
     @Published var liveMenuItems: [AXMenuItem] = []
     @Published var lastLiveMenuStructureRefresh: Date = .distantPast
     @Published var lastLiveMenuSignature = ""

@@ -1791,8 +1791,18 @@ extension LauncherView {
     /// exits pure global app search mid-typing (blank sheet on ↓, dead expansion).
     /// Called from the AX selection observer AND the 0.75s live poll (some apps
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
-    func refreshLiveSelectionIntoDockContext() {
+    /// `minInterval` throttles the poll caller only; event-driven callers pass 0 and stay
+    /// instant. Each call spawns an AX selection read, and for Finder that read reaches
+    /// `getFinderSelectedFiles()` — an Apple event that executes on the MAIN thread. Firing it
+    /// every 0.75 s tick made typing in Context Dock stutter for a Selection Scope feature the
+    /// user had not even opened.
+    func refreshLiveSelectionIntoDockContext(minInterval: TimeInterval = 0) {
         guard showContextInDock else { return }
+        if minInterval > 0 {
+            let now = Date()
+            guard now.timeIntervalSince(lastLiveSelectionPoll) > minInterval else { return }
+            lastLiveSelectionPoll = now
+        }
         // Even while OUR dock has key focus, the source app can still change selection by mouse
         // click/drag behind the panel. Keep polling the remembered source app; empty AX reads are
         // ignored below so transient background-read failures do not flicker the icon.
@@ -1916,10 +1926,11 @@ extension LauncherView {
         autoReturnFromGlobalContextIfNeeded()
         // A file selected in Finder WHILE the dock is open must surface the trailing
         // selection button live — the lightweight AX poll below never reads selection.
-        refreshFinderSelectionContextFromFinder()
+        // Backup cadence only: the AX event path above handles the responsive case.
+        refreshFinderSelectionContextFromFinder(minInterval: 2.0)
         // Same for live TEXT selections (browser pages, editors): poll as backup for
         // apps whose web areas don't emit AXSelectedTextChanged.
-        refreshLiveSelectionIntoDockContext()
+        refreshLiveSelectionIntoDockContext(minInterval: 2.0)
 
         let bundleId = app.bundleIdentifier ?? ""
         let pid = app.processIdentifier
@@ -1951,10 +1962,14 @@ extension LauncherView {
         }
     }
 
-    func refreshFinderSelectionContextFromFinder() {
+    /// `minInterval` separates the two callers. The AX selection event (AXSelectedRowsChanged,
+    /// which Finder does emit) is the real path and stays responsive; the 0.75 s idle poll is
+    /// only a backup for apps that miss the event, and reading Finder there every tick meant a
+    /// main-thread Apple event 80 times a minute while the user was merely typing in the dock.
+    func refreshFinderSelectionContextFromFinder(minInterval: TimeInterval = 0.25) {
         guard showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
         let now = Date()
-        guard now.timeIntervalSince(lastFinderSelectionRefresh) > 0.25 else { return }
+        guard now.timeIntervalSince(lastFinderSelectionRefresh) > minInterval else { return }
         lastFinderSelectionRefresh = now
         guard
             frontmost.bundleID == "com.apple.finder"

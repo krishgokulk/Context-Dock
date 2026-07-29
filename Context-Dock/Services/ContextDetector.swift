@@ -19,8 +19,59 @@ class ContextDetector {
 
     // MARK: - Finder Selected Files Detection
 
+    /// Reading Finder's selection means an Apple event, and `runAppleScript` executes those on
+    /// the MAIN thread (it even hops back with `DispatchQueue.main.sync` when called off it).
+    /// Context Dock's 0.75 s live poll, the AX reader and the pill rebuild each asked
+    /// independently, so a single keystroke could block the main thread on several round trips
+    /// to Finder — the "app feels laggy" symptom. One short-lived cache collapses a burst of
+    /// callers into one event; it is deliberately shorter than the poll interval so a selection
+    /// change still shows up on the next tick.
+    private let finderSelectionCacheTTL: TimeInterval = 0.35
+    private var cachedFinderSelection: (urls: [URL], readAt: Date)?
+    /// The cache is touched from the main thread and from the background refresh, so it is
+    /// guarded rather than assumed main-only.
+    private let finderSelectionLock = NSLock()
+    private let finderSelectionScriptQueue = DispatchQueue(
+        label: "com.krishgokul.ContextDock.finderSelection", qos: .userInitiated)
+
+    private var freshFinderSelectionFromCache: [URL]? {
+        finderSelectionLock.lock()
+        defer { finderSelectionLock.unlock() }
+        guard let cached = cachedFinderSelection,
+            Date().timeIntervalSince(cached.readAt) < finderSelectionCacheTTL
+        else { return nil }
+        return cached.urls
+    }
+
+    private func storeFinderSelection(_ urls: [URL]) {
+        finderSelectionLock.lock()
+        cachedFinderSelection = (urls, Date())
+        finderSelectionLock.unlock()
+    }
+
+    /// Drop the cache when the answer is known to be stale (app switch, selection dismissed).
+    func invalidateFinderSelectionCache() {
+        finderSelectionLock.lock()
+        cachedFinderSelection = nil
+        finderSelectionLock.unlock()
+    }
+
+    /// Cached, non-blocking read for the live poll: returns immediately with what is known and
+    /// refreshes in the background. The dock's idle loop must never sit on an Apple event.
+    func finderSelectedFilesAsync(_ completion: @escaping ([URL]) -> Void) {
+        if let cached = freshFinderSelectionFromCache {
+            completion(cached)
+            return
+        }
+        finderSelectionScriptQueue.async {
+            let urls = self.getFinderSelectedFiles()
+            DispatchQueue.main.async { completion(urls) }
+        }
+    }
+
     /// Get currently selected files in Finder (no Cmd+C needed!)
     func getFinderSelectedFiles() -> [URL] {
+        if let cached = freshFinderSelectionFromCache { return cached }
         let script = """
         tell application "Finder"
             set selectedItems to selection
@@ -39,6 +90,7 @@ class ContextDetector {
         """
 
         guard let result = runAppleScript(script) else {
+            storeFinderSelection([])
             return []
         }
 
@@ -46,7 +98,9 @@ class ContextDetector {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        return paths.map { URL(fileURLWithPath: $0) }
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        storeFinderSelection(urls)
+        return urls
     }
 
     /// Mail attachments selected/visible in the focused message. Mail caches

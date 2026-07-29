@@ -910,6 +910,10 @@ extension LauncherView {
         get { contextDockViewModel.lastFinderSelectionRefresh }
         nonmutating set { contextDockViewModel.lastFinderSelectionRefresh = newValue }
     }
+    var lastLiveSelectionPoll: Date {
+        get { contextDockViewModel.lastLiveSelectionPoll }
+        nonmutating set { contextDockViewModel.lastLiveSelectionPoll = newValue }
+    }
 
     var lastPillQuery: String {
         get { contextDockViewModel.lastPillQuery }
