@@ -1978,6 +1978,13 @@ extension LauncherView {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
 
+        // CLI packages are an immediate, local match.  Do this before consulting the
+        // debounced grouped-result snapshot so the input completion stays in lockstep
+        // with the terminal result (for example, `bre` -> `brew`) on the first keystroke.
+        if let cli = directGlobalCLIScopeMatches(for: q, limit: 1).first {
+            return cli.title
+        }
+
         // Ghost must use the same visible order as the result sheet. If first row is
         // a menu command, preview that command, not the first app result.
         if let prepared = globalContextViewModel.preparedResults,

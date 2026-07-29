@@ -281,6 +281,15 @@ class TerminalAIBridge: ObservableObject {
         // Execute in terminal if available, otherwise background
         let (output, exitCode) = await executeInTerminalOrBackground(command)
 
+        // CLI scope terminals are transcript surfaces for non-interactive work:
+        // execute once for a real result, then render that result in the visible PTY.
+        if terminalController?.showsCapturedExecutionTranscript == true,
+            !isTUICommand(command)
+        {
+            terminalController?.appendExecutionTranscript(
+                command: command, output: output, exitCode: exitCode)
+        }
+
         if let progressID { ILauncherNotificationManager.shared.remove(progressID) }
         if let progressLabel {
             ILauncherNotificationManager.shared.post(

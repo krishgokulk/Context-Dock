@@ -8,6 +8,9 @@ class TerminalHostController: NSObject {
     var onProcessTerminated: (() -> Void)?
     /// When true this is an embedded panel terminal — does NOT steal the AI bridge slot
     var isPanel: Bool = false
+    /// CLI scopes render a captured, single-run command transcript here after the
+    /// background executor has produced a real exit code and output.
+    var showsCapturedExecutionTranscript = false
 
     // AI Integration: Output capture callback
     var onOutputReceived: ((String) -> Void)?
@@ -93,6 +96,16 @@ class TerminalHostController: NSObject {
         guard let data = keys.data(using: .utf8) else { return }
         let bytes = [UInt8](data)
         terminalView.send(data: bytes[...])
+    }
+
+    /// Render a completed execution without sending it through the shell again. This
+    /// avoids duplicate side effects while preserving a readable terminal transcript.
+    func appendExecutionTranscript(command: String, output: String, exitCode: Int32) {
+        let statusColor = exitCode == 0 ? "\u{001B}[32m" : "\u{001B}[31m"
+        let cleanOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = cleanOutput.isEmpty ? "(no output)" : cleanOutput
+        let transcript = "\r\n\u{001B}[2m$ \(command)\u{001B}[0m\r\n\(body)\r\n\(statusColor)exit \(exitCode)\u{001B}[0m\r\n"
+        terminalView.feed(text: transcript)
     }
 
 }
@@ -239,4 +252,3 @@ struct TerminalResizeHandle: View {
             }
     }
 }
-

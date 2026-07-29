@@ -1217,12 +1217,10 @@ extension LauncherView {
                         guard !l2.handledApprovalIds.contains(msg.id) else { return }
                         l2.handledApprovalIds.insert(msg.id)
                         let command = msg.content
-                        // CLI tool scope: run the approved command LIVE in the scope's
-                        // embedded PTY (real-time output, interactive) instead of bouncing
-                        // to Terminal.app.
+                        // Route the bridge to the scoped PTY, then resume the pending tool
+                        // call. Sending directly to the PTY left the on-device loop waiting.
                         if isInCLIToolScope {
-                            CLIScopeTerminalManager.shared.run(command)
-                            return
+                            _ = CLIScopeTerminalManager.shared.prepareForExecution()
                         }
                         // Bridge card whose tool loop is still awaiting THIS command →
                         // resume it (the loop runs it and feeds the result back to the

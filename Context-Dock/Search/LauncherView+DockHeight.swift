@@ -36,6 +36,12 @@ extension LauncherView {
             && shouldUsePureGlobalAppSearch
             && globalInlineAppScope == nil
             && globalContextViewModel.typingSnapshot.phase != .expanded
+        let cliTerminalReservedHeight: CGFloat = {
+            guard isInCLIToolScope else { return 0 }
+            let terminal = CLIScopeTerminalManager.shared
+            // Header + vertical padding when collapsed; bounded body when expanded.
+            return terminal.isExpanded ? terminal.height + 54 : 42
+        }()
 
         return DockHeightMetrics(
             surfaceMode: currentDockSurfaceMode,
@@ -58,7 +64,8 @@ extension LauncherView {
             resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
             loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             l1ResultsReservedHeight: pureGlobalCompactTyping ? 0 : l1ResultsReservedHeight,
-            measuredChatContentHeight: measuredChatContentHeight
+            measuredChatContentHeight: measuredChatContentHeight,
+            cliTerminalReservedHeight: cliTerminalReservedHeight
         )
     }
 

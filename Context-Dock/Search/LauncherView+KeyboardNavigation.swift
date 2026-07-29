@@ -248,6 +248,33 @@ extension LauncherView {
                 return event
             }
 
+            // A cli:// scope is an agent command workspace, not a Global Context
+            // result list. Its text must always reach the scoped chat on Return.  The
+            // generic Global Context monitor below can see stale menu/app pills and
+            // consume Return first, which made "brew show installed apps" appear to do
+            // nothing. Keep vertical arrows inside the workspace too: an empty CLI
+            // composer must not cycle the user into Context/Media layers.
+            if self.isCLIToolScopeLocked {
+                let cliQuery = self.searchState.query
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if event.keyCode == 36,
+                    !cliQuery.isEmpty,
+                    !self.l2.isLoading,
+                    let target = self.currentGlobalScopedChatTarget
+                {
+                    self.armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                    self.dismissMediaLayer()
+                    self.handleL2QuerySkippingMenuRouter(cliQuery)
+                    return nil
+                }
+                if (event.keyCode == 125 || event.keyCode == 126),
+                    cliQuery.isEmpty,
+                    self.isSearchFieldFocused
+                {
+                    return nil
+                }
+            }
+
             // Pills behave like atomic text: backspace with the caret at a pill's
             // right edge converts that pill back to plain text (any position, not
             // just end-of-query), and arrow keys jump across the pill in one press
@@ -395,6 +422,19 @@ extension LauncherView {
                     // Music ⌘Q). Enter runs it instead of expanding the sheet; ↓ still expands
                     // to browse the other rows.
                     if self.executeFocusedGlobalGroupedListRow() {
+                        return nil
+                    }
+                    // "quit <app>" before the sheet is built: quit the app the leading icon
+                    // is previewing. The fast-match fallbacks below only know the index
+                    // rows, which for this query are unrelated menu owners — one of them
+                    // could be launched instead of the app being quit.
+                    if let quitTarget = self.strongGlobalQuitMatch(for: self.searchState.query),
+                        let bundleID = quitTarget.bundleID,
+                        let app = NSWorkspace.shared.runningApplications.first(where: {
+                            $0.bundleIdentifier == bundleID && !$0.isTerminated
+                        })
+                    {
+                        self.terminateRunningAppFromDock(app)
                         return nil
                     }
                     let matchIcons = self.globalContextViewModel.typingSnapshot.matchDockIcons

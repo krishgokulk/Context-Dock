@@ -1300,7 +1300,15 @@ extension LauncherView {
                         ScrollView(.vertical, showsIndicators: false) {
                             LazyVStack(spacing: 12) {
                                 ForEach(l2.chatMessages) { message in
-                                    if message.role == .approval {
+                                    // The on-device provider inserts a streaming placeholder.
+                                    // Keep the single live activity row visible during that handoff
+                                    // instead of rendering a second, empty assistant bubble.
+                                    if message.role == .assistant,
+                                        message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                        l2.isLoading
+                                    {
+                                        EmptyView()
+                                    } else if message.role == .approval {
                                         l2InlineApprovalCard(message)
                                             .id(message.id)
                                     } else if message.hasInstallButton {
@@ -1377,9 +1385,16 @@ extension LauncherView {
                 }
 
                 // CLI tool scopes get an embedded live PTY docked at the bottom —
-                // approved commands run here in real time; chevron expands it.
+                // it is a bounded drawer in the chat sheet, not a second window.
                 if isInCLIToolScope {
-                    CLIScopeTerminalPanel(isDark: isEffectiveDark, accentColor: .green)
+                    CLIScopeTerminalPanel(
+                        isDark: isEffectiveDark,
+                        accentColor: .green,
+                        onLayoutChange: {
+                            requestWindowSizeUpdate(reason: .panelChanged, animated: true,
+                                                    debounceNanoseconds: 0)
+                        }
+                    )
                         .padding(.horizontal, 12)
                         .padding(.top, 4)
                         .padding(.bottom, 8)
@@ -4203,8 +4218,13 @@ extension LauncherView {
                         }
                     }
                 } else if provider == .onDevice {
+                    let cliCommand: String? = scopedBundleId.hasPrefix("cli://")
+                        ? String(scopedBundleId.dropFirst("cli://".count))
+                        : nil
                     await self.setL2LoadingStatus(
-                        "Reading app context and live capabilities…", requestID: l2RequestID)
+                        cliCommand.map { "Checking \($0) --help and available subcommands…" }
+                            ?? "Reading app context and live capabilities…",
+                        requestID: l2RequestID)
                     // On-device Apple Intelligence: trim history + use minimal context for scoped apps
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))

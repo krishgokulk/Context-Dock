@@ -3680,7 +3680,7 @@ extension LauncherView {
                             in: .whitespacesAndNewlines
                         ).isEmpty
                 }
-        if hasAnyCLI {
+        if hasAnyCLI && !isCLIToolScope {
             _ = prepareScopedWorkspaceTerminal()
         }
 

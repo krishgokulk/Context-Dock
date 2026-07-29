@@ -1414,6 +1414,13 @@ struct LauncherView: View {
         }
         .onReceive(TerminalAIBridge.shared.$pendingApproval) { pending in
             if let pending = pending {
+                // A CLI scope is a real command workspace, not an app adapter. Keep its
+                // live status honest while the approval card is on screen.
+                let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                    || l2.targetApp?.bundleId.hasPrefix("cli://") == true
+                if isCLIScope, l2.isLoading {
+                    l2.loadingStatus = "Waiting for your approval to run \(pending.command)…"
+                }
                 let risk = pending.classification.riskLevel.displayName
                 let approvalMsg = AIChatMessage(
                     role: .approval,
@@ -1452,6 +1459,32 @@ struct LauncherView: View {
             } else {
                 // Close popup if one was open (for non-panel contexts)
                 CommandApprovalWindowHost.close()
+            }
+        }
+        .onReceive(TerminalAIBridge.shared.$currentCommand) { command in
+            // TerminalAIBridge is the authoritative execution signal. Updating from it
+            // avoids fake timer-based progress and keeps the CLI agent transcript aligned
+            // with the actual approval/execution lifecycle.
+            let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                || l2.targetApp?.bundleId.hasPrefix("cli://") == true
+            guard isCLIScope else { return }
+
+            let status = command.map { "Running \($0)…" } ?? "Reading command result…"
+            if l2.isLoading {
+                l2.loadingStatus = status
+            }
+            if remPanelIsProcessing,
+                let statusIndex = remPanelChatMessages.lastIndex(where: {
+                    $0.role == .assistant && $0.structuredData == "on-device-status"
+                })
+            {
+                let message = remPanelChatMessages[statusIndex]
+                remPanelChatMessages[statusIndex] = AIChatMessage(
+                    id: message.id,
+                    role: .assistant,
+                    content: status,
+                    structuredData: "on-device-status"
+                )
             }
         }
     }

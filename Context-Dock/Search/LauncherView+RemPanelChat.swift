@@ -874,9 +874,13 @@ extension LauncherView {
             // Never leave a blank assistant bubble while Apple Intelligence is choosing
             // tools or waiting for a command approval. The structured marker lets the
             // shared terminal approval observer update this exact status in place.
+            let cliCommand = scopedIdentity.bundleId.hasPrefix("cli://")
+                ? String(scopedIdentity.bundleId.dropFirst("cli://".count))
+                : nil
             let placeholder = AIChatMessage(
                 role: .assistant,
-                content: "Preparing the best action for this scope…",
+                content: cliCommand.map { "Checking \($0) --help and available subcommands…" }
+                    ?? "Preparing the best action for this scope…",
                 structuredData: "on-device-status"
             )
             remPanelChatMessages.append(placeholder)
