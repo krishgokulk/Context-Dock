@@ -403,8 +403,9 @@ extension LauncherView {
             for (k, v) in env { processEnv[k] = v }
             process.environment = processEnv
             let pipe = Pipe()
+            let errorPipe = Pipe()
             process.standardOutput = pipe
-            process.standardError = Pipe()
+            process.standardError = errorPipe
             let inputPipe = Pipe()
             if ext.scriptType == .swift {
                 process.standardInput = inputPipe
@@ -422,17 +423,33 @@ extension LauncherView {
                 return
             }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             let output = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // stderr was previously read by nobody and the exit code was never checked, so a
+            // script that failed still toasted "Ran <name>". Report what actually happened.
+            let errorOutput = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let exitCode = process.terminationStatus
             _ = env  // keep env alive for the closure
             DispatchQueue.main.async {
+                guard exitCode == 0 else {
+                    let detail = errorOutput.isEmpty ? output : errorOutput
+                    AppToast.show(
+                        "\(extName) failed", icon: "exclamationmark.triangle", tint: .orange)
+                    self.reportExtensionRun(
+                        name: extName, succeeded: false, detail: detail, exitCode: exitCode)
+                    return
+                }
                 if output.isEmpty {
                     AppToast.show("Ran \(extName)", icon: "checkmark.circle", tint: .blue)
                 } else {
                     let shown = output.count > 120 ? String(output.prefix(120)) + "…" : output
                     AppToast.show(shown, icon: "text.viewfinder", tint: .indigo)
                 }
+                self.reportExtensionRun(
+                    name: extName, succeeded: true, detail: output, exitCode: 0)
             }
         }
     }

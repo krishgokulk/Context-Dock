@@ -413,6 +413,29 @@ extension LauncherView {
             .replacingOccurrences(of: "{appName}", with: escaped(ctx.appName))
     }
 
+    /// Single truthful report for anything script-shaped that runs on a selection: the chat says
+    /// what the exit code says, with the real output attached. Silence used to read as success.
+    func reportExtensionRun(name: String, succeeded: Bool, detail: String, exitCode: Int32) {
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tail = trimmed.count > 900 ? "…" + String(trimmed.suffix(900)) : trimmed
+        let content: String
+        if succeeded {
+            content = tail.isEmpty ? "✅ \(name) ran." : "✅ \(name) ran.\n\n```\n\(tail)\n```"
+        } else {
+            let reason = tail.isEmpty ? "No output — check the script." : "```\n\(tail)\n```"
+            content = "⚠️ \(name) failed (exit \(exitCode)).\n\n\(reason)"
+        }
+        let message = AIChatMessage(role: .assistant, content: content, isError: !succeeded)
+        if aiMode.isActive {
+            aiMode.messages.append(message)
+            persistGeneralAIConversation()
+        } else {
+            l2.chatMessages.append(message)
+            persistActiveL2DockSession()
+        }
+        requestWindowSizeUpdate(reason: .chatChanged)
+    }
+
     func runOnceFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
@@ -470,6 +493,15 @@ extension LauncherView {
             let consoleKey = prepareScopedWorkspaceTerminal()
             let term = panelTerminal(for: consoleKey)
             showLivePanel(.terminal)
+            // The terminal is a live PTY with no output API, so the run leaves its own trail:
+            // stdout+stderr tee'd to a log, the exit code written to a marker file. Swift polls
+            // the marker and reports the real outcome — otherwise a failing script just scrolls
+            // past and the chat implies it worked.
+            let runID = UUID().uuidString
+            let logURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("proposal_\(runID).log")
+            let statusURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("proposal_\(runID).status")
             let exports = envVars.map { key, value in
                 let safe = value
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -478,8 +510,38 @@ extension LauncherView {
                     .replacingOccurrences(of: "\r", with: " ")
                 return "export \(key)=\"\(safe)\""
             }.joined(separator: "; ")
-            term.sendCommand("\(exports); bash \"\(tmp.path)\"")
+            term.sendCommand(
+                "\(exports); bash \"\(tmp.path)\" > >(tee \"\(logURL.path)\") 2>&1; "
+                + "echo $? > \"\(statusURL.path)\"")
+            awaitProposalRunOutcome(
+                name: proposal.name, logURL: logURL, statusURL: statusURL)
         }
+    }
+
+    /// Polls for the exit-code marker the terminal run writes, then reports the outcome once.
+    /// Gives up quietly after 10 minutes so a long-running or abandoned job never reports a
+    /// result it doesn't have.
+    private func awaitProposalRunOutcome(name: String, logURL: URL, statusURL: URL) {
+        let deadline = Date().addingTimeInterval(600)
+        func poll() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                let fm = FileManager.default
+                guard let raw = try? String(contentsOf: statusURL, encoding: .utf8) else {
+                    if Date() < deadline { poll() }
+                    return
+                }
+                let exitCode =
+                    Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1
+                let log =
+                    (try? String(contentsOf: logURL, encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                self.reportExtensionRun(
+                    name: name, succeeded: exitCode == 0, detail: log, exitCode: exitCode)
+                try? fm.removeItem(at: statusURL)
+                try? fm.removeItem(at: logURL)
+            }
+        }
+        poll()
     }
 
     /// Run a proposal's AppleScript synchronously and return whether it succeeded plus a
