@@ -183,6 +183,10 @@ struct LauncherView: View {
     /// Set when the router checked the whole catalog and found no route — turns the fallback
     /// answer into "here's the gap, here's the extension" instead of a guess.
     @State var selectionRouterNoRouteNote: String?
+    /// Recipient remembered by the `deliver.email` route while the answer is still being written.
+    /// The finished text becomes the draft body, so "summarise this and mail it to X" is one
+    /// request instead of two disconnected ones.
+    @State var selectionRouterPendingEmail: PendingSelectionEmail?
     /// Activation generation already entered, so the window-open handler and the posted
     /// activation don't both rebuild the surface for one hotkey press.
     @State var lastAppliedSelectionActivation: Int = -1

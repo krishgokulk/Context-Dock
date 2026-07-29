@@ -1435,6 +1435,111 @@ extension LauncherView {
         return 180
     }
 
+    /// Second step of "summarise this and mail it to <address>": the content is written, and
+    /// this offers it as a Mail draft. Opens a visible draft — never sends. Sending stays the
+    /// user's click inside Mail, which is the only place they can see what goes out.
+    @ViewBuilder
+    func selectionEmailDraftCard(_ draft: PendingSelectionEmail) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "envelope.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.purple)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Draft email to \(draft.to)?")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(
+                    aiMode.selectionFiles.isEmpty
+                        ? "Subject: \(draft.subject) · the answer above becomes the body"
+                        : "Subject: \(draft.subject) · body + \(aiMode.selectionFiles.count) attachment(s)"
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button("Cancel") { aiMode.pendingEmailDraft = nil }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Draft") {
+                let d = draft
+                aiMode.pendingEmailDraft = nil
+                createSelectionEmailDraft(d)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.purple.opacity(0.25)))
+    }
+
+    /// Builds the draft in Mail (so the selected files can ride along as attachments) and
+    /// reports the real outcome — an AppleScript failure is shown, never swallowed.
+    func createSelectionEmailDraft(_ draft: PendingSelectionEmail) {
+        let attachments = aiMode.selectionFiles.map(\.path)
+        func escaped(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        // An AppleScript string literal cannot contain a raw newline, and a summary is full of
+        // them — without this the whole draft fails to compile.
+        func escapedBody(_ value: String) -> String {
+            escaped(value)
+                .replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+                .replacingOccurrences(of: "\n", with: "\" & return & \"")
+        }
+        var script = """
+            tell application "Mail"
+                set newMessage to make new outgoing message with properties \
+                    {subject:"\(escaped(draft.subject))", content:"\(escapedBody(draft.body))", \
+                     visible:true}
+                tell newMessage
+                    make new to recipient at end of to recipients with properties \
+                        {address:"\(escaped(draft.to))"}
+            """
+        for path in attachments {
+            script += """
+
+                    tell content
+                        make new attachment with properties \
+                            {file name:(POSIX file "\(escaped(path))" as alias)} \
+                            at after the last paragraph
+                    end tell
+            """
+        }
+        script += """
+
+                end tell
+                activate
+            end tell
+            """
+
+        let outcome = runProposalAppleScript(script)
+        let message: AIChatMessage
+        if outcome.ok {
+            let extra = attachments.isEmpty
+                ? ""
+                : " with \(attachments.count) attachment\(attachments.count == 1 ? "" : "s")"
+            message = AIChatMessage(
+                role: .assistant,
+                content: "✉️ Draft to **\(draft.to)** opened in Mail\(extra). Review it and press "
+                    + "Send there — DoraX does not send mail for you.")
+        } else {
+            message = AIChatMessage(
+                role: .assistant,
+                content: "⚠️ Couldn't create the Mail draft:\n\n\(outcome.message)",
+                isError: true)
+        }
+        aiMode.messages.append(message)
+        persistGeneralAIConversation()
+        requestWindowSizeUpdate(reason: .chatChanged)
+    }
+
     /// Two-step send confirmation: the AI proposed sharing its result; the user approves the
     /// destination before the native Share fires.
     @ViewBuilder
@@ -1535,6 +1640,10 @@ extension LauncherView {
                         if let pending = aiMode.pendingShare {
                             selectionShareConfirmCard(pending)
                                 .id("pending-share")
+                        }
+                        if let draft = aiMode.pendingEmailDraft {
+                            selectionEmailDraftCard(draft)
+                                .id("pending-email-draft")
                         }
                         // DoraX Action Chat: first-run approval for executable actions.
                         GeneralAIActionApprovalCard()
@@ -1902,6 +2011,13 @@ extension LauncherView {
                     {
                         self.aiMode.pendingShare = PendingSelectionShare(
                             text: cleaned, destination: shareDest)
+                    }
+                    // Second half of a "produce this, then mail it" request: the content now
+                    // exists, so offer it as a draft. Still a click away from being sent.
+                    if var draft = self.selectionRouterPendingEmail {
+                        self.selectionRouterPendingEmail = nil
+                        draft.body = cleaned
+                        self.aiMode.pendingEmailDraft = draft
                     }
                     self.requestWindowSizeUpdate(reason: .chatChanged)
                 }

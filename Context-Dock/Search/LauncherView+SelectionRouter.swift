@@ -71,7 +71,15 @@ extension LauncherView {
             .filter { pill in
                 guard !pill.isSeparator, pill.isEnabled else { return false }
                 // The Ask AI row is the thing that got us here — never route back into it.
-                return pill.rankingKind != "selectionAI" && pill.id != "selection-ask-ai"
+                guard pill.rankingKind != "selectionAI", pill.id != "selection-ask-ai" else {
+                    return false
+                }
+                // Prompt-only rows are not routes — see selectionRouteIsPromptOnly. Executing
+                // one from inside a chat re-submits its canned question as a new user message,
+                // which routes to the same row again: "Ran Document Brief" twice, the canned
+                // text sitting in the input field, and no work done. They stay clickable in the
+                // sheet for a human; the router never sees them.
+                return !selectionRouteIsPromptOnly(pill)
             }
     }
 
@@ -106,8 +114,8 @@ extension LauncherView {
 
     /// A "prompt" row only opens an AI chat with a canned question — it performs no work on the
     /// file. Routing a concrete capability request into one is how "transcribe" ended up running
-    /// "Audio Brief": nearest row by wording, nothing transcribed. The model needs to see the
-    /// difference, so the catalog labels it.
+    /// "Audio Brief" and how "summarise and mail this" ended up running "Document Brief" twice.
+    /// Excluded from the catalog outright: the chat itself already answers content requests.
     func selectionRouteIsPromptOnly(_ pill: DockPill) -> Bool {
         pill.rankingKind == "selectionWorkflow"
     }
@@ -117,9 +125,8 @@ extension LauncherView {
         let rows = pills.prefix(60).map { pill -> String in
             let id = selectionRouteIdentifier(for: pill)
             let group = selectionRouteGroup(for: pill)
-            let kind = selectionRouteIsPromptOnly(pill) ? " | kind: prompt-only" : ""
             return "- id: \(id) | \(pill.name) | \(group) | accepts: "
-                + "\(selectionRouteAccepts(pill))\(kind)"
+                + "\(selectionRouteAccepts(pill))"
         }
         return rows.joined(separator: "\n")
     }
@@ -304,6 +311,10 @@ extension LauncherView {
             \(catalogBlock)
             \(fileOpsBlock.isEmpty ? "" : "\n" + fileOpsBlock)
 
+            Delivery route — use it when the message asks for content to be PRODUCED and then             sent somewhere ("summarise this and mail it to a@b.com", "write a note about this             and email it to me"):
+            - id: deliver.email | args: to (the email address exactly as written), subject
+            The content is written in this chat first and only then offered as a draft, so pick             this instead of trying to find a row that does both.
+
             Reply with ONE line of JSON and nothing else:
             {"selection_action":{"id":"<exact id from the list>"}}
             {"selection_action":{"id":"fileop.move","args":{"destination":"Pictures"}}}
@@ -317,10 +328,6 @@ extension LauncherView {
               to reminders", "remind me about this at 10pm" are all the same request.
             - The id must be copied exactly from the list. Never invent one.
             - Pick the route whose effect matches the request, not one that merely shares a word.
-            - Rows marked "kind: prompt-only" just open a chat with a canned question; they do \
-              not process the file. Never use one to satisfy a request for real work (transcribe, \
-              convert, download, extract, compress). If only prompt-only rows are close, return \
-              none — a missing capability is a better answer than a route that does nothing.
             - The route must accept \(payloadKind) (or "any").
             - Include "args" only for routes that list them, using the exact key names shown.
             - A request to know something ("what is this", "how big is it") is a question — \
@@ -350,6 +357,28 @@ extension LauncherView {
             return nil
         }
         let chosenID = choice.id
+        // Two-phase delivery: remember the recipient, then let the normal answer path write the
+        // content. Nothing is sent here — the finished text becomes a draft the user approves.
+        if chosenID == "deliver.email" {
+            let to = (choice.args["to"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard to.contains("@") else {
+                await selectionRouterStep("No recipient found — answering instead")
+                return nil
+            }
+            let subject = (choice.args["subject"] ?? "").trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            let resolvedSubject = await MainActor.run { () -> String in
+                if !subject.isEmpty { return subject }
+                let label = selectionRouteSubjectLabel()
+                return label.isEmpty ? "From DoraX" : label
+            }
+            await MainActor.run {
+                selectionRouterPendingEmail = PendingSelectionEmail(
+                    to: to, subject: resolvedSubject)
+            }
+            await selectionRouterStep("Best path: write it here, then draft an email to \(to)")
+            return nil
+        }
         if chosenID.hasPrefix("fileop.") {
             await selectionRouterStep("Best path: File operation · \(chosenID)")
             if let answer = await runSelectionFileOperation(id: chosenID, args: choice.args) {
@@ -443,6 +472,8 @@ extension LauncherView {
         aiMode.pendingToolChips = []
         aiMode.routerTrace = []
         aiMode.pendingShare = nil
+        aiMode.pendingEmailDraft = nil
+        selectionRouterPendingEmail = nil
         aiMode.pendingEnableApp = nil
         aiMode.attachments = []
         aiMode.selectionText = nil

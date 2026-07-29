@@ -90,9 +90,21 @@ struct AIModeState {
     var selectionURL: String? = nil
     // Awaiting user confirmation before sending an AI result via Share (two-step "Send via X?").
     var pendingShare: PendingSelectionShare? = nil
+    // Awaiting confirmation for a composed email draft ("summarise this and mail it to X"):
+    // the content is written first, then offered. Never sent without the user's click.
+    var pendingEmailDraft: PendingSelectionEmail? = nil
     // Set when a query targeted an app the user hasn't selected — the answer bubble shows a
     // one-tap "Enable <app> for this chat" button that adds it to the picker and re-runs.
     var pendingEnableApp: EnableAppRequest? = nil
+}
+
+/// A two-phase delivery request: the router recognised "do X to this, then mail it to
+/// someone", so the content is generated in the chat first and the recipient is remembered
+/// until it exists. `body` is filled in from the finished answer, never guessed.
+struct PendingSelectionEmail: Equatable {
+    let to: String
+    let subject: String
+    var body: String = ""
 }
 
 struct PendingSelectionShare: Equatable {
