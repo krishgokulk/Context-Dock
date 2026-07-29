@@ -158,6 +158,16 @@ extension LauncherView {
         let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
         let isCLIScope = scope.scopedBundleId.hasPrefix("cli://")
+        // A cli:// scope is a command workspace: the typed text is the tool's prompt, not
+        // a filter over rows. Its only row was the tool's own pill, so the sheet appeared
+        // on an empty query, vanished the moment a typed letter missed the pill's search
+        // terms, and flickered back when a later letter hit them — the dock grew and
+        // shrank while typing, and again on entering and leaving the scope. A System
+        // Command scope keeps its rows because those are real, selectable device/control
+        // rows; a CLI tool has none.
+        if isCLIScope {
+            return emptyGlobalGroupedListNavigationState()
+        }
         let resolvedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
             .filter { pill in
                 guard !pill.isSeparator else { return false }

@@ -3217,7 +3217,14 @@ extension LauncherView {
         guard isActiveGlobalRunningAppMenuScope() else { return nil }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let state = visibleGlobalGroupedListNavigationState(for: q)
-        let menus = state.menuPills.filter { !$0.isSeparator }
+        // A CLI tool scope has exactly one "menu" row: the tool itself. The left scope
+        // chip already shows it, so previewing it here put a second, unexplained green
+        // </> in the trailing slot while the user was typing the tool's arguments.
+        let scopedBundleID = currentGlobalScopedBundleID
+        let menus = state.menuPills.filter {
+            guard !$0.isSeparator else { return false }
+            return !($0.rankingKind == "cliTool" && $0.sourceBundleId == scopedBundleID)
+        }
         guard !menus.isEmpty else { return nil }
         if let idx = l2.focusedPillIndex {
             let sourceIndex = idx - state.appResults.count

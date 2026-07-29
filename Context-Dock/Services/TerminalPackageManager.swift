@@ -376,7 +376,7 @@ class TerminalPackageManager: ObservableObject {
         }
 
         for attempt in attempts {
-            let output = await runQuiet(attempt, env: env)
+            let output = Self.strippingANSI(await runQuiet(attempt, env: env))
             let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
             // Accept output that looks like real help (>20 chars, no error markers)
             if trimmed.count > 20
@@ -422,7 +422,7 @@ class TerminalPackageManager: ObservableObject {
         // Stop digging if we've already collected enough text
         guard await accumulator.text.count < 28000 else { return }
 
-        let subs = parseSubcommands(from: help)
+        let subs = parseSubcommands(from: help, binary: binary)
             .filter { !Self.metaSubcommands.contains($0) }
             .prefix(12)  // max breadth per level
 
@@ -440,48 +440,127 @@ class TerminalPackageManager: ObservableObject {
 
     /// Parse the subcommand list from --help output.
     /// Handles: "SUBCOMMANDS:", "COMMANDS:", "Available commands:", indented lists.
-    func parseSubcommands(from helpText: String) -> [String] {
+    /// `binary` (and any alias the help text invokes itself by) lets rows written as full
+    /// invocations — `mo clean    Free up disk space` — resolve to the subcommand rather
+    /// than to the binary name repeated 15 times.
+    func parseSubcommands(from helpText: String, binary: String? = nil) -> [String] {
+        let text = Self.strippingANSI(helpText)
         var subcommands: [String] = []
-        let lines = helpText.components(separatedBy: .newlines)
         var inSection = false
+        var rows: [[String]] = []
 
-        for line in lines {
-            let lower = line.lowercased()
+        for line in text.components(separatedBy: .newlines) {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            let isIndented = line.hasPrefix(" ") || line.hasPrefix("\t")
 
-            // Detect section headers: "SUBCOMMANDS:", "COMMANDS:", "Available commands:"
-            if trimmedLine.hasSuffix(":") && (lower.contains("command") || lower.contains("subcommand")) {
+            if !isIndented, Self.isCommandSectionHeader(trimmedLine) {
                 inSection = true
                 continue
             }
             // New unindented section header ends the commands section
-            if inSection && !trimmedLine.isEmpty && !line.hasPrefix(" ") && !line.hasPrefix("\t") {
+            if inSection && !trimmedLine.isEmpty && !isIndented {
                 inSection = false
             }
             // Blank line ends section only if already well inside it
-            if inSection && trimmedLine.isEmpty && subcommands.count > 0 {
+            if inSection && trimmedLine.isEmpty && !rows.isEmpty {
                 inSection = false
             }
 
-            if inSection || line.hasPrefix("  ") || line.hasPrefix("\t") {
-                // Strip leading whitespace, then take the first token
-                var word = trimmedLine.components(separatedBy: .whitespaces).first ?? ""
-                // Strip trailing parenthetical like "(default)" or "[hidden]"
-                if word.hasPrefix("(") || word.hasPrefix("[") { continue }
-                // Strip trailing suffix like ":"
-                if word.hasSuffix(":") { word = String(word.dropLast()) }
-                guard word.count > 1, word.count < 30,
-                      !word.hasPrefix("-"), !word.hasPrefix("("), !word.hasPrefix("["),
-                      !word.hasPrefix("<"), !word.hasPrefix("{"),
-                      word == word.lowercased(),
-                      word.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
-                      !subcommands.contains(word),
-                      !Self.metaSubcommands.contains(word)
-                else { continue }
-                subcommands.append(word)
+            guard inSection || line.hasPrefix("  ") || line.hasPrefix("\t") else { continue }
+            let tokens = trimmedLine.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            if !tokens.isEmpty { rows.append(tokens) }
+        }
+
+        var invocationNames = Self.invocationNames(in: text, binary: binary)
+        // Help written as invocations ("mo clean  Free up disk space") repeats one leading
+        // token on nearly every row. Whatever that token is — the binary or an installed
+        // alias the help is written against — it is not a subcommand.
+        if let dominant = Self.dominantLeadingToken(in: rows) {
+            invocationNames.insert(dominant)
+        }
+
+        for row in rows {
+            var tokens = row
+            if let first = tokens.first?.lowercased(), invocationNames.contains(first) {
+                tokens.removeFirst()
             }
+            guard var word = tokens.first else { continue }
+            // Strip trailing parenthetical like "(default)" or "[hidden]"
+            if word.hasPrefix("(") || word.hasPrefix("[") { continue }
+            // Strip trailing suffix like ":" or a list comma
+            if word.hasSuffix(":") || word.hasSuffix(",") { word = String(word.dropLast()) }
+            guard word.count > 1, word.count < 30,
+                  !word.hasPrefix("-"), !word.hasPrefix("("), !word.hasPrefix("["),
+                  !word.hasPrefix("<"), !word.hasPrefix("{"),
+                  word == word.lowercased(),
+                  word.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
+                  !invocationNames.contains(word),
+                  !subcommands.contains(word),
+                  !Self.metaSubcommands.contains(word)
+            else { continue }
+            subcommands.append(word)
         }
         return Array(subcommands.prefix(20))
+    }
+
+    /// The leading token shared by most command rows, when there is one — that is the
+    /// tool's own invocation name, not a subcommand.
+    private static func dominantLeadingToken(in rows: [[String]]) -> String? {
+        guard rows.count >= 3 else { return nil }
+        var counts: [String: Int] = [:]
+        for row in rows {
+            guard let first = row.first?.lowercased(), first.count > 1, !first.hasPrefix("-") else {
+                continue
+            }
+            counts[first, default: 0] += 1
+        }
+        guard let (token, count) = counts.max(by: { $0.value < $1.value }),
+            count >= 3,
+            Double(count) >= Double(rows.count) * 0.5
+        else { return nil }
+        return token
+    }
+
+    /// A commands heading. The colon is optional: plenty of CLIs (mole, many Go and Rust
+    /// tools) print a bare, colour-coded `COMMANDS` heading, and requiring the colon meant
+    /// their entire command list was skipped.
+    private static func isCommandSectionHeader(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        guard lower.contains("command"), !lower.contains("usage") else { return false }
+        if line.hasSuffix(":") { return true }
+        let words = lower.split(separator: " ")
+        guard words.count <= 3 else { return false }
+        return line == line.uppercased()
+            || lower.hasPrefix("commands")
+            || lower.hasPrefix("subcommands")
+            || lower.hasPrefix("available")
+    }
+
+    /// Names the help text uses to invoke the tool: the binary itself plus whatever the
+    /// `Usage:` line names (Homebrew formulae often install a short alias — mole ships
+    /// `mo` — and the help text is written in terms of the alias).
+    private static func invocationNames(in helpText: String, binary: String?) -> Set<String> {
+        var names = Set<String>()
+        if let binary {
+            let base = binary.components(separatedBy: " ").first ?? binary
+            let trimmed = base.trimmingCharacters(in: .whitespaces).lowercased()
+            if !trimmed.isEmpty {
+                names.insert(trimmed)
+                names.insert((trimmed as NSString).lastPathComponent)
+            }
+        }
+        for line in helpText.components(separatedBy: .newlines) {
+            let lower = line.trimmingCharacters(in: .whitespaces).lowercased()
+            guard lower.hasPrefix("usage:") || lower.hasPrefix("usage ") else { continue }
+            let after = lower.drop(while: { $0 != ":" }).dropFirst()
+            let candidate = after.split(separator: " ").first.map(String.init)
+                ?? lower.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            let name = (candidate as NSString).lastPathComponent
+            if name.count > 1, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) {
+                names.insert(name)
+            }
+        }
+        return names
     }
 
     /// Parse the primary usage pattern line from --help output.
@@ -504,7 +583,7 @@ class TerminalPackageManager: ObservableObject {
         guard let topHelp = await scanHelpText(for: pkg.command) else { return }
         let deepHelp = await scanDeepHelp(for: pkg.command) ?? topHelp
         packages[index].helpText       = deepHelp
-        packages[index].subcommands    = parseSubcommands(from: topHelp)
+        packages[index].subcommands    = parseSubcommands(from: topHelp, binary: pkg.command)
         packages[index].usagePattern   = parseUsagePattern(from: topHelp)
         savePackages()
     }
@@ -516,6 +595,19 @@ class TerminalPackageManager: ObservableObject {
     }
 
     private var autoScanInFlight: Set<String> = []
+    private var autoScannedOnce: Set<String> = []
+
+    /// A tool needs (re)scanning when it has no help at all, when the stored help still
+    /// carries raw ANSI escapes, or when the scan produced no subcommands. The last two
+    /// cover everything pinned before the parser learned to strip colour codes and read
+    /// colon-less `COMMANDS` headings: those entries cached unusable help and an empty
+    /// command list, and would otherwise never be scanned again.
+    func needsHelpScan(_ package: TerminalPackage) -> Bool {
+        let help = (package.helpText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if help.isEmpty { return true }
+        if help.contains("\u{1B}") { return true }
+        return package.subcommands.isEmpty
+    }
 
     /// Fire-and-forget `--help` scan for a linked CLI whose reference is still empty.
     /// A newly pinned binary is registered WITHOUT a blocking scan, so its `helpText` is
@@ -526,10 +618,14 @@ class TerminalPackageManager: ObservableObject {
         let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cmd.isEmpty,
             let pkg = packages.first(where: { $0.command == cmd || $0.name == cmd }),
-            (pkg.helpText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !autoScanInFlight.contains(pkg.command)
+            needsHelpScan(pkg),
+            !autoScanInFlight.contains(pkg.command),
+            // A tool that genuinely has no subcommands (jq, markitdown…) stays "needs
+            // scan" forever, so cap the automatic retry at once per launch.
+            !autoScannedOnce.contains(pkg.command)
         else { return }
         autoScanInFlight.insert(pkg.command)
+        autoScannedOnce.insert(pkg.command)
         let target = pkg.command
         Task { @MainActor in
             await refreshHelpTextByCommand(target)
@@ -660,7 +756,31 @@ class TerminalPackageManager: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         let current = env["PATH"] ?? ""
         env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:" + current
+        // Ask tools for plain help. Colour-coded output is the norm for modern CLIs and
+        // its escape sequences broke subcommand parsing outright; these three variables
+        // are what most CLI frameworks honour. Output is still sanitised after the fact
+        // for the tools that ignore them.
+        env["NO_COLOR"] = "1"
+        env["CLICOLOR"] = "0"
+        env["TERM"] = "dumb"
         return env
+    }
+
+    /// Strips ANSI colour/cursor escapes (CSI + OSC) and carriage returns. Coloured help
+    /// text turned every parsed token into `\u{1B}[0;32mclean`, which failed the
+    /// alphanumeric check and produced zero subcommands — and the raw escapes were also
+    /// being fed to the model as "command syntax".
+    static func strippingANSI(_ text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "\u{1B}\\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "\u{1B}", with: "")
+            .replacingOccurrences(of: "\r", with: "")
     }
 
     private func runQuiet(_ command: String, env: [String: String]) async -> String {
@@ -830,10 +950,12 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         installedPath != nil
     }
 
-    /// Truncated help text safe to embed in AI prompts (first 2000 chars).
+    /// Help text sized for a prompt. Cut on a line boundary and labelled when shortened —
+    /// a mid-flag cut reads to the model as a real flag, which is how invented flags get
+    /// into generated commands.
     var helpTextForPrompt: String? {
         guard let ht = helpText, !ht.isEmpty else { return nil }
-        return String(ht.prefix(2000))
+        return AIContextBudget.fitReference(ht, budget: 2_000)
     }
 
     func isAssociated(with bundleId: String) -> Bool {
