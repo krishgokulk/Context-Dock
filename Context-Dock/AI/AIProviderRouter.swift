@@ -304,14 +304,18 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
             ],
             body: [
                 "model": configuration.modelID,
-                "system": contextPrompt,
-                "messages": messages,
+                // Cacheable block form: consecutive questions against the same scope share
+                // this system prompt, so the second one reads it at ~0.1× instead of full
+                // price. Below the model's minimum prefix it simply doesn't cache.
+                "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
+                "messages": AnthropicPromptCache.markingLastBlock(messages),
                 // Was 1024 — long answers were cut mid-sentence. Models that think by
                 // default spend part of this budget before writing a word.
                 "max_tokens": 8192,
             ]
         )
         let response = try JSONDecoder().decode(Response.self, from: data)
+        AnthropicPromptCache.logUsage(response.usage, label: "anthropicSend")
         guard let content = response.content.first?.text, !content.isEmpty else {
             throw AIServiceError.emptyResponse("No response from Anthropic")
         }
@@ -320,6 +324,7 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
 
     private struct Response: Decodable {
         let content: [Content]
+        let usage: AnthropicUsage?
         struct Content: Decodable { let text: String }
     }
 }

@@ -373,10 +373,16 @@ extension AIProviderService {
         let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
 
         for _ in 0..<maxIterations {
+            // Prompt caching. Every iteration re-sends the same system prompt and tool set
+            // plus the whole conversation so far; the breakpoint on the last system block
+            // covers tools + system (they render first), and the one on the newest message
+            // extends the cached span over the history. Markers go on this copy only —
+            // writing them back into `messages` would add one per iteration and blow the
+            // 4-breakpoint limit.
             var body: [String: Any] = [
                 "model": model,
-                "system": contextPrompt,
-                "messages": messages,
+                "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
+                "messages": AnthropicPromptCache.markingLastBlock(messages),
                 "tools": ToolDefinitions.anthropic + customTools,
                 // 1024 was far too small for an agentic loop: on models that think by default
                 // it caps thinking AND the reply together, so answers were cut mid-sentence
@@ -390,6 +396,7 @@ extension AIProviderService {
                 body["output_config"] = ["effort": "high"]
             }
             let decoded = try await AnthropicToolProviderAdapter().send(apiKey: apiKey, body: body)
+            AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
 

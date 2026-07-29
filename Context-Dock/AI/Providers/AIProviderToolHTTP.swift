@@ -39,6 +39,9 @@ struct OpenAIToolResponse: Codable {
 struct AnthropicToolResponse: Codable {
     let content: [ContentBlock]
     let stop_reason: String?
+    /// Carries the prompt-cache counters. Without decoding these there is no way to tell
+    /// a cache hit from a full-price re-read — both return HTTP 200 with the same shape.
+    let usage: AnthropicUsage?
     struct ContentBlock: Codable {
         let type: String
         let text: String?
