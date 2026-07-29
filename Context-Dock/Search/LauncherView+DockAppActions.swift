@@ -278,6 +278,7 @@ extension LauncherView {
     func terminateRunningAppFromDock(_ app: NSRunningApplication) {
         let name = app.localizedName ?? "App"
         let bundleID = app.bundleIdentifier ?? ""
+        beginGlobalQuitBatchPresentation()
         hoveredDockAppKey = nil
         if !bundleID.isEmpty {
             launcherViewModel.appQuitFeedbackPhases[bundleID] = .progress
@@ -293,6 +294,31 @@ extension LauncherView {
         refocusLauncherWindowAfterAppAction(delay: 0.06)
         scheduleDockRefreshAfterTerminationAttempt(for: app, feedbackID: feedbackID)
         refreshGlobalSearchAfterRunningAppMutation()
+    }
+
+    /// Spotlight-style multi-quit: retain the filtered Global Context result list while
+    /// the app exit changes focus, refresh rows inline, then dismiss only after the
+    /// user leaves it idle. This owns one sleeping task, never a repeating timer.
+    func beginGlobalQuitBatchPresentation() {
+        guard isGlobalContextActive else { return }
+        globalQuitIdleDismissTask?.cancel()
+        globalQuitIdleDismissGeneration &+= 1
+        let generation = globalQuitIdleDismissGeneration
+        let queryAtLastQuit = searchState.query
+
+        AppDelegate.shared?.holdDockForGlobalQuitBatch(seconds: 10)
+        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+
+        globalQuitIdleDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled,
+                generation == globalQuitIdleDismissGeneration,
+                isGlobalContextActive,
+                searchState.query == queryAtLastQuit
+            else { return }
+            isSearchFieldFocused = false
+            AppDelegate.shared?.hideLauncher()
+        }
     }
 
     func appQuitFeedbackPhase(bundleID: String?) -> DockInlineFeedback.Phase? {

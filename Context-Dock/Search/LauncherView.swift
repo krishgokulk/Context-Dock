@@ -102,6 +102,10 @@ struct LauncherView: View {
     }
     @State var livePanelMode: LivePanelMode = .results([])
     @State var livePanelVisible: Bool = false  // drives the slide-in animation
+    /// One cancellable idle timer for a batch of Global Context quit actions. Keeping
+    /// this in the view avoids polling and makes a second quit simply reset the timer.
+    @State var globalQuitIdleDismissTask: Task<Void, Never>?
+    @State var globalQuitIdleDismissGeneration: Int = 0
     @State var qlRightClickPos: CGPoint? = nil  // position for QL pill context menu
     @State var panelTerminalHost: TerminalHostController? = nil
     @ObservedObject var workerPool = BackgroundWorkerPool.shared

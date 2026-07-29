@@ -173,6 +173,16 @@ class KeyableWindow: NSPanel {
         }
     }
 
+    /// Applies a launcher-owned resize immediately.  SwiftUI may ask its hosting view to resize
+    /// during a display pass; that request still takes the deferred path above.  The dock's own
+    /// size coordinator, however, has already prepared the matching SwiftUI surface and must not
+    /// wait for a second run-loop turn — doing so briefly leaves a tall transparent panel around a
+    /// short card.  Keeping this narrow escape hatch here preserves a single owner for anchoring.
+    func applyDockFrame(_ frameRect: NSRect, display: Bool = true) {
+        pendingDeferredFrame = nil
+        applyAnchoredFrame(frameRect, display: display, animate: false)
+    }
+
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         if isInsideSwiftUIDisplayCycle {
             deferAnchoredFrame(frameRect, display: flag, animate: false)
@@ -1159,6 +1169,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         suppressHideOnResignUntil = Date().addingTimeInterval(seconds)
         window.alphaValue = 1
         window.orderFrontRegardless()
+    }
+
+    /// Quitting an app transfers macOS focus before the process has fully exited.
+    /// Keep an already-visible Global Context sheet alive through that transition so
+    /// the user can quit several apps from the same result list.
+    func holdDockForGlobalQuitBatch(seconds: TimeInterval = 10) {
+        let deadline = Date().addingTimeInterval(seconds)
+        suppressResultHideUntil = deadline
+        suppressHideOnResignUntil = deadline
+        guard let window = launcherWindow, window.isVisible else { return }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
+        window.makeKey()
     }
 
     func reinforceFloatingDockWindow(reason: String, activate: Bool) {

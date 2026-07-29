@@ -1833,7 +1833,7 @@ struct CodeBlockView: View {
                 }
 
                 #if DEBUG
-                print("✅ Saved extension to Documents/ILauncher/Extensions")
+                print("✅ Saved extension to Application Support/Context-Dock/Extensions")
                 #endif
 
             } catch {

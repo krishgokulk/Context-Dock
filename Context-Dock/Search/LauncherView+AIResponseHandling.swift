@@ -214,7 +214,7 @@ extension LauncherView {
 
                         📦 **\(extensionName)**
                         📝 \(description)
-                        📂 Saved to: Documents/ILauncher/Extensions
+                        📂 Saved to: Application Support/Context-Dock/Extensions
 
                         The extension has been added and is now available in your Extensions library!
                         """

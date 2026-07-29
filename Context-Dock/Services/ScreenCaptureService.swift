@@ -4,6 +4,7 @@ import Vision
 
 final class ScreenCaptureService: @unchecked Sendable {
     static let shared = ScreenCaptureService()
+    private let captureLock = NSLock()
     private init() {}
 
     enum CaptureKind {
@@ -14,6 +15,33 @@ final class ScreenCaptureService: @unchecked Sendable {
 
     func capture(_ kind: CaptureKind) {
         Task.detached(priority: .userInitiated) {
+            // A global hotkey can be repeated while the native selection overlay is
+            // still up. Launching two screencapture pickers makes both appear to fail.
+            guard self.captureLock.try() else {
+                await MainActor.run {
+                    AppToast.show("Capture already in progress", icon: "text.viewfinder", tint: .orange)
+                }
+                return
+            }
+            defer { self.captureLock.unlock() }
+
+            // The old implementation relied on the child `screencapture` process to
+            // signal this failure. It then returned silently, which looked exactly
+            // like a broken hotkey. Ask through our app identity and make the next
+            // action clear if macOS still denies the permission.
+            let canCapture = await MainActor.run { () -> Bool in
+                if CGPreflightScreenCaptureAccess() { return true }
+                return CGRequestScreenCaptureAccess() && CGPreflightScreenCaptureAccess()
+            }
+            guard canCapture else {
+                await MainActor.run {
+                    AppToast.show(
+                        "Capture Text needs Screen Recording access — allow Context Dock in Privacy & Security",
+                        icon: "text.viewfinder", tint: .orange)
+                }
+                return
+            }
+
             // Resolve the source app BEFORE screencapture takes over the front: the
             // clipboard scope shows "Copied from …", and once the picker is up the
             // frontmost app is screencapture, not the app the user grabbed from.
@@ -56,12 +84,22 @@ final class ScreenCaptureService: @unchecked Sendable {
                 try process.run()
                 process.waitUntilExit()
             } catch {
+                await MainActor.run {
+                    AppToast.show(
+                        "Couldn’t start the screen capture picker", icon: "text.viewfinder", tint: .red)
+                }
                 return
             }
             // Non-zero status is the user pressing Escape on the picker — stay silent.
-            guard process.terminationStatus == 0,
-                let data = try? Data(contentsOf: url), !data.isEmpty
-            else { return }
+            guard process.terminationStatus == 0 else { return }
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+                await MainActor.run {
+                    AppToast.show(
+                        "Capture produced no image — try selecting the text again",
+                        icon: "text.viewfinder", tint: .orange)
+                }
+                return
+            }
 
             switch kind {
             case .text:
@@ -144,9 +182,31 @@ final class ScreenCaptureService: @unchecked Sendable {
         } catch {
             return ""
         }
-        return (request.results ?? [])
-            .compactMap { $0.topCandidates(1).first?.string }
+        // Vision does not guarantee array order. Rebuild reading order from the
+        // observations' image-space bounds: top-to-bottom, then left-to-right
+        // within the same visual line. This keeps paragraphs, menus, and tables
+        // useful after they land on the clipboard.
+        let lines = (request.results ?? []).compactMap { observation -> OCRLine? in
+            guard let text = observation.topCandidates(1).first?.string
+                .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
+            else { return nil }
+            return OCRLine(text: text, bounds: observation.boundingBox)
+        }
+        let ordered = lines.sorted { lhs, rhs in
+            let lineTolerance = max(lhs.bounds.height, rhs.bounds.height) * 0.55
+            if abs(lhs.bounds.midY - rhs.bounds.midY) <= lineTolerance {
+                return lhs.bounds.minX < rhs.bounds.minX
+            }
+            return lhs.bounds.midY > rhs.bounds.midY
+        }
+        return ordered
+            .map(\.text)
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private struct OCRLine {
+        let text: String
+        let bounds: CGRect
     }
 }

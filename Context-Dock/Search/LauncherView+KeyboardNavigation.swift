@@ -1360,34 +1360,25 @@ extension LauncherView {
 
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: effectiveHeight)
 
-            let visibleStartHeight = self.renderedDockHeight ?? currentFrame.height
-            let shouldAnimateVisibleShell = animated && abs(visibleStartHeight - effectiveHeight) > 1
-            self.renderedDockHeight = visibleStartHeight
+            // Keep the shell and its host in lockstep.  The old implementation grew the
+            // transparent NSPanel first and then animated a shorter SwiftUI card inside it. That
+            // exposed an empty half-sheet and, while the host was taller than the card, SwiftUI's
+            // fallback alignment could momentarily re-centre the input/icon.  Spotlight-style
+            // launchers do not animate two independent geometries: they prepare the final surface
+            // and commit one anchored panel frame.  A single yield lets SwiftUI accept the new
+            // content frame before it can become visible outside the old host; it is one pass per
+            // real size change, never on each search result.
+            var noAnimation = Transaction()
+            noAnimation.animation = nil
+            withTransaction(noAnimation) {
+                self.renderedDockHeight = effectiveHeight
+            }
+            await Task.yield()
+            guard !Task.isCancelled, window.isVisible else { return }
 
-            if effectiveHeight >= currentFrame.height || !shouldAnimateVisibleShell {
-                if shouldAnimateVisibleShell {
-                    // Spotlight-style reveal: the transparent host receives its final capacity
-                    // synchronously, then the single top-anchored SwiftUI surface grows inside it.
-                    // Animating the NSPanel frame exposed the already-full list through a moving
-                    // crop (empty sheet first, rows later). A non-bouncy ease-out keeps the glass,
-                    // divider, headers, and rows moving as one prepared surface.
-                    window.setFrame(newFrame, display: true)
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        self.renderedDockHeight = effectiveHeight
-                    }
-                } else {
-                    self.renderedDockHeight = effectiveHeight
-                    window.setFrame(newFrame, display: true)
-                }
+            if let keyableWindow = window as? KeyableWindow {
+                keyableWindow.applyDockFrame(newFrame)
             } else {
-                // Collapse: hide the visible shell first while the larger transparent host still
-                // provides room, then shrink the host after the animation. This is the inverse of
-                // expansion and prevents either edge from clipping the persistent input.
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
-                    self.renderedDockHeight = effectiveHeight
-                }
-                try? await Task.sleep(nanoseconds: 230_000_000)
-                guard !Task.isCancelled else { return }
                 window.setFrame(newFrame, display: true)
             }
             // Transparent window: recompute the macOS drop-shadow for the new glass
