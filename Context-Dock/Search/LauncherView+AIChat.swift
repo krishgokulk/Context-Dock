@@ -890,6 +890,24 @@ extension LauncherView {
 
     func exitContextDockChatAndScope() {
         let wasCLIToolScope = isCLIToolScopeLocked
+        if wasCLIToolScope {
+            // A CLI tool session is bound to the scope, not to an app the user returns to:
+            // leaving it ends the run. Keeping the transcript meant the next scope opened
+            // on the previous tool's conversation, and the model carried that history into
+            // its first command.
+            l2.chatMessages = []
+            if let key = l2.activeDockSessionKey {
+                AppPanelChatStore.shared.clear(for: key)
+            }
+            l2.isLoading = false
+            l2.loadingStatus = nil
+            l2.activeRequestID = nil
+            l2.currentTask?.cancel()
+            l2.currentTask = nil
+            contextDockChatCapturedText = nil
+            contextDockChatFiles = []
+            CLIScopeTerminalManager.shared.reset()
+        }
         exitContextDockChatSheet()
         clearSearchContext()
         remPanelIsProcessing = false
@@ -2469,13 +2487,15 @@ extension LauncherView {
         )
     }
 
-    func appPanelCLIDocumentation(for package: TerminalPackage) -> String {
+    func appPanelCLIDocumentation(for package: TerminalPackage, query: String = "") -> String {
         var doc = "### \(package.command) [CLI]"
         if let path = package.installedPath, !path.isEmpty {
             doc += " at \(path)"
         }
         if let helpText = package.helpText, !helpText.isEmpty {
-            doc += "\n" + String(helpText.prefix(1000))
+            // Relevance-fitted and cut on a line boundary — a prefix cut here left flags
+            // half-written, which the model then treats as real flags.
+            doc += "\n" + AIContextBudget.fitHelpText(helpText, query: query, budget: 1_000)
         } else if !package.description.isEmpty {
             doc += "\n" + package.description
         } else {
@@ -2499,13 +2519,13 @@ extension LauncherView {
         return "• \(package.command): run_command(\"\(package.command) \\\"<full user query>\\\"\")"
     }
 
-    func dockScopedCLIDocumentation(for package: TerminalPackage) -> String {
+    func dockScopedCLIDocumentation(for package: TerminalPackage, query: String = "") -> String {
         var doc = "### \(package.command) [CLI]"
         if let path = package.installedPath, !path.isEmpty {
             doc += " at \(path)"
         }
         if let helpText = package.helpText, !helpText.isEmpty {
-            doc += "\n" + String(helpText.prefix(1000))
+            doc += "\n" + AIContextBudget.fitHelpText(helpText, query: query, budget: 1_000)
         } else if !package.subcommands.isEmpty {
             doc += "\nSubcommands (always include a space between command and subcommand):\n"
             doc += package.subcommands.map { "  \(package.command) \($0)" }.joined(separator: "\n")
@@ -2927,6 +2947,41 @@ extension LauncherView {
     func setL2LoadingStatus(_ status: String?, requestID: UUID) {
         guard l2.activeRequestID == requestID, l2.isLoading else { return }
         l2.loadingStatus = status
+    }
+
+    /// The CLI tool a `cli://` scope is bound to, or nil outside such a scope.
+    func cliScopeToolCommand(for bundleID: String) -> String? {
+        guard bundleID.hasPrefix("cli://") else { return nil }
+        let command = String(bundleID.dropFirst("cli://".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? nil : command
+    }
+
+    /// Narrates each step of a CLI tool scope from the command about to run, so the
+    /// session reads like an agent working ("Reading mole --help…", "Running mole scan…")
+    /// instead of one generic "Running linked CLI…" for every step. Derived from the real
+    /// command string, so it can never claim work that isn't happening.
+    func cliAgentStatus(for command: String, tool: String?) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shortened = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
+        guard let tool, !tool.isEmpty else { return "Running \(shortened)…" }
+        let lower = trimmed.lowercased()
+        if lower.contains("--help") || lower.hasSuffix(" -h") || lower.hasSuffix(" help") {
+            return "Reading \(tool) --help…"
+        }
+        if lower.contains("--version") || lower.hasSuffix(" -v") {
+            return "Checking the \(tool) version…"
+        }
+        if lower.hasPrefix("which ") || lower.hasPrefix("command -v ") {
+            return "Locating \(tool)…"
+        }
+        guard lower.hasPrefix(tool.lowercased()) else { return "Running \(shortened)…" }
+        let rest = trimmed.dropFirst(tool.count).trimmingCharacters(in: .whitespaces)
+        let subcommand = rest.split(separator: " ").first.map(String.init) ?? ""
+        if subcommand.isEmpty || subcommand.hasPrefix("-") {
+            return "Running \(tool)…"
+        }
+        return "Running \(tool) \(subcommand)…"
     }
 
     func isCancellationError(_ error: Error) -> Bool {
@@ -4058,7 +4113,11 @@ extension LauncherView {
                     }
                 }
 
-                await self.setL2LoadingStatus("Checking linked actions, CLI, and MCP…", requestID: l2RequestID)
+                await self.setL2LoadingStatus(
+                    self.cliScopeToolCommand(for: scopedBundleId).map {
+                        "Loading what \($0) can do…"
+                    } ?? "Checking linked actions, CLI, and MCP…",
+                    requestID: l2RequestID)
                 let runtimeCLIContextPrompt = await self.runtimeAppCLIContextPrompt(
                     bundleId: scopedBundleId,
                     appName: scopedAppName.isEmpty ? (frontmostName ?? frontmost.name) : scopedAppName,
@@ -4139,6 +4198,9 @@ extension LauncherView {
                 if provider != .onDevice && provider != .shortcuts {
                     // Collects MCP tools the model invokes via the tool loop, for the chip.
                     let mcpRan = MCPRunCollector()
+                    // In a CLI tool scope every status names the tool and the step, so the
+                    // user can follow the agent: help probe → chosen subcommand → result.
+                    let cliTool = self.cliScopeToolCommand(for: scopedBundleId)
                     let commandExecutor: (String, String) async -> (Bool, String) = {
                         command, purpose in
                         // Run an installed adapter action (New Board, Zoom, Delete, deep link,
@@ -4232,7 +4294,10 @@ extension LauncherView {
                             return (true, result)
                         }
                         await self.setL2LoadingStatus(
-                            "Running linked CLI…", requestID: l2RequestID)
+                            cliTool == nil
+                                ? "Running linked CLI…"
+                                : self.cliAgentStatus(for: command, tool: cliTool),
+                            requestID: l2RequestID)
                         if self.scopedAppHasPreferredNonTerminalRoute(
                             bundleId: scopedBundleId,
                             appName: scopedAppName.isEmpty
@@ -4251,7 +4316,9 @@ extension LauncherView {
                         ? query
                         : "\(activeContextPrompt)\n\nUser request: \(query)"
                     await self.setL2LoadingStatus(
-                        "Choosing the best available capability…", requestID: l2RequestID)
+                        cliTool.map { "Working out the right \($0) command…" }
+                            ?? "Choosing the best available capability…",
+                        requestID: l2RequestID)
                     var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
                         toolQuery,
                         context: scopedConversationContext,
@@ -4268,7 +4335,8 @@ extension LauncherView {
                     }
                     var toolsRan = await mcpRan.tools
                     await self.setL2LoadingStatus(
-                        "Checking the result…", requestID: l2RequestID)
+                        cliTool.map { "Reading the \($0) output…" } ?? "Checking the result…",
+                        requestID: l2RequestID)
                     // Fallback: model emitted a raw mcp_call as its final text (not via the loop).
                     if let resolved = await self.resolveMCPToolCall(
                         in: finalResponse, bundleId: scopedBundleId, userQuery: query,
@@ -5542,7 +5610,11 @@ extension LauncherView {
             let appToolsBlock = await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: toolProvider == .onDevice,
                 query: query,
-                scope: executionScope)
+                scope: executionScope,
+                // Per-provider budget. On-device Apple Intelligence gets a fraction of the
+                // cloud allowance — its window is small enough that an unbudgeted
+                // capability block alone overflowed it.
+                characterBudget: AIContextBudget.characterBudget(for: toolProvider))
             if !appToolsBlock.isEmpty {
                 let toolSystemPrompt = sysContent + "\n\n" + appToolsBlock
                 var loopHistory = history

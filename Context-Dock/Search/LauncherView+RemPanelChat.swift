@@ -203,7 +203,11 @@ extension LauncherView {
                 $0.name == toolCmd || $0.command == toolCmd
             })
             let isTUI = TerminalAIBridge.shared.isTUICommand(toolCmd)
-            let hasScannedHelp = !(pkg?.helpText ?? "").isEmpty
+            // "Has help text" is not the same as "has a usable reference": entries scanned
+            // before the parser stripped ANSI codes stored colour escapes and zero
+            // subcommands. Treat those as unscanned so they get re-scanned and the model
+            // bootstraps from a live --help this turn instead of trusting the junk.
+            let hasScannedHelp = pkg.map { !TerminalPackageManager.shared.needsHelpScan($0) } ?? false
             // Reference not scanned yet — kick a background scan for next time, and make the
             // model bootstrap ITSELF this turn by running `--help` first instead of guessing
             // (an unscanned tool previously produced hallucinated generic scripts).
@@ -225,8 +229,16 @@ extension LauncherView {
             // The AI must only use commands that appear here.
             let helpSnippet: String = {
                 guard let ht = pkg?.helpText, !ht.isEmpty else { return unscannedBootstrap }
+                // Budgeted by relevance, not by position. A flat prefix(4000) kept the
+                // banner and top-level usage while the subcommand the user actually asked
+                // about fell off the end — and cut mid-flag, which reads as a real flag.
+                let fitted = AIContextBudget.fitHelpText(
+                    ht,
+                    query: query,
+                    budget: AIContextBudget.characterBudget(for: provider)
+                )
                 return
-                    "\n\n══ TOOL REFERENCE (exact output of \(toolCmd) --help) ══\n\(String(ht.prefix(4000)))\n══ END TOOL REFERENCE ══"
+                    "\n\n══ TOOL REFERENCE (from \(toolCmd) --help) ══\n\(fitted)\n══ END TOOL REFERENCE ══"
             }()
             let subcommandList: String = {
                 guard let subs = pkg?.subcommands, !subs.isEmpty else { return "" }
@@ -563,7 +575,11 @@ extension LauncherView {
                     return doc
                 }
             }
-            let packageDocs = contextualCliPackages.map(appPanelCLIDocumentation(for:))
+            // Pass the query through so each tool's help is fitted to what was asked
+            // rather than to whatever sits in its first 1 000 characters.
+            let packageDocs = contextualCliPackages.map {
+                appPanelCLIDocumentation(for: $0, query: query)
+            }
             let toolDocs = (extensionDocs + packageDocs).joined(separator: "\n\n---\n\n")
 
             // Intent → invocation hints per tool

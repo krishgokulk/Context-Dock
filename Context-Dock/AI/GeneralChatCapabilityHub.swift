@@ -36,7 +36,8 @@ final class GeneralChatCapabilityHub {
     func capabilityPromptBlock(
         compact: Bool = false,
         query: String = "",
-        scope: AIConversationScope = .general
+        scope: AIConversationScope = .general,
+        characterBudget: Int = 12_000
     ) async -> String {
         let discovery = await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
         let discoveryLines = discovery.promptLines
@@ -48,9 +49,17 @@ final class GeneralChatCapabilityHub {
             .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
             .sorted()
             .joined(separator: "|")
+        // Retrieved evidence for THIS question, not just an inventory of what exists.
+        // The inventory says which apps are installed; this says which cached menu command,
+        // history entry, recent document or indexed file actually matches what was asked —
+        // and that grounding is what stops the model answering app questions from memory.
+        // Ranked best-first, capped per source, and appended last so it sits closest to the
+        // question in the prompt.
+        let evidenceLines = await GeneralChatLocalEvidence.promptLines(query: query)
         let inventoryLines = appInventoryLines()
             + discoveryLines
             + targetedSkillLines(query: query, scope: scope)
+            + evidenceLines
         if let cachedBlock,
             cachedAllowlistFingerprint == allowlistFingerprint,
             Date().timeIntervalSince(cachedAt) < cacheTTL
@@ -59,7 +68,8 @@ final class GeneralChatCapabilityHub {
                 cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
                 inventoryLines: inventoryLines
             )
-            return compact ? compacted(block) : block
+            return AIContextBudget.fitReference(
+                compact ? compacted(block) : block, budget: characterBudget)
         }
 
         var mcpLines: [String] = []
@@ -162,7 +172,8 @@ final class GeneralChatCapabilityHub {
             cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
             inventoryLines: inventoryLines
         )
-        return compact ? compacted(full) : full
+        return AIContextBudget.fitReference(
+            compact ? compacted(full) : full, budget: characterBudget)
     }
 
     /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/
