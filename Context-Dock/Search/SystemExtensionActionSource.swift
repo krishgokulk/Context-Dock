@@ -369,7 +369,11 @@ extension LauncherView {
 
     /// Run an imported selection extension against the frozen selection and toast its output.
     private func runCustomSelectionExtension(_ ext: ILExtension) {
-        guard let script = ext.scriptContent, !script.isEmpty else { return }
+        guard let rawScript = ext.scriptContent, !rawScript.isEmpty else { return }
+        // Same expansion the proposal "Run Once" path uses: extensions are written against the
+        // documented {file}/{selectedText}/{url} placeholders, so they must be substituted here
+        // or the script runs with the literal braces and silently does nothing.
+        let script = expandSelectionPlaceholders(in: rawScript)
         let ctx = effectiveShareAXContext()
         let filePaths = ctx.selectedFilePaths
         var env: [String: String] = [

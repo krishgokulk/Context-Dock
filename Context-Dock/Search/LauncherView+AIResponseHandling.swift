@@ -377,18 +377,60 @@ extension LauncherView {
     }
 
     /// Execute a proposal's script immediately without saving.
+    /// Substitutes the `{file}` / `{selectedText}` / `{url}` placeholders the app documents
+    /// everywhere (Automation settings, trigger rules, the extension-proposal prompt) into a
+    /// script before it runs. Without this a proposal script runs with the literal text
+    /// `{file}` in it: `ffmpeg -i "{file}"` fails, `set -e` exits, and nothing is produced —
+    /// which reads as "it said converted but there's no file".
+    ///
+    /// Values are shell-escaped because they land inside double quotes in the script.
+    func expandSelectionPlaceholders(in script: String) -> String {
+        let ctx = effectiveShareAXContext()
+        let selectionFiles = effectiveSelectedFileURLsForConversation().map(\.path)
+        let files = selectionFiles.isEmpty ? ctx.selectedFilePaths : selectionFiles
+        let text =
+            (effectiveSelectionForScope.flatMap { selection -> String? in
+                if case .text(let value) = selection { return value }
+                return nil
+            }) ?? ctx.selectedText ?? ""
+
+        func escaped(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+
+        return script
+            .replacingOccurrences(of: "{file}", with: escaped(files.first ?? ""))
+            .replacingOccurrences(
+                of: "{files}", with: escaped(files.joined(separator: "\" \"")))
+            .replacingOccurrences(of: "{selectedText}", with: escaped(text))
+            .replacingOccurrences(of: "{text}", with: escaped(text))
+            .replacingOccurrences(of: "{url}", with: escaped(ctx.currentURL ?? ""))
+            .replacingOccurrences(
+                of: "{clipboard}",
+                with: escaped(NSPasteboard.general.string(forType: .string) ?? ""))
+            .replacingOccurrences(of: "{appName}", with: escaped(ctx.appName))
+    }
+
     func runOnceFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
         else { return }
-        let ctx = AXContextReader.shared.current
+        // Selection Scope freezes its payload, and the dock is frontmost by the time this runs —
+        // so the live AX read is the wrong source for the file being acted on.
+        let ctx = effectiveShareAXContext()
+        let selectionFiles = effectiveSelectedFileURLsForConversation().map(\.path)
+        let contextFiles = selectionFiles.isEmpty ? ctx.selectedFilePaths : selectionFiles
         let envVars: [String: String] = [
             "CD_URL": ctx.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
             "CD_TEXT": ctx.selectedText ?? "",
-            "CD_FILE": ctx.selectedFilePaths.first ?? "",
+            "CD_FILE": contextFiles.first ?? "",
+            "CD_FILES": contextFiles.joined(separator: "\n"),
             "CD_APP": ctx.appName,
             "CD_TITLE": ctx.windowTitle ?? "",
         ]
+        let script = expandSelectionPlaceholders(in: proposal.script)
         AppToast.show(
             "Running \(proposal.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0,
             centered: true)
@@ -398,7 +440,7 @@ extension LauncherView {
             // discards the error (executeAndReturnError(nil)), which is why "Add reminder"
             // reported success but nothing appeared — a permission denial or bad script
             // was swallowed. Capture the error and tell the user what actually happened.
-            let outcome = runProposalAppleScript(proposal.script)
+            let outcome = runProposalAppleScript(script)
             if outcome.ok {
                 AppToast.show(
                     "\(proposal.name) ran", icon: "checkmark.circle.fill",
@@ -419,7 +461,7 @@ extension LauncherView {
         default:
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("proposal_\(UUID().uuidString).sh")
-            try? proposal.script.write(to: tmp, atomically: true, encoding: .utf8)
+            try? script.write(to: tmp, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
             // Run in the VISIBLE dock terminal — the user watches the clone/build/
@@ -465,11 +507,20 @@ extension LauncherView {
         return (true, result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 
-    /// Save a proposal as a persistent Context Trigger rule.
+    /// Save a proposal — as a Selection Scope extension when it was proposed for that layer,
+    /// otherwise as a persistent Context Trigger rule.
     func installFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
         else { return }
+        // A selection-layer proposal has to land in the extension store the Selection Scope
+        // sheet and Settings both read (`layer == .l2_context`, `category == "shortcutSheet"`).
+        // Saving it as a trigger rule — as every proposal used to — meant the user pressed
+        // "Save as Extension" and it appeared in neither place.
+        if proposal.layer.lowercased() == "selection" {
+            installSelectionScopeExtension(proposal)
+            return
+        }
         let lang: AppScriptLanguage = {
             switch proposal.scriptType.lowercased() {
             case "applescript": return .applescript
@@ -517,6 +568,43 @@ extension LauncherView {
                 "**\(proposal.name)** saved as an extension. It runs automatically when its "
                 + "selection/context matches, or type \"\(proposal.name.lowercased())\" to run it.")
         // Route the confirmation to whichever chat raised the proposal.
+        if aiMode.isActive {
+            aiMode.messages.append(confirmation)
+        } else {
+            l2.chatMessages.append(confirmation)
+        }
+    }
+
+    /// Installs a proposed Selection Scope action as a real extension: it then shows up as a
+    /// row in the selection sheet, is listed and editable in Settings, and survives relaunch.
+    private func installSelectionScopeExtension(_ proposal: ExtensionProposalData) {
+        let scriptType: ILExtension.ScriptType = {
+            switch proposal.scriptType.lowercased() {
+            case "applescript": return .applescript
+            case "jxa", "javascript": return .javascript
+            case "python": return .python
+            case "swift": return .swift
+            default: return .bash
+            }
+        }()
+        let ext = ILExtension(
+            name: proposal.name,
+            description: proposal.description,
+            icon: proposal.icon ?? "sparkles",
+            layer: .l2_context,
+            category: "shortcutSheet",
+            enabled: true,
+            scriptContent: proposal.script,
+            scriptType: scriptType,
+            author: "DoraX AI"
+        )
+        LayeredExtensionManager.shared.addExtension(ext)
+        let confirmation = AIChatMessage(
+            role: .assistant,
+            content:
+                "**\(proposal.name)** saved as a Selection Scope extension. It appears as a row "
+                + "whenever a matching selection is active, and in Settings → Extensions."
+        )
         if aiMode.isActive {
             aiMode.messages.append(confirmation)
         } else {
