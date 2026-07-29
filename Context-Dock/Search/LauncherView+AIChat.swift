@@ -1794,7 +1794,14 @@ extension LauncherView {
 
         withAnimation {
             aiMode.messages.append(
-                AIChatMessage(role: .user, content: query, attachments: pendingAttachments))
+                // Display the selection's files as chips on the FIRST turn only. They are still
+                // sent to the provider on every turn (below), but repeating the chip on each
+                // message made a two-line chat look like the user re-attached the file each time
+                // — and the selection pill in the header already says what is attached.
+                AIChatMessage(
+                    role: .user, content: query,
+                    attachments: aiMode.messages.count <= 1
+                        ? pendingAttachments : aiMode.attachments))
         }
         persistGeneralAIConversation()
         searchState.query = ""
@@ -4794,18 +4801,66 @@ extension LauncherView {
         return detector.matches(in: text, options: [], range: range).compactMap(\.url)
     }
 
-    /// Answer browser-history questions from the same local URL library that powers
-    /// Context Dock search rows. The full history never enters a provider prompt.
+    /// Answer browser history / bookmark / open-tab questions from the same local URL
+    /// library that powers Context Dock search rows. The data never enters a provider
+    /// prompt — the answer is formatted here and returned as the assistant message.
     @MainActor
     func isBrowserHistoryReadQuery(_ query: String) -> Bool {
-        let normalized = query.lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        LauncherView.isBrowserLibraryReadPhrase(
+            query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// True when the phrase asks to SEE local browser data (history, bookmarks, open
+    /// tabs) rather than to act on the browser. Kept `static` so the executable-intent
+    /// resolver can consult it without a view instance — a read like "show all opened
+    /// tabs" starts with the verb "show " and used to route to an app action.
+    static func isBrowserLibraryReadPhrase(_ normalized: String) -> Bool {
+        // "open <x> history page" is navigation, owned by SafariCapabilityRouter.
         guard !normalized.hasPrefix("open ") else { return false }
-        return (normalized.contains("visit")
-            && (normalized.contains("recent") || normalized.contains("history")
-                || normalized.hasPrefix("did i")))
-            || normalized.contains("browser history")
-            || normalized.contains("browsing history")
+        if normalized.contains("browser history") || normalized.contains("browsing history") {
+            return true
+        }
+        // Acting ON the data, not reading it.
+        let actionWords = [
+            "clear ", "delete ", "remove ", "erase ", "close ", "new tab", "new window",
+            "bookmark this", "bookmark the", "add bookmark", "save bookmark",
+        ]
+        if actionWords.contains(where: normalized.contains) { return false }
+        let dataWords = ["history", "visited", "visit ", "bookmark", "opened tab", "open tab", "tabs"]
+        guard dataWords.contains(where: normalized.contains) else { return false }
+        let readShapes = [
+            "what", "which", "show", "list", "find", "search", "how many", "give me",
+            "all ", "any ", "recent", "did i", "have i", "tell me",
+        ]
+        return readShapes.contains(where: normalized.contains)
+    }
+
+    /// Date window a history question asks for ("yesterday", "today", "last week").
+    /// `nil` means no time constraint.
+    static func browserLibraryDateWindow(for normalized: String) -> (start: Date, end: Date)? {
+        let cal = Calendar.current
+        let now = Date()
+        let todayStart = cal.startOfDay(for: now)
+        if normalized.contains("yesterday") {
+            guard let start = cal.date(byAdding: .day, value: -1, to: todayStart) else { return nil }
+            return (start, todayStart)
+        }
+        if normalized.contains("today") || normalized.contains("so far today") {
+            return (todayStart, now)
+        }
+        if normalized.contains("last week") || normalized.contains("past week")
+            || normalized.contains("this week") || normalized.contains("last 7 days")
+        {
+            guard let start = cal.date(byAdding: .day, value: -7, to: todayStart) else { return nil }
+            return (start, now)
+        }
+        if normalized.contains("last month") || normalized.contains("past month")
+            || normalized.contains("last 30 days")
+        {
+            guard let start = cal.date(byAdding: .day, value: -30, to: todayStart) else { return nil }
+            return (start, now)
+        }
+        return nil
     }
 
     @MainActor
@@ -4841,48 +4896,137 @@ extension LauncherView {
             return "\(appName) isn’t added to App Adapters, so General AI can’t read its local history."
         }
 
+        // Open tabs are live app state, not library data — answer them from the browser
+        // itself. "show all opened tabs" used to reach the executable planner and open a
+        // NEW tab instead of listing the existing ones.
+        let wantsTabs = normalized.contains("tab")
+        let wantsBookmarks = normalized.contains("bookmark")
+        let wantsHistory =
+            !wantsTabs && !wantsBookmarks
+            || normalized.contains("history") || normalized.contains("visit")
+        if wantsTabs, !wantsHistory, !wantsBookmarks {
+            return openBrowserTabsAnswer(query: normalized, bundleId: requestedBundle)
+        }
+
         let stopWords: Set<String> = [
-            "a", "about", "any", "browser", "browsing", "did", "do", "have", "history",
-            "i", "in", "my", "recent", "recently", "safari", "site", "the", "visit",
-            "visited", "website",
+            "a", "about", "all", "any", "are", "bookmark", "bookmarks", "browser",
+            "browsing", "did", "do", "have", "history", "i", "in", "ive", "my", "page",
+            "pages", "recent", "recently", "safari", "show", "site", "the", "today",
+            "visit", "visited", "website", "what", "which", "yesterday",
         ]
         let searchTerm = normalized
             .split { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" }
             .map(String.init)
             .filter { !stopWords.contains($0) }
             .joined(separator: " ")
-        let libraryQuery = searchTerm.isEmpty ? "history" : searchTerm
+        let dateWindow = Self.browserLibraryDateWindow(for: normalized)
+        // A date-bounded question ("yesterday") needs the whole window, not the top few.
+        let fetchLimit = dateWindow != nil ? 400 : (requireAppAdapter && requestedBundle == nil ? 200 : 40)
+        let libraryQuery = searchTerm.isEmpty ? (wantsBookmarks ? "bookmarks" : "history") : searchTerm
         var entries = await BrowserURLLibraryService.shared.refreshedEntries(
             matching: libraryQuery,
             bundleId: requestedBundle,
-            limit: requireAppAdapter && requestedBundle == nil ? 200 : 20)
+            limit: fetchLimit)
         if requireAppAdapter, requestedBundle == nil {
             entries = entries.filter { allowedBrowserBundles.contains($0.browserBundleId) }
         }
+        // Bookmarks carry no visit date, so a date window implies history only.
+        if wantsBookmarks, !wantsHistory {
+            entries = entries.filter { $0.kind == .bookmark }
+        } else if dateWindow != nil || (wantsHistory && !wantsBookmarks) {
+            entries = entries.filter { $0.kind == .history }
+        }
+        if let dateWindow {
+            entries = entries.filter { entry in
+                guard let visited = entry.visitDate else { return false }
+                return visited >= dateWindow.start && visited < dateWindow.end
+            }
+        }
 
+        let subjectLabel = wantsBookmarks && !wantsHistory ? "bookmarks" : "history"
         guard !entries.isEmpty else {
             if BrowserURLLibraryService.shared.refreshInProgress {
-                return "Your local browser history is still refreshing. Please try again in a moment."
+                return "Your local browser \(subjectLabel) is still refreshing. Please try again in a moment."
+            }
+            if dateWindow != nil {
+                return "I checked the local browser-\(subjectLabel) cache and found no visits in that time range."
             }
             let subject = searchTerm.isEmpty ? "that" : "“\(searchTerm)”"
-            return "I checked the local browser-history URL cache and found no recent visits matching \(subject)."
+            return "I checked the local browser-\(subjectLabel) cache and found nothing matching \(subject)."
         }
 
         let formatter = DateFormatter()
         formatter.locale = .autoupdatingCurrent
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        let lines = entries.prefix(8).map { entry in
+        let shown = Array(entries.prefix(dateWindow != nil ? 25 : 8))
+        let lines = shown.map { entry in
             let rawTitle = entry.title.isEmpty ? entry.domain : entry.title
             let title = rawTitle
                 .replacingOccurrences(of: "[", with: "(")
                 .replacingOccurrences(of: "]", with: ")")
+            if entry.kind == .bookmark {
+                return "- [\(title)](\(entry.url.absoluteString)) — \(entry.browserName) bookmark"
+            }
             let date = entry.visitDate.map(formatter.string(from:)) ?? "date unavailable"
             return "- [\(title)](\(entry.url.absoluteString)) — \(entry.browserName), \(date)"
         }
-        let countLabel = entries.count == 1 ? "one matching visit" : "\(entries.count) matching visits"
-        return "I checked the local browser-history URL cache and found \(countLabel):\n\n"
-            + lines.joined(separator: "\n")
+        let noun = wantsBookmarks && !wantsHistory ? "bookmark" : "visit"
+        let countLabel =
+            entries.count == 1 ? "one matching \(noun)" : "\(entries.count) matching \(noun)s"
+        let more = entries.count > shown.count ? "\n…and \(entries.count - shown.count) more." : ""
+        let copied = copyBrowserLinksIfRequested(
+            query: normalized, urls: shown.map(\.url.absoluteString))
+        return "I checked the local browser-\(subjectLabel) cache and found \(countLabel):\n\n"
+            + lines.joined(separator: "\n") + more + copied
+    }
+
+    /// Every open tab of the scoped browser (or Safari when unscoped), read live via the
+    /// same AppleScript readers the dock already uses.
+    @MainActor
+    private func openBrowserTabsAnswer(query: String, bundleId: String?) -> String {
+        let detector = ContextDetector.shared
+        let target = bundleId ?? "com.apple.Safari"
+        let tabs: [BrowserTab]
+        let browserName: String
+        switch target {
+        case "com.google.Chrome", "com.brave.Browser", "org.chromium.Chromium",
+            "com.microsoft.edgemac":
+            tabs = detector.getAllChromeTabs()
+            browserName = "Chrome"
+        case "company.thebrowser.Browser":
+            tabs = detector.getAllArcTabs()
+            browserName = "Arc"
+        default:
+            tabs = detector.getAllSafariTabs()
+            browserName = "Safari"
+        }
+        guard !tabs.isEmpty else {
+            return "\(browserName) has no open tabs I can read right now."
+        }
+        let lines = tabs.prefix(40).map { tab -> String in
+            let title = tab.title.isEmpty ? tab.url : tab.title
+            return "- [\(title)](\(tab.url))"
+        }
+        let more = tabs.count > 40 ? "\n…and \(tabs.count - 40) more." : ""
+        let copied = copyBrowserLinksIfRequested(query: query, urls: tabs.map(\.url))
+        let countLabel = tabs.count == 1 ? "one open tab" : "\(tabs.count) open tabs"
+        return "\(browserName) has \(countLabel):\n\n" + lines.joined(separator: "\n") + more
+            + copied
+    }
+
+    /// "…copy to clipboard" is part of the same read request — honour it here instead of
+    /// letting the executable planner take over the whole query.
+    @MainActor
+    private func copyBrowserLinksIfRequested(query: String, urls: [String]) -> String {
+        guard query.contains("clipboard") || query.contains("copy them")
+            || query.contains("copy the links") || query.contains("copy all")
+        else { return "" }
+        guard !urls.isEmpty else { return "" }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(urls.joined(separator: "\n"), forType: .string)
+        return "\n\nCopied \(urls.count) link\(urls.count == 1 ? "" : "s") to the clipboard."
     }
 
     /// Parse a `{"mcp_call": {"server","tool","arguments"}}` directive out of an AI reply —

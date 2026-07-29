@@ -104,12 +104,22 @@ extension LauncherView {
         return "any"
     }
 
+    /// A "prompt" row only opens an AI chat with a canned question — it performs no work on the
+    /// file. Routing a concrete capability request into one is how "transcribe" ended up running
+    /// "Audio Brief": nearest row by wording, nothing transcribed. The model needs to see the
+    /// difference, so the catalog labels it.
+    func selectionRouteIsPromptOnly(_ pill: DockPill) -> Bool {
+        pill.rankingKind == "selectionWorkflow"
+    }
+
     func selectionCatalogPromptBlock(_ pills: [DockPill]) -> String {
         guard !pills.isEmpty else { return "" }
         let rows = pills.prefix(60).map { pill -> String in
             let id = selectionRouteIdentifier(for: pill)
             let group = selectionRouteGroup(for: pill)
-            return "- id: \(id) | \(pill.name) | \(group) | accepts: \(selectionRouteAccepts(pill))"
+            let kind = selectionRouteIsPromptOnly(pill) ? " | kind: prompt-only" : ""
+            return "- id: \(id) | \(pill.name) | \(group) | accepts: "
+                + "\(selectionRouteAccepts(pill))\(kind)"
         }
         return rows.joined(separator: "\n")
     }
@@ -307,6 +317,10 @@ extension LauncherView {
               to reminders", "remind me about this at 10pm" are all the same request.
             - The id must be copied exactly from the list. Never invent one.
             - Pick the route whose effect matches the request, not one that merely shares a word.
+            - Rows marked "kind: prompt-only" just open a chat with a canned question; they do \
+              not process the file. Never use one to satisfy a request for real work (transcribe, \
+              convert, download, extract, compress). If only prompt-only rows are close, return \
+              none — a missing capability is a better answer than a route that does nothing.
             - The route must accept \(payloadKind) (or "any").
             - Include "args" only for routes that list them, using the exact key names shown.
             - A request to know something ("what is this", "how big is it") is a question — \

@@ -310,6 +310,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
+    var runOutput: String?  // terminal/script output, collapsed behind a disclosure
 
     enum ChatRole {
         case user
@@ -322,7 +323,8 @@ struct AIChatMessage: Identifiable, Equatable {
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
-        enableAppRequest: EnableAppRequest? = nil, trace: [String] = []
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        runOutput: String? = nil
     ) {
         self.id = UUID()
         self.role = role
@@ -336,6 +338,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
+        self.runOutput = runOutput
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
@@ -343,7 +346,8 @@ struct AIChatMessage: Identifiable, Equatable {
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
-        enableAppRequest: EnableAppRequest? = nil, trace: [String] = []
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        runOutput: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -357,6 +361,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
+        self.runOutput = runOutput
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -436,6 +441,7 @@ struct AIChatMessageView: View {
     var userAvatarSymbol: String? = nil
     var assistantAvatarImage: NSImage? = nil
     @State private var isTraceExpanded = false
+    @State private var isRunOutputExpanded = false
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -577,6 +583,55 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Collapsed script output. Header states the size so the user can judge whether to open it.
+    @ViewBuilder
+    private func runOutputView(_ output: String) -> some View {
+        let lineCount = output.split(separator: "\n", omittingEmptySubsequences: false).count
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                    isRunOutputExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isRunOutputExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "terminal")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Output · \(lineCount) line\(lineCount == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            if isRunOutputExpanded {
+                ScrollView {
+                    Text(output)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: 220)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.35))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08))
+                )
+                .padding(.top, 5)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
     @ViewBuilder
     private var attachmentChips: some View {
         let alignment: HorizontalAlignment = message.role == .user ? .trailing : .leading
@@ -620,6 +675,12 @@ struct AIChatMessageView: View {
                 // Routing trace ("Matching 31 actions…", "Best path: Share · Notes")
                 if message.role == .assistant, !message.trace.isEmpty {
                     routerTraceView
+                }
+                // Script/terminal output — collapsed. A conversion log is hundreds of lines of
+                // ffmpeg banner the user did not ask to read; it belongs one tap away, not
+                // dumped between two chat bubbles.
+                if let runOutput = message.runOutput, !runOutput.isEmpty {
+                    runOutputView(runOutput)
                 }
                 // MCP tool-run chips ("ran <tool> via <server>")
                 if !message.mcpToolsRan.isEmpty {

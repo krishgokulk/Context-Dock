@@ -395,6 +395,7 @@ extension LauncherView {
             }
         }()
         let extName = ext.name
+        setScriptRunStatus("Running \(extName)…")
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: interpreter.url)
@@ -418,6 +419,7 @@ extension LauncherView {
                 }
             } catch {
                 DispatchQueue.main.async {
+                    self.setScriptRunStatus(nil)
                     AppToast.show("Failed: \(extName)", icon: "exclamationmark.triangle", tint: .orange)
                 }
                 return

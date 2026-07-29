@@ -415,17 +415,30 @@ extension LauncherView {
 
     /// Single truthful report for anything script-shaped that runs on a selection: the chat says
     /// what the exit code says, with the real output attached. Silence used to read as success.
-    func reportExtensionRun(name: String, succeeded: Bool, detail: String, exitCode: Int32) {
-        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let tail = trimmed.count > 900 ? "…" + String(trimmed.suffix(900)) : trimmed
-        let content: String
-        if succeeded {
-            content = tail.isEmpty ? "✅ \(name) ran." : "✅ \(name) ran.\n\n```\n\(tail)\n```"
+    /// Live, truthful run status shown in place of the thinking dots ("Running ffmpeg…").
+    /// Passing nil ends it. Targets whichever chat surface is on screen.
+    func setScriptRunStatus(_ status: String?) {
+        if aiMode.isActive {
+            aiMode.loadingStatus = status
+            aiMode.isLoading = status != nil
         } else {
-            let reason = tail.isEmpty ? "No output — check the script." : "```\n\(tail)\n```"
-            content = "⚠️ \(name) failed (exit \(exitCode)).\n\n\(reason)"
+            l2.loadingStatus = status
+            l2.isLoading = status != nil
         }
-        let message = AIChatMessage(role: .assistant, content: content, isError: !succeeded)
+    }
+
+    func reportExtensionRun(name: String, succeeded: Bool, detail: String, exitCode: Int32) {
+        setScriptRunStatus(nil)
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Keep the log out of the bubble — it goes behind the collapsed "Output" disclosure.
+        let tail = trimmed.count > 4000 ? "…" + String(trimmed.suffix(4000)) : trimmed
+        let content =
+            succeeded
+            ? "✅ \(name) ran."
+            : "⚠️ \(name) failed (exit \(exitCode))."
+                + (tail.isEmpty ? " No output — check the script." : "")
+        let message = AIChatMessage(
+            role: .assistant, content: content, isError: !succeeded, runOutput: tail)
         if aiMode.isActive {
             aiMode.messages.append(message)
             persistGeneralAIConversation()
@@ -513,6 +526,7 @@ extension LauncherView {
             term.sendCommand(
                 "\(exports); bash \"\(tmp.path)\" > >(tee \"\(logURL.path)\") 2>&1; "
                 + "echo $? > \"\(statusURL.path)\"")
+            setScriptRunStatus("Running \(proposal.name)…")
             awaitProposalRunOutcome(
                 name: proposal.name, logURL: logURL, statusURL: statusURL)
         }
@@ -527,6 +541,10 @@ extension LauncherView {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 let fm = FileManager.default
                 guard let raw = try? String(contentsOf: statusURL, encoding: .utf8) else {
+                    // Still running: mirror the script's own last line of output as the status,
+                    // so the user sees the real work ("[download] 62% of 4MiB") rather than dots.
+                    self.setScriptRunStatus(
+                        Self.liveRunStatus(name: name, logURL: logURL))
                     if Date() < deadline { poll() }
                     return
                 }
@@ -542,6 +560,18 @@ extension LauncherView {
             }
         }
         poll()
+    }
+
+    /// Last meaningful line of a running script's log, shortened for the status strip.
+    private static func liveRunStatus(name: String, logURL: URL) -> String {
+        let fallback = "Running \(name)…"
+        guard let log = try? String(contentsOf: logURL, encoding: .utf8) else { return fallback }
+        let lines = log.split(whereSeparator: \.isNewline)
+        guard var last = lines.last.map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !last.isEmpty
+        else { return fallback }
+        if last.count > 70 { last = String(last.prefix(70)) + "…" }
+        return "\(name): \(last)"
     }
 
     /// Run a proposal's AppleScript synchronously and return whether it succeeded plus a
