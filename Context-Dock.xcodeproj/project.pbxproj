@@ -546,6 +546,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Context-Dock uses Bluetooth access only when you open the Bluetooth Global Command to show paired devices and connection status.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Context-Dock needs calendar access to manage events.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Context-Dock needs contacts access to search your address book.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Context-Dock reads your Documents folder once, to move extensions you created earlier into its own Application Support folder.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "iLauncher needs photo Library to manage and search Photos";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Context-Dock needs Reminder access to manage Reminders.";
@@ -603,6 +604,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Context-Dock uses Bluetooth access only when you open the Bluetooth Global Command to show paired devices and connection status.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Context-Dock needs calendar access to manage events.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Context-Dock needs contacts access to search your address book.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Context-Dock reads your Documents folder once, to move extensions you created earlier into its own Application Support folder.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "iLauncher needs photo Library to manage and search Photos";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Context-Dock needs Reminder access to manage Reminders.";

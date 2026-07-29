@@ -21,6 +21,9 @@ class LayeredExtensionManager: ObservableObject {
     private let libraryBasePath: URL
     private let userExtensionsPath: URL
 
+    /// One migration pass per process, so the reload it triggers cannot spawn another.
+    private var didStartDocumentsMigration = false
+
     init() {
         // Extensions are app-owned data, so they live beside the rest of it in Application
         // Support. They used to live in ~/Documents/ILauncher/Extensions, which is a
@@ -75,11 +78,24 @@ class LayeredExtensionManager: ObservableObject {
         // TCC-protected location, an evicted iCloud file, a stalled mount) froze the main
         // thread before the menu bar item and hotkeys were installed, so the app looked
         // launched but had no icon and answered nothing, not even Quit.
+        // Migration reads ~/Documents, which can sit blocked for as long as the TCC prompt is
+        // unanswered, so it is fire-and-forget: never awaited, and never in front of
+        // discovery. A pending prompt costs the not-yet-copied extensions until the next
+        // launch, not the whole library.
+        if !didStartDocumentsMigration {
+            didStartDocumentsMigration = true
+            Task.detached(priority: .utility) { [libPath] in
+                let copied = LayeredExtensionManager.migrateFromDocumentsIfNeeded(to: libPath)
+                // Only reload when the copy actually brought something new in. The flag above
+                // keeps this second pass from spawning a third migration.
+                if copied > 0 {
+                    await LayeredExtensionManager.shared.loadExtensions()
+                }
+            }
+        }
+
         let discovered = await Task.detached(priority: .userInitiated) { [libPath] in
-            // Migration reads ~/Documents, so it runs here rather than in init() — that read
-            // is exactly the one that can block on a TCC prompt.
-            LayeredExtensionManager.migrateFromDocumentsIfNeeded(to: libPath)
-            return LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
+            LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
                 .compactMap { LayeredExtensionManager.loadExtensionFromMetadata($0) }
         }.value
         let scanned = await Task.detached(priority: .userInitiated) {
@@ -127,20 +143,22 @@ class LayeredExtensionManager: ObservableObject {
     /// migration interrupted halfway leaves both trees intact. The old tree is left in place
     /// on purpose — a `.migrated-from-documents` marker in the new base is what stops this
     /// from running again, so the user can delete the old folder whenever they like.
-    private nonisolated static func migrateFromDocumentsIfNeeded(to newBase: URL) {
+    /// - Returns: how many files were copied, so the caller can skip a pointless reload.
+    @discardableResult
+    private nonisolated static func migrateFromDocumentsIfNeeded(to newBase: URL) -> Int {
         let fm = FileManager.default
         let marker = newBase.appendingPathComponent(".migrated-from-documents")
-        guard !fm.fileExists(atPath: marker.path) else { return }
+        guard !fm.fileExists(atPath: marker.path) else { return 0 }
 
-        guard let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        guard let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return 0 }
         let oldBase = documents.appendingPathComponent("ILauncher/Extensions")
         guard fm.fileExists(atPath: oldBase.path) else {
             // Nothing to migrate — a fresh install. Mark it so we never stat Documents again.
             try? Data().write(to: marker)
-            return
+            return 0
         }
 
-        guard let enumerator = fm.enumerator(at: oldBase, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+        guard let enumerator = fm.enumerator(at: oldBase, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
         var copied = 0
         var failed = 0
         let prefix = oldBase.path + "/"
@@ -172,6 +190,7 @@ class LayeredExtensionManager: ObservableObject {
         #if DEBUG
         print("📦 Extension migration: copied \(copied), failed \(failed) from \(oldBase.path)")
         #endif
+        return copied
     }
 
     // MARK: - Extension Discovery (nonisolated static — safe to call from Task.detached)
