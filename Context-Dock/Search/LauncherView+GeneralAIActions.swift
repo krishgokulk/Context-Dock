@@ -1221,6 +1221,13 @@ extension LauncherView {
             details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
         }
 
+        // Every open tab, not just the frontmost page. Without this the block said only
+        // "current page", so "show all opened tabs" had no tab data and the model answered
+        // from whatever unrelated context was nearby.
+        if let tabsBlock = browserOpenTabsContextBlock(bundleID: bundleID) {
+            details.append(tabsBlock)
+        }
+
         let ax = AXContextReader.shared.current
         if ax.bundleId == bundleID {
             let summary = ax.contextSummary.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1250,6 +1257,32 @@ extension LauncherView {
             If the requested detail is absent, say it was not readable; never request permission in chat.
             """
         return (block, false)
+    }
+
+    /// All open tabs of a browser bundle, formatted for the live-context block. Returns
+    /// nil for non-browsers or when the browser exposes no readable tab.
+    @MainActor
+    private func browserOpenTabsContextBlock(bundleID: String) -> String? {
+        let detector = ContextDetector.shared
+        let tabs: [BrowserTab]
+        switch bundleID {
+        case "com.apple.Safari":
+            tabs = detector.getAllSafariTabs()
+        case "com.google.Chrome", "com.brave.Browser", "org.chromium.Chromium",
+            "com.microsoft.edgemac":
+            tabs = detector.getAllChromeTabs()
+        case "company.thebrowser.Browser":
+            tabs = detector.getAllArcTabs()
+        default:
+            return nil
+        }
+        guard !tabs.isEmpty else { return nil }
+        let lines = tabs.prefix(40).map { tab -> String in
+            let title = tab.title.isEmpty ? tab.url : tab.title
+            return "- \(title) — \(tab.url)"
+        }
+        let more = tabs.count > 40 ? "\n…and \(tabs.count - 40) more open tabs." : ""
+        return "Open tabs (\(tabs.count)):\n" + lines.joined(separator: "\n") + more
     }
 
     /// Live app-state context for General Chat questions about a named app

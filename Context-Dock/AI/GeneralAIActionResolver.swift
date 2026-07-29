@@ -369,6 +369,11 @@ final class GeneralAIActionResolver {
             && lowered.contains("page") {
             return true
         }
+        // Reading local browser data ("show all opened tabs", "list my history") is a READ
+        // answered from the local URL library. Its leading verb ("show ") matched the verb
+        // list below and routed the query to an executable capability — which opened a NEW
+        // tab instead of listing the open ones.
+        if LauncherView.isBrowserLibraryReadPhrase(lowered) { return false }
         let questionStarts = [
             "how ", "what", "why ", "who ", "when ", "where ", "which ", "explain",
             "tell me", "can you explain", "describe", "compare", "summarize", "translate",
