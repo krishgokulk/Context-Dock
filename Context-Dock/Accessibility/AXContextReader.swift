@@ -369,7 +369,7 @@ final class AXContextReader {
     }
 
     /// Selected text of one element: plain attribute first, then the
-    /// range-parameterized read (covers fields that only expose the range).
+    /// range-parameterized read (covers fields that only expose the range), then text markers.
     private func selectedText(of el: AXUIElement) -> String? {
         if let t = strAttr(el, kAXSelectedTextAttribute as CFString), !t.isEmpty { return t }
         var rangeRef: CFTypeRef?
@@ -382,7 +382,26 @@ final class AXContextReader {
                 return s
             }
         }
-        return nil
+        return selectedTextViaTextMarkers(el)
+    }
+
+    /// WebKit's own selection API. Safari's AXWebArea implements NEITHER AXSelectedText
+    /// (returns -25212, attribute unsupported) NOR AXSelectedTextRange — it exposes the
+    /// selection only as an opaque text-marker range. So every page selection in Safari read
+    /// back as "nothing selected", and Selection Scope opened on the plain app instead of the
+    /// highlighted text. Chrome/Electron WebKit-derived views expose the same pair.
+    private func selectedTextViaTextMarkers(_ el: AXUIElement) -> String? {
+        var markerRange: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            el, "AXSelectedTextMarkerRange" as CFString, &markerRange) == .success,
+            let markerRange
+        else { return nil }
+        var strRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            el, "AXStringForTextMarkerRange" as CFString, markerRange, &strRef) == .success,
+            let text = strRef as? String, !text.isEmpty
+        else { return nil }
+        return text
     }
 
     private func readWebAreaSelectedText(_ axApp: AXUIElement) -> String? {

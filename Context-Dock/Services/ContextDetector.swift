@@ -425,8 +425,33 @@ class ContextDetector {
             }
         }
 
+        // 3.5) WebKit content (Safari, and WebKit views inside other apps) implements neither
+        // of the two attributes above — AXSelectedText returns -25212 there — and exposes the
+        // selection only as a text-marker range. Without this, every Safari page selection read
+        // as "nothing selected".
+        if let markerText = selectedTextViaTextMarkers(element) {
+            return markerText
+        }
+
         // 4) Final fallback: AppleScript/System Events (legacy; may fail per-app)
         return getSelectedTextViaAppleScript(from: app)
+    }
+
+    /// WebKit's selection API: an opaque AXSelectedTextMarkerRange resolved to a string through
+    /// the AXStringForTextMarkerRange parameterized attribute.
+    private func selectedTextViaTextMarkers(_ element: AXUIElement) -> String? {
+        var markerRange: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, "AXSelectedTextMarkerRange" as CFString, &markerRange) == .success,
+            let markerRange
+        else { return nil }
+        var stringRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element, "AXStringForTextMarkerRange" as CFString, markerRange, &stringRef) == .success,
+            let text = stringRef as? String
+        else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func isAccessibilityTrusted(prompt: Bool) -> Bool {
