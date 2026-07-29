@@ -871,7 +871,14 @@ extension LauncherView {
                 return
             }
 
-            let placeholder = AIChatMessage(role: .assistant, content: "")
+            // Never leave a blank assistant bubble while Apple Intelligence is choosing
+            // tools or waiting for a command approval. The structured marker lets the
+            // shared terminal approval observer update this exact status in place.
+            let placeholder = AIChatMessage(
+                role: .assistant,
+                content: "Preparing the best action for this scope…",
+                structuredData: "on-device-status"
+            )
             remPanelChatMessages.append(placeholder)
             let messageID = placeholder.id
 
@@ -892,8 +899,10 @@ extension LauncherView {
                                             self.remPanelChatMessages[index] = AIChatMessage(
                                                 id: messageID,
                                                 role: .assistant,
-                                                content: self.remPanelChatMessages[index].content
-                                                    + token
+                                                content: self.remPanelChatMessages[index].structuredData
+                                                    == "on-device-status"
+                                                    ? token
+                                                    : self.remPanelChatMessages[index].content + token
                                             )
                                         }
                                     }
@@ -902,11 +911,12 @@ extension LauncherView {
                                     DispatchQueue.main.async {
                                         if let index = self.remPanelChatMessages.firstIndex(where: {
                                             $0.id == messageID
-                                        }), self.remPanelChatMessages[index].content.isEmpty {
+                                        }) {
                                             self.remPanelChatMessages[index] = AIChatMessage(
                                                 id: messageID,
                                                 role: .assistant,
-                                                content: response
+                                                content: response,
+                                                isError: false
                                             )
                                         }
                                         self.remPanelIsProcessing = false

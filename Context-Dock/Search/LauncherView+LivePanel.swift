@@ -2135,7 +2135,9 @@ extension LauncherView {
             let risk = parts.count > 1 ? parts[1] : "Unknown"
             let isHighRisk =
                 risk.lowercased().contains("high") || risk.lowercased().contains("critical")
-            let isPending = terminalBridge.pendingApproval != nil
+            // A global terminal bridge can only wait for one command. Match the
+            // command itself so an old card cannot approve a later command.
+            let isPending = terminalBridge.pendingApproval?.command == msg.content
 
             VStack(alignment: .leading, spacing: 8) {
                 // Header
@@ -2229,6 +2231,7 @@ extension LauncherView {
             }
         case .assistant:
             let brewTools = extractBrewInstalls(from: msg.content)
+            let choices = appPanelChoiceOptions(in: msg.content)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .top, spacing: 0) {
                     Text(msg.content)
@@ -2262,8 +2265,63 @@ extension LauncherView {
                     }
                     .padding(.leading, 4)
                 }
+                // A clarification should be an interaction, not a request for the
+                // user to type an arbitrary list number. Keep this deliberately
+                // narrow: only short, explicit numbered questions become actions.
+                if !choices.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(choices, id: \.self) { choice in
+                            Button {
+                                submitAppPanelChoice(choice)
+                            } label: {
+                                Text(choice)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                    .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.32)))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Choose \(choice)")
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
             }
         }
+    }
+
+    /// Extract only genuine assistant clarifications, such as “1. Scan first” /
+    /// “2. Clean immediately”. Ordinary numbered output remains plain text.
+    func appPanelChoiceOptions(in text: String) -> [String] {
+        let prompt = text.lowercased()
+        let hasQuestion = prompt.contains("do you want")
+            || prompt.contains("which would you prefer")
+            || prompt.contains("choose")
+            || prompt.contains("select an option")
+        guard hasQuestion,
+              let regex = try? NSRegularExpression(pattern: #"(?m)^\s*\d+[\.)]\s*([^\n]+)$"#)
+        else { return [] }
+
+        let source = text as NSString
+        let options = regex.matches(in: text, range: NSRange(location: 0, length: source.length))
+            .compactMap { match -> String? in
+                guard match.numberOfRanges > 1 else { return nil }
+                let value = source.substring(with: match.range(at: 1))
+                    .replacingOccurrences(of: "**", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty, value.count <= 90 else { return nil }
+                return value
+            }
+        guard (2...4).contains(options.count) else { return [] }
+        return Array(NSOrderedSet(array: options)).compactMap { $0 as? String }
+    }
+
+    func submitAppPanelChoice(_ choice: String) {
+        guard !remPanelIsProcessing else { return }
+        searchState.query = choice
+        handleRemPanelQuery()
     }
 
     /// Extracts all tool names from "brew install <tool>" patterns in a string.

@@ -3560,7 +3560,9 @@ extension LauncherView {
         let appURL = applicationURL(bundleIdentifier: bundleIdentifier, appName: appName)
         let appPath = appURL?.path ?? ""
         let icon =
-            !appPath.isEmpty
+            isCLIToolScope
+            ? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+            : !appPath.isEmpty
             ? NSWorkspace.shared.icon(forFile: appPath)
             : (resolvedApplicationIcon(bundleIdentifier: bundleIdentifier, appName: appName)
                 ?? preparedDockIcon(targetApp?.icon))

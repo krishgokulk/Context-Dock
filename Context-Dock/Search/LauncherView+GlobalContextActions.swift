@@ -2118,11 +2118,25 @@ extension LauncherView {
     func activateFocusedGlobalAppScopeIfPossible() -> Bool {
         guard isGlobalContextActive,
             currentGlobalScopedBundleID == nil,
-            searchInputCursorIsAtEnd(),
-            let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
+            searchInputCursorIsAtEnd()
         else { return false }
 
-        if result.subtitle.hasPrefix("syscmd://") {
+        // The input's leading CLI icon is resolved synchronously from the package
+        // registry, while the grouped app snapshot is intentionally debounced. On a
+        // quick Right Arrow those two could disagree and scope an old app result.
+        // Command-name prefix matches own this gesture until the user navigates to a
+        // different row explicitly.
+        if let cliResult = directGlobalCLIScopeMatches(
+            for: searchState.query,
+            limit: 1
+        ).first {
+            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
+        }
+
+        guard let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
+        else { return false }
+
+        if result.subtitle.hasPrefix("syscmd://") || result.subtitle.hasPrefix("cli://") {
             let activated = activateGlobalInlineScope(
                 result: result,
                 bundleID: result.subtitle
@@ -2161,6 +2175,12 @@ extension LauncherView {
 
         let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedQuery = typed.lowercased()
+
+        // Keep Right Arrow consistent with the immediate command result/leading icon,
+        // rather than waiting for the debounced grouped-result state to catch up.
+        if let cliResult = directGlobalCLIScopeMatches(for: typed, limit: 1).first {
+            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
+        }
 
         // Right Arrow always follows the visibly highlighted row. Commands enter
         // their scope immediately; apps first accept their visible completion.
@@ -3252,10 +3272,10 @@ extension LauncherView {
             message: "Indexed apps and running app menus..."
         )
 
-        // 5. CLI tools
+        // 5. CLI tools. The package registry is user-managed and index rebuilds happen
+        // off the typing path, so every enabled package is eligible for a global scope.
         let cliIcon = NSWorkspace.shared.icon(forFileType: "public.unix-executable")
-        for pkg in terminalPackageManager.packages
-        where pkg.isEnabled && isUserAddedGlobalCLITool(pkg) {
+        for pkg in terminalPackageManager.packages where pkg.isEnabled {
             addIfNew(.init(cliPackage: pkg, icon: cliIcon))
         }
 

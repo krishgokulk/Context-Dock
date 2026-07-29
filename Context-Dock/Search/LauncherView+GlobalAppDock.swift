@@ -786,6 +786,15 @@ extension LauncherView {
             return groupedGlobalApplicationList(limit: limit)
         }
 
+        // Do not wait for the asynchronous global-index refresh to recognize an
+        // installed CLI. This is a bounded in-memory prefix lookup over registered
+        // packages, so `brew` becomes the first result from its first keystroke and
+        // can never be displaced by a same-named recent executable/document.
+        let directCLIMatches = directGlobalCLIScopeMatches(for: q, limit: limit)
+        if !directCLIMatches.isEmpty {
+            return directCLIMatches
+        }
+
         if GlobalSearchService.shared.documentCount > 0 {
             let snapshot = GlobalContextSearchCoordinator.shared.snapshot(
                 query: q,
@@ -1010,6 +1019,65 @@ extension LauncherView {
                 .map(\.result)
                 .prefix(limit)
         )
+    }
+
+    /// Immediate command-name matching for Global Context. Natural-language aliases
+    /// continue through `GlobalSearchService`; this hot path intentionally remains
+    /// prefix-only so it is predictable and effectively free while typing.
+    func directGlobalCLIScopeMatches(for query: String, limit: Int) -> [SearchResult] {
+        let q = normalizedDockPillText(query)
+        guard !q.isEmpty, limit > 0 else { return [] }
+
+        let matches: [(package: TerminalPackage, score: Double)] =
+            TerminalPackageManager.shared.packages.lazy
+            .filter(\.isEnabled)
+            .compactMap { package in
+                let command = normalizedDockPillText(package.command)
+                let name = normalizedDockPillText(package.name)
+                if command == q { return (package, 20_000) }
+                if command.hasPrefix(q) { return (package, 19_500 - Double(command.count)) }
+                if !name.isEmpty && name.hasPrefix(q) {
+                    return (package, 19_000 - Double(name.count))
+                }
+                return nil
+            }
+            .sorted {
+                if $0.score != $1.score { return $0.score > $1.score }
+                return $0.package.command.localizedCaseInsensitiveCompare($1.package.command)
+                    == .orderedAscending
+            }
+
+        return matches.prefix(limit).map { match in
+            let command = match.package.command
+            let displayName = match.package.name.isEmpty ? command : match.package.name
+            let scopedResult = SearchResult(
+                title: command,
+                subtitle: "cli://\(command)",
+                icon: nil,
+                action: {},
+                type: .cliTool,
+                filePath: nil,
+                contactData: nil
+            )
+            var result = SearchResult(
+                title: command,
+                subtitle: "cli://\(command)",
+                icon: NSWorkspace.shared.icon(forFileType: "public.unix-executable"),
+                action: {
+                    _ = activateGlobalInlineScope(
+                        result: scopedResult,
+                        bundleID: "cli://\(command)"
+                    )
+                },
+                type: .cliTool,
+                filePath: nil,
+                contactData: nil,
+                stableID: "cli://\(command)"
+            )
+            result.score = match.score
+            result.displayBadges = [displayName == command ? "CLI Tool" : displayName]
+            return result
+        }
     }
 
     func globalListSubtitle(for result: SearchResult, isRunning: Bool) -> String {

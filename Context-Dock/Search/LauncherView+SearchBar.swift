@@ -3582,6 +3582,12 @@ extension LauncherView {
     func fastGlobalContextLeadingMatchIcon(for query: String) -> MatchDockIcon? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty, isGlobalContextActive, shouldUsePureGlobalAppSearch else { return nil }
+        // "quit gemini" is answered by the running-app quit rows, which the fast index
+        // does not carry at all — it ranks the words "quit"/"ge" across menus instead,
+        // so the icon showed Activity Monitor until ↓ built the grouped sheet.
+        if let quitTarget = strongGlobalQuitMatch(for: q) {
+            return quitTarget
+        }
         // Mirror the grouped list's `strongCommandMatch` rule: a Global Command whose
         // name prefix-matches outranks every app row there, so the leading icon must
         // show it too. The fast index ranks commands below prefix apps, which is why
@@ -3595,6 +3601,48 @@ extension LauncherView {
             return first
         }
         return globalContextViewModel.stickyLeadingMatchIcon
+    }
+
+    /// The running app a "quit …" query targets — the same app the grouped sheet's first
+    /// row quits. Reads the cached regular-app list (a dozen entries) rather than
+    /// rebuilding the quit rows, so this stays free to call from the view body.
+    func strongGlobalQuitMatch(for query: String) -> MatchDockIcon? {
+        let q = normalizedDockPillText(query)
+        guard q == "quit" || q.hasPrefix("quit ") else { return nil }
+        let target = q.dropFirst("quit".count).trimmingCharacters(in: .whitespaces)
+        guard !target.isEmpty else { return nil }
+        let ownBundleID = Bundle.main.bundleIdentifier
+        let candidates = runningRegularApps.filter {
+            !$0.isTerminated
+                && $0.bundleIdentifier != ownBundleID
+                && $0.bundleIdentifier != "com.apple.finder"
+                && !($0.localizedName ?? "").isEmpty
+        }
+        // Same ranking the quit rows use: name prefix beats a mid-name hit, shorter name
+        // wins ties — so "quit ge" previews Gemini, not GeminiAppLauncher.
+        func rank(_ apps: [NSRunningApplication]) -> NSRunningApplication? {
+            apps.sorted {
+                let lhs = $0.localizedName ?? ""
+                let rhs = $1.localizedName ?? ""
+                if lhs.count != rhs.count { return lhs.count < rhs.count }
+                return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+            }.first
+        }
+        let named = candidates.map { ($0, normalizedDockPillText($0.localizedName ?? "")) }
+        let match =
+            rank(named.filter { $0.1.hasPrefix(target) }.map(\.0))
+            ?? rank(named.filter { $0.1.contains(target) }.map(\.0))
+        guard let match, let icon = match.icon, let name = match.localizedName else { return nil }
+        return MatchDockIcon(
+            id: "quit:\(match.bundleIdentifier ?? name)",
+            bundleID: match.bundleIdentifier,
+            title: "Quit \(name)",
+            icon: icon,
+            isRunning: true,
+            isExpandable: false,
+            score: 98_000,
+            isExactAppPrefix: true
+        )
     }
 
     /// Global Command whose name prefix-matches the query — the same row the grouped

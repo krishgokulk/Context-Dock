@@ -197,7 +197,7 @@ final class GlobalContextSearchCoordinator {
                 guard !bundleId.isEmpty else { continue }
                 let current = cachedMenuCounts[bundleId]
                 cachedMenuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
-            case .systemCommandScope:
+            case .systemCommandScope, .cliScope:
                 if isPrefixMatch(doc) {
                     if commandExactPrefix == nil { commandExactPrefix = doc }
                 } else if commandFuzzy == nil {
@@ -333,6 +333,10 @@ final class GlobalContextSearchCoordinator {
                 return 30_000 + Double(menuCount)
             case .systemCommandScope:
                 return 20_000 + doc.rankingBoost
+            case .cliScope:
+                // A typed command name is an explicit scope request, not a document
+                // search. Put it ahead of menu owners and recent-file matches.
+                return (prefix ? 60_000 : 20_000) + doc.rankingBoost
             default:
                 if prefix, doc.sourceKind == .running {
                     return 40_000 + doc.rankingBoost
@@ -354,7 +358,7 @@ final class GlobalContextSearchCoordinator {
                 guard !bundleId.isEmpty else { continue }
                 let current = menuCounts[bundleId]
                 menuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
-            case .systemCommandScope:
+            case .systemCommandScope, .cliScope:
                 if commandDocs.count < limit {
                     commandDocs.append(doc)
                 }
@@ -380,7 +384,7 @@ final class GlobalContextSearchCoordinator {
                 )
                 for doc in tokenDocs {
                     switch doc.action {
-                    case .cachedMenu, .systemCommandScope:
+                    case .cachedMenu, .systemCommandScope, .cliScope:
                         continue
                     default:
                         guard isPrefixMatch(doc, against: token) else { continue }

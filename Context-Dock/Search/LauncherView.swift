@@ -339,7 +339,6 @@ struct LauncherView: View {
     var cliToolSearchResults: [SearchResult] {
         return TerminalPackageManager.shared.packages
             .filter(\.isEnabled)
-            .filter(isUserAddedGlobalCLITool)
             .map { pkg in
                 let isTUI = TerminalAIBridge.shared.isTUICommand(pkg.command)
                 let symbolName = isTUI ? "terminal.fill" : "arrow.right.square.fill"
@@ -1421,12 +1420,32 @@ struct LauncherView: View {
                     content: pending.command,
                     structuredData: "\(pending.purpose)|||/\(risk)"
                 )
-                if l2.targetApp != nil || showContextInDock {
+                // An explicit app / CLI scope owns its entire conversation, including
+                // on-device tool approvals.  Checking L2 first used to send this card
+                // to an invisible L2 transcript while the visible scoped chat remained
+                // stuck on its empty streaming placeholder.
+                if searchState.activeSmartQueryKey != nil {
+                    let alreadyShown = remPanelChatMessages.contains {
+                        $0.role == .approval && $0.content == pending.command
+                    }
+                    if !alreadyShown {
+                        appendPanelMessage(approvalMsg)
+                    }
+                    if let statusIndex = remPanelChatMessages.lastIndex(where: {
+                        $0.role == .assistant
+                            && $0.structuredData == "on-device-status"
+                    }) {
+                        let status = remPanelChatMessages[statusIndex]
+                        remPanelChatMessages[statusIndex] = AIChatMessage(
+                            id: status.id,
+                            role: .assistant,
+                            content: "Waiting for your approval to run the command below…",
+                            structuredData: "on-device-status"
+                        )
+                    }
+                } else if l2.targetApp != nil || showContextInDock {
                     // L2 app scope active — show inline in L2 chat
                     l2.chatMessages.append(approvalMsg)
-                } else if searchState.activeSmartQueryKey != nil {
-                    // Legacy panel fallback
-                    remPanelChatMessages.append(approvalMsg)
                 } else {
                     openCommandApprovalWindow(pending: pending)
                 }
