@@ -686,10 +686,12 @@ private struct StickyAttachmentEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 4, height: 4)
         textView.registerForDraggedTypes([.fileURL, .URL])
 
-        let scrollView = NSScrollView()
+        let scrollView = StickyAttachmentScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.attachmentHandler = onReceiveAttachments
+        scrollView.registerForDraggedTypes([.fileURL, .URL])
         scrollView.documentView = textView
         return scrollView
     }
@@ -698,6 +700,7 @@ private struct StickyAttachmentEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? StickyAttachmentTextView else { return }
         textView.attachmentHandler = onReceiveAttachments
+        (scrollView as? StickyAttachmentScrollView)?.attachmentHandler = onReceiveAttachments
         if textView.string != text { textView.string = text }
     }
 
@@ -764,4 +767,31 @@ private final class StickyAttachmentTextView: NSTextView {
             return nil
         }
     }
+}
+
+/// `NSTextView` shrinks to the text it contains. This companion scroll view owns
+/// Finder drops over the rest of the empty editor area, which is where users most
+/// naturally drop files into a new note.
+private final class StickyAttachmentScrollView: NSScrollView {
+    var attachmentHandler: (([URL]) -> Void)?
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggedFileURLs(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !draggedFileURLs(from: sender.draggingPasteboard).isEmpty
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = draggedFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        attachmentHandler?(urls)
+        return true
+    }
+}
+
+private func draggedFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+    (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? [])
+        .filter(\.isFileURL)
 }
