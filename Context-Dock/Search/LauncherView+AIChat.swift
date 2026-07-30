@@ -3124,6 +3124,14 @@ extension LauncherView {
         }
     }
 
+    /// One step of Context Dock chat's live route trace — the same treatment Selection Scope
+    /// and General Chat get. Shown beside the typing indicator now, kept on the finished
+    /// answer as the "N steps" disclosure. Every line is work the app performed.
+    func dockTraceStep(_ text: String) {
+        l2.loadingStatus = text
+        l2.routerTrace.append(text)
+    }
+
     /// Called when MenuIntentRouter found no menu match — skips menu routing to avoid recursion.
     func handleL2QuerySkippingMenuRouter(_ query: String) {
         handleL2Query(query, skipMenuRouter: true)
@@ -3471,6 +3479,14 @@ extension LauncherView {
             && !scopedBundleId.isEmpty
             && !scopedAppName.isEmpty
 
+        // Start this turn's trace, and say which app the request is being resolved against.
+        l2.routerTrace = []
+        if !scopedAppName.isEmpty {
+            dockTraceStep("Scope: \(scopedAppName)")
+        } else if !frontmost.name.isEmpty {
+            dockTraceStep("Frontmost app: \(frontmost.name)")
+        }
+
         // Capability gap: the request needs a CLI this scope cannot reach. Offer the one action
         // that closes it (link it, or install then link) instead of spending a provider call on
         // an answer that can only say "open Terminal yourself".
@@ -3481,6 +3497,7 @@ extension LauncherView {
                 query: query, bundleID: gapBundleId, appName: gapAppName)
         {
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            dockTraceStep("No route in this scope — offering a tool that can close the gap")
             withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                 pendingCapabilityGap = gap
             }
@@ -3586,12 +3603,19 @@ extension LauncherView {
                 let runningApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.bundleIdentifier == capturedTarget.bundleId && !$0.isTerminated
                 })
+                await MainActor.run {
+                    dockTraceStep(
+                        runningApp == nil
+                            ? "\(capturedTarget.appName) isn't running — its menus can't be read"
+                            : "Reading \(capturedTarget.appName) menu commands…")
+                }
                 if let app = runningApp,
                     let matchedItem = await MenuIntentRouter.shared.findMatch(
                         query: query, app: app)
                 {
                     await MainActor.run {
                         l2.isLoading = false
+                        dockTraceStep("Best path: \(matchedItem.pathString) · menu command")
                         let pid = app.processIdentifier
                         let path = matchedItem.path
                         let sc = matchedItem.shortcutChar
@@ -4393,7 +4417,8 @@ extension LauncherView {
                     }
                     await MainActor.run {
                         var msg = AIChatMessage(
-                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan)
+                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
+                            trace: self.l2.routerTrace)
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
                         if !activeContextPrompt.isEmpty {
@@ -4626,7 +4651,8 @@ extension LauncherView {
                                 role: .assistant,
                                 content: finalReply.trimmingCharacters(in: .whitespacesAndNewlines)
                                     .isEmpty ? "The Shortcut returned no output." : finalReply,
-                                mcpToolsRan: toolsRan)
+                                mcpToolsRan: toolsRan,
+                                trace: self.l2.routerTrace)
                             msg = self.tagMessageWithProposal(msg)
                             l2.chatMessages.append(msg)
                             if !activeContextPrompt.isEmpty {

@@ -40,6 +40,10 @@ struct L2State {
     /// Truthful, user-visible orchestration activity for Context Dock chat.
     /// This reports app/tool work, never private model reasoning.
     var loadingStatus: String? = nil
+    /// Every `loadingStatus` line this turn, kept so the finished answer carries the same
+    /// "N steps" disclosure Selection Scope shows. `loadingStatus` is a single live line and
+    /// is overwritten by the next stage; this is the history of what was actually done.
+    var routerTrace: [String] = []
     var currentTask: Task<Void, Never>? = nil
     var activeRequestID: UUID? = nil
     var contextExtensions: [ExtensionDiscoveryResult] = []

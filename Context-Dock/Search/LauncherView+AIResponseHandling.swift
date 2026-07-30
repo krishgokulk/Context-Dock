@@ -370,9 +370,14 @@ extension LauncherView {
             let json = proposal.asJSON()
         else { return msg }
         let cleaned = ExtensionProposalData.cleanResponse(msg.content)
+        // Carry the fields the caller already filled in. Rebuilding with only the proposal
+        // silently dropped the route trace and the tool chips, so a proposed extension lost
+        // the record of the search that led to it — the case where that record matters most.
         return AIChatMessage(
             id: msg.id, role: msg.role, content: cleaned,
-            structuredData: json, hasInstallButton: true
+            structuredData: json, hasInstallButton: true,
+            attachments: msg.attachments, appLaunches: msg.appLaunches,
+            mcpToolsRan: msg.mcpToolsRan, trace: msg.trace, runOutput: msg.runOutput
         )
     }
 
