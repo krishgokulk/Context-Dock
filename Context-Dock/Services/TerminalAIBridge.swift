@@ -616,6 +616,19 @@ class TerminalAIBridge: ObservableObject {
 
     /// Execute command in background, streaming each line to `onLine` as it arrives.
     /// Returns the full combined output + exit code when the process finishes.
+    /// Printed on stderr by the command script before the command runs. Everything the shell
+    /// emitted before it came from the user's dotfiles, not from the command.
+    nonisolated static let stderrBeginMarker = "__DORAX_CMD_STDERR_BEGIN__"
+
+    /// Drops shell-startup output that precedes the marker. Without a marker the text is
+    /// returned unchanged — better to show extra noise than to swallow a real error.
+    /// `nonisolated`: called from the process termination handler, off the main actor.
+    nonisolated static func commandStderr(_ raw: String) -> String {
+        guard let range = raw.range(of: stderrBeginMarker) else { return raw }
+        return String(raw[range.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func executeInBackground(
         _ command: String,
         onLine: (@Sendable (String) -> Void)? = nil
@@ -623,7 +636,17 @@ class TerminalAIBridge: ObservableObject {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", command]
+            // A login shell sources the user's dotfiles, and anything they print lands on this
+            // process's stderr before the command has even started. One broken line in
+            // ~/.zshenv (a rakubrew init whose Perl cache no longer compiles) therefore
+            // appeared in chat as though `brew search` had produced it.
+            //
+            // The shell still sources those files — commands rely on the aliases, functions and
+            // PATH they set — but the script announces itself on stderr first, so everything
+            // before that marker is provably startup noise and not this command's output.
+            process.arguments = [
+                "-lc", "printf '%s\\n' '\(Self.stderrBeginMarker)' >&2\n" + command,
+            ]
 
             // Set up environment with full tool paths (Homebrew Apple Silicon + Intel)
             var environment = ProcessInfo.processInfo.environment
@@ -661,12 +684,20 @@ class TerminalAIBridge: ObservableObject {
                         onLine(trimmed)
                     }
                 }
+                // Streaming counterpart of the marker split: nothing on stderr counts as
+                // output until the command announces itself.
+                let commandStarted = TerminalStderrGate()
                 errorPipe.fileHandleForReading.readabilityHandler = { fh in
                     let data = fh.availableData
                     guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
                     for line in chunk.components(separatedBy: "\n") {
                         let trimmed = line.trimmingCharacters(in: .controlCharacters)
                         guard !trimmed.isEmpty else { continue }
+                        if trimmed.contains(Self.stderrBeginMarker) {
+                            commandStarted.open()
+                            continue
+                        }
+                        guard commandStarted.isOpen else { continue }
                         appendCollectedLine(trimmed)
                         onLine(trimmed)
                     }
@@ -679,7 +710,8 @@ class TerminalAIBridge: ObservableObject {
                     let outData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                     var output = String(data: outData, encoding: .utf8) ?? ""
-                    if let err = String(data: errData, encoding: .utf8), !err.isEmpty {
+                    let err = Self.commandStderr(String(data: errData, encoding: .utf8) ?? "")
+                    if !err.isEmpty {
                         output += "\n" + err
                     }
                     continuation.resume(returning: (output.trimmingCharacters(in: .whitespacesAndNewlines), proc.terminationStatus))
@@ -899,5 +931,25 @@ extension TerminalHostController {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Tiny thread-safe latch for the streaming stderr gate. The pipe's readability handler runs
+/// off the main thread, so the "has the command started" flag it shares with its own later
+/// invocations needs a lock rather than a captured `var`.
+final class TerminalStderrGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return opened
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        lock.unlock()
     }
 }
