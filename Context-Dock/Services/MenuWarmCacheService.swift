@@ -195,13 +195,23 @@ final class MenuWarmCacheService {
         // Interactive callers await this result. Keep the scan at userInitiated
         // priority to avoid a user-interactive → utility priority inversion.
         let items = await Task.detached(priority: .userInitiated) {
-            // Finder lazily populates submenu children only when opened — use the
-            // press-open-read-close scan so its menu items appear, not just the top row.
+            // Most apps can use a passive AX scan. If it exposes a known Recent branch
+            // with no children (TextEdit / Preview's File → Open Recent), rerun once with
+            // the narrow press-open-read-close scan so those real file rows reach Global
+            // Context. We never expand arbitrary submenus during background warming.
             func scan() async -> [AXMenuItem] {
-                isFinder
-                    ? await AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
-                        for: pid, maxDepth: 6)
-                    : await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                let passive = await AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
+                let recentTitles: Set<String> = [
+                    "open recent", "recent items", "recent documents", "recent files", "recent projects",
+                ]
+                let hasUnexpandedRecentBranch = passive.contains { item in
+                    recentTitles.contains(
+                        item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+                        && item.children.isEmpty
+                }
+                guard isFinder || hasUnexpandedRecentBranch else { return passive }
+                return await AXMenuReader.shared.refreshAllMenuItemsOpeningLazyMenus(
+                    for: pid, maxDepth: 6)
             }
             var readItems = await scan()
             if readItems.isEmpty {

@@ -1424,6 +1424,10 @@ extension LauncherView {
         guard let app = GeneralAIActionResolver.shared.namedInstalledApp(in: query) else {
             return ""
         }
+        // Reuse Global Context's semantic file-intent parser rather than maintaining
+        // a second list of chat phrases here. This recognises recent/latest/newest
+        // file requests while keeping unrelated app-status questions lean.
+        let asksForRecentDocuments = finderSemanticProfile(for: query).wantsRecent
         // Only status/state questions pay for live reads.
         let statusWords = [
             "what", "doing", "going on", "status", "open", "current", "working",
@@ -1432,7 +1436,11 @@ extension LauncherView {
         ]
         guard statusWords.contains(where: lowered.contains) else { return "" }
 
-        await MainActor.run { aiMode.loadingStatus = "Reading \(app.name) state…" }
+        await MainActor.run {
+            aiMode.loadingStatus = asksForRecentDocuments
+                ? "Reading \(app.name) and recent documents…"
+                : "Reading \(app.name) state…"
+        }
         var lines: [String] = [
             "## Live \(app.name) state (read by DoraX just now — factual)",
         ]
@@ -1507,6 +1515,34 @@ extension LauncherView {
             lines.append("")
             lines.append("DoraX capabilities registered for \(app.name): "
                 + inventory.joined(separator: "; ") + ".")
+        }
+
+        // General Chat intentionally remains its own surface, but a question such as
+        // "Preview recent documents" needs the same factual, read-only Recent Items
+        // data Global Context already renders. RecentItemsService is TTL-cached, so
+        // this adds no filesystem/Spotlight work to normal chat or to each keystroke.
+        // Do not label these as Preview's private Open Recent menu: they are DoraX's
+        // cross-app recent-document index, which may contain files from other apps.
+        if asksForRecentDocuments {
+            let recentDocuments = RecentItemsService.shared.recentDocuments()
+            if recentDocuments.isEmpty {
+                lines.append("")
+                lines.append("## DoraX Recent Items (read just now)")
+                lines.append("- No readable recent documents are currently available.")
+            } else {
+                lines.append("")
+                lines.append("## DoraX Recent Items (read just now — factual)")
+                lines.append(
+                    "These are the cross-app recent files available to Global Context, "
+                    + "not a guessed list from \(app.name).")
+                for document in recentDocuments.prefix(12) {
+                    let folder = document.url.deletingLastPathComponent().path
+                    lines.append("- \(document.name) — \(folder)")
+                }
+                if recentDocuments.count > 12 {
+                    lines.append("- …and \(recentDocuments.count - 12) more recent files.")
+                }
+            }
         }
 
         lines.append("")

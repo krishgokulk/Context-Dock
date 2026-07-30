@@ -297,6 +297,16 @@ struct AppLaunchAction: Equatable {
     let bundleId: String
 }
 
+/// A concrete file returned by DoraX's local Recent Items index. Keeping the URL on
+/// the message lets the chat render desktop-native actions without asking the model
+/// to reproduce a path or issuing another AI request.
+struct RecentFileAction: Equatable {
+    let url: URL
+
+    var name: String { url.lastPathComponent }
+    var folder: String { url.deletingLastPathComponent().path }
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -307,6 +317,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var hasInstallButton: Bool  // Show "Add to Extensions" button
     var attachments: [URL]  // Files the user attached to this message (shown as chips)
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
+    var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
@@ -322,7 +333,8 @@ struct AIChatMessage: Identifiable, Equatable {
     init(
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
+        appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil
     ) {
@@ -335,6 +347,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.hasInstallButton = hasInstallButton
         self.attachments = attachments
         self.appLaunches = appLaunches
+        self.recentFiles = recentFiles
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -345,7 +358,8 @@ struct AIChatMessage: Identifiable, Equatable {
     init(
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = [],
+        appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil
     ) {
@@ -358,6 +372,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.hasInstallButton = hasInstallButton
         self.attachments = attachments
         self.appLaunches = appLaunches
+        self.recentFiles = recentFiles
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -482,6 +497,56 @@ struct AIChatMessageView: View {
                     .overlay(Capsule().strokeBorder(providerColor.opacity(0.3)))
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Concrete local-file actions for a grounded Recent Items answer. Both actions
+    /// are direct AppKit calls: they never go back through the provider or automation.
+    @ViewBuilder
+    private var recentFileRows: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Recent files")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ForEach(message.recentFiles, id: \.url) { file in
+                HStack(spacing: 8) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(file.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(file.folder)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 4)
+                    Button("Open") {
+                        NSWorkspace.shared.open(file.url)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                    .help("Open \(file.name)")
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([file.url])
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                    .help("Show \(file.name) in Finder")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
         }
     }
@@ -739,6 +804,10 @@ struct AIChatMessageView: View {
 
                 if !message.appLaunches.isEmpty {
                     appLaunchButtons
+                }
+
+                if !message.recentFiles.isEmpty {
+                    recentFileRows
                 }
 
                 if message.enableAppRequest != nil {

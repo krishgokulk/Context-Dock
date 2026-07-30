@@ -19,6 +19,10 @@ private enum GeneralAIChatConversationStore {
         let bundleId: String
     }
 
+    private struct StoredRecentFile: Codable {
+        let path: String
+    }
+
     private struct StoredMessage: Codable {
         let role: String
         let content: String
@@ -27,6 +31,8 @@ private enum GeneralAIChatConversationStore {
         let hasInstallButton: Bool
         let attachments: [String]
         let appLaunches: [StoredAppLaunch]
+        // Optional preserves conversations saved before file rows existed.
+        let recentFiles: [StoredRecentFile]?
         let mcpToolsRan: [String]
     }
 
@@ -50,6 +56,9 @@ private enum GeneralAIChatConversationStore {
                         bundleId: $0.bundleId
                     )
                 },
+                recentFiles: (item.recentFiles ?? []).map {
+                    RecentFileAction(url: URL(fileURLWithPath: $0.path))
+                },
                 mcpToolsRan: item.mcpToolsRan
             )
         }
@@ -71,6 +80,7 @@ private enum GeneralAIChatConversationStore {
                         bundleId: $0.bundleId
                     )
                 },
+                recentFiles: message.recentFiles.map { StoredRecentFile(path: $0.url.path) },
                 mcpToolsRan: message.mcpToolsRan
             )
         }
@@ -2003,6 +2013,9 @@ extension LauncherView {
                     else { return cleaned }
                     return self.enforceNoFalseSelectionSuccess(cleaned)
                 }
+                let recentFiles = await MainActor.run {
+                    self.generalAIRecentFileActions(for: query)
+                }
                 await MainActor.run {
                     let enableReq = self.aiMode.pendingEnableApp
                     self.aiMode.pendingEnableApp = nil
@@ -2012,6 +2025,7 @@ extension LauncherView {
                         // describing a script.
                         let baseMsg = AIChatMessage(
                             role: .assistant, content: cleaned, appLaunches: launches,
+                            recentFiles: recentFiles,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             enableAppRequest: enableReq,
                             trace: self.aiMode.routerTrace)
@@ -5336,6 +5350,24 @@ extension LauncherView {
              "how hot", "how cold", "degrees"],
             "Open Weather", "cloud.sun", "com.apple.weather")
         return launches
+    }
+
+    /// Supplies interactive rows only when the user has explicitly enabled the named
+    /// app for this General Chat and the shared Global Context semantic parser says the
+    /// request is about recency. The service is already TTL-cached, so this is a cheap
+    /// snapshot taken once after the answer—not work performed while typing.
+    func generalAIRecentFileActions(for query: String) -> [RecentFileAction] {
+        guard currentAISelectionSnapshot.isEmpty,
+              finderSemanticProfile(for: query).wantsRecent,
+              let namedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+              chatFocusApps.contains(where: {
+                  $0.bundleId.caseInsensitiveCompare(namedApp.bundleId) == .orderedSame
+              })
+        else { return [] }
+
+        return RecentItemsService.shared.recentDocuments()
+            .prefix(12)
+            .map { RecentFileAction(url: $0.url) }
     }
 
     func sendToAIProvider(

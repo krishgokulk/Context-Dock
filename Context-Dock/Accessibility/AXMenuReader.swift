@@ -129,16 +129,35 @@ final class AXMenuReader {
             // Skip the Apple menu (index 0) — opening it surfaces About/System Settings.
             let isApple = idx == 0
 
+            let container = submenuContainer(for: item) ?? item
             var children = readChildren(
-                of: submenuContainer(for: item) ?? item,
+                of: container,
                 path: [title], depth: 1, maxDepth: maxDepth)
-            if children.isEmpty && !isApple {
+            // TextEdit, Preview, and many document apps expose File's static children
+            // immediately but populate its nested Open Recent branch only after File is
+            // opened. Treat that as a narrow lazy-menu case; do not press every menu or
+            // recurse through arbitrary dynamic branches during background warming.
+            let needsRecentExpansion = containsUnexpandedRecentBranch(children)
+            var didOpenTopLevelMenu = false
+            if (children.isEmpty || needsRecentExpansion) && !isApple {
                 // Open (populates lazy children), read, then cancel to close.
                 AXUIElementPerformAction(item, kAXPressAction as CFString)
                 usleep(25_000)
                 children = readChildren(
-                    of: submenuContainer(for: item) ?? item,
+                    of: container,
                     path: [title], depth: 1, maxDepth: maxDepth)
+                if needsRecentExpansion,
+                   let recentBranch = firstUnexpandedRecentBranch(in: children)
+                {
+                    AXUIElementPerformAction(recentBranch.element, kAXPressAction as CFString)
+                    usleep(25_000)
+                    children = readChildren(
+                        of: container,
+                        path: [title], depth: 1, maxDepth: maxDepth)
+                }
+                didOpenTopLevelMenu = true
+            }
+            if didOpenTopLevelMenu {
                 var menuRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(item, "AXMenu" as CFString, &menuRef) == .success,
                     let menu = menuRef
@@ -163,6 +182,31 @@ final class AXMenuReader {
             menuCache[pid] = CacheEntry(items: items, date: Date())
         }
         return items
+    }
+
+    /// Dynamic "Open Recent" branches are useful file facts, unlike most lazy menus.
+    /// Keep this title set deliberately small: it bounds the scan to one additional press
+    /// per app warm and avoids expanding large browser history/bookmark menus.
+    private func containsUnexpandedRecentBranch(_ items: [AXMenuItem]) -> Bool {
+        firstUnexpandedRecentBranch(in: items) != nil
+    }
+
+    private func firstUnexpandedRecentBranch(in items: [AXMenuItem]) -> AXMenuItem? {
+        let recentTitles: Set<String> = [
+            "open recent", "recent items", "recent documents", "recent files", "recent projects",
+        ]
+        for item in items {
+            let normalized = item.title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if recentTitles.contains(normalized), item.children.isEmpty {
+                return item
+            }
+            if let nested = firstUnexpandedRecentBranch(in: item.children) {
+                return nested
+            }
+        }
+        return nil
     }
 
     /// Force-evict a pid from the cache (call on app relaunch / app switch).
