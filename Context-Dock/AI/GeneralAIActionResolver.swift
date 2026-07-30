@@ -74,7 +74,9 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
     let capabilityID: String?
     let requiredInputs: [String]
     let riskLevel: AICapabilityRiskLevel
-    let confidence: Double
+    /// Mutable so a caller can lower it — a query that reached the resolver without an
+    /// explicit verb is offered for confirmation rather than executed outright.
+    var confidence: Double
     let permissionKey: String
     let debugReason: String
 
@@ -202,8 +204,26 @@ final class GeneralAIActionResolver {
                 pendingClarification = nil
             }
         }
-        guard isLikelyExecutable(trimmed) else { return .none }
         let lowered = trimmed.lowercased()
+
+        // Intent used to be decided by the verb list alone, which runs before any lookup —
+        // so "duckduckgo ai" was filed as conversation while the local index held
+        // "Open Duck.ai" one call away. The verb list stays as the fast path; when it says
+        // no, ask the index instead of giving up. Retrieve, then decide.
+        let verbShaped = isLikelyExecutable(trimmed)
+        let nounShapedTarget = verbShaped ? nil : nounShapedAppTarget(lowered)
+        guard verbShaped || nounShapedTarget != nil else { return .none }
+
+        // Domain intents (media transport, reminders, screenshots…) read as commands only
+        // with a verb — "play", "remind me", "capture". A noun phrase never means those, so
+        // they stay behind the fast path and skip straight to the app the index matched.
+        guard verbShaped else {
+            guard let target = nounShapedTarget else { return .none }
+            // No verb means no proof the user wants this run, only proof of what they meant.
+            // Offer it: the chat path lists candidates below 0.7 instead of executing.
+            return offeringOnly(
+                await appScopedResolution(target: target, trimmed: trimmed))
+        }
 
         // Domain intents first — they are more specific than generic app actions.
         if let media = await resolveMediaTransportIntent(lowered, original: trimmed) {
@@ -230,34 +250,7 @@ final class GeneralAIActionResolver {
 
         // Generic app-scoped action: "open safari new private window", "quit music", …
         if let target = resolveTargetApp(in: lowered) {
-            guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
-                return .explain(
-                    "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
-                    + "Add it in Settings → App Adapters → Choose App, then ask again.")
-            }
-            // Compound "save and quit" style requests → an ordered plan, each step resolved
-            // independently. Checked before single-action routing so we don't hunt for one
-            // combined "save and quit" menu that doesn't exist.
-            if let steps = compoundSteps(in: target.remainingPhrase) {
-                return .compound(
-                    appName: target.name, bundleID: target.bundleId, steps: steps)
-            }
-            // Per-app router first — it knows the best route for that app's tasks.
-            if let router = appRouters[target.bundleId],
-               let routed = await router.route(
-                   actionPhrase: target.remainingPhrase, original: trimmed) {
-                return routed
-            }
-            let base = resolveAppScopedAction(
-                appName: target.name,
-                bundleID: target.bundleId,
-                actionPhrase: target.remainingPhrase,
-                original: trimmed
-            )
-            // Fold in MCP tools the app exposes so they compete in the same ranked list.
-            return await augmentWithMCPCandidates(
-                base, appName: target.name, bundleID: target.bundleId,
-                actionPhrase: target.remainingPhrase, intentKey: Self.normalizedIntentKey(trimmed))
+            return await appScopedResolution(target: target, trimmed: trimmed)
         }
 
         // Browser action with no browser named ("new private window") — ask which one
@@ -276,6 +269,81 @@ final class GeneralAIActionResolver {
         }
 
         return .none
+    }
+
+    // MARK: - App-scoped resolution
+
+    /// Everything that happens once a query is known to be about one installed app.
+    /// Shared by the verb path and the retrieval-first noun path.
+    private func appScopedResolution(
+        target: TargetApp, trimmed: String
+    ) async -> GeneralAIActionResolution {
+        guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
+            return .explain(
+                "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
+                + "Add it in Settings → App Adapters → Choose App, then ask again.")
+        }
+        // Compound "save and quit" style requests → an ordered plan, each step resolved
+        // independently. Checked before single-action routing so we don't hunt for one
+        // combined "save and quit" menu that doesn't exist.
+        if let steps = compoundSteps(in: target.remainingPhrase) {
+            return .compound(
+                appName: target.name, bundleID: target.bundleId, steps: steps)
+        }
+        // Per-app router first — it knows the best route for that app's tasks.
+        if let router = appRouters[target.bundleId],
+           let routed = await router.route(
+               actionPhrase: target.remainingPhrase, original: trimmed) {
+            return routed
+        }
+        let base = resolveAppScopedAction(
+            appName: target.name,
+            bundleID: target.bundleId,
+            actionPhrase: target.remainingPhrase,
+            original: trimmed
+        )
+        // Fold in MCP tools the app exposes so they compete in the same ranked list.
+        return await augmentWithMCPCandidates(
+            base, appName: target.name, bundleID: target.bundleId,
+            actionPhrase: target.remainingPhrase, intentKey: Self.normalizedIntentKey(trimmed))
+    }
+
+    // MARK: - Retrieval-first intent (no verb)
+
+    /// Which installed app a verb-less phrase is about, when the phrase is shaped like a
+    /// target rather than a topic. Returns nil unless every condition holds, because this is
+    /// the path that lets a sentence with no command in it reach the action machinery:
+    ///
+    /// - not a question ("what is safari" stays conversation)
+    /// - not a browser-library read ("history" is answered from the URL library, not clicked)
+    /// - names an installed app, and says something *after* the app name. A bare app name is
+    ///   Global Context's job — General Chat is not a second launcher.
+    /// - that remainder is short. "duckduckgo ai" is a target; "safari keeps crashing when I
+    ///   open three windows" is a complaint, and belongs in conversation.
+    private func nounShapedAppTarget(_ lowered: String) -> TargetApp? {
+        guard !isQuestionShaped(lowered) else { return nil }
+        guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
+        guard let target = resolveTargetApp(in: lowered) else { return nil }
+        let remainder = target.remainingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remainder.isEmpty else { return nil }
+        let words = remainder.split(whereSeparator: { $0.isWhitespace })
+        guard words.count <= 3 else { return nil }
+        return target
+    }
+
+    /// Caps confidence below the chat path's auto-run threshold (0.7), so candidates are
+    /// listed for the user to pick instead of being executed. Used for verb-less queries,
+    /// where the index proves what the user *meant* but nothing proves they want it run.
+    private func offeringOnly(
+        _ resolution: GeneralAIActionResolution
+    ) -> GeneralAIActionResolution {
+        guard case .candidates(let candidates) = resolution else { return resolution }
+        return .candidates(
+            candidates.map { candidate in
+                var offered = candidate
+                offered.confidence = min(candidate.confidence, 0.65)
+                return offered
+            })
     }
 
     // MARK: - Browser disambiguation
@@ -332,6 +400,19 @@ final class GeneralAIActionResolver {
 
     // MARK: - Executable-intent gate
 
+    private static let questionStarts = [
+        "how ", "what", "why ", "who ", "when ", "where ", "which ", "explain",
+        "tell me", "can you explain", "describe", "compare", "summarize", "translate",
+        "write ", "is ", "are ", "does ", "do ", "did ", "should ",
+    ]
+
+    /// Conversation, not a target — checked by both the verb gate and the noun-phrase path.
+    private func isQuestionShaped(_ lowered: String) -> Bool {
+        let text = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix("?") { return true }
+        return Self.questionStarts.contains(where: text.hasPrefix)
+    }
+
     /// Cheap local check: does this look like a command rather than a question?
     /// Runs only on submit (never while typing) and uses no AX or provider calls.
     private func isLikelyExecutable(_ query: String) -> Bool {
@@ -374,12 +455,7 @@ final class GeneralAIActionResolver {
         // list below and routed the query to an executable capability — which opened a NEW
         // tab instead of listing the open ones.
         if LauncherView.isBrowserLibraryReadPhrase(lowered) { return false }
-        let questionStarts = [
-            "how ", "what", "why ", "who ", "when ", "where ", "which ", "explain",
-            "tell me", "can you explain", "describe", "compare", "summarize", "translate",
-            "write ", "is ", "are ", "does ", "do ", "did ", "should ",
-        ]
-        if questionStarts.contains(where: lowered.hasPrefix) { return false }
+        if Self.questionStarts.contains(where: lowered.hasPrefix) { return false }
 
         let verbs = [
             "open ", "launch ", "start ", "create ", "new ", "add ", "make ",
