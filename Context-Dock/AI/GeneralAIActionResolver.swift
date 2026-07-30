@@ -690,33 +690,61 @@ final class GeneralAIActionResolver {
     ]
 
     private func resolveTargetApp(in lowered: String) -> TargetApp? {
-        // Longest alias match first so "text edit" beats "text".
-        let sortedAliases = appAliases.keys.sorted { $0.count > $1.count }
-        for alias in sortedAliases {
-            guard containsWordPhrase(lowered, phrase: alias) else { continue }
-            let bundleId = appAliases[alias]!
-            guard let name = installedAppName(bundleId: bundleId) else { continue }
-            return TargetApp(
-                name: name,
-                bundleId: bundleId,
-                remainingPhrase: removePhrase(alias, from: lowered)
-            )
+        // Every name that appears in the sentence competes, whether it came from the alias
+        // table or from the installed-apps catalog.
+        //
+        // The alias table used to win unconditionally, because it was checked first and
+        // returned on the first hit. It holds "terminal" → com.apple.Terminal, so "quick
+        // ghostty terminal" resolved to Apple's Terminal and never reached the catalog — the
+        // only place Ghostty exists. A 30-row hardcoded table outranked every installed app.
+        //
+        // Ranking is by position in the sentence, then by matched length. People name the
+        // target before qualifying it ("ghostty quick terminal", "safari new private window"),
+        // so the leftmost name is the subject and later words describe what to do with it.
+        // Length only breaks ties at the same position, which is what keeps "vs code" from
+        // being read as "code".
+        struct Match {
+            let start: Int
+            let matchedLength: Int
+            let name: String
+            let bundleId: String
+            let matchedPhrase: String
         }
+        var matches: [Match] = []
+
+        for (alias, bundleId) in appAliases {
+            guard let offset = wordPhraseOffset(lowered, phrase: alias) else { continue }
+            // Aliases still matter: they carry colloquial names the catalog cannot match,
+            // like "vs code" for "Visual Studio Code".
+            guard let name = installedAppName(bundleId: bundleId) else { continue }
+            matches.append(
+                Match(
+                    start: offset, matchedLength: alias.count, name: name,
+                    bundleId: bundleId, matchedPhrase: alias))
+        }
+
         // Installed-apps catalog (already warmed at startup; in-memory read).
-        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
-        var best: (entry: InstalledApplicationEntry, nameLength: Int)?
-        for entry in installed {
+        for entry in InstalledApplicationsCatalog.cachedInstalledApps() {
             let name = entry.name.lowercased()
-            guard name.count > 2, containsWordPhrase(lowered, phrase: name) else { continue }
-            if best == nil || name.count > best!.nameLength {
-                best = (entry, name.count)
+            guard name.count > 2, let offset = wordPhraseOffset(lowered, phrase: name) else {
+                continue
             }
+            matches.append(
+                Match(
+                    start: offset, matchedLength: name.count, name: entry.name,
+                    bundleId: entry.bundleId, matchedPhrase: name))
+        }
+
+        let best = matches.min { lhs, rhs in
+            if lhs.start != rhs.start { return lhs.start < rhs.start }
+            if lhs.matchedLength != rhs.matchedLength { return lhs.matchedLength > rhs.matchedLength }
+            return lhs.name < rhs.name  // stable, so the same query always resolves the same way
         }
         guard let best else { return nil }
         return TargetApp(
-            name: best.entry.name,
-            bundleId: best.entry.bundleId,
-            remainingPhrase: removePhrase(best.entry.name.lowercased(), from: lowered)
+            name: best.name,
+            bundleId: best.bundleId,
+            remainingPhrase: removePhrase(best.matchedPhrase, from: lowered)
         )
     }
 
@@ -734,6 +762,18 @@ final class GeneralAIActionResolver {
         let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
         let boundary = { (c: Character?) in c == nil || !(c!.isLetter || c!.isNumber) }
         return boundary(before) && boundary(after)
+    }
+
+    /// Character offset of `phrase` in `text` when it appears on word boundaries, else nil.
+    /// The offset is what lets competing app names be ranked by where they appear.
+    private func wordPhraseOffset(_ text: String, phrase: String) -> Int? {
+        guard !phrase.isEmpty, let range = text.range(of: phrase) else { return nil }
+        let before = range.lowerBound == text.startIndex
+            ? nil : text[text.index(before: range.lowerBound)]
+        let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
+        let boundary = { (c: Character?) in c == nil || !(c!.isLetter || c!.isNumber) }
+        guard boundary(before), boundary(after) else { return nil }
+        return text.distance(from: text.startIndex, to: range.lowerBound)
     }
 
     private func removePhrase(_ phrase: String, from text: String) -> String {
