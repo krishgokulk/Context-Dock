@@ -200,6 +200,26 @@ extension LauncherView {
             }
 
             let routingMode = self.keyRoutingMode
+            // General Chat's provider picker is an AppKit menu.  After that menu closes,
+            // AppKit can leave the panel (rather than the NSTextView) as first responder, so
+            // SwiftUI's TextField.onSubmit never receives Return.  Route that *unfocused* path
+            // here, before the L2/global-only key guard below.  A focused editor still owns
+            // Return and uses its normal .onSubmit route, so this cannot double-send.
+            if event.keyCode == 36,
+                self.currentDockSurfaceMode == .generalChat,
+                !(NSApp.keyWindow?.firstResponder is NSTextView)
+            {
+                let generalChatQuery = self.searchState.query
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !generalChatQuery.isEmpty {
+                    if !self.launchTypedAppMatchIfNeeded() {
+                        self.submitAIQuery()
+                    }
+                    self.ensureSearchInputFocusReady()
+                    return nil
+                }
+            }
+
             if let routedEvent = self.handleTopLevelKeyRouting(event, mode: routingMode) {
                 return routedEvent
             }
@@ -584,23 +604,6 @@ extension LauncherView {
 
             if event.keyCode == 36, self.aiMode.isActive {
                 self.submitAIQuery()
-                return nil
-            }
-
-            // General Chat before the first send: Enter reaches the model only through the
-            // field's .onSubmit, so it dies whenever the field lost first responder — the
-            // provider picker's NSMenu takes key focus and SwiftUI does not reliably hand
-            // it back. Runs only while the field is NOT first responder, so the focused
-            // path still goes through .onSubmit and can never double-send.
-            if event.keyCode == 36,
-                self.currentDockSurfaceMode == .generalChat,
-                !(NSApp.keyWindow?.firstResponder is NSTextView),
-                !q.isEmpty
-            {
-                if !self.launchTypedAppMatchIfNeeded() {
-                    self.submitAIQuery()
-                }
-                self.ensureSearchInputFocusReady()
                 return nil
             }
 
