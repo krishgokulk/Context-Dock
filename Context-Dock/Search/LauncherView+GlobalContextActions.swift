@@ -770,30 +770,11 @@ extension LauncherView {
         }
     }
 
+    /// Delegates to the one shared definition. Copies of this predicate drifted apart:
+    /// some CLI-suggestion paths filtered on it while others took every enabled package,
+    /// so PATH binaries the user never added ("tac", "pdf2ps") ghost-completed as scopes.
     func isUserAddedGlobalCLITool(_ package: TerminalPackage) -> Bool {
-        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return false }
-        if settings.isCLIToolPinned(command) { return true }
-        let commandKey = normalizedDockPillText(command)
-        let packageNameKey = normalizedDockPillText(package.name)
-        if adapterManager.adapters.contains(where: { adapter in
-            let adapterKey = normalizedDockPillText(adapter.bundleId)
-            let adapterNameKey = normalizedDockPillText(adapter.appName)
-            if adapter.bundleId.lowercased().hasPrefix("cli://") {
-                return adapterKey.contains(commandKey)
-                    || (!packageNameKey.isEmpty && adapterKey.contains(packageNameKey))
-                    || adapterNameKey == commandKey
-                    || (!packageNameKey.isEmpty && adapterNameKey == packageNameKey)
-            }
-            return adapter.actions.contains { action in
-                action.type == .cliTool
-                    && (action.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
-            }
-        }) {
-            return true
-        }
-        let scopeIds = Set(["cli://\(command)", "cli_\(command)", command])
-        return package.contextAppBundleIds.contains { scopeIds.contains($0) }
+        terminalPackageManager.isUserAddedGlobalScope(package)
     }
 
     func globalSystemCommandScopeMatches(for query: String, limit: Int) -> [SearchResult] {

@@ -344,10 +344,12 @@ struct LauncherView: View {
         )
     }
 
-    /// Registered CLI tools appear in search results alongside applications.
+    /// CLI tools the user added appear in search results alongside applications. `packages`
+    /// also holds every executable found on PATH, which must not be searchable as a scope.
     var cliToolSearchResults: [SearchResult] {
         return TerminalPackageManager.shared.packages
             .filter(\.isEnabled)
+            .filter(TerminalPackageManager.shared.isUserAddedGlobalScope)
             .map { pkg in
                 let isTUI = TerminalAIBridge.shared.isTUICommand(pkg.command)
                 let symbolName = isTUI ? "terminal.fill" : "arrow.right.square.fill"

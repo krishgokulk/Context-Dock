@@ -1031,6 +1031,9 @@ extension LauncherView {
         let matches: [(package: TerminalPackage, score: Double)] =
             TerminalPackageManager.shared.packages.lazy
             .filter(\.isEnabled)
+            // This is the per-keystroke path that draws the inline ghost, so an unfiltered
+            // list here is what completed "ta" to "tac" and "pd" to "pdf2ps".
+            .filter(TerminalPackageManager.shared.isUserAddedGlobalScope)
             .compactMap { package in
                 let command = normalizedDockPillText(package.command)
                 let name = normalizedDockPillText(package.name)

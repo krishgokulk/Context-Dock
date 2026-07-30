@@ -24,17 +24,30 @@ class TerminalPackageManager: ObservableObject {
         let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return false }
         if AppSettings.shared.isCLIToolPinned(command) { return true }
+
         let commandKey = command.lowercased()
-        return AppAdapterManager.shared.adapters.contains { adapter in
-            if adapter.bundleId.lowercased().hasPrefix("cli://") {
-                return adapter.bundleId.lowercased().contains(commandKey)
-                    || adapter.appName.lowercased() == commandKey
+        let packageNameKey = package.name
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if AppAdapterManager.shared.adapters.contains(where: { adapter in
+            let adapterKey = adapter.bundleId.lowercased()
+            let adapterNameKey = adapter.appName
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if adapterKey.hasPrefix("cli://") {
+                return adapterKey.contains(commandKey)
+                    || (!packageNameKey.isEmpty && adapterKey.contains(packageNameKey))
+                    || adapterNameKey == commandKey
+                    || (!packageNameKey.isEmpty && adapterNameKey == packageNameKey)
             }
-            return adapter.actions.contains {
-                $0.type == .cliTool
-                    && ($0.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
+            return adapter.actions.contains { action in
+                action.type == .cliTool
+                    && (action.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
             }
+        }) {
+            return true
         }
+        // Wired into a scope directly rather than through an adapter.
+        let scopeIds = Set(["cli://\(command)", "cli_\(command)", command])
+        return package.contextAppBundleIds.contains { scopeIds.contains($0) }
     }
 
     private let packagesKey = "L2TerminalPackages"
