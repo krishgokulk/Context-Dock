@@ -178,6 +178,13 @@ final class GeneralAIActionResolver {
     }
     private var pendingClarification: PendingClarification?
 
+    /// Live trace sink for the current `resolve` call. Every line describes work this
+    /// resolver actually performed — a count it read, a route it matched, a candidate it
+    /// dropped — never model reasoning. Set for the duration of one resolve, then cleared.
+    private var stepReporter: ((String) -> Void)?
+
+    private func step(_ text: String) { stepReporter?(text) }
+
     private init() {
         let routers: [any AppCapabilityRouting] = [
             SafariCapabilityRouter()
@@ -193,10 +200,24 @@ final class GeneralAIActionResolver {
     ///   Both are explicit user consent, so either one makes an app actionable — without
     ///   this, the Enable tap granted reading but not acting, and the resolver told the user
     ///   to go add an App Adapter for an app they had just enabled.
+    /// - Parameter scopedApp: the app this chat surface is already scoped to (Context Dock's
+    ///   frontmost-app chat). The surface names the app, so the sentence does not have to:
+    ///   "new private window" typed into Safari's chat means Safari. Without this the
+    ///   resolver could only find a target by reading the text, so it fell through to
+    ///   browser disambiguation and asked which browser — while sitting inside Safari's own
+    ///   chat. An app named in the text still wins, since that is the more explicit signal.
+    /// - Parameter onStep: live trace sink; see `stepReporter`.
     func resolve(
         query: String,
-        chatAllowedBundleIds: Set<String> = []
+        chatAllowedBundleIds: Set<String> = [],
+        scopedApp: (name: String, bundleId: String)? = nil,
+        onStep: ((String) -> Void)? = nil
     ) async -> GeneralAIActionResolution {
+        stepReporter = onStep
+        defer { stepReporter = nil }
+        // Opening a scoped chat is itself the grant for that app.
+        var chatAllowedBundleIds = chatAllowedBundleIds
+        if let scopedApp { chatAllowedBundleIds.insert(scopedApp.bundleId) }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending = pendingClarification {
             if Date() > pending.expiresAt {
@@ -208,7 +229,8 @@ final class GeneralAIActionResolver {
                 pendingClarification = nil
                 return await resolve(
                     query: pending.originalQuery + " using " + option,
-                    chatAllowedBundleIds: chatAllowedBundleIds)
+                    chatAllowedBundleIds: chatAllowedBundleIds,
+                    scopedApp: scopedApp, onStep: onStep)
             } else if !trimmed.isEmpty {
                 // A non-option response starts a new request rather than trapping the user
                 // in stale clarification state.
@@ -222,7 +244,8 @@ final class GeneralAIActionResolver {
         // "Open Duck.ai" one call away. The verb list stays as the fast path; when it says
         // no, ask the index instead of giving up. Retrieve, then decide.
         let verbShaped = isLikelyExecutable(trimmed)
-        let nounShapedTarget = verbShaped ? nil : nounShapedAppTarget(lowered)
+        let nounShapedTarget = verbShaped
+            ? nil : nounShapedAppTarget(lowered, scopedApp: scopedApp)
         guard verbShaped || nounShapedTarget != nil else { return .none }
 
         // Domain intents (media transport, reminders, screenshots…) read as commands only
@@ -268,6 +291,14 @@ final class GeneralAIActionResolver {
                 chatAllowedBundleIds: chatAllowedBundleIds)
         }
 
+        // Scoped chat with no app named in the text: the surface is the target. Checked
+        // before browser disambiguation so Safari's own chat never asks which browser.
+        if let scopedTarget = scopedTargetApp(scopedApp, lowered: lowered) {
+            return await appScopedResolution(
+                target: scopedTarget, trimmed: trimmed,
+                chatAllowedBundleIds: chatAllowedBundleIds)
+        }
+
         // Browser action with no browser named ("new private window") — ask which one
         // when several browsers are installed instead of guessing.
         if let browserResolution = await resolveUnscopedBrowserAction(lowered, original: trimmed) {
@@ -284,6 +315,27 @@ final class GeneralAIActionResolver {
         }
 
         return .none
+    }
+
+    // MARK: - Scoped-surface target
+
+    /// The scoped chat's app as a resolution target, with the whole phrase as the action.
+    /// Returns nil when there is no scope, or when the phrase already names some app — a
+    /// name in the text is the more explicit signal and must win over the surface.
+    private func scopedTargetApp(
+        _ scopedApp: (name: String, bundleId: String)?, lowered: String
+    ) -> TargetApp? {
+        guard let scopedApp, !scopedApp.bundleId.isEmpty,
+            !scopedApp.bundleId.hasPrefix("scope://"), !scopedApp.bundleId.hasPrefix("cli://")
+        else { return nil }
+        guard resolveTargetApp(in: lowered) == nil else { return nil }
+        // Strips the filler words ("open ", " in ", " the ") the same way a named-app match
+        // does, so the action phrase reaching the matchers looks identical either way.
+        let phrase = removePhrase(scopedApp.name.lowercased(), from: lowered)
+        guard !phrase.isEmpty else { return nil }
+        step("Scope: \(scopedApp.name) — resolving “\(phrase)” against it")
+        return TargetApp(
+            name: scopedApp.name, bundleId: scopedApp.bundleId, remainingPhrase: phrase)
     }
 
     // MARK: - App-scoped resolution
@@ -336,10 +388,15 @@ final class GeneralAIActionResolver {
     ///   Global Context's job — General Chat is not a second launcher.
     /// - that remainder is short. "duckduckgo ai" is a target; "safari keeps crashing when I
     ///   open three windows" is a complaint, and belongs in conversation.
-    private func nounShapedAppTarget(_ lowered: String) -> TargetApp? {
+    private func nounShapedAppTarget(
+        _ lowered: String, scopedApp: (name: String, bundleId: String)? = nil
+    ) -> TargetApp? {
         guard !isQuestionShaped(lowered) else { return nil }
         guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
-        guard let target = resolveTargetApp(in: lowered) else { return nil }
+        // In a scoped chat the app is the surface, so "private window" needs no app name.
+        guard let target = resolveTargetApp(in: lowered)
+            ?? scopedTargetApp(scopedApp, lowered: lowered)
+        else { return nil }
         let remainder = target.remainingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !remainder.isEmpty else { return nil }
         let words = remainder.split(whereSeparator: { $0.isWhitespace })
@@ -716,6 +773,10 @@ final class GeneralAIActionResolver {
         // outrank a real executable route for an executable intent.
         let adapterActions = AppAdapterManager.shared.scoredActions(for: bundleID, query: actionPhrase)
             .filter { $0.action.type != .aiPrompt }
+        step(
+            adapterActions.isEmpty
+                ? "App adapter: no action matched"
+                : "App adapter: \(adapterActions.count) action(s) matched, best “\(adapterActions[0].action.name)”")
         if let top = adapterActions.first {
             // Confidence tracks how well the action matched, not the fact that it is an
             // adapter. A flat 0.88 here outranked the cached menu's 0.82 even when the
@@ -733,7 +794,13 @@ final class GeneralAIActionResolver {
         // Execution still launches the app and live-verifies the menu item before clicking.
         let menuMatches = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID, appName: appName, query: actionPhrase, maxResults: 6)
-        if let match = bestMenuMatch(menuMatches, actionPhrase: actionPhrase) {
+        let menuBest = bestMenuMatch(menuMatches, actionPhrase: actionPhrase)
+        step(
+            menuMatches.isEmpty
+                ? "\(appName) menu cache: cold or no match"
+                : "\(appName) menus: \(menuMatches.count) candidate(s), "
+                    + (menuBest.map { "exact match \($0.pathString)" } ?? "none matched every word"))
+        if let match = menuBest {
             if let char = match.shortcutChar, !char.isEmpty {
                 candidates.append(keyboardShortcutCandidate(
                     title: match.title, path: match.path, char: char,
@@ -751,12 +818,14 @@ final class GeneralAIActionResolver {
         if candidates.allSatisfy({ $0.route == .adapter }) {
             if let seeded = seededShortcutCandidate(
                 bundleID: bundleID, appName: appName, actionPhrase: actionPhrase) {
+                step("Built-in shortcut for \(appName): \(seeded.title)")
                 candidates.append(seeded)
             }
         }
 
         // 4. User's macOS Shortcuts whose name matches the whole request.
         if let shortcut = matchingMacShortcut(for: original) {
+            step("Your macOS Shortcuts: matched “\(shortcut.name)”")
             candidates.append(DoraXActionCandidate(
                 id: "shortcutRunner.\(shortcut.name)",
                 title: "Run Shortcut “\(shortcut.name)”",
@@ -905,10 +974,17 @@ final class GeneralAIActionResolver {
             !CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
         }
         var list = candidates
+        if !unavailable.isEmpty {
+            step("\(unavailable.count) route(s) cooling down after a recent failure")
+        }
+        if !avoided.isEmpty {
+            step("\(avoided.count) route(s) skipped — you set “avoid” for them")
+        }
         let dropIDs = Set((avoided + unavailable).map(\.id))
         if !dropIDs.isEmpty, dropIDs.count < candidates.count {
             list.removeAll { dropIDs.contains($0.id) }
         }
+        step("Ranking \(list.count) route(s)…")
         list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
         return list
     }
@@ -932,6 +1008,9 @@ final class GeneralAIActionResolver {
         }
         guard strongAlternativeExists else { return candidates }
         let pruned = candidates.filter { !($0.route == .adapter && $0.confidence < 0.7) }
+        if pruned.count < candidates.count {
+            step("Dropped \(candidates.count - pruned.count) partial adapter match — an exact route matched")
+        }
         return pruned.isEmpty ? candidates : pruned
     }
 
@@ -1299,6 +1378,7 @@ final class GeneralAIActionResolver {
         guard case .candidates(var candidates) = base else { return base }
         let mcp = await mcpCandidates(
             appName: appName, bundleID: bundleID, actionPhrase: actionPhrase)
+        step(mcp.isEmpty ? "MCP tools: no match" : "MCP tools: \(mcp.count) matched")
         guard !mcp.isEmpty else { return base }
         // Drop the honest "no verified route" launch fallback if a real MCP route now exists.
         if candidates.count == 1, candidates[0].route == .appLaunch, candidates[0].caveat != nil {

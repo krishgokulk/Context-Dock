@@ -23,13 +23,47 @@ extension LauncherView {
         Set(chatFocusApps.map(\.bundleId))
     }
 
+    /// The app this chat surface is scoped to, when it is a real app scope. Context Dock's
+    /// frontmost-app chat ("Chat with Safari") names the app in the surface, so the resolver
+    /// can target it without the user repeating the name in every sentence.
+    func scopedChatApp() -> (name: String, bundleId: String)? {
+        guard let scoped = l2.targetApp else { return nil }
+        let bundleId = scoped.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = scoped.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleId.isEmpty, !name.isEmpty,
+            !bundleId.hasPrefix("scope://"), !bundleId.hasPrefix("cli://")
+        else { return nil }
+        return (name, bundleId)
+    }
+
+    /// One step of the live route trace — the same treatment Selection Scope gets: shown
+    /// beside the typing indicator now, kept on the finished answer as the "N steps"
+    /// disclosure. Every line is work the app performed, never model reasoning.
+    func actionTraceStep(_ text: String) {
+        aiMode.loadingStatus = text
+        aiMode.routerTrace.append(text)
+    }
+
     /// Executable-action interception for General AI Chat. Returns the final chat
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
     func generalAIExecutableActionAnswer(query: String) async -> String? {
-        await MainActor.run { aiMode.loadingStatus = "Checking App Adapter capabilities…" }
+        let scoped = await MainActor.run { () -> (name: String, bundleId: String)? in
+            // Start this turn's trace clean; a stale one would be attached to the answer.
+            aiMode.routerTrace = []
+            let scoped = scopedChatApp()
+            actionTraceStep(
+                scoped.map { "Reading \($0.name) capabilities…" }
+                    ?? "Reading available capabilities…")
+            return scoped
+        }
         let resolution = await GeneralAIActionResolver.shared.resolve(
-            query: query, chatAllowedBundleIds: chatGrantedBundleIds())
+            query: query,
+            chatAllowedBundleIds: chatGrantedBundleIds(),
+            scopedApp: scoped,
+            onStep: { [self] text in
+                MainActor.assumeIsolated { actionTraceStep(text) }
+            })
 
         switch resolution {
         case .none:
@@ -42,6 +76,9 @@ extension LauncherView {
             await MainActor.run {
                 aiMode.loadingStatus = nil
                 aiMode.actionProgress = nil
+                // Nothing was routed, so the steps describe a search that found nothing.
+                // Attaching them to a plain conversational answer would be noise.
+                aiMode.routerTrace = []
             }
             return nil
 
@@ -70,6 +107,12 @@ extension LauncherView {
                     aiMode.actionProgress = nil
                 }
                 return nil
+            }
+            await MainActor.run {
+                actionTraceStep("Best path: \(best.title) · \(best.routeLabel)")
+                if !best.debugReason.isEmpty {
+                    actionTraceStep("Chosen because \(best.debugReason)")
+                }
             }
             // Confirmed executable → NOW build the planner strip (never for plain Q&A).
             let discovered = discoveredRouteLabels(from: candidates)
@@ -429,7 +472,12 @@ extension LauncherView {
                     await MainActor.run { aiMode.loadingStatus = "Reading \(appLabel) menus…" }
                     await MenuWarmCacheService.shared.warm(app: app, force: true)
                     let refreshed = await GeneralAIActionResolver.shared.resolve(
-                        query: query, chatAllowedBundleIds: chatGrantedBundleIds())
+                        query: query,
+                        chatAllowedBundleIds: chatGrantedBundleIds(),
+                        scopedApp: scopedChatApp(),
+                        onStep: { [self] text in
+                            MainActor.assumeIsolated { actionTraceStep(text) }
+                        })
                     if case .candidates(let refreshedCandidates) = refreshed,
                         let menuCandidate = refreshedCandidates.first(where: {
                             $0.route != .appLaunch && $0.bundleID == bundleID
