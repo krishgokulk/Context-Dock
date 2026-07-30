@@ -65,7 +65,7 @@ final class StickyNotesManager: ObservableObject {
         guard panel == nil else { return }
 
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 340),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -84,6 +84,7 @@ final class StickyNotesManager: ObservableObject {
         p.becomesKeyOnlyIfNeeded = true
         p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         p.isReleasedWhenClosed = false
+        p.minSize = NSSize(width: 620, height: 380)
         // Hide native window buttons + tabbing — the SwiftUI header/tab strip owns all
         // of it, so nothing opaque or square floats over the glass.
         p.standardWindowButton(.closeButton)?.isHidden = true
@@ -229,27 +230,31 @@ private struct StickyRootView: View {
     }
 }
 
-// MARK: - Single note (editor + AI composer)
+// MARK: - Single note (editor + sidecar AI conversation)
 
 private struct StickyNoteContent: View {
     let noteID: UUID
 
     @ObservedObject private var store = QuickNotesStore.shared
     @ObservedObject private var settings = AppSettings.shared
-    @FocusState private var focused: Bool
+    @AppStorage("quickNoteAIChatWidth") private var aiChatWidth = 330.0
     @State private var prompt: String = ""
     @State private var isGenerating = false
 
     var body: some View {
         Group {
             if store.notes.contains(where: { $0.id == noteID }) {
-                VStack(spacing: 0) {
-                    TextEditor(text: binding)
-                        .focused($focused)
-                        .font(.system(size: 13))
-                        .scrollContentBackground(.hidden)
-                        .padding(10)
-                    composer
+                GeometryReader { proxy in
+                    let chatWidth = sidePaneWidth(for: proxy.size.width)
+                    let editorWidth = max(310, proxy.size.width - chatWidth - 8)
+                    HStack(spacing: 0) {
+                        notePane(width: editorWidth)
+                        StickySplitDivider(
+                            width: $aiChatWidth,
+                            maximumWidth: max(260, min(480, proxy.size.width - 310))
+                        )
+                        chatPane(width: chatWidth)
+                    }
                 }
             } else {
                 VStack(spacing: 6) {
@@ -262,11 +267,135 @@ private struct StickyNoteContent: View {
         }
     }
 
-    /// ChatGPT-style composer pinned to the bottom: type a prompt, Return sends it
-    /// to the selected AI provider and appends the reply into this note.
-    private var composer: some View {
+    private func notePane(width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            StickyAttachmentEditor(
+                text: binding,
+                onReceiveAttachments: attachFiles
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                handleFileDrop(providers)
+                return true
+            }
+            attachmentStrip
+        }
+        .frame(minWidth: width, idealWidth: width, maxWidth: width, maxHeight: .infinity)
+    }
+
+    private func chatPane(width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("Ask AI")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(settings.selectedAIProvider.displayName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider().opacity(0.35)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        if chatMessages.isEmpty && !isGenerating {
+                            ContentUnavailableView {
+                                Label("Ask about this note", systemImage: "text.bubble")
+                            } description: {
+                                Text("The note text and attached file names are included as context.")
+                            }
+                            .font(.system(size: 11))
+                            .frame(maxWidth: .infinity, minHeight: 160)
+                        }
+
+                        ForEach(chatMessages) { message in
+                            chatBubble(message)
+                                .id(message.id)
+                        }
+
+                        if isGenerating {
+                            HStack(spacing: 7) {
+                                ProgressView().controlSize(.small)
+                                Text("Thinking…")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                            .padding(10)
+                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                            .id("thinking")
+                        }
+                    }
+                    .padding(10)
+                }
+                .onChange(of: chatMessages.count) { _, _ in
+                    guard let last = chatMessages.last else { return }
+                    withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+                .onChange(of: isGenerating) { _, generating in
+                    if generating {
+                        withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo("thinking", anchor: .bottom) }
+                    }
+                }
+            }
+
+            chatComposer
+        }
+        .frame(minWidth: width, idealWidth: width, maxWidth: width, maxHeight: .infinity)
+    }
+
+    private func sidePaneWidth(for availableWidth: CGFloat) -> CGFloat {
+        let maximum = max(260, min(480, availableWidth - 310))
+        return min(max(CGFloat(aiChatWidth), 260), maximum)
+    }
+
+    private var chatMessages: [ChatMessage] {
+        store.notes.first(where: { $0.id == noteID })?.chatMessages ?? []
+    }
+
+    private func chatBubble(_ message: ChatMessage) -> some View {
+        let isUser = message.role == .user
+        return HStack {
+            if isUser { Spacer(minLength: 28) }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(message.content)
+                    .font(.system(size: 12))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !isUser {
+                    Button("Add to note") { appendToNote(message.content) }
+                        .font(.system(size: 10, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                isUser ? Color.accentColor.opacity(0.78) : Color.primary.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+            if !isUser { Spacer(minLength: 18) }
+        }
+    }
+
+    private func appendToNote(_ text: String) {
+        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
+        store.updateText(existing.isEmpty ? text : existing + "\n\n" + text, for: noteID)
+    }
+
+    /// Composer stays inside the sidecar, so typing to AI never changes the note.
+    private var chatComposer: some View {
         HStack(spacing: 8) {
-            // Same attach menu the Quick Note scope offers.
             Menu {
                 Button(action: attachFrontmostWindow) {
                     Label("Attach Frontmost Window", systemImage: "macwindow")
@@ -274,6 +403,9 @@ private struct StickyNoteContent: View {
                 Divider()
                 Button { attachFile(imagesOnly: true) } label: {
                     Label("Upload Photo", systemImage: "photo")
+                }
+                Button { attachFile(imagesOnly: false) } label: {
+                    Label("Attach Files…", systemImage: "paperclip")
                 }
                 Button { captureScreen(interactive: false) } label: {
                     Label("Take Screenshot", systemImage: "camera.viewfinder")
@@ -289,37 +421,35 @@ private struct StickyNoteContent: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Attach context")
+            .help("Attach to note")
+
             TextField("Ask AI…", text: $prompt)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .onSubmit { send() }
                 .disabled(isGenerating)
-            if isGenerating {
-                ProgressView().controlSize(.small).scaleEffect(0.6)
-            } else {
-                Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(
-                            prompt.trimmingCharacters(in: .whitespaces).isEmpty
-                                ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
-                }
-                .buttonStyle(.plain)
-                .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button(action: send) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(
+                        prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
             }
+            .buttonStyle(.plain)
+            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.vertical, 9)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
+        .padding(10)
     }
 
     private func send() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isGenerating else { return }
         prompt = ""
+        store.appendChatMessage(ChatMessage(role: .user, content: text), for: noteID)
         isGenerating = true
         let provider = settings.selectedAIProvider
         let key = settings.getAPIKey(for: provider)
@@ -330,16 +460,33 @@ private struct StickyNoteContent: View {
                     text,
                     context: .none,
                     provider: provider,
-                    apiKey: key.isEmpty ? nil : key
+                    apiKey: key.isEmpty ? nil : key,
+                    conversationHistory: Array(chatMessages.dropLast()),
+                    additionalContextPrompt: noteContext,
+                    attachments: noteAttachments
                 )
             } catch {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }
-            let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
             let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-            store.updateText(existing.isEmpty ? body : existing + "\n\n" + body, for: noteID)
+            store.appendChatMessage(ChatMessage(role: .assistant, content: body), for: noteID)
             isGenerating = false
         }
+    }
+
+    private var noteContext: String {
+        let note = store.notes.first(where: { $0.id == noteID })
+        let text = note?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let filenames = note?.attachments ?? []
+        var parts = ["You are the sidecar assistant for a Quick Note. Keep the note itself unchanged unless the user explicitly asks to add text."]
+        if !text.isEmpty { parts.append("Current note:\n\(text)") }
+        if !filenames.isEmpty { parts.append("Attached files: \(filenames.joined(separator: ", "))") }
+        return parts.joined(separator: "\n\n")
+    }
+
+    private var noteAttachments: [AIAttachment] {
+        let filenames = store.notes.first(where: { $0.id == noteID })?.attachments ?? []
+        return filenames.map { AIAttachment.inferred(from: store.attachmentURL($0)) }
     }
 
     private var binding: Binding<String> {
@@ -349,23 +496,24 @@ private struct StickyNoteContent: View {
         )
     }
 
-    private func append(_ text: String) {
-        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
-        store.updateText(existing.isEmpty ? text : existing + "\n" + text, for: noteID)
+    /// Every non-text item is copied into QuickNoteFiles before it is shown.  The note
+    /// therefore keeps a real, independent copy rather than a transient file:// string.
+    private func attachFiles(_ urls: [URL]) {
+        _ = store.attachFiles(urls, to: noteID)
     }
 
     private func attachFile(imagesOnly: Bool) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = !imagesOnly
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
+        // A sticky note is a storage box: non-photo attachment picks deliberately
+        // accept every document type (and folders), not only the handful of types
+        // an AI provider can directly inspect.
+        if imagesOnly { panel.allowedContentTypes = [.image] }
         panel.message = "Attach files to this note"
         guard panel.runModal() == .OK else { return }
-        let lines = panel.urls.map { "\($0.lastPathComponent) — \($0.path)" }
-            .joined(separator: "\n")
-        guard !lines.isEmpty else { return }
-        append(lines)
+        attachFiles(panel.urls)
     }
 
     private func captureScreen(interactive: Bool) {
@@ -382,7 +530,7 @@ private struct StickyNoteContent: View {
                 process.waitUntilExit()
             } catch { return }
             guard FileManager.default.fileExists(atPath: url.path) else { return }
-            await MainActor.run { append("Screenshot — \(url.path)") }
+            await MainActor.run { attachFiles([url]) }
         }
     }
 
@@ -396,6 +544,224 @@ private struct StickyNoteContent: View {
         {
             parts.append("Selected text:\n\(sel)")
         }
-        append(parts.joined(separator: "\n"))
+        let text = parts.joined(separator: "\n")
+        let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
+        store.updateText(existing.isEmpty ? text : existing + "\n" + text, for: noteID)
+    }
+
+    @ViewBuilder
+    private var attachmentStrip: some View {
+        let attachments = store.notes.first(where: { $0.id == noteID })?.attachments ?? []
+        if !attachments.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(attachments, id: \.self) { name in
+                        let url = store.attachmentURL(name)
+                        HStack(spacing: 5) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable()
+                                .frame(width: 16, height: 16)
+                            Text(name)
+                                .font(.system(size: 10, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 130, alignment: .leading)
+                            Button {
+                                store.removeAttachment(name, from: noteID)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 7, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
+                        .onTapGesture { NSWorkspace.shared.open(url) }
+                        .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
+                        .help(url.path)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+            }
+        }
+    }
+
+    private func handleFileDrop(_ providers: [NSItemProvider]) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [URL] = []
+        for provider in providers where provider.canLoadObject(ofClass: URL.self) {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL {
+                    lock.lock()
+                    urls.append(url)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { attachFiles(urls) }
+    }
+}
+
+/// A real AppKit tracking view prevents a panel's draggable background from stealing
+/// a divider drag. SwiftUI owns the persisted width; AppKit only handles the mouse.
+private struct StickySplitDivider: NSViewRepresentable {
+    @Binding var width: Double
+    var maximumWidth: CGFloat
+
+    func makeNSView(context: Context) -> DividerView {
+        let view = DividerView()
+        view.update(width: width, maximumWidth: maximumWidth, binding: $width)
+        return view
+    }
+
+    func updateNSView(_ view: DividerView, context: Context) {
+        view.update(width: width, maximumWidth: maximumWidth, binding: $width)
+    }
+
+    final class DividerView: NSView {
+        private var startingWidth: Double = 330
+        private var startingMouseX: CGFloat = 0
+        private var maximumWidth: CGFloat = 480
+        private var binding: Binding<Double>?
+
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.separatorColor.withAlphaComponent(0.55).setFill()
+            NSRect(x: bounds.midX - 0.5, y: bounds.minY, width: 1, height: bounds.height).fill()
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        func update(width: Double, maximumWidth: CGFloat, binding: Binding<Double>) {
+            self.maximumWidth = maximumWidth
+            self.binding = binding
+            needsDisplay = true
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            startingWidth = binding?.wrappedValue ?? 330
+            startingMouseX = event.locationInWindow.x
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let proposed = startingWidth - Double(event.locationInWindow.x - startingMouseX)
+            binding?.wrappedValue = min(max(proposed, 260), Double(maximumWidth))
+        }
+    }
+}
+
+/// A small AppKit bridge for the one capability TextEditor lacks: converting a file
+/// or image pasted with Cmd-V into a note attachment instead of inserting its file URL
+/// as prose.  SwiftUI owns the note text; AppKit only normalises the pasteboard boundary.
+private struct StickyAttachmentEditor: NSViewRepresentable {
+    @Binding var text: String
+    var onReceiveAttachments: ([URL]) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let textView = StickyAttachmentTextView()
+        textView.delegate = context.coordinator
+        textView.attachmentHandler = onReceiveAttachments
+        textView.string = text
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.font = .systemFont(ofSize: 13)
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.registerForDraggedTypes([.fileURL, .URL])
+
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = scrollView.documentView as? StickyAttachmentTextView else { return }
+        textView.attachmentHandler = onReceiveAttachments
+        if textView.string != text { textView.string = text }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: StickyAttachmentEditor
+        init(parent: StickyAttachmentEditor) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            if parent.text != textView.string { parent.text = textView.string }
+        }
+    }
+}
+
+private final class StickyAttachmentTextView: NSTextView {
+    var attachmentHandler: (([URL]) -> Void)?
+
+    override func paste(_ sender: Any?) {
+        let pasteboard = NSPasteboard.general
+        let fileURLs = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? [])
+            .filter(\.isFileURL)
+        if !fileURLs.isEmpty {
+            attachmentHandler?(fileURLs)
+            return
+        }
+        if let image = NSImage(pasteboard: pasteboard), let stagedURL = stage(image: image) {
+            attachmentHandler?([stagedURL])
+            return
+        }
+        super.paste(sender)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggedFileURLs(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !draggedFileURLs(from: sender.draggingPasteboard).isEmpty
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = draggedFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        attachmentHandler?(urls)
+        return true
+    }
+
+    private func draggedFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? [])
+            .filter(\.isFileURL)
+    }
+
+    private func stage(image: NSImage) -> URL? {
+        guard let tiff = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:])
+        else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ContextDockStickyPaste-\(UUID().uuidString).png")
+        do {
+            try png.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
     }
 }

@@ -9,19 +9,43 @@ import AppKit
 import Combine
 import Foundation
 
-struct QuickNote: Identifiable, Codable, Hashable {
+struct QuickNote: Identifiable, Codable {
     let id: UUID
     var text: String
     var createdAt: Date
     /// Filenames of real files the user dropped, copied into the note's storage folder
     /// (QuickNoteFiles/) — Quick Note doubles as a drop/storage box.
     var attachments: [String] = []
+    /// A note owns its sidecar conversation.  Keeping this separate from `text`
+    /// means an AI answer never overwrites or pollutes the editable note.
+    var chatMessages: [ChatMessage] = []
 
-    init(id: UUID = UUID(), text: String, createdAt: Date = Date(), attachments: [String] = []) {
+    init(
+        id: UUID = UUID(),
+        text: String,
+        createdAt: Date = Date(),
+        attachments: [String] = [],
+        chatMessages: [ChatMessage] = []
+    ) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
         self.attachments = attachments
+        self.chatMessages = chatMessages
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, createdAt, attachments, chatMessages
+    }
+
+    /// Old notes predate attachments and sidecar chat. Decode them losslessly.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        text = try values.decode(String.self, forKey: .text)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        attachments = try values.decodeIfPresent([String].self, forKey: .attachments) ?? []
+        chatMessages = try values.decodeIfPresent([ChatMessage].self, forKey: .chatMessages) ?? []
     }
 }
 
@@ -121,6 +145,12 @@ final class QuickNotesStore: ObservableObject {
     func updateText(_ text: String, for id: UUID) {
         guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[idx].text = text
+        save()
+    }
+
+    func appendChatMessage(_ message: ChatMessage, for id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[idx].chatMessages.append(message)
         save()
     }
 
