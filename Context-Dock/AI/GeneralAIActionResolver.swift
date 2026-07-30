@@ -714,11 +714,19 @@ final class GeneralAIActionResolver {
         // 1. App adapter actions (native registered capability). Exclude `.aiPrompt` actions
         // ("Ask AI about Safari") — those are knowledge/Q&A, not executable, and must never
         // outrank a real executable route for an executable intent.
-        let adapterActions = AppAdapterManager.shared.actions(for: bundleID, query: actionPhrase)
-            .filter { $0.type != .aiPrompt }
-        if let action = adapterActions.first {
+        let adapterActions = AppAdapterManager.shared.scoredActions(for: bundleID, query: actionPhrase)
+            .filter { $0.action.type != .aiPrompt }
+        if let top = adapterActions.first {
+            // Confidence tracks how well the action matched, not the fact that it is an
+            // adapter. A flat 0.88 here outranked the cached menu's 0.82 even when the
+            // adapter match was a single shared word: "new private window in safari" ran
+            // "New Tab" because both contain "new", while the menu cache held the exact
+            // "New Private Window". The menu matcher requires *every* query token, so an
+            // exact menu hit deserves to win over a partial adapter hit.
+            let strong = top.score >= AppAdapterManager.adapterActionStrongMatchScore
             candidates.append(adapterCandidate(
-                action: action, appName: appName, bundleID: bundleID, confidence: 0.88))
+                action: top.action, appName: appName, bundleID: bundleID,
+                confidence: strong ? 0.88 : 0.62))
         }
 
         // 2. Cached menu commands — product fallback when no app adapter/MCP/API route fits.
@@ -886,7 +894,7 @@ final class GeneralAIActionResolver {
     private func rankedWithPreferences(
         _ candidates: [DoraXActionCandidate], intentKey: String
     ) -> [DoraXActionCandidate] {
-        let candidates = productRouteFiltered(candidates)
+        let candidates = droppingWeakAdapterMatches(productRouteFiltered(candidates))
         let avoided = candidates.filter {
             RoutePreferenceStore.shared.strength(
                 intentKey: intentKey, bundleID: $0.bundleID ?? "", route: $0.route.rawValue)
@@ -903,6 +911,28 @@ final class GeneralAIActionResolver {
         }
         list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
         return list
+    }
+
+    /// Ranking is by route tier, and the adapter route is tier 0 — so an adapter candidate
+    /// leads regardless of how well it matched. That is right when the adapter action *is*
+    /// what was asked for, and wrong when the match rests on one shared word: "new private
+    /// window in safari" put Safari's "New Tab" adapter action ahead of the cached menu's
+    /// exact "New Private Window", and ran it.
+    ///
+    /// Tier order itself is sound — an adapter capability really is more reliable than a
+    /// menu click — so rather than penalise the tier, drop a weakly-matched adapter
+    /// candidate whenever some other route matched the request properly. When nothing else
+    /// matched, the weak candidate stays: it is still the best guess available, and its low
+    /// confidence means the chat path offers it instead of running it.
+    private func droppingWeakAdapterMatches(
+        _ candidates: [DoraXActionCandidate]
+    ) -> [DoraXActionCandidate] {
+        let strongAlternativeExists = candidates.contains {
+            $0.route != .adapter && $0.route != .appLaunch && $0.confidence >= 0.7
+        }
+        guard strongAlternativeExists else { return candidates }
+        let pruned = candidates.filter { !($0.route == .adapter && $0.confidence < 0.7) }
+        return pruned.isEmpty ? candidates : pruned
     }
 
     /// Product rule: terminal/CLI is fallback-only for app workflows. If DoraX has a real

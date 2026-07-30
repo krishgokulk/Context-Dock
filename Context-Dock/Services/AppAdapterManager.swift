@@ -276,25 +276,40 @@ final class AppAdapterManager: ObservableObject {
 
     /// Return actions for a bundle ID, optionally filtered by a search query.
     func actions(for bundleId: String, query: String = "") -> [AdapterAction] {
+        scoredActions(for: bundleId, query: query).map(\.action)
+    }
+
+    /// Same ranking as `actions(for:query:)`, keeping each action's match score.
+    ///
+    /// Callers that turn an action into a route need the score, not just the order: a score
+    /// of 120 means the query *is* this action's name, while 58 can mean a single shared
+    /// word ("new" in "new private window" vs. "New Tab"). Collapsing both into "best match"
+    /// is how a one-word overlap got executed as if it were an exact hit.
+    func scoredActions(
+        for bundleId: String, query: String = ""
+    ) -> [(action: AdapterAction, score: Double)] {
         guard let adapter = adapter(for: bundleId) else { return [] }
         let visibleActions = adapter.visibleActions
-        guard !query.isEmpty else { return visibleActions }
+        guard !query.isEmpty else { return visibleActions.map { ($0, 0) } }
         let normalizedQuery = normalizedAdapterSearchText(query)
-        let ranked = visibleActions.compactMap { action -> (AdapterAction, Double)? in
+        let ranked = visibleActions.compactMap { action -> (action: AdapterAction, score: Double)? in
             let score = adapterActionMatchScore(action, query: normalizedQuery)
             guard score > 0 else { return nil }
             return (action, score)
         }
 
-        return ranked
-            .sorted { lhs, rhs in
-                if lhs.1 == rhs.1 {
-                    return lhs.0.name.localizedCaseInsensitiveCompare(rhs.0.name) == .orderedAscending
-                }
-                return lhs.1 > rhs.1
+        return ranked.sorted { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.action.name.localizedCaseInsensitiveCompare(rhs.action.name) == .orderedAscending
             }
-            .map(\.0)
+            return lhs.score > rhs.score
+        }
     }
+
+    /// Scores at or above this mean the query named the action (exact name, or one string
+    /// containing the other). Below it, the match rests on partial token overlap, a category
+    /// or a description — a hint worth offering, not a route worth running unprompted.
+    static let adapterActionStrongMatchScore: Double = 88
 
     // MARK: - Execution
 
