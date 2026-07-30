@@ -10,6 +10,33 @@ class TerminalPackageManager: ObservableObject {
 
     @Published var packages: [TerminalPackage] = []
 
+    /// Did the user deliberately make this tool a global CLI scope?
+    ///
+    /// `packages` is not a user-curated list — BinaryWatcherService discovers executables on
+    /// PATH, so it holds hundreds of entries the user never chose (`tac`, `new-localization`).
+    /// Two places disagreed about that: Settings → CLI Tool Scope lists only the deliberate
+    /// ones, while the global search index accepted every enabled package, so typing "tac"
+    /// ghost-completed a scope the user never added and Settings could not show or remove.
+    ///
+    /// Deliberate means pinned, or wired into an App Adapter as a CLI tool. This is the one
+    /// definition; both the index and Settings must use it.
+    func isUserAddedGlobalScope(_ package: TerminalPackage) -> Bool {
+        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return false }
+        if AppSettings.shared.isCLIToolPinned(command) { return true }
+        let commandKey = command.lowercased()
+        return AppAdapterManager.shared.adapters.contains { adapter in
+            if adapter.bundleId.lowercased().hasPrefix("cli://") {
+                return adapter.bundleId.lowercased().contains(commandKey)
+                    || adapter.appName.lowercased() == commandKey
+            }
+            return adapter.actions.contains {
+                $0.type == .cliTool
+                    && ($0.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
+            }
+        }
+    }
+
     private let packagesKey = "L2TerminalPackages"
 
     init() {

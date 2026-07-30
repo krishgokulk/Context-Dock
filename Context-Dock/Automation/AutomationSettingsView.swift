@@ -854,21 +854,10 @@ struct AutomationSettingsView: View {
         }
     }
 
+    /// Delegates to the shared definition so this list and the global search index can never
+    /// disagree about which tools the user actually added.
     private func isUserAddedGlobalCLITool(_ package: TerminalPackage) -> Bool {
-        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return false }
-        if settings.isCLIToolPinned(command) { return true }
-        let commandKey = command.lowercased()
-        return adapterMgr.adapters.contains { adapter in
-            if adapter.bundleId.lowercased().hasPrefix("cli://") {
-                return adapter.bundleId.lowercased().contains(commandKey)
-                    || adapter.appName.lowercased() == commandKey
-            }
-            return adapter.actions.contains {
-                $0.type == .cliTool
-                    && ($0.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
-            }
-        }
+        pkgMgr.isUserAddedGlobalScope(package)
     }
 
     private var filteredTriggers: [AXTriggerRule] {

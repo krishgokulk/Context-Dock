@@ -3289,10 +3289,13 @@ extension LauncherView {
             message: "Indexed apps and running app menus..."
         )
 
-        // 5. CLI tools. The package registry is user-managed and index rebuilds happen
-        // off the typing path, so every enabled package is eligible for a global scope.
+        // 5. CLI tools the user deliberately made a scope — pinned, or wired into an App
+        // Adapter. `packages` also holds every executable BinaryWatcherService found on PATH,
+        // and indexing those made "tac" ghost-complete as a scope the user never added and
+        // Settings could neither list nor remove. Same predicate Settings uses.
         let cliIcon = NSWorkspace.shared.icon(forFileType: "public.unix-executable")
-        for pkg in terminalPackageManager.packages where pkg.isEnabled {
+        for pkg in terminalPackageManager.packages
+        where pkg.isEnabled && terminalPackageManager.isUserAddedGlobalScope(pkg) {
             addIfNew(.init(cliPackage: pkg, icon: cliIcon))
         }
 
