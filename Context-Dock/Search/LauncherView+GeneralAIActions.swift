@@ -1524,6 +1524,28 @@ extension LauncherView {
         // Do not label these as Preview's private Open Recent menu: they are DoraX's
         // cross-app recent-document index, which may contain files from other apps.
         if asksForRecentDocuments {
+            // The app's OWN Open Recent entries first, from its cached menu snapshot. This
+            // needs no Full Disk Access and does not need the app running — a question about
+            // "recent TextEdit files" used to be answerable only from the cross-app list
+            // below, which had to be disclaimed as not being the app's, so the honest answer
+            // was also a useless one.
+            let ownRecents = AppMenuCapabilityCache.shared.resolvedRecentDocumentURLs(
+                bundleIdentifier: app.bundleId, limit: 15)
+            if !ownRecents.isEmpty {
+                let age = AppMenuCapabilityCache.shared.snapshotAge(
+                    bundleIdentifier: app.bundleId)
+                let readWhen = age.map { "read \(Int($0 / 60)) min ago" } ?? "from the menu cache"
+                lines.append("")
+                lines.append("## \(app.name) — Open Recent (\(readWhen), factual)")
+                lines.append(
+                    "These come from \(app.name)'s own Open Recent menu, cached by DoraX. "
+                    + "Each one can be opened by launching \(app.name) and clicking its "
+                    + "Open Recent entry — no need for the app to be running now.")
+                for url in ownRecents {
+                    lines.append("- \(url.lastPathComponent) — \(url.deletingLastPathComponent().path)")
+                }
+            }
+
             let recentDocuments = RecentItemsService.shared.recentDocuments()
             if recentDocuments.isEmpty {
                 lines.append("")
