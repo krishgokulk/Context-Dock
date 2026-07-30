@@ -3620,17 +3620,43 @@ extension LauncherView {
                 await MainActor.run {
                     dockTraceStep(
                         runningApp == nil
-                            ? "\(capturedTarget.appName) isn't running — its menus can't be read"
+                            ? "\(capturedTarget.appName) isn't running — reading its cached menus"
                             : "Reading \(capturedTarget.appName) menu commands…")
                 }
+                // A live read when the app is running; otherwise the cached snapshot this
+                // branch already confirmed exists. Refusing to use that cache was a
+                // contradiction: the guard above requires hasMenuSnapshot, and then the
+                // request fell through to a generic AI answer because the app happened to be
+                // closed. The click launches the app and verifies the path before pressing it.
+                var matched: (
+                    path: [String], title: String, pathString: String,
+                    shortcutChar: String?, shortcutModifiers: Int, image: NSImage?
+                )?
                 if let app = runningApp,
-                    let matchedItem = await MenuIntentRouter.shared.findMatch(
-                        query: query, app: app)
+                    let live = await MenuIntentRouter.shared.findMatch(query: query, app: app)
                 {
+                    matched = (
+                        live.path, live.title, live.pathString, live.shortcutChar,
+                        live.shortcutModifiers, live.image)
+                } else if runningApp == nil,
+                    let cached = await MenuIntentRouter.shared.findCachedMatch(
+                        query: query, bundleId: capturedTarget.bundleId,
+                        appName: capturedTarget.appName)
+                {
+                    matched = (
+                        cached.path, cached.title, cached.pathString, cached.shortcutChar,
+                        cached.shortcutModifiers, cached.image)
+                }
+                if let matchedItem = matched {
                     await MainActor.run {
                         l2.isLoading = false
-                        dockTraceStep("Best path: \(matchedItem.pathString) · menu command")
-                        let pid = app.processIdentifier
+                        dockTraceStep(
+                            runningApp == nil
+                                ? "Best path: \(matchedItem.pathString) · cached menu, will launch \(capturedTarget.appName)"
+                                : "Best path: \(matchedItem.pathString) · menu command")
+                        // pid 0 means "launch first" — the execution path resolves the real
+                        // process from the bundle id before clicking.
+                        let pid = runningApp?.processIdentifier ?? 0
                         let path = matchedItem.path
                         let sc = matchedItem.shortcutChar
                         let mod = matchedItem.shortcutModifiers

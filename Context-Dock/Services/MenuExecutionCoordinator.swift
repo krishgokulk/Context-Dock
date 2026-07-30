@@ -11,7 +11,12 @@ final class MenuExecutionCoordinator {
     private init() {}
 
     struct DockMenuActionRequest {
+        /// 0 means "not running yet" — pair it with `launchBundleId` and the app is launched
+        /// before the menu is clicked. A cached menu snapshot is enough to know the path
+        /// exists, so a request does not have to wait for the user to open the app first.
         let sourcePID: pid_t
+        /// Bundle identifier to launch when `sourcePID` is 0.
+        var launchBundleId: String? = nil
         let path: [String]
         let shortcutChar: String?
         let shortcutModifiers: Int
@@ -28,6 +33,42 @@ final class MenuExecutionCoordinator {
         let reloadMenu: @MainActor (NSRunningApplication) -> Void
         let clearLiveDockMenuState: @MainActor () -> Void
         let refocusDockInput: @MainActor () -> Void
+    }
+
+    /// Launches `bundleId` and waits until its menu bar can actually be read, so the click
+    /// that follows is not aimed at an app that has not built its menus yet.
+    ///
+    /// The wait is bounded and polls for a real signal — the menu bar reporting children —
+    /// rather than sleeping a hopeful fixed interval. A cached path can also be stale after
+    /// launch, which the existing live verification downstream already handles.
+    private static func launchAndPrepareMenus(bundleId: String) async -> NSRunningApplication? {
+        guard let app = await AppAdapterManager.shared.launchAndActivate(bundleId: bundleId)
+        else { return nil }
+
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        // ~3s total: a cold app that has not shown a menu bar by then will fail the
+        // downstream verification honestly rather than be clicked blindly.
+        for _ in 0..<30 {
+            var menuBar: CFTypeRef?
+            // Type-checked rather than force-cast: this runs on the shared path for every
+            // menu click, so an app returning something unexpected must not trap.
+            if AXUIElementCopyAttributeValue(element, kAXMenuBarAttribute as CFString, &menuBar)
+                == .success,
+                let value = menuBar,
+                CFGetTypeID(value) == AXUIElementGetTypeID()
+            {
+                let bar = value as! AXUIElement  // guarded by the type-id check above
+                var count: CFIndex = 0
+                if AXUIElementGetAttributeValueCount(bar, kAXChildrenAttribute as CFString, &count)
+                    == .success, count > 0
+                {
+                    await MenuWarmCacheService.shared.warm(app: app, force: true)
+                    return app
+                }
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return app
     }
 
     /// macOS revalidates Accessibility for non-notarized (e.g. Xcode Debug) builds by cdhash,
@@ -51,7 +92,10 @@ final class MenuExecutionCoordinator {
         request: DockMenuActionRequest,
         callbacks: DockMenuActionCallbacks
     ) {
-        guard request.sourcePID != 0 else { return }
+        // A request either targets a live process, or names an app to launch first.
+        guard request.sourcePID != 0
+            || !(request.launchBundleId ?? "").isEmpty
+        else { return }
         // No Accessibility trust → AX menu clicks and shortcut posting can't work; prompt.
         guard Self.ensureAccessibilityTrustOrPrompt() else { return }
         guard executionTask == nil else {
@@ -66,11 +110,19 @@ final class MenuExecutionCoordinator {
             Self.isVolatileSelectionMenuPath(request.path)
         executionTask = Task { [self] in
             defer { executionTask = nil }
-            guard
-                let sourceApp = NSWorkspace.shared.runningApplications.first(where: {
+            // Resolve the target process, launching it when the request came from a cached
+            // menu snapshot rather than a live menu read.
+            let resolvedApp: NSRunningApplication?
+            if request.sourcePID != 0 {
+                resolvedApp = NSWorkspace.shared.runningApplications.first(where: {
                     $0.processIdentifier == request.sourcePID && !$0.isTerminated
                 })
-            else { return }
+            } else if let bundleId = request.launchBundleId, !bundleId.isEmpty {
+                resolvedApp = await Self.launchAndPrepareMenus(bundleId: bundleId)
+            } else {
+                resolvedApp = nil
+            }
+            guard let sourceApp = resolvedApp else { return }
 
             let pid = sourceApp.processIdentifier
 
@@ -108,7 +160,7 @@ final class MenuExecutionCoordinator {
                 let liveMatch = await Self.waitForExecutableMenuItem(
                     path: request.path,
                     app: sourceApp,
-                    in: request.sourcePID,
+                    in: pid,
                     attempts: 5,
                     pauseNanoseconds: 80_000_000
                 )
@@ -150,7 +202,7 @@ final class MenuExecutionCoordinator {
                     shortcutChar: executableShortcutChar,
                     shortcutModifiers: executableShortcutModifiers,
                     app: sourceApp,
-                    in: request.sourcePID
+                    in: pid
                 )
             {
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -177,7 +229,7 @@ final class MenuExecutionCoordinator {
                 let liveMatch = await Self.waitForExecutableMenuItem(
                     path: executablePath,
                     app: sourceApp,
-                    in: request.sourcePID,
+                    in: pid,
                     attempts: isWindowMenuAction ? 3 : 2,
                     pauseNanoseconds: 60_000_000
                 )
@@ -196,17 +248,17 @@ final class MenuExecutionCoordinator {
             let pasteMenuClicked =
                 !directWindowActionHandled
                 && Self.isPasteMenuPath(executablePath)
-                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
+                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: pid)
             let menuClicked =
                 !directWindowActionHandled && !pasteMenuClicked
-                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: request.sourcePID)
+                && AXMenuReader.shared.clickMenuItemReliably(path: executablePath, in: pid)
             let shortcutSent =
                 !directWindowActionHandled && !pasteMenuClicked && !menuClicked
                 && !preferredShortcut.isEmpty
                 && AXMenuReader.shared.executeShortcut(
                     char: preferredShortcut,
                     modifiers: executableShortcutModifiers,
-                    in: request.sourcePID
+                    in: pid
                 )
 
             let fallbackWindowActionHandled =

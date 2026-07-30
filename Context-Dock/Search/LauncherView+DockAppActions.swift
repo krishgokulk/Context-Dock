@@ -657,8 +657,11 @@ extension LauncherView {
         }
     }
 
+    /// - Parameter launchBundleId: pass alongside `sourcePID: 0` to click a menu path that
+    ///   came from a cached snapshot — the app is launched and its menus prepared first.
     func executeDockMenuAction(
         sourcePID: pid_t,
+        launchBundleId: String? = nil,
         path: [String],
         shortcutChar: String?,
         shortcutModifiers: Int
@@ -666,6 +669,7 @@ extension LauncherView {
         MenuExecutionCoordinator.shared.executeDockMenuAction(
             request: .init(
                 sourcePID: sourcePID,
+                launchBundleId: launchBundleId,
                 path: path,
                 shortcutChar: shortcutChar,
                 shortcutModifiers: shortcutModifiers,

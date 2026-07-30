@@ -4365,6 +4365,9 @@ extension LauncherView {
                     self.pendingAIMenuProposal = nil
                     self.executeDockMenuAction(
                         sourcePID: pid,
+                        // A proposal built from a cached snapshot carries pid 0; the bundle id
+                        // is what lets the click launch the app first.
+                        launchBundleId: pid == 0 ? bId : nil,
                         path: path,
                         shortcutChar: sc,
                         shortcutModifiers: mod
