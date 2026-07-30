@@ -110,8 +110,19 @@ final class CapabilityGapService {
         }
 
         // 3. Unrecognised task: fall back to the generic scorer over installed tools.
+        //
+        // This branch is a guess, and a wrong guess here is expensive: the caller shows the
+        // gap card *instead of* resolving an in-app route, so the request never reaches the
+        // menus. "new private window" in Safari offered to link an installed tool called
+        // new-localization — findPackageForQuery splits a package name into words and scores
+        // any overlap ("new") with no floor, then discards the score. So this branch now
+        // requires two things the scorer cannot give on its own.
+        if appLikelyHandlesItself(query: normalized, bundleID: bundleID, appName: appName) {
+            return nil
+        }
         if let installed = manager.findPackageForQuery(query),
             installed.isInstalled,
+            queryNamesTool(installed, query: normalized),
             !installed.contextAppBundleIds.contains(bundleID)
         {
             return Gap(
@@ -125,6 +136,43 @@ final class CapabilityGapService {
                     : installed.description)
         }
         return nil
+    }
+
+    /// True when the app's own capabilities plausibly cover the request, so proposing a CLI
+    /// tool would be answering a question the app already answers. Only the strict test
+    /// counts: every meaningful word of the request must appear in one menu item's title or
+    /// path, the same bar `bestMenuMatch` applies before it will click a menu.
+    private func appLikelyHandlesItself(
+        query: String, bundleID: String, appName: String
+    ) -> Bool {
+        let tokens = query
+            .split { !$0.isLetter && !$0.isNumber }
+            .map { String($0).lowercased() }
+            .filter { $0.count > 1 }
+        guard !tokens.isEmpty else { return false }
+
+        let strongAdapterMatch = AppAdapterManager.shared
+            .scoredActions(for: bundleID, query: query)
+            .contains { $0.score >= AppAdapterManager.adapterActionStrongMatchScore }
+        if strongAdapterMatch { return true }
+
+        let menus = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: bundleID, appName: appName, query: query, maxResults: 8)
+        return menus.contains { item in
+            let haystack = (item.path + [item.title]).joined(separator: " ").lowercased()
+            return tokens.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    /// True when the request actually names the tool — its command, or its full package name.
+    /// A shared name *fragment* is not enough for an unrecognised task: `new-localization`
+    /// contributed only the word "new".
+    private func queryNamesTool(_ package: TerminalPackage, query: String) -> Bool {
+        let command = package.command.lowercased()
+        let name = package.name.lowercased()
+        if !command.isEmpty, query.contains(command) { return true }
+        if !name.isEmpty, query.contains(name) { return true }
+        return false
     }
 
     private func matches(_ package: TerminalPackage, query: String) -> Bool {

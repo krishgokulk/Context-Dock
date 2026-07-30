@@ -44,6 +44,63 @@ extension LauncherView {
         aiMode.routerTrace.append(text)
     }
 
+    /// Honest answer for a command that named a target but matched no route.
+    ///
+    /// Returns nil for anything that is not clearly a command against a known app — ordinary
+    /// conversation must still reach the provider. When it does apply, the answer reports the
+    /// search that just ran (the live trace lines, which are real work) and the specific
+    /// thing that is missing, rather than a plausible-sounding paragraph about menu items the
+    /// app may not have.
+    func noRouteGuidance(query: String, scoped: (name: String, bundleId: String)?) -> String? {
+        guard GeneralAIActionResolver.shared.looksExecutable(query) else { return nil }
+        let target: (name: String, bundleId: String)? =
+            scoped ?? GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        guard let target else { return nil }
+
+        var lines = ["I couldn’t find a way to do that in **\(target.name)**."]
+
+        let searched = aiMode.routerTrace.filter { !$0.hasPrefix("Reading ") }
+        if !searched.isEmpty {
+            lines.append("")
+            lines.append("What I checked:")
+            lines.append(contentsOf: searched.map { "• \($0)" })
+        }
+
+        var fixes: [String] = []
+        let isRunning = !NSRunningApplication
+            .runningApplications(withBundleIdentifier: target.bundleId)
+            .filter { !$0.isTerminated }
+            .isEmpty
+        let menuCacheWarm = !AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: target.bundleId, appName: target.name,
+            query: "", maxResults: 1
+        ).isEmpty
+
+        if !menuCacheWarm {
+            fixes.append(
+                isRunning
+                    ? "I haven’t read \(target.name)’s menus yet. Ask again and I’ll open its menu bar to learn the commands."
+                    : "\(target.name) isn’t running, so its menus haven’t been read. Launch it once and ask again.")
+        }
+        if AppAdapterManager.shared.adapter(for: target.bundleId) == nil,
+            !chatGrantedBundleIds().contains(target.bundleId)
+        {
+            fixes.append(
+                "Add \(target.name) in Settings → App Adapters to give it a permanent capability set.")
+        }
+        if menuCacheWarm {
+            fixes.append(
+                "\(target.name) may not expose this as a menu command or shortcut. If it has a CLI, add it in Settings → Terminal Tools and I can drive it from there.")
+        }
+
+        if !fixes.isEmpty {
+            lines.append("")
+            lines.append("What would make it work:")
+            lines.append(contentsOf: fixes.map { "• \($0)" })
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// Executable-action interception for General AI Chat. Returns the final chat
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
@@ -72,6 +129,19 @@ extension LauncherView {
             // let the specialist generate a script and run it with approval.
             if let scripted = await appleScriptModelFallbackAnswer(query: query) {
                 return scripted
+            }
+            // A command aimed at a known app that found no route is a dead end, and sending
+            // it to a provider produces a confident paragraph about menus the app may not
+            // have. Say what was searched and what would make it work instead.
+            if let guidance = await MainActor.run(body: {
+                noRouteGuidance(query: query, scoped: scoped)
+            }) {
+                await MainActor.run {
+                    aiMode.loadingStatus = nil
+                    aiMode.actionProgress = nil
+                    aiMode.pendingToolChips = ["DoraX route lookup"]
+                }
+                return guidance
             }
             await MainActor.run {
                 aiMode.loadingStatus = nil
