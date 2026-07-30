@@ -261,7 +261,17 @@ final class GeneralAIActionResolver {
                     chatAllowedBundleIds: chatAllowedBundleIds))
         }
 
-        // Domain intents first — they are more specific than generic app actions.
+        // An explicitly named app is stronger evidence than a generic domain word.  In
+        // particular, “open deleted message in Messages” is a Messages menu lookup, not
+        // a request to compose/share a message.  Resolve the app before the broad intent
+        // detectors so app menus and adapters get the first chance to answer it.
+        if let target = resolveTargetApp(in: lowered) {
+            return await appScopedResolution(
+                target: target, trimmed: trimmed,
+                chatAllowedBundleIds: chatAllowedBundleIds)
+        }
+
+        // Domain intents are more specific than an *unnamed* generic app action.
         if let media = await resolveMediaTransportIntent(lowered, original: trimmed) {
             return media
         }
@@ -282,13 +292,6 @@ final class GeneralAIActionResolver {
         }
         if let screenshot = resolveScreenshotIntent(lowered, original: trimmed) {
             return screenshot
-        }
-
-        // Generic app-scoped action: "open safari new private window", "quit music", …
-        if let target = resolveTargetApp(in: lowered) {
-            return await appScopedResolution(
-                target: target, trimmed: trimmed,
-                chatAllowedBundleIds: chatAllowedBundleIds)
         }
 
         // Scoped chat with no app named in the text: the surface is the target. Checked
@@ -314,7 +317,94 @@ final class GeneralAIActionResolver {
             return api
         }
 
+        // Last resort: search every app's cached menus by content, the way Global Context
+        // does. Everything above needs the app to be named in the sentence, so "open deleted
+        // message in mesages app" died on a typo while Global Context found
+        // Messages ▸ View ▸ Recently Deleted from "deleted message" alone — no app name at
+        // all. Same index, so the two surfaces stop disagreeing.
+        if let crossApp = crossAppCachedMenuResolution(query: trimmed) {
+            return crossApp
+        }
+
         return .none
+    }
+
+    // MARK: - Cross-app menu fallback
+
+    /// Phrases to try against the menu index, most literal first.
+    ///
+    /// The index matches a menu title, so it answers "deleted message" but not "open deleted
+    /// message in mesages app" — a whole sentence carries verbs and filler no menu item
+    /// contains. Stripping those leaves the words that actually name the command, which is
+    /// what the user would have typed into Global Context.
+    private func menuSearchPhrases(from query: String) -> [String] {
+        let lowered = query.lowercased()
+        var phrases = [lowered]
+
+        let noise: Set<String> = [
+            "open", "launch", "start", "run", "show", "go", "to", "in", "on", "the", "a", "an",
+            "app", "application", "please", "me", "my", "for", "using", "with", "via", "and",
+        ]
+        let kept = lowered
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !noise.contains($0) }
+        if kept.count >= 1, kept.count < lowered.split(separator: " ").count {
+            phrases.append(kept.joined(separator: " "))
+        }
+        // Dropping the last token too, since a trailing app name ("… mesages") is not part of
+        // any menu title and may be misspelled anyway.
+        if kept.count >= 2 {
+            phrases.append(kept.dropLast().joined(separator: " "))
+        }
+        var seen = Set<String>()
+        return phrases.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// Menu commands matching the phrase across every app with a cached snapshot, ranked by
+    /// the shared global index rather than a matcher of this file's own.
+    ///
+    /// Offered, never auto-run: confidence stays under the chat path's 0.7 threshold, because
+    /// this is a content guess about an app the user did not name, and acting on it can launch
+    /// that app. Global Context has the same information but requires a keypress on a visible
+    /// row; the chat equivalent of that keypress is picking from the list.
+    private func crossAppCachedMenuResolution(query: String) -> GeneralAIActionResolution? {
+        var candidates: [DoraXActionCandidate] = []
+        var seenPaths = Set<String>()
+        for phrase in menuSearchPhrases(from: query) {
+            let docs = GlobalSearchService.shared.query(
+                phrase, limit: 12, includeCachedMenus: true, includeRunningCachedMenus: true)
+            for doc in docs {
+                guard case .cachedMenu(let bundleId, let appName, let path, let char, let mods) =
+                    doc.action, !path.isEmpty
+                else { continue }
+
+                // The literal sentence may return non-menu index rows first.  Keep trying
+                // the normalized phrase, and never show one menu command twice if both
+                // phrases matched it.
+                guard seenPaths.insert("\(bundleId)|\(path.joined(separator: "→"))").inserted else {
+                    continue
+                }
+                let title = path.last ?? doc.title
+                if let char, !char.isEmpty {
+                    candidates.append(
+                        keyboardShortcutCandidate(
+                            title: title, path: path, char: char, modifiers: mods,
+                            appName: appName, bundleID: bundleId, confidence: 0.66,
+                            reason: "cached \(appName) menu \(path.joined(separator: " → ")) matched the phrase"))
+                } else {
+                    candidates.append(
+                        verifiedMenuCandidate(
+                            title: title, path: path, shortcutChar: char, shortcutModifiers: mods,
+                            appName: appName, bundleID: bundleId, confidence: 0.64))
+                }
+                if candidates.count >= 4 { break }
+            }
+            if candidates.count >= 4 { break }
+        }
+        guard !candidates.isEmpty else { return nil }
+        step("Cross-app menu search: \(candidates.count) match(es) in cached menus")
+        return .candidates(candidates)
     }
 
     // MARK: - Scoped-surface target
