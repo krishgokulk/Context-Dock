@@ -187,7 +187,16 @@ final class GeneralAIActionResolver {
 
     // MARK: Public entry
 
-    func resolve(query: String) async -> GeneralAIActionResolution {
+    /// - Parameter chatAllowedBundleIds: apps the user granted to *this chat* via the
+    ///   "Enable <app> for this chat" tap. App Adapters is the persistent, Settings-level
+    ///   grant; this is the per-conversation one, and it expires with the conversation.
+    ///   Both are explicit user consent, so either one makes an app actionable — without
+    ///   this, the Enable tap granted reading but not acting, and the resolver told the user
+    ///   to go add an App Adapter for an app they had just enabled.
+    func resolve(
+        query: String,
+        chatAllowedBundleIds: Set<String> = []
+    ) async -> GeneralAIActionResolution {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending = pendingClarification {
             if Date() > pending.expiresAt {
@@ -197,7 +206,9 @@ final class GeneralAIActionResolver {
                     || trimmed.lowercased().contains($0.lowercased())
             }) {
                 pendingClarification = nil
-                return await resolve(query: pending.originalQuery + " using " + option)
+                return await resolve(
+                    query: pending.originalQuery + " using " + option,
+                    chatAllowedBundleIds: chatAllowedBundleIds)
             } else if !trimmed.isEmpty {
                 // A non-option response starts a new request rather than trapping the user
                 // in stale clarification state.
@@ -222,7 +233,9 @@ final class GeneralAIActionResolver {
             // No verb means no proof the user wants this run, only proof of what they meant.
             // Offer it: the chat path lists candidates below 0.7 instead of executing.
             return offeringOnly(
-                await appScopedResolution(target: target, trimmed: trimmed))
+                await appScopedResolution(
+                    target: target, trimmed: trimmed,
+                    chatAllowedBundleIds: chatAllowedBundleIds))
         }
 
         // Domain intents first — they are more specific than generic app actions.
@@ -250,7 +263,9 @@ final class GeneralAIActionResolver {
 
         // Generic app-scoped action: "open safari new private window", "quit music", …
         if let target = resolveTargetApp(in: lowered) {
-            return await appScopedResolution(target: target, trimmed: trimmed)
+            return await appScopedResolution(
+                target: target, trimmed: trimmed,
+                chatAllowedBundleIds: chatAllowedBundleIds)
         }
 
         // Browser action with no browser named ("new private window") — ask which one
@@ -276,9 +291,10 @@ final class GeneralAIActionResolver {
     /// Everything that happens once a query is known to be about one installed app.
     /// Shared by the verb path and the retrieval-first noun path.
     private func appScopedResolution(
-        target: TargetApp, trimmed: String
+        target: TargetApp, trimmed: String, chatAllowedBundleIds: Set<String>
     ) async -> GeneralAIActionResolution {
-        guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
+        let grantedForThisChat = chatAllowedBundleIds.contains(target.bundleId)
+        guard grantedForThisChat || AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
             return .explain(
                 "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
                 + "Add it in Settings → App Adapters → Choose App, then ask again.")

@@ -16,12 +16,20 @@ import Contacts
 
 extension LauncherView {
 
+    /// Bundle IDs the user granted to this conversation with "Enable <app> for this chat".
+    /// A per-chat grant is explicit consent, so it makes an app actionable exactly like a
+    /// persistent App Adapters entry — it just expires with the conversation.
+    func chatGrantedBundleIds() -> Set<String> {
+        Set(chatFocusApps.map(\.bundleId))
+    }
+
     /// Executable-action interception for General AI Chat. Returns the final chat
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
     func generalAIExecutableActionAnswer(query: String) async -> String? {
         await MainActor.run { aiMode.loadingStatus = "Checking App Adapter capabilities…" }
-        let resolution = await GeneralAIActionResolver.shared.resolve(query: query)
+        let resolution = await GeneralAIActionResolver.shared.resolve(
+            query: query, chatAllowedBundleIds: chatGrantedBundleIds())
 
         switch resolution {
         case .none:
@@ -412,14 +420,16 @@ extension LauncherView {
                 // launch → verified shortcut/menu instead of stopping after launch.
                 if candidate.route == .appLaunch, candidate.caveat != nil,
                     let bundleID = candidate.bundleID,
-                    AppAdapterManager.shared.adapter(for: bundleID) != nil,
+                    chatGrantedBundleIds().contains(bundleID)
+                        || AppAdapterManager.shared.adapter(for: bundleID) != nil,
                     let app = NSRunningApplication
                         .runningApplications(withBundleIdentifier: bundleID)
                         .first(where: { !$0.isTerminated })
                 {
                     await MainActor.run { aiMode.loadingStatus = "Reading \(appLabel) menus…" }
                     await MenuWarmCacheService.shared.warm(app: app, force: true)
-                    let refreshed = await GeneralAIActionResolver.shared.resolve(query: query)
+                    let refreshed = await GeneralAIActionResolver.shared.resolve(
+                        query: query, chatAllowedBundleIds: chatGrantedBundleIds())
                     if case .candidates(let refreshedCandidates) = refreshed,
                         let menuCandidate = refreshedCandidates.first(where: {
                             $0.route != .appLaunch && $0.bundleID == bundleID
