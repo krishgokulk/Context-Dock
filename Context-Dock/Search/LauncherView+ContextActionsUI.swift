@@ -1110,23 +1110,34 @@ extension LauncherView {
             }
         }
         Task {
+            await MainActor.run { dockTraceStep("Running \(command)…") }
             let result = await TerminalCommandExecutor.shared.runPreApproved(command)
             let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             await MainActor.run {
-                let body = output.isEmpty ? "(no output)" : output
-                l2.chatMessages.append(
-                    AIChatMessage(
-                        role: .tool,
-                        content: """
-                            \(command)
-
-                            \(body)
-                            """,
-                        isError: !result.success
-                    )
-                )
+                dockTraceStep(
+                    result.success
+                        ? "Ran \(command)" : "\(command) failed")
             }
-            guard result.success, !output.isEmpty else { return }
+            // The command run is a step, not a message. Its output rides along as collapsed
+            // detail on the answer below, so the conversation reads as prose with the work
+            // one tap away — instead of a bubble repeating the whole transcript.
+            guard result.success, !output.isEmpty else {
+                await MainActor.run {
+                    // No prose answer will follow, so this run has to stand on its own.
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .tool,
+                            content: result.success
+                                ? "\(command) — no output"
+                                : "\(command) — failed",
+                            isError: !result.success,
+                            trace: l2.routerTrace,
+                            runOutput: output.isEmpty ? nil : output
+                        )
+                    )
+                }
+                return
+            }
             do {
                 let history = await MainActor.run { l2.chatMessages }
                 let answer = try await sendToAIProviderWithContext(
@@ -1146,10 +1157,18 @@ extension LauncherView {
                 )
                 await MainActor.run {
                     l2.chatMessages.append(
-                        AIChatMessage(role: .assistant, content: answer))
+                        AIChatMessage(
+                            role: .assistant, content: answer,
+                            trace: l2.routerTrace, runOutput: output))
                 }
             } catch {
-                // Output is already shown in the tool message above.
+                // No prose answer arrived, so surface the raw output rather than losing it.
+                await MainActor.run {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .tool, content: command,
+                            trace: l2.routerTrace, runOutput: output))
+                }
             }
         }
     }
