@@ -604,6 +604,37 @@ struct AIChatMessageView: View {
     /// Collapsed record of how the answer was routed. Every line is real work the app did
     /// (catalog size, chosen path, executed row) — never model reasoning.
     @ViewBuilder
+    /// One line describing what the trace did, instead of a bare step count.
+    ///
+    /// Categorised by the prefixes this app writes itself — `dockTraceStep`,
+    /// `actionTraceStep` and `selectionRouterStep` produce every line here — so this reads
+    /// its own vocabulary rather than guessing at arbitrary text. Anything uncategorised
+    /// still counts toward the total, and a trace with nothing recognisable falls back to
+    /// the plain count, so the label can never overstate what happened.
+    static func traceSummary(_ trace: [String]) -> String {
+        var commands = 0
+        var reads = 0
+        for line in trace {
+            let lower = line.lowercased()
+            // Completions only. Each run also emits a "Running …" line first, so counting
+            // both would report one command as two.
+            if lower.hasPrefix("ran ") || lower.hasSuffix(" failed") {
+                commands += 1
+            } else if lower.hasPrefix("reading ") {
+                reads += 1
+            }
+        }
+        var parts: [String] = []
+        if commands > 0 { parts.append("Ran \(commands) command\(commands == 1 ? "" : "s")") }
+        if reads > 0 { parts.append("read \(reads) source\(reads == 1 ? "" : "s")") }
+        guard !parts.isEmpty else {
+            return "\(trace.count) step\(trace.count == 1 ? "" : "s")"
+        }
+        let others = trace.count - commands - reads
+        if others > 0 { parts.append("\(others) more") }
+        return parts.joined(separator: ", ")
+    }
+
     private var routerTraceView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
@@ -616,7 +647,7 @@ struct AIChatMessageView: View {
                         .font(.system(size: 8, weight: .bold))
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 9, weight: .semibold))
-                    Text("\(message.trace.count) step\(message.trace.count == 1 ? "" : "s")")
+                    Text(Self.traceSummary(message.trace))
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(.secondary)
@@ -1163,6 +1194,7 @@ struct AdapterApprovalPopupView: View {
     let request: AdapterActionRequest
     @State private var isHoveringAllow = false
     @State private var isHoveringDeny = false
+    @State private var isHoveringAlways = false
 
     private var typeLabel: String {
         switch request.action.type {
@@ -1198,7 +1230,7 @@ struct AdapterApprovalPopupView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ILauncher wants to:")
+                    Text("Context Dock wants to:")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Text(request.action.name)
@@ -1270,7 +1302,30 @@ struct AdapterApprovalPopupView: View {
             }
             .padding(.horizontal, 18)
             .padding(.top, 14)
-            .padding(.bottom, 18)
+            .padding(.bottom, request.onApproveAlways == nil ? 18 : 10)
+
+            // Standing grant — offered only for non-destructive actions. Browser
+            // Extensions are the main beneficiary: without it a userscript re-prompts
+            // on every single run.
+            if let approveAlways = request.onApproveAlways {
+                Button {
+                    approveAlways()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.shield")
+                        Text("Always allow \(request.action.name) for \(request.adapter.appName)")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isHoveringAlways ? .primary : .secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { isHoveringAlways = $0 }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+            }
         }
         .frame(width: 460)
         .background(
