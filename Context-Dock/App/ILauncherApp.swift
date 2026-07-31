@@ -291,6 +291,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
     var suppressHideOnResignUntil: Date = .distantPast
+    /// Set while a screen-capture UI owns the screen, so the dock can be put back exactly
+    /// as the user left it once the capture ends. See `handleScreenCaptureUIActivation`.
+    var dockWasVisibleBeforeScreenCapture = false
+    var screenCaptureUIIsActive = false
     /// While in the future, a global-context app launch is morphing into that app's Context
     /// Dock — result-execution hides are skipped so the dock stays instead of hide+relaunch.
     var suppressResultHideUntil: Date = .distantPast
@@ -416,6 +420,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // Before any accessibility read happens: cap how long one may block. An app that
+        // is slow to answer (Terminal while launching or streaming output is the usual
+        // one) otherwise stalls every reader for seconds, and the ones on the main thread
+        // take the whole dock down with them.
+        AXMessagingTimeout.installProcessDefault()
         // Enforce single instance — if another copy is already running, tell it to show and quit
         let bundleID = Bundle.main.bundleIdentifier ?? ""
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
@@ -456,6 +465,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Purge cached data (menus, adapters) for apps no longer installed.
         UninstalledAppCleanupService.cleanupInBackground()
+
+        // Instantiate the Safari bridge now — its Darwin observers only exist once
+        // the singleton is created, and the extension can fire before any UI does.
+        _ = SafariBrowserBridge.shared
 
         // Create the launcher window
         setupLauncherWindow()
@@ -550,6 +563,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
+        // Safari toolbar button — open Context Dock scoped to the frontmost browser
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBrowserActivateDockRequest),
+            name: .browserActivateDockRequested,
+            object: nil
+        )
+
         // Observe Services notifications to show launcher
         NotificationCenter.default.addObserver(
             self,
@@ -607,12 +628,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func handleAppActivation(_ notification: Notification) {
         guard
             let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
-                as? NSRunningApplication,
-            let resolvedApp = resolvedUserFacingApplication(app)
+                as? NSRunningApplication
         else { return }
+
+        // A capture UI taking the screen — ours via /usr/sbin/screencapture, or the system
+        // Screenshot app on ⌘⇧4/⌘⇧5 — is not the user clicking away from the dock. Without
+        // this the dock resigns key, hides for real, and the scope the user was working in
+        // is gone by the time the capture ends.
+        if Self.isScreenCaptureUI(app) {
+            handleScreenCaptureUIActivation()
+            return
+        }
+        restoreDockAfterScreenCaptureIfNeeded()
+
+        guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
         recordFrontmostApp(resolvedApp)
         reinforceFloatingDockWindow(reason: "app activation", activate: false)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
+    }
+
+    /// The system Screenshot agent, or the `screencapture` tool we spawn ourselves.
+    static func isScreenCaptureUI(_ app: NSRunningApplication) -> Bool {
+        if let bundleId = app.bundleIdentifier?.lowercased() {
+            if bundleId.hasPrefix("com.apple.screencapture") || bundleId == "com.apple.screenshot" {
+                return true
+            }
+        }
+        let executable = app.executableURL?.lastPathComponent.lowercased()
+        return executable == "screencapture" || executable == "screencaptureui"
+    }
+
+    private func handleScreenCaptureUIActivation() {
+        if !screenCaptureUIIsActive {
+            dockWasVisibleBeforeScreenCapture = launcherWindow?.isVisible == true
+        }
+        screenCaptureUIIsActive = true
+        // Generous: a capture lasts as long as the user takes to drag. Cleared below.
+        suppressHideOnResignUntil = Date().addingTimeInterval(300)
+    }
+
+    /// Called when any normal app becomes frontmost again — the capture is over.
+    func restoreDockAfterScreenCaptureIfNeeded() {
+        guard screenCaptureUIIsActive else { return }
+        screenCaptureUIIsActive = false
+        let shouldRestore = dockWasVisibleBeforeScreenCapture
+        dockWasVisibleBeforeScreenCapture = false
+        // One more resign follows as the captured app takes focus back; ride that out,
+        // then let normal hide-on-focus-loss resume.
+        suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
+        guard shouldRestore, let window = launcherWindow else { return }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
     }
 
     @objc private func handleAppLaunch(_ notification: Notification) {
@@ -627,6 +693,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleAppTermination(_ notification: Notification) {
         reinforceFloatingDockWindow(reason: "app termination", activate: false)
+    }
+
+    @objc func handleBrowserActivateDockRequest(_ notification: Notification) {
+        // Safari is frontmost when the toolbar button is clicked, so the dock
+        // opens already scoped to the page the user was reading.
+        activateContextDock()
     }
 
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
@@ -2146,23 +2218,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     // Hidden → always open at L2.
                     self.isDockContextMode = true
                     self.showLauncher()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                    }
                 }
             } else {
                 self.setupLauncherWindow()
                 self.isDockContextMode = true
                 self.showLauncher()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                    NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                }
             }
         }
     }
@@ -2183,15 +2243,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print(
                 "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
             )
-            // Capture the SELECTION synchronously, right now, while that app is still frontmost
-            // and BEFORE our panel steals focus. Many apps (TextEdit, plenty of native text
-            // views) report a nil AXFocusedUIElement once they're inactive, so reading after we
-            // activate silently returns nothing — that's why Selection Scope worked in some apps
-            // and not others. This is the cheap AX read only (focused element + selected text).
-            // The Finder file read is AppleScript (main-thread, 100s of ms) and would block the
-            // window from painting, so it's skipped here — Finder keeps its selection across
-            // focus changes, so the async open pass re-reads the files a beat later without loss.
-            AXContextReader.shared.refreshSelectionOnly(from: currentApp, includeFinderFiles: false)
             // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
             DispatchQueue.main.async {
                 ContextDockEnvironment.shared.frontmostAppDidChange(
@@ -2294,6 +2345,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKey()
         window.acceptsMouseMovedEvents = true
         self.launcherWindow?.makeKey()
+
+        // The global hotkey must show a usable shell before any accessibility work.  This read
+        // is still performed on the next main-loop turn (the app's AX element is usually valid
+        // during the activation hand-off), while the lifecycle's existing async pass remains the
+        // authoritative refresh for selections that arrive later.  Keeping it out of the hotkey
+        // handler removes the only synchronous cross-process call on the launch critical path.
+        if let currentApp = previousFrontmostApp {
+            DispatchQueue.main.async {
+                AXContextReader.shared.refreshSelectionOnly(
+                    from: currentApp, includeFinderFiles: false)
+            }
+        }
 
         // Reset content state now that the window is key and the app is active.
         // The window is still alpha=0 at this point, so stale content is not visible.
@@ -2455,6 +2518,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else {
             return
         }
+
+        // A capture UI is a transient overlay, not the user moving to another app —
+        // pushing it through as the new frontmost would swap the dock's scope out from
+        // under whatever they were doing.
+        if Self.isScreenCaptureUI(app) { return }
 
         // Only track user-facing non-DoraX apps. Resolve helper processes (ChatGPT helper, etc.)
         // back to their owning .app before pushing context into LauncherView.

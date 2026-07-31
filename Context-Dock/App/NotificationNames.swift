@@ -19,6 +19,8 @@ extension Notification.Name {
     static let activateClipboardScope    = Notification.Name("activateClipboardScope")
     static let activateSelectionScope    = Notification.Name("activateSelectionScope")
     static let switchToL1                = Notification.Name("switchToL1")
+    /// Safari toolbar button pressed — posted by SafariBrowserBridge.
+    static let browserActivateDockRequested = Notification.Name("browserActivateDockRequested")
     static let toggleAIExtensions        = Notification.Name("toggleAIExtensions")
 
     // MARK: - App / context detection

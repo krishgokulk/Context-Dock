@@ -147,6 +147,9 @@ final class AXContextReader {
 
         var ctx = AXContext(appName: name, bundleId: bundleId, pid: pid)
         let axApp = AXUIElementCreateApplication(pid)
+        // This runs on the open path, on the main thread — never wait longer than a
+        // couple of frames for a title. A missed read is handled; a stall is not.
+        AXMessagingTimeout.apply(AXMessagingTimeout.interactive, to: axApp)
         ctx.windowTitle = readWindowTitle(axApp)
         ctx.focusedElementRole = readFocusedRole(axApp)
 
@@ -167,6 +170,7 @@ final class AXContextReader {
     func refreshSelectionOnly(from app: NSRunningApplication, includeFinderFiles: Bool = true) {
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
+        AXMessagingTimeout.apply(AXMessagingTimeout.interactive, to: axApp)
         var ctx = current
         // An app that is no longer frontmost often reports a nil AXFocusedUIElement, so an empty
         // read here means "couldn't read it", NOT "the user deselected". Never let that erase a

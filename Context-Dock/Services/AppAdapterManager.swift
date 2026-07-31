@@ -91,6 +91,11 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     var cliToolCommand: String?     // .cliTool — command from TerminalPackageManager
     var shortcutName: String?       // .shortcut
     var aiPromptTemplate: String?   // .aiPrompt — context vars resolved before sending
+    /// Ids of actions in the *same* adapter to run, in order, before this one.
+    /// e.g. a "History" navigation chains ["yt-pip"] so the playing video pops out
+    /// before the page navigates away. Links are best-effort — prefix an id with `!`
+    /// to make it a hard prerequisite whose failure cancels the action.
+    var chain: [String]?
     // UX
     var requiresApproval: Bool      // Show confirmation dialog before executing
     var isDestructive: Bool         // Show red warning in approval UI
@@ -104,7 +109,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
          triggers: [String] = [], category: String? = nil, type: AdapterActionType,
          menuPath: [String]? = nil, script: String? = nil, scriptFile: String? = nil,
          urlScheme: String? = nil, cliToolCommand: String? = nil, shortcutName: String? = nil,
-         aiPromptTemplate: String? = nil,
+         aiPromptTemplate: String? = nil, chain: [String]? = nil,
          requiresApproval: Bool = false, isDestructive: Bool = false,
          accentColor: String? = nil) {
         self.id = id; self.name = name; self.icon = icon
@@ -112,7 +117,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         self.type = type
         self.menuPath = menuPath; self.script = script; self.scriptFile = scriptFile
         self.urlScheme = urlScheme; self.cliToolCommand = cliToolCommand; self.shortcutName = shortcutName
-        self.aiPromptTemplate = aiPromptTemplate
+        self.aiPromptTemplate = aiPromptTemplate; self.chain = chain
         self.requiresApproval = requiresApproval; self.isDestructive = isDestructive
         self.accentColor = accentColor
     }
@@ -120,7 +125,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, icon, description, triggers, category, type, menuPath, script,
              scriptFile, urlScheme, cliToolCommand, shortcutName, aiPromptTemplate,
-             requiresApproval, isDestructive, accentColor
+             chain, requiresApproval, isDestructive, accentColor
     }
 
     // Tolerant decode: AI-generated actions may omit icon/description/triggers/flags.
@@ -141,6 +146,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         cliToolCommand = try c.decodeIfPresent(String.self, forKey: .cliToolCommand)
         shortcutName = try c.decodeIfPresent(String.self, forKey: .shortcutName)
         aiPromptTemplate = try c.decodeIfPresent(String.self, forKey: .aiPromptTemplate)
+        chain = try c.decodeIfPresent([String].self, forKey: .chain)
         requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval) ?? false
         isDestructive = try c.decodeIfPresent(Bool.self, forKey: .isDestructive) ?? false
         accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor)
@@ -217,6 +223,9 @@ struct AdapterActionRequest: Identifiable {
     let adapter: AppAdapter
     var onApprove: () -> Void
     var onDeny: () -> Void
+    /// Approve and remember, so this action never prompts again. Nil when the
+    /// action isn't eligible for a standing grant (destructive actions always ask).
+    var onApproveAlways: (() -> Void)?
 }
 
 // MARK: - AppAdapterManager
@@ -317,31 +326,46 @@ final class AppAdapterManager: ObservableObject {
     /// For `.aiPrompt` actions this returns the resolved prompt string as output
     /// so ContentView can inject it into the search field.
     func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "") async -> (Bool, String) {
-        if action.requiresApproval {
-            guard let adp = adapters.first(where: { $0.actions.contains(where: { $0.id == action.id }) }) else {
+        let owningAdapter = adapters.first { $0.actions.contains { $0.id == action.id } }
+        let consentBundleId = targetBundleId ?? owningAdapter?.bundleId ?? ""
+
+        // A standing "Always Allow" grant skips the prompt. Destructive actions never
+        // qualify — those re-ask every time regardless of what the user granted.
+        let hasStandingGrant = !action.isDestructive
+            && AdapterActionConsentStore.shared.isAllowed(bundleId: consentBundleId,
+                                                          actionId: action.id)
+
+        if action.requiresApproval && !hasStandingGrant {
+            guard let adp = owningAdapter else {
                 return (false, "Adapter not found")
             }
             return await withCheckedContinuation { continuation in
+                let run: () -> Void = { [weak self] in
+                    Task { [weak self] in
+                        await MainActor.run {
+                            self?.pendingApproval = nil
+                        }
+                        let result = await self?.runChain(action, context: context, targetBundleId: targetBundleId, query: query) ?? (false, "")
+                        await MainActor.run {
+                            self?.lastResult = result
+                        }
+                        continuation.resume(returning: result)
+                    }
+                }
                 let request = AdapterActionRequest(
                     action: action,
                     adapter: adp,
-                    onApprove: { [weak self] in
-                        Task { [weak self] in
-                            await MainActor.run {
-                                self?.pendingApproval = nil
-                            }
-                            let result = await self?.runAction(action, context: context, targetBundleId: targetBundleId, query: query) ?? (false, "")
-                            await MainActor.run {
-                                self?.lastResult = result
-                            }
-                            continuation.resume(returning: result)
-                        }
-                    },
+                    onApprove: run,
                     onDeny: { [weak self] in
                         Task { @MainActor in
                             self?.pendingApproval = nil
                         }
                         continuation.resume(returning: (false, "Cancelled"))
+                    },
+                    onApproveAlways: action.isDestructive ? nil : {
+                        AdapterActionConsentStore.shared.allowAlways(
+                            bundleId: consentBundleId, actionId: action.id)
+                        run()
                     }
                 )
                 Task { @MainActor in
@@ -349,11 +373,60 @@ final class AppAdapterManager: ObservableObject {
                 }
             }
         }
-        let result = await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        let result = await runChain(action, context: context, targetBundleId: targetBundleId, query: query)
         await MainActor.run {
             self.lastResult = result
         }
         return result
+    }
+
+    /// Run an action's `chain` prerequisites (in declared order) and then the action
+    /// itself. Chained ids resolve within the same adapter only — a chain must never
+    /// reach across apps.
+    ///
+    /// Links are **best-effort**: a link that fails is noted and the primary action still
+    /// runs. Most chains are enhancements rather than prerequisites — YouTube's navigation
+    /// actions chain "pip" so a playing video pops out before the page changes — and an
+    /// aborting chain meant every one of them silently did nothing the moment Picture-in-
+    /// Picture was unavailable (a Safari Web App without the extension enabled, or simply
+    /// no video playing). Prefix a link id with `!` when it genuinely is a prerequisite and
+    /// its failure must cancel the action.
+    private func runChain(_ action: AdapterAction, context: AXContext,
+                          targetBundleId: String?, query: String) async -> (Bool, String) {
+        let links = action.chain ?? []
+        guard !links.isEmpty else {
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        }
+
+        guard let adapter = adapters.first(where: { $0.actions.contains { $0.id == action.id } }) else {
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        }
+
+        var seen: Set<String> = [action.id]
+        var skipped: [String] = []
+        for rawId in links {
+            let isRequired = rawId.hasPrefix("!")
+            let linkId = isRequired ? String(rawId.dropFirst()) : rawId
+            guard !seen.contains(linkId) else { continue }   // cycle guard
+            seen.insert(linkId)
+            guard let link = adapter.actions.first(where: { $0.id == linkId }) else {
+                if isRequired { return (false, "Chained action not found: \(linkId)") }
+                skipped.append(linkId)
+                continue
+            }
+            let (ok, output) = await runAction(link, context: context,
+                                               targetBundleId: targetBundleId, query: query)
+            if !ok {
+                if isRequired { return (false, "\(link.name) failed: \(output)") }
+                skipped.append(link.name)
+            }
+        }
+
+        let (ok, output) = await runAction(action, context: context,
+                                           targetBundleId: targetBundleId, query: query)
+        guard ok, !skipped.isEmpty else { return (ok, output) }
+        let note = "Skipped \(skipped.joined(separator: ", "))"
+        return (true, output.isEmpty ? note : "\(output) · \(note)")
     }
 
     // MARK: - Menu command (universal control surface)
@@ -1047,6 +1120,38 @@ final class AppAdapterManager: ObservableObject {
             }
             // Resolve context vars (including $PAGE_TEXT and $SELECTED_TEXT from bridge)
             let resolved = injectPageContext(script, context: context, query: query)
+
+            let owner = targetBundleId
+                ?? adapters.first { $0.actions.contains { $0.id == action.id } }?.bundleId
+            let isWebApp = owner?.hasPrefix("com.apple.Safari.WebApp.") ?? false
+
+            // Preferred path: run it through our own Safari Web Extension. This is the
+            // only route that reaches a Safari Web App (they have no AppleScript
+            // dictionary) and the only one that carries user activation.
+            if let owner, let app = await resolveOrLaunchTargetApp(for: owner),
+               await SafariExtensionCommandBridge.shared.isAvailable(in: app) {
+                do {
+                    // "pip" runs as a real function rather than injected source — gated
+                    // media APIs need the activation that only a genuine call carries.
+                    let output = isPictureInPictureScript(resolved)
+                        ? try await SafariExtensionCommandBridge.shared.requestPictureInPicture(in: app)
+                        : try await SafariExtensionCommandBridge.shared.runJavaScript(resolved, in: app)
+                    if output.hasPrefix("JS error:") { return (false, output) }
+                    return (true, output.isEmpty ? "Script executed" : output)
+                } catch {
+                    if isWebApp {
+                        // No AppleScript fallback exists for web apps — report honestly.
+                        return (false, error.localizedDescription)
+                    }
+                    // Real Safari: fall through to AppleScript below.
+                }
+            } else if isWebApp {
+                return (false, """
+                Context Dock isn't enabled as an extension in this web app. Open it, go to \
+                Settings ▸ Extensions, turn on Context Dock and allow it for this site — \
+                web apps expose no AppleScript interface, so there is no other route in.
+                """)
+            }
             // Execute directly in the active Safari page via SafariTabManager
             let result = await SafariTabManager.shared.executeJS(resolved)
             if result == nil {
@@ -1061,6 +1166,15 @@ final class AppAdapterManager: ObservableObject {
             }
             return (true, output.isEmpty ? "Script executed" : output)
         }
+    }
+
+    /// A userscript whose whole job is Picture-in-Picture. Detected so it can be run as a
+    /// native function instead of injected source: `requestPictureInPicture()` demands
+    /// transient user activation, which survives a real call but not an eval'd string.
+    private func isPictureInPictureScript(_ source: String) -> Bool {
+        let lower = source.lowercased()
+        return lower.contains("requestpictureinpicture")
+            || lower.contains("webkitsetpresentationmode")
     }
 
     private func resolvedTargetApp(for bundleId: String?) -> NSRunningApplication? {

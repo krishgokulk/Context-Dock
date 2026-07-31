@@ -25,9 +25,19 @@ final class ScreenCaptureService: @unchecked Sendable {
             // Resolve the source app BEFORE screencapture takes over the front: the
             // clipboard scope shows "Copied from …", and once the picker is up the
             // frontmost app is screencapture, not the app the user grabbed from.
-            let source = await MainActor.run { Self.captureSourceApp() }
-            guard await Self.ensureScreenRecordingAccess() else { return }
-            await Self.clearOwnWindowsFromScreen()
+            // Snapshot the source app AND whether the dock was up in the *same* main-thread
+            // hop the hotkey lands on. Reading visibility later was the bug behind "the dock
+            // never came back": anything that hid the panel in the milliseconds between the
+            // key press and this task made the snapshot read `false`, and a false snapshot
+            // means nothing gets restored afterwards.
+            let (source, dockWasVisible) = await MainActor.run {
+                (Self.captureSourceApp(), Self.launcherIsOnScreen())
+            }
+            guard await Self.ensureScreenRecordingAccess() else {
+                await MainActor.run { Self.restoreOwnWindows(dockWasVisible) }
+                return
+            }
+            await Self.hideOwnWindowsForCapture(dockWasVisible)
 
             let isSavedImage: Bool
             switch kind {
@@ -71,11 +81,15 @@ final class ScreenCaptureService: @unchecked Sendable {
                 process.waitUntilExit()
             } catch {
                 await MainActor.run {
+                    Self.restoreOwnWindows(dockWasVisible)
                     AppToast.show(
                         "Capture failed to start", icon: "exclamationmark.triangle", tint: .orange)
                 }
                 return
             }
+            // Put the dock back the moment the picker is gone — before OCR, so the scope
+            // the user was in reappears immediately rather than after recognition.
+            await MainActor.run { Self.restoreOwnWindows(dockWasVisible) }
             // Escape on the picker exits non-zero and writes nothing — that is a
             // deliberate cancel, so stay silent. A zero exit with no file is a real
             // failure and must say so.
@@ -114,10 +128,16 @@ final class ScreenCaptureService: @unchecked Sendable {
                         )
                     )
                     NSSound(named: "Tink")?.play()
-                    let words = text.split(whereSeparator: { $0.isWhitespace }).count
+                    // Same confidence the screenshot toast gives: show what was actually
+                    // snipped, not just that something happened.
                     AppToast.show(
-                        "Text copied — \(words) \(words == 1 ? "word" : "words") ready to paste",
-                        icon: "text.viewfinder", tint: .green)
+                        Self.snippetSummary(for: text),
+                        icon: "text.viewfinder", tint: .green, duration: 3.5,
+                        actionTitle: "Clipboard",
+                        action: {
+                            NotificationCenter.default.post(
+                                name: .activateClipboardScope, object: nil)
+                        })
                 }
             case .area, .screenshot:
                 guard let image = NSImage(data: data) else { return }
@@ -173,16 +193,74 @@ final class ScreenCaptureService: @unchecked Sendable {
     /// The launcher panel lives at status-window level — above screencapture's crosshair
     /// overlay. Left on screen it swallowed the drag and landed inside the captured
     /// image; anything behind it could never be snipped at all.
+    ///
+    /// This orders the window out directly rather than calling `hideLauncher(force:)`:
+    /// a forced hide *ends the session* — it drops `smartScopeActive`, clears the active
+    /// scope key and unpins — so capturing from inside an app or Terminal scope threw
+    /// that scope away. Taking the panel off screen changes nothing the user set up, and
+    /// `restoreOwnWindows` puts it back exactly as it was.
     @MainActor
-    private static func clearOwnWindowsFromScreen() async {
+    private static func launcherIsOnScreen() -> Bool {
+        let window = AppDelegate.shared?.launcherWindow
+        #if DEBUG
+        let visibleWindows = NSApp.windows
+            .filter { $0.isVisible }
+            .map { "\(type(of: $0))<\($0.windowNumber)> a=\($0.alphaValue)" }
+            .joined(separator: ", ")
+        NSLog(
+            "[capture] snapshot delegate=\(AppDelegate.shared != nil) "
+                + "launcherWindow=\(window.map { "#\($0.windowNumber)" } ?? "nil") "
+                + "isVisible=\(window?.isVisible ?? false) alpha=\(window?.alphaValue ?? -1) "
+                + "key=\(window?.isKeyWindow ?? false) appActive=\(NSApp.isActive) "
+                + "onScreen=[\(visibleWindows)]")
+        #endif
+        return window?.isVisible == true
+    }
+
+    @MainActor
+    private static func hideOwnWindowsForCapture(_ dockWasVisible: Bool) async {
         AppToast.hide()
-        if AppDelegate.shared?.launcherWindow?.isVisible == true {
-            AppDelegate.shared?.smartScopeActive = false
-            AppDelegate.shared?.hideLauncher(force: true)
-        }
-        // Give the window server a beat to actually take the panels off screen before
+        guard dockWasVisible, let delegate = AppDelegate.shared,
+            let window = delegate.launcherWindow
+        else { return }
+
+        // screencapture activates itself, so our panel resigns key and the normal
+        // focus-loss path starts hiding the dock for real — including a 0.15s fade whose
+        // completion handler orders the window out *after* we have put it back. Suppress
+        // that path for the whole capture instead of racing it.
+        delegate.suppressHideOnResignUntil = Date().addingTimeInterval(Self.captureHoldSeconds)
+        #if DEBUG
+        NSLog("[capture] hiding dock for picker")
+        #endif
+        window.orderOut(nil)
+        // Give the window server a beat to actually take the panel off screen before
         // the picker starts compositing.
         try? await Task.sleep(nanoseconds: 150_000_000)
+    }
+
+    /// Long enough for an unhurried drag; the hold is released the moment the picker ends.
+    private static let captureHoldSeconds: TimeInterval = 300
+
+    @MainActor
+    private static func restoreOwnWindows(_ wasVisible: Bool) {
+        #if DEBUG
+        NSLog("[capture] restore requested wasVisible=\(wasVisible)")
+        #endif
+        guard let delegate = AppDelegate.shared else { return }
+        guard wasVisible, let window = delegate.launcherWindow else {
+            delegate.suppressHideOnResignUntil = .distantPast
+            return
+        }
+        window.alphaValue = 1
+        // orderFrontRegardless keeps the app non-activating: the dock comes back floating
+        // over whatever the user captured from, which stays frontmost.
+        window.orderFrontRegardless()
+        #if DEBUG
+        NSLog("[capture] restored dock, isVisible=\(window.isVisible)")
+        #endif
+        // A short tail: the captured app activates right after the picker closes, which
+        // is one more resign the dock should survive. Then normal behaviour resumes.
+        delegate.suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
     }
 
     // MARK: - Helpers
@@ -199,6 +277,18 @@ final class ScreenCaptureService: @unchecked Sendable {
             return (app.localizedName ?? "", app.bundleIdentifier ?? "")
         }
         return ("", "")
+    }
+
+    /// Toast copy for a finished snip: the opening words of what was read, plus the size
+    /// of the rest, so the user can confirm the right region was captured without pasting.
+    private static func snippetSummary(for text: String) -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace }).count
+        let firstLine =
+            text.split(separator: "\n").first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? text
+        let preview = firstLine.count > 30 ? String(firstLine.prefix(30)) + "…" : firstLine
+        let scale = words == 1 ? "1 word" : "\(words) words"
+        return preview.isEmpty ? "Text copied — \(scale)" : "Copied “\(preview)”"
     }
 
     // MARK: - Recognition

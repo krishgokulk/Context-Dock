@@ -3086,6 +3086,8 @@ struct AutomationAdapterDetailView: View {
     @ObservedObject private var mcpManager = MCPServerManager.shared
     @ObservedObject private var apiStore = APIConnectionStore.shared
     @ObservedObject private var skillStore = SkillStore.shared
+    @ObservedObject private var consentStore = AdapterActionConsentStore.shared
+    @ObservedObject private var safariBridge = SafariBrowserBridge.shared
     @State private var showAPIConnectSheet = false
     @State private var apiName = ""
     @State private var apiBaseURL = ""
@@ -3417,6 +3419,71 @@ struct AutomationAdapterDetailView: View {
 
     private var browserExtensionActions: [AdapterAction] {
         visibleActions.filter { $0.type == .pageJS }
+    }
+
+    // MARK: Safari extension health
+
+    /// Live state of the Safari Web Extension pipeline. Without this a broken bridge is
+    /// invisible — every consumer just silently falls back to AppleScript/AX.
+    @ViewBuilder
+    private var safariBridgeStatusRow: some View {
+        let (symbol, tint, label): (String, Color, String) = {
+            switch safariBridge.connection {
+            case .live(let seen):
+                return ("checkmark.circle.fill", .green,
+                        "Safari extension connected — last page \(Self.relativeTime(seen))")
+            case .idle(let seen):
+                return ("pause.circle.fill", .yellow,
+                        "Safari extension idle — last page \(Self.relativeTime(seen))")
+            case .neverConnected:
+                return ("xmark.circle.fill", .red,
+                        "Safari extension has never sent a page. Enable “Context Dock” in "
+                        + "Safari → Settings → Extensions and grant it site access.")
+            }
+        }()
+
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 10))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private static func relativeTime(_ date: Date) -> String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .short
+        return fmt.localizedString(for: date, relativeTo: Date())
+    }
+
+    /// Standing-grant control. Mirrors the "Always allow" choice from the approval
+    /// dialog so a grant can be inspected and revoked without triggering the action.
+    @ViewBuilder
+    private func trustToggle(for action: AdapterAction) -> some View {
+        let bundleId = currentAdapter.bundleId
+        let trusted = consentStore.isAllowed(bundleId: bundleId, actionId: action.id)
+
+        Button {
+            if trusted {
+                consentStore.revoke(bundleId: bundleId, actionId: action.id)
+            } else {
+                consentStore.allowAlways(bundleId: bundleId, actionId: action.id)
+            }
+        } label: {
+            Image(systemName: trusted ? "checkmark.shield.fill" : "shield")
+                .font(.system(size: 11))
+                .foregroundStyle(trusted ? Color.green : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(trusted
+              ? "Always allowed — runs without asking. Click to revoke."
+              : "Asks for approval before each run. Click to always allow.")
     }
 
     /// macOS Shortcuts linked to this adapter (stored as `.shortcut` actions).
@@ -4089,6 +4156,28 @@ struct AutomationAdapterDetailView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
 
+                        safariBridgeStatusRow
+
+                        // Safari Web Apps expose no AppleScript interface, so pageJS can't
+                        // reach them. Say so up front rather than letting each run fail.
+                        if currentAdapter.bundleId.hasPrefix("com.apple.Safari.WebApp.") {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.orange)
+                                Text("This is a Safari Web App. Web apps expose no AppleScript "
+                                     + "interface, so Browser JavaScript can't run here yet — "
+                                     + "open the site in Safari proper to use these actions.")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.08),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                        }
+
                         ForEach(browserExtensionActions) { action in
                             HStack(spacing: 10) {
                                 ZStack {
@@ -4107,6 +4196,7 @@ struct AutomationAdapterDetailView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                trustToggle(for: action)
                                 Button {
                                     editingAction = action
                                     showAddActionSheet = true

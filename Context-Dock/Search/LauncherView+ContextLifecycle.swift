@@ -1160,9 +1160,13 @@ extension LauncherView {
             l2.chatDraftBundleId = ""
         }
         suppressOpenResize = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
+        // Prepare the first real layout on the next pass, before the fade-in has completed.
+        // Holding resizing for 300ms made the SwiftUI result card expand inside the compact
+        // 70pt panel first, exposing the temporary half-sheet the user sees at launch.
+        DispatchQueue.main.async { [self] in
             suppressOpenResize = false
-            requestWindowSizeUpdate(reason: .modeChanged)
+            requestWindowSizeUpdate(
+                reason: .modeChanged, animated: false, debounceNanoseconds: 0)
         }
 
         // Opening straight into Selection Scope: enter it now, on this frame. Waiting for the

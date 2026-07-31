@@ -423,6 +423,69 @@ final class AXMenuReader {
         return traverse(element: bar, path: path)
     }
 
+    /// Whether a menu path exists, without pressing anything.
+    ///
+    /// `unknown` is the important case: AX cannot see inside a submenu that has never
+    /// been opened, so a path whose parent is present but whose contents are unreadable
+    /// is genuinely undecidable. Reporting those as "exists" made every Safari-family
+    /// app look like it had our extension installed — every app has an Edit menu — so
+    /// each action opened that menu on screen only to find nothing there.
+    enum MenuItemPresence {
+        case present
+        case absent
+        case unknown
+    }
+
+    func menuItemPresence(path: [String], in pid: pid_t) -> MenuItemPresence {
+        guard let bar = menuBarElement(for: pid) else { return .absent }
+        return presence(element: bar, path: path)
+    }
+
+    /// Lenient form: anything not provably absent counts as existing.
+    func menuItemExists(path: [String], in pid: pid_t) -> Bool {
+        menuItemPresence(path: path, in: pid) != .absent
+    }
+
+    private func presence(element: AXUIElement, path: [String]) -> MenuItemPresence {
+        guard !path.isEmpty else { return .absent }
+        let target = path[0].lowercased()
+        let rest   = Array(path.dropFirst())
+
+        let container = submenuContainer(for: element) ?? element
+        guard let children = childElements(of: container), !children.isEmpty else { return .absent }
+
+        var sawUnknown = false
+        for child in children {
+            let role  = strAttr(child, kAXRoleAttribute as CFString) ?? ""
+            let title = strAttr(child, kAXTitleAttribute as CFString) ?? ""
+
+            if role == "AXMenu" {
+                switch presence(element: child, path: path) {
+                case .present: return .present
+                case .unknown: sawUnknown = true
+                case .absent: break
+                }
+                continue
+            }
+            guard title.lowercased() == target else { continue }
+            if rest.isEmpty { return .present }
+
+            if let menuContainer = submenuContainer(for: child),
+               let kids = childElements(of: menuContainer), !kids.isEmpty {
+                switch presence(element: menuContainer, path: rest) {
+                case .present: return .present
+                case .unknown: sawUnknown = true
+                // Submenu is populated and the item simply is not in it.
+                case .absent: break
+                }
+                continue
+            }
+            // Never opened, so its contents are unreadable — undecidable, not present.
+            sawUnknown = true
+        }
+        return sawUnknown ? .unknown : .absent
+    }
+
     @discardableResult
     func clickMenuItemReliably(path: [String], in pid: pid_t) -> Bool {
         if clickMenuItem(path: path, in: pid) { return true }
