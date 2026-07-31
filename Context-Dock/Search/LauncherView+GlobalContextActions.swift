@@ -175,8 +175,11 @@ extension LauncherView {
                 if isCLIScope { return pill.rankingKind == "cliTool" }
                 // Running-app capsules are isolated cached-menu scopes. Generic
                 // content search, web search, app launch, window management, tools,
-                // and Global Context actions belong to other surfaces.
-                return ["menu", "submenuChild", "finderMenu"].contains(pill.rankingKind)
+                // and Global Context actions belong to other surfaces — but actions the
+                // user authored for THIS app in App Adapters are exactly what an app scope
+                // is for, and were being filtered out of the surface they belong to.
+                return ["menu", "submenuChild", "finderMenu", "adapter"]
+                    .contains(pill.rankingKind)
             }
         // System-command providers define semantic display order directly:
         // power control, summary, then devices. The shared result shell handles
@@ -5156,6 +5159,21 @@ extension LauncherView {
                 appName: scope.scopedAppName,
                 query: actionQuery
             )
+            // Actions the user authored in App Adapters. They were built only for Context
+            // Dock, so an app scope in Global Context showed cached menus and nothing the
+            // user had added themselves. Menu-bar actions stay out: AXMenuReader owns menus
+            // and would duplicate them. CLI-tool actions stay out too — they attach a
+            // terminal to the dock, which is not what a Global Context row does.
+            let scopedAdapterActions = adapterManager
+                .actions(for: scope.scopedBundleId, query: actionQuery)
+                .filter { $0.type != .menubar && $0.type != .cliTool }
+            if !scopedAdapterActions.isEmpty {
+                pills += adapterActionPills(
+                    actions: scopedAdapterActions,
+                    scopedBundleId: scope.scopedBundleId,
+                    scopedAppName: scope.scopedAppName,
+                    scopedSearchQuery: actionQuery)
+            }
         }
         let visible =
             pills

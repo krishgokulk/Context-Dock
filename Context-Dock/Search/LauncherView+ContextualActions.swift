@@ -2693,6 +2693,117 @@ extension LauncherView {
         return true
     }
 
+    /// Dock pills for one app's adapter actions.
+    ///
+    /// Extracted so Global Context's app scope renders the same pills, executed the same
+    /// way, as Context Dock. Building a second set for the other surface would have meant
+    /// two implementations of "run an adapter action" free to drift apart.
+    func adapterActionPills(
+        actions: [AdapterAction],
+        scopedBundleId: String,
+        scopedAppName: String,
+        scopedSearchQuery: String
+    ) -> [DockPill] {
+        var pills: [DockPill] = []
+        for action in actions {
+            let cliCommand =
+                action.cliToolCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let pillName =
+                action.type == .cliTool && !cliCommand.isEmpty
+                ? cliCommand
+                : action.name
+            let shortcutName = action.shortcutName ?? action.name
+            let pillIcon = action.type == .shortcut
+                ? ShortcutsCatalog.iconName(for: shortcutName)
+                : action.icon
+            let pillAccent = action.type == .shortcut
+                ? ShortcutsCatalog.accentColorName(for: shortcutName)
+                : (action.accentColor ?? "blue")
+            var pill = DockPill(
+                id: "adapter-\(scopedBundleId)-\(action.id)",
+                name: pillName,
+                icon: pillIcon,
+                accentColorName: pillAccent,
+                badge: action.type == .menubar
+                    ? "Custom" : (action.type == .cliTool ? "CLI" : action.type.displayName),
+                execute: {
+                    if action.type == .cliTool, !cliCommand.isEmpty {
+                        attachCLIToolToCurrentDock(
+                            command: cliCommand,
+                            bundleIdentifier: scopedBundleId,
+                            appName: scopedAppName
+                        )
+                        return
+                    }
+                    let capturedContext = effectiveAXContextForConversation()
+                    Task {
+                        AppInteractionStore.shared.record(
+                            bundleId: scopedBundleId,
+                            appName: scopedAppName,
+                            query: scopedSearchQuery.isEmpty ? action.name : scopedSearchQuery,
+                            kind: action.type == .pageJS ? .pageJS : .adapterAction,
+                            actionId: action.id
+                        )
+                        let result = await adapterManager.execute(
+                            action,
+                            context: capturedContext,
+                            targetBundleId: scopedBundleId,
+                            query: scopedSearchQuery
+                        )
+                        await MainActor.run {
+                            if action.type == .aiPrompt, result.0, !result.1.isEmpty {
+                                searchState.query = result.1
+                                isSearchFieldFocused = true
+                            }
+                        }
+                    }
+                })
+            pill.rankingKind = action.type == .cliTool ? "cliTool" : "adapter"
+            if action.type == .shortcut {
+                pill.menuItemImage = nil
+            }
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = scopedAppName
+            pill.trackingIdentifier = "adapter:\(scopedBundleId):\(action.id)"
+            pill.searchTerms =
+                [action.name, pillName, action.description, action.type.displayName, cliCommand]
+                + action.triggers
+            pills.append(pill)
+
+            // For CLI tool adapter actions, also emit subcommand pills so the user
+            // gets the same scannable help-command pills as standalone CLI packages.
+            if action.type == .cliTool, !cliCommand.isEmpty,
+                let pkg = terminalPackageManager.packages.first(where: {
+                    $0.command.caseInsensitiveCompare(cliCommand) == .orderedSame
+                })
+            {
+                for sub in pkg.subcommands.prefix(5) {
+                    let fullCmd = "\(cliCommand) \(sub)"
+                    var subPill = DockPill(
+                        id: "adapter-sub-\(scopedBundleId)-\(fullCmd)",
+                        name: sub,
+                        icon: action.icon,
+                        accentColorName: action.accentColor ?? "green",
+                        badge: cliCommand,
+                        execute: {
+                            attachCLIToolToCurrentDock(
+                                command: fullCmd,
+                                package: pkg,
+                                runImmediately: true
+                            )
+                        }
+                    )
+                    subPill.rankingKind = "cliTool"
+                    subPill.sourceBundleId = scopedBundleId
+                    subPill.sourceAppName = scopedAppName
+                    subPill.trackingIdentifier = "adapter-sub:\(scopedBundleId):\(fullCmd)"
+                    subPill.searchTerms = [sub, fullCmd, action.name, cliCommand] + pkg.keywords
+                    pills.append(subPill)
+                }
+            }
+        }
+        return pills
+    }
     func scopedSpecialAppPills(
         bundleIdentifier: String,
         appName: String,
@@ -5474,103 +5585,11 @@ extension LauncherView {
             pill.searchTerms = [tool.displayName, tool.toolName]
             pills.append(pill)
         }
-        for action in visibleAdapterActions {
-            let cliCommand =
-                action.cliToolCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let pillName =
-                action.type == .cliTool && !cliCommand.isEmpty
-                ? cliCommand
-                : action.name
-            let shortcutName = action.shortcutName ?? action.name
-            let pillIcon = action.type == .shortcut
-                ? ShortcutsCatalog.iconName(for: shortcutName)
-                : action.icon
-            let pillAccent = action.type == .shortcut
-                ? ShortcutsCatalog.accentColorName(for: shortcutName)
-                : (action.accentColor ?? "blue")
-            var pill = DockPill(
-                id: "adapter-\(scopedBundleId)-\(action.id)",
-                name: pillName,
-                icon: pillIcon,
-                accentColorName: pillAccent,
-                badge: action.type == .menubar
-                    ? "Custom" : (action.type == .cliTool ? "CLI" : action.type.displayName),
-                execute: {
-                    if action.type == .cliTool, !cliCommand.isEmpty {
-                        attachCLIToolToCurrentDock(
-                            command: cliCommand,
-                            bundleIdentifier: scopedBundleId,
-                            appName: scopedAppName
-                        )
-                        return
-                    }
-                    let capturedContext = effectiveAXContextForConversation()
-                    Task {
-                        AppInteractionStore.shared.record(
-                            bundleId: scopedBundleId,
-                            appName: scopedAppName,
-                            query: scopedSearchQuery.isEmpty ? action.name : scopedSearchQuery,
-                            kind: action.type == .pageJS ? .pageJS : .adapterAction,
-                            actionId: action.id
-                        )
-                        let result = await adapterManager.execute(
-                            action,
-                            context: capturedContext,
-                            targetBundleId: scopedBundleId,
-                            query: scopedSearchQuery
-                        )
-                        await MainActor.run {
-                            if action.type == .aiPrompt, result.0, !result.1.isEmpty {
-                                searchState.query = result.1
-                                isSearchFieldFocused = true
-                            }
-                        }
-                    }
-                })
-            pill.rankingKind = action.type == .cliTool ? "cliTool" : "adapter"
-            if action.type == .shortcut {
-                pill.menuItemImage = nil
-            }
-            pill.sourceBundleId = scopedBundleId
-            pill.sourceAppName = scopedAppName
-            pill.trackingIdentifier = "adapter:\(scopedBundleId):\(action.id)"
-            pill.searchTerms =
-                [action.name, pillName, action.description, action.type.displayName, cliCommand]
-                + action.triggers
-            pills.append(pill)
-
-            // For CLI tool adapter actions, also emit subcommand pills so the user
-            // gets the same scannable help-command pills as standalone CLI packages.
-            if action.type == .cliTool, !cliCommand.isEmpty,
-                let pkg = terminalPackageManager.packages.first(where: {
-                    $0.command.caseInsensitiveCompare(cliCommand) == .orderedSame
-                })
-            {
-                for sub in pkg.subcommands.prefix(5) {
-                    let fullCmd = "\(cliCommand) \(sub)"
-                    var subPill = DockPill(
-                        id: "adapter-sub-\(scopedBundleId)-\(fullCmd)",
-                        name: sub,
-                        icon: action.icon,
-                        accentColorName: action.accentColor ?? "green",
-                        badge: cliCommand,
-                        execute: {
-                            attachCLIToolToCurrentDock(
-                                command: fullCmd,
-                                package: pkg,
-                                runImmediately: true
-                            )
-                        }
-                    )
-                    subPill.rankingKind = "cliTool"
-                    subPill.sourceBundleId = scopedBundleId
-                    subPill.sourceAppName = scopedAppName
-                    subPill.trackingIdentifier = "adapter-sub:\(scopedBundleId):\(fullCmd)"
-                    subPill.searchTerms = [sub, fullCmd, action.name, cliCommand] + pkg.keywords
-                    pills.append(subPill)
-                }
-            }
-        }
+        pills += adapterActionPills(
+            actions: visibleAdapterActions,
+            scopedBundleId: scopedBundleId,
+            scopedAppName: scopedAppName,
+            scopedSearchQuery: scopedSearchQuery)
         } // end !isFinderDesktopOnlyMode
 
         if !useSeededMenuPills || hasStrongContextQuery {
