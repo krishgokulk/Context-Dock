@@ -2565,16 +2565,33 @@ extension LauncherView {
         return "• \(package.command): run_command(\"\(package.command) \\\"<full user query>\\\"\")"
     }
 
+    /// Words the help parser mistakes for subcommands when a description wraps onto its own
+    /// line. Listing "pear the" as a runnable subcommand invites the model to try it.
+    static let helpNoiseTokens: Set<String> = [
+        "the", "to", "a", "an", "and", "or", "for", "with", "at", "in", "of", "on", "by",
+        "from", "specified", "available", "all", "only", "add", "them",
+    ]
+
     func dockScopedCLIDocumentation(for package: TerminalPackage, query: String = "") -> String {
         var doc = "### \(package.command) [CLI]"
         if let path = package.installedPath, !path.isEmpty {
             doc += " at \(path)"
         }
+        // The subcommand list is the tool's table of contents, and it goes in whether or not
+        // help text follows. It used to be an `else` branch: with help text present it was
+        // never sent, and the help itself is budget-clipped by relevance to the query — so
+        // "clean cache" against pear scored no section containing "clean" or "cache",
+        // dropped remove-orphaned and list-orphaned from a 1k slice of 30k, and the model
+        // answered, accurately, that the provided help mentioned no way to clean a cache.
+        // Nine short tokens are worth far more here than nine hundred characters of prose.
+        let subcommands = package.subcommands.filter { !Self.helpNoiseTokens.contains($0.lowercased()) }
+        if !subcommands.isEmpty {
+            doc += "\nSubcommands (always include a space between command and subcommand):\n"
+            doc += subcommands.map { "  \(package.command) \($0)" }.joined(separator: "\n")
+        }
         if let helpText = package.helpText, !helpText.isEmpty {
             doc += "\n" + AIContextBudget.fitHelpText(helpText, query: query, budget: 1_000)
-        } else if !package.subcommands.isEmpty {
-            doc += "\nSubcommands (always include a space between command and subcommand):\n"
-            doc += package.subcommands.map { "  \(package.command) \($0)" }.joined(separator: "\n")
+        } else if !subcommands.isEmpty {
             if !package.description.isEmpty { doc += "\n" + package.description }
         } else if !package.description.isEmpty {
             doc += "\n" + package.description
