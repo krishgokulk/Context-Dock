@@ -73,6 +73,9 @@ final class CapabilityGapService {
     func resolve(query: String, bundleID: String, appName: String) -> Gap? {
         let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized.count > 3, !bundleID.isEmpty else { return nil }
+        // A question wants an answer, not a tool. "what is this app used for?" is asking
+        // about the scope, and no linked CLI would help.
+        guard !Self.looksLikeQuestion(normalized) else { return nil }
 
         let manager = TerminalPackageManager.shared
         // 1. Already linked and plausibly relevant → no gap, let the model use it.
@@ -138,6 +141,15 @@ final class CapabilityGapService {
         return nil
     }
 
+    private static func looksLikeQuestion(_ normalized: String) -> Bool {
+        if normalized.hasSuffix("?") { return true }
+        let starts = [
+            "what", "why", "how", "who", "when", "where", "which", "explain", "tell me",
+            "describe", "is ", "are ", "does ", "do ", "did ", "can ", "should ",
+        ]
+        return starts.contains(where: normalized.hasPrefix)
+    }
+
     /// True when the app's own capabilities plausibly cover the request, so proposing a CLI
     /// tool would be answering a question the app already answers. Only the strict test
     /// counts: every meaningful word of the request must appear in one menu item's title or
@@ -168,10 +180,23 @@ final class CapabilityGapService {
     /// A shared name *fragment* is not enough for an unrecognised task: `new-localization`
     /// contributed only the word "new".
     private func queryNamesTool(_ package: TerminalPackage, query: String) -> Bool {
+        // Whole words only. A substring test matched the tool `pp` inside "what is this app
+        // used for?" and offered to link it — the check meant to stop weak guesses became
+        // one itself.
+        let words = Set(
+            query.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init))
         let command = package.command.lowercased()
         let name = package.name.lowercased()
-        if !command.isEmpty, query.contains(command) { return true }
-        if !name.isEmpty, query.contains(name) { return true }
+        if !command.isEmpty, words.contains(command) { return true }
+        // A multi-word package name has to appear as a phrase, so compare on word boundaries
+        // rather than raw containment.
+        if !name.isEmpty, name != command {
+            let nameWords = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+            if !nameWords.isEmpty, nameWords.allSatisfy({ words.contains($0) }) { return true }
+        }
         return false
     }
 
