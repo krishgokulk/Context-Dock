@@ -2,9 +2,16 @@ import AppKit
 import SwiftUI
 import Vision
 
+/// Text Snipper + screenshot capture.
+///
+/// Everything here funnels through `/usr/sbin/screencapture -i`, which needs three
+/// things the old implementation left to chance: Screen Recording permission (without
+/// it the picker never draws and the file is never written), a clear screen (our own
+/// launcher sits at status-window level, so it drew *over* the crosshair and ended up
+/// inside the shot), and feedback — every failure used to `return` in silence, which is
+/// what "Capture Text doesn't work" looked like from the outside.
 final class ScreenCaptureService: @unchecked Sendable {
     static let shared = ScreenCaptureService()
-    private let captureLock = NSLock()
     private init() {}
 
     enum CaptureKind {
@@ -15,37 +22,12 @@ final class ScreenCaptureService: @unchecked Sendable {
 
     func capture(_ kind: CaptureKind) {
         Task.detached(priority: .userInitiated) {
-            // A global hotkey can be repeated while the native selection overlay is
-            // still up. Launching two screencapture pickers makes both appear to fail.
-            guard self.captureLock.try() else {
-                await MainActor.run {
-                    AppToast.show("Capture already in progress", icon: "text.viewfinder", tint: .orange)
-                }
-                return
-            }
-            defer { self.captureLock.unlock() }
-
-            // The old implementation relied on the child `screencapture` process to
-            // signal this failure. It then returned silently, which looked exactly
-            // like a broken hotkey. Ask through our app identity and make the next
-            // action clear if macOS still denies the permission.
-            let canCapture = await MainActor.run { () -> Bool in
-                if CGPreflightScreenCaptureAccess() { return true }
-                return CGRequestScreenCaptureAccess() && CGPreflightScreenCaptureAccess()
-            }
-            guard canCapture else {
-                await MainActor.run {
-                    AppToast.show(
-                        "Capture Text needs Screen Recording access — allow Context Dock in Privacy & Security",
-                        icon: "text.viewfinder", tint: .orange)
-                }
-                return
-            }
-
             // Resolve the source app BEFORE screencapture takes over the front: the
             // clipboard scope shows "Copied from …", and once the picker is up the
             // frontmost app is screencapture, not the app the user grabbed from.
             let source = await MainActor.run { Self.captureSourceApp() }
+            guard await Self.ensureScreenRecordingAccess() else { return }
+            await Self.clearOwnWindowsFromScreen()
 
             let isSavedImage: Bool
             switch kind {
@@ -77,8 +59,12 @@ final class ScreenCaptureService: @unchecked Sendable {
                 // No -x: let screencapture play the native shutter sound so the user gets
                 // audible feedback that the full-screen shot was taken.
                 process.arguments = [url.path]
-            case .text, .area:
+            case .area:
                 process.arguments = ["-i", url.path]
+            case .text:
+                // -x mutes the shutter: a text snip is not a screenshot, and the Tink
+                // below is the confirmation that matters.
+                process.arguments = ["-i", "-x", url.path]
             }
             do {
                 try process.run()
@@ -86,24 +72,26 @@ final class ScreenCaptureService: @unchecked Sendable {
             } catch {
                 await MainActor.run {
                     AppToast.show(
-                        "Couldn’t start the screen capture picker", icon: "text.viewfinder", tint: .red)
+                        "Capture failed to start", icon: "exclamationmark.triangle", tint: .orange)
                 }
                 return
             }
-            // Non-zero status is the user pressing Escape on the picker — stay silent.
+            // Escape on the picker exits non-zero and writes nothing — that is a
+            // deliberate cancel, so stay silent. A zero exit with no file is a real
+            // failure and must say so.
             guard process.terminationStatus == 0 else { return }
             guard let data = try? Data(contentsOf: url), !data.isEmpty else {
                 await MainActor.run {
                     AppToast.show(
-                        "Capture produced no image — try selecting the text again",
-                        icon: "text.viewfinder", tint: .orange)
+                        "Nothing captured — try selecting a larger area",
+                        icon: "viewfinder", tint: .orange)
                 }
                 return
             }
 
             switch kind {
             case .text:
-                let text = Self.recognizeText(in: url)
+                let text = Self.recognizeText(in: data)
                 guard !text.isEmpty else {
                     await MainActor.run {
                         AppToast.show(
@@ -157,6 +145,46 @@ final class ScreenCaptureService: @unchecked Sendable {
         }
     }
 
+    // MARK: - Preconditions
+
+    /// `screencapture` runs under *our* Screen Recording grant. Without it the picker
+    /// never appears and the command quietly writes nothing, so ask up front and send
+    /// the user straight to the right Settings pane.
+    @MainActor
+    private static func ensureScreenRecordingAccess() -> Bool {
+        if CGPreflightScreenCaptureAccess() { return true }
+        // Fires the system prompt the first time; a no-op once the user has answered.
+        if CGRequestScreenCaptureAccess() { return true }
+        AppToast.show(
+            "Screen Recording permission needed to capture",
+            icon: "lock.shield", tint: .orange, duration: 6,
+            actionTitle: "Open Settings",
+            action: {
+                if let url = URL(
+                    string:
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                ) {
+                    NSWorkspace.shared.open(url)
+                }
+            })
+        return false
+    }
+
+    /// The launcher panel lives at status-window level — above screencapture's crosshair
+    /// overlay. Left on screen it swallowed the drag and landed inside the captured
+    /// image; anything behind it could never be snipped at all.
+    @MainActor
+    private static func clearOwnWindowsFromScreen() async {
+        AppToast.hide()
+        if AppDelegate.shared?.launcherWindow?.isVisible == true {
+            AppDelegate.shared?.smartScopeActive = false
+            AppDelegate.shared?.hideLauncher(force: true)
+        }
+        // Give the window server a beat to actually take the panels off screen before
+        // the picker starts compositing.
+        try? await Task.sleep(nanoseconds: 150_000_000)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -173,40 +201,91 @@ final class ScreenCaptureService: @unchecked Sendable {
         return ("", "")
     }
 
-    private static func recognizeText(in url: URL) -> String {
+    // MARK: - Recognition
+
+    private static func recognizeText(in data: Data) -> String {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return "" }
+
+        if let text = recognize(image), !text.isEmpty { return text }
+
+        // A tight snip around a single word or a line of small UI text can be too few
+        // pixels for the recogniser. One upscaled retry costs milliseconds and rescues
+        // exactly the captures a text snipper is used for.
+        guard let upscaled = upscale(image, factor: 3), let text = recognize(upscaled) else {
+            return ""
+        }
+        return text
+    }
+
+    private static func recognize(_ image: CGImage) -> String? {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
+        // Default is 1/32 of the image height — on a full-screen grab that discards
+        // ordinary body text. A snipper must read whatever is inside the rectangle.
+        request.minimumTextHeight = 0
+        if #available(macOS 13.0, *) {
+            request.automaticallyDetectsLanguage = true
+        }
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
-            try VNImageRequestHandler(url: url, options: [:]).perform([request])
+            try handler.perform([request])
         } catch {
-            return ""
+            return nil
         }
-        // Vision does not guarantee array order. Rebuild reading order from the
-        // observations' image-space bounds: top-to-bottom, then left-to-right
-        // within the same visual line. This keeps paragraphs, menus, and tables
-        // useful after they land on the clipboard.
-        let lines = (request.results ?? []).compactMap { observation -> OCRLine? in
-            guard let text = observation.topCandidates(1).first?.string
-                .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
-            else { return nil }
-            return OCRLine(text: text, bounds: observation.boundingBox)
+        return readingOrderText(from: request.results ?? [])
+    }
+
+    /// Vision returns observations without a guaranteed layout order, so raw joining
+    /// scrambles documents, webpages and anything with columns. Group observations that
+    /// share a baseline into lines, order each line left→right, then lines top→bottom.
+    private static func readingOrderText(from observations: [VNRecognizedTextObservation]) -> String {
+        let boxes = observations.compactMap { observation -> (text: String, box: CGRect)? in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            return (candidate.string, observation.boundingBox)
         }
-        let ordered = lines.sorted { lhs, rhs in
-            let lineTolerance = max(lhs.bounds.height, rhs.bounds.height) * 0.55
-            if abs(lhs.bounds.midY - rhs.bounds.midY) <= lineTolerance {
-                return lhs.bounds.minX < rhs.bounds.minX
+        guard !boxes.isEmpty else { return "" }
+
+        var lines: [[(text: String, box: CGRect)]] = []
+        // Vision's origin is bottom-left: descending midY walks the page top to bottom.
+        for item in boxes.sorted(by: { $0.box.midY > $1.box.midY }) {
+            let tolerance = max(item.box.height, 0.005) * 0.6
+            if var line = lines.last, let reference = line.first,
+                abs(reference.box.midY - item.box.midY) <= tolerance
+            {
+                line.append(item)
+                lines[lines.count - 1] = line
+            } else {
+                lines.append([item])
             }
-            return lhs.bounds.midY > rhs.bounds.midY
         }
-        return ordered
-            .map(\.text)
+
+        return
+            lines
+            .map { line in
+                line.sorted { $0.box.minX < $1.box.minX }
+                    .map(\.text)
+                    .joined(separator: " ")
+            }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private struct OCRLine {
-        let text: String
-        let bounds: CGRect
+    private static func upscale(_ image: CGImage, factor: Int) -> CGImage? {
+        let width = image.width * factor
+        let height = image.height * factor
+        // Guard against a huge source turning into a gigapixel retry.
+        guard width * height <= 40_000_000 else { return nil }
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 }
