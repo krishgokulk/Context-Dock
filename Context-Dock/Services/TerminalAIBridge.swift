@@ -223,7 +223,12 @@ class TerminalAIBridge: ObservableObject {
     /// re-prompts and NEVER touches the pending-approval continuation. Uses the reliable
     /// background/terminal executor (real exit code + captured output), not a PTY marker
     /// wait — so an inline "Approve & Run" always produces output.
-    func runPreApprovedCommand(_ command: String) async -> (success: Bool, output: String) {
+    /// - Parameter onLine: receives each output line as it arrives, so a caller can show
+    ///   live progress instead of a frozen spinner until the command exits.
+    func runPreApprovedCommand(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> (success: Bool, output: String) {
         var command = command
         switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
         case .clean:
@@ -245,7 +250,8 @@ class TerminalAIBridge: ObservableObject {
             }
             return (false, message)
         }
-        return await executeCommand(command, classification: classification, wasApproved: true)
+        return await executeCommand(
+            command, classification: classification, wasApproved: true, onLine: onLine)
     }
 
     // MARK: - Direct Execution
@@ -254,7 +260,8 @@ class TerminalAIBridge: ObservableObject {
     private func executeCommand(
         _ command: String,
         classification: TerminalCommandClassifier.CommandClassification,
-        wasApproved: Bool
+        wasApproved: Bool,
+        onLine: (@Sendable (String) -> Void)? = nil
     ) async -> (success: Bool, output: String) {
         isExecuting = true
         currentCommand = command
@@ -279,7 +286,7 @@ class TerminalAIBridge: ObservableObject {
         }
 
         // Execute in terminal if available, otherwise background
-        let (output, exitCode) = await executeInTerminalOrBackground(command)
+        let (output, exitCode) = await executeInTerminalOrBackground(command, onLine: onLine)
 
         // CLI scope terminals are transcript surfaces for non-interactive work:
         // execute once for a real result, then render that result in the visible PTY.
@@ -502,7 +509,10 @@ class TerminalAIBridge: ObservableObject {
     }
 
     /// Execute command either in visible terminal or background
-    private func executeInTerminalOrBackground(_ command: String) async -> (output: String, exitCode: Int32) {
+    private func executeInTerminalOrBackground(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> (output: String, exitCode: Int32) {
         // TUI / interactive apps MUST go to the visible terminal (real PTY)
         if isTUICommand(command) {
             if let controller = terminalController {
@@ -534,7 +544,8 @@ class TerminalAIBridge: ObservableObject {
 
         // Non-interactive commands: stream line-by-line to active panel, capture full output
         let lineHandler = streamLineHandler
-        let bgResult = await executeInBackground(command, onLine: lineHandler)
+        let bgResult = await executeInBackground(
+            command, onLine: onLine ?? lineHandler)
 
         // If the command itself complains it needs a TTY, re-route to visible terminal
         let interactivePhrases = ["requires an interactive terminal", "is running interactively", "needs a terminal", "not a tty", "no tty present"]

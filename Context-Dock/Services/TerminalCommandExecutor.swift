@@ -15,8 +15,11 @@ final class TerminalCommandExecutor {
         await bridge.processAICommand(command, purpose: purpose)
     }
 
-    func runPreApproved(_ command: String) async -> (success: Bool, output: String) {
-        await bridge.runPreApprovedCommand(command)
+    func runPreApproved(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> (success: Bool, output: String) {
+        await bridge.runPreApprovedCommand(command, onLine: onLine)
     }
 
     func spawnWorker(command: String, purpose: String) -> String {

@@ -1110,9 +1110,26 @@ extension LauncherView {
             }
         }
         Task {
-            await MainActor.run { dockTraceStep("Running \(command)…") }
-            let result = await TerminalCommandExecutor.shared.runPreApproved(command)
-            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run {
+                // Without this the chat sat silent until the command exited — `mole clean`
+                // runs for minutes, and nothing on screen said it was working.
+                l2.isLoading = true
+                dockTraceStep("Running \(command)…")
+            }
+            let result = await TerminalCommandExecutor.shared.runPreApproved(command) { line in
+                // Live progress: the tool's own latest line, cleaned of the escape codes it
+                // prints for colour. Status only — the full output is kept for the answer.
+                let clean = TerminalPackageManager.strippingANSI(line)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !clean.isEmpty else { return }
+                let shown = clean.count > 80 ? String(clean.prefix(80)) + "…" : clean
+                Task { @MainActor in l2.loadingStatus = shown }
+            }
+            // Stored stripped: the collapsed output view is not a terminal emulator, so raw
+            // CSI sequences rendered as literal "[0;32m" noise around every line.
+            let output = TerminalPackageManager.strippingANSI(result.output)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run { l2.isLoading = false }
             await MainActor.run {
                 dockTraceStep(
                     result.success
