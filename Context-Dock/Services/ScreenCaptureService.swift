@@ -4,12 +4,11 @@ import Vision
 
 /// Text Snipper + screenshot capture.
 ///
-/// Everything here funnels through `/usr/sbin/screencapture -i`, which needs three
-/// things the old implementation left to chance: Screen Recording permission (without
-/// it the picker never draws and the file is never written), a clear screen (our own
-/// launcher sits at status-window level, so it drew *over* the crosshair and ended up
-/// inside the shot), and feedback — every failure used to `return` in silence, which is
-/// what "Capture Text doesn't work" looked like from the outside.
+/// Everything here funnels through `/usr/sbin/screencapture -i`, which needs two things
+/// the old implementation left to chance: Screen Recording permission (without it the
+/// picker never draws and the file is never written), and feedback — every failure used
+/// to `return` in silence, which is what "Capture Text doesn't work" looked like from
+/// the outside. The dock itself stays on screen throughout; see `holdDockThroughCapture`.
 final class ScreenCaptureService: @unchecked Sendable {
     static let shared = ScreenCaptureService()
     private init() {}
@@ -25,19 +24,9 @@ final class ScreenCaptureService: @unchecked Sendable {
             // Resolve the source app BEFORE screencapture takes over the front: the
             // clipboard scope shows "Copied from …", and once the picker is up the
             // frontmost app is screencapture, not the app the user grabbed from.
-            // Snapshot the source app AND whether the dock was up in the *same* main-thread
-            // hop the hotkey lands on. Reading visibility later was the bug behind "the dock
-            // never came back": anything that hid the panel in the milliseconds between the
-            // key press and this task made the snapshot read `false`, and a false snapshot
-            // means nothing gets restored afterwards.
-            let (source, dockWasVisible) = await MainActor.run {
-                (Self.captureSourceApp(), Self.launcherIsOnScreen())
-            }
-            guard await Self.ensureScreenRecordingAccess() else {
-                await MainActor.run { Self.restoreOwnWindows(dockWasVisible) }
-                return
-            }
-            await Self.hideOwnWindowsForCapture(dockWasVisible)
+            let source = await MainActor.run { Self.captureSourceApp() }
+            guard await Self.ensureScreenRecordingAccess() else { return }
+            await MainActor.run { Self.holdDockThroughCapture() }
 
             let isSavedImage: Bool
             switch kind {
@@ -81,15 +70,13 @@ final class ScreenCaptureService: @unchecked Sendable {
                 process.waitUntilExit()
             } catch {
                 await MainActor.run {
-                    Self.restoreOwnWindows(dockWasVisible)
+                    Self.releaseDockAfterCapture()
                     AppToast.show(
                         "Capture failed to start", icon: "exclamationmark.triangle", tint: .orange)
                 }
                 return
             }
-            // Put the dock back the moment the picker is gone — before OCR, so the scope
-            // the user was in reappears immediately rather than after recognition.
-            await MainActor.run { Self.restoreOwnWindows(dockWasVisible) }
+            await MainActor.run { Self.releaseDockAfterCapture() }
             // Escape on the picker exits non-zero and writes nothing — that is a
             // deliberate cancel, so stay silent. A zero exit with no file is a real
             // failure and must say so.
@@ -190,77 +177,33 @@ final class ScreenCaptureService: @unchecked Sendable {
         return false
     }
 
-    /// The launcher panel lives at status-window level — above screencapture's crosshair
-    /// overlay. Left on screen it swallowed the drag and landed inside the captured
-    /// image; anything behind it could never be snipped at all.
+    /// Keep the dock exactly where it is for the duration of the picker.
     ///
-    /// This orders the window out directly rather than calling `hideLauncher(force:)`:
-    /// a forced hide *ends the session* — it drops `smartScopeActive`, clears the active
-    /// scope key and unpins — so capturing from inside an app or Terminal scope threw
-    /// that scope away. Taking the panel off screen changes nothing the user set up, and
-    /// `restoreOwnWindows` puts it back exactly as it was.
+    /// It deliberately does NOT hide the launcher. An earlier version did, on the theory
+    /// that our status-level panel sat over screencapture's crosshair — it does not, and
+    /// hiding it threw away whatever scope the user was working in. The only thing that
+    /// needs suppressing is the ordinary focus-loss hide: screencapture activates itself,
+    /// our panel resigns key, and the dock would vanish mid-capture.
     @MainActor
-    private static func launcherIsOnScreen() -> Bool {
-        let window = AppDelegate.shared?.launcherWindow
-        #if DEBUG
-        let visibleWindows = NSApp.windows
-            .filter { $0.isVisible }
-            .map { "\(type(of: $0))<\($0.windowNumber)> a=\($0.alphaValue)" }
-            .joined(separator: ", ")
-        NSLog(
-            "[capture] snapshot delegate=\(AppDelegate.shared != nil) "
-                + "launcherWindow=\(window.map { "#\($0.windowNumber)" } ?? "nil") "
-                + "isVisible=\(window?.isVisible ?? false) alpha=\(window?.alphaValue ?? -1) "
-                + "key=\(window?.isKeyWindow ?? false) appActive=\(NSApp.isActive) "
-                + "onScreen=[\(visibleWindows)]")
-        #endif
-        return window?.isVisible == true
-    }
-
-    @MainActor
-    private static func hideOwnWindowsForCapture(_ dockWasVisible: Bool) async {
+    private static func holdDockThroughCapture() {
         AppToast.hide()
-        guard dockWasVisible, let delegate = AppDelegate.shared,
-            let window = delegate.launcherWindow
-        else { return }
-
-        // screencapture activates itself, so our panel resigns key and the normal
-        // focus-loss path starts hiding the dock for real — including a 0.15s fade whose
-        // completion handler orders the window out *after* we have put it back. Suppress
-        // that path for the whole capture instead of racing it.
+        guard let delegate = AppDelegate.shared else { return }
         delegate.suppressHideOnResignUntil = Date().addingTimeInterval(Self.captureHoldSeconds)
-        #if DEBUG
-        NSLog("[capture] hiding dock for picker")
-        #endif
-        window.orderOut(nil)
-        // Give the window server a beat to actually take the panel off screen before
-        // the picker starts compositing.
-        try? await Task.sleep(nanoseconds: 150_000_000)
     }
 
-    /// Long enough for an unhurried drag; the hold is released the moment the picker ends.
+    /// A capture lasts as long as the user takes to drag; the hold is released the moment
+    /// the picker exits.
     private static let captureHoldSeconds: TimeInterval = 300
 
     @MainActor
-    private static func restoreOwnWindows(_ wasVisible: Bool) {
-        #if DEBUG
-        NSLog("[capture] restore requested wasVisible=\(wasVisible)")
-        #endif
+    private static func releaseDockAfterCapture() {
         guard let delegate = AppDelegate.shared else { return }
-        guard wasVisible, let window = delegate.launcherWindow else {
-            delegate.suppressHideOnResignUntil = .distantPast
-            return
-        }
-        window.alphaValue = 1
-        // orderFrontRegardless keeps the app non-activating: the dock comes back floating
-        // over whatever the user captured from, which stays frontmost.
-        window.orderFrontRegardless()
-        #if DEBUG
-        NSLog("[capture] restored dock, isVisible=\(window.isVisible)")
-        #endif
-        // A short tail: the captured app activates right after the picker closes, which
-        // is one more resign the dock should survive. Then normal behaviour resumes.
+        // One more resign arrives as the captured app takes focus back — ride that out,
+        // then normal hide-on-focus-loss resumes.
         delegate.suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
+        guard let window = delegate.launcherWindow, window.isVisible else { return }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
     }
 
     // MARK: - Helpers
