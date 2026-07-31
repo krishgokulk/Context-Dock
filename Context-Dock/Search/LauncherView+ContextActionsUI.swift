@@ -1095,6 +1095,60 @@ extension LauncherView {
     /// panel for live output, runs through the background/terminal executor (real exit code
     /// + captured output — no fragile PTY-marker wait), appends the result to the chat, and
     /// feeds it back to the model for a plain answer.
+    /// Ceiling on chained commands for one request. Three is enough for the common
+    /// wrong-command-then-right-command recovery without letting a failing tool loop.
+    static let maxScopedCommandAttempts = 3
+
+    /// The model asks for another command by putting `RUN: <command>` on its own line.
+    static func parseLoopCommand(_ reply: String) -> String? {
+        for raw in reply.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.uppercased().hasPrefix("RUN:") else { continue }
+            let command = line.dropFirst(4)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            return command.isEmpty ? nil : command
+        }
+        return nil
+    }
+
+    /// Removes the directive line so a reply that both explains and proposes does not show
+    /// the user machine syntax.
+    static func strippingLoopDirective(_ reply: String) -> String {
+        let kept = reply.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("RUN:") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return kept.isEmpty ? reply : kept
+    }
+
+    /// Prompt for one turn of the loop: everything run so far, and the two allowed replies.
+    func scopedLoopPrompt(
+        originalQuestion: String,
+        transcript: [(command: String, output: String)],
+        canRunAnother: Bool
+    ) -> String {
+        var lines = ["User asked:", originalQuestion, ""]
+        for (index, step) in transcript.enumerated() {
+            lines.append("Command \(index + 1): \(step.command)")
+            lines.append("Output \(index + 1):")
+            lines.append(step.output.isEmpty ? "(no output)" : step.output)
+            lines.append("")
+        }
+        if canRunAnother {
+            lines.append(
+                "If the output answers the request, answer it concisely and say nothing else. "
+                + "If it does not — wrong command, missing argument, empty or error output — "
+                + "reply with exactly one line `RUN: <command>` giving the single next command "
+                + "to try, using only subcommands documented for this tool. Do not invent flags.")
+        } else {
+            lines.append(
+                "Answer the request from the output above. No more commands can be run, so "
+                + "if it still cannot be answered, say what is missing.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func runApprovedScopedCommand(_ command: String, originalQuestion: String) {
         // Only an interactive command needs a visible terminal. Everything else already runs
         // headless with its output captured, and that output is appended to the chat below —
@@ -1110,82 +1164,104 @@ extension LauncherView {
             }
         }
         Task {
-            await MainActor.run {
-                // Without this the chat sat silent until the command exited — `mole clean`
-                // runs for minutes, and nothing on screen said it was working.
-                l2.isLoading = true
-                dockTraceStep("Running \(command)…")
-            }
-            let result = await TerminalCommandExecutor.shared.runPreApproved(command) { line in
-                // Live progress: the tool's own latest line, cleaned of the escape codes it
-                // prints for colour. Status only — the full output is kept for the answer.
-                let clean = TerminalPackageManager.strippingANSI(line)
+            // Agentic loop: run, judge the result against what was asked, and either answer
+            // or take one more step. Bounded — an unbounded loop on a tool that keeps
+            // erroring would run commands forever.
+            var transcript: [(command: String, output: String)] = []
+            var current = command
+
+            for attempt in 1...Self.maxScopedCommandAttempts {
+                await MainActor.run {
+                    // Without this the chat sat silent until the command exited — `mole clean`
+                    // runs for minutes, and nothing on screen said it was working.
+                    l2.isLoading = true
+                    dockTraceStep(
+                        attempt == 1
+                            ? "Running \(current)…"
+                            : "Step \(attempt): running \(current)…")
+                }
+                let result = await TerminalCommandExecutor.shared.runPreApproved(current) { line in
+                    // Live progress: the tool's own latest line, cleaned of the escape codes it
+                    // prints for colour. Status only — the full output is kept for the answer.
+                    let clean = TerminalPackageManager.strippingANSI(line)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !clean.isEmpty else { return }
+                    let shown = clean.count > 80 ? String(clean.prefix(80)) + "…" : clean
+                    Task { @MainActor in l2.loadingStatus = shown }
+                }
+                // Stored stripped: the collapsed output view is not a terminal emulator, so raw
+                // CSI sequences rendered as literal "[0;32m" noise around every line.
+                let output = TerminalPackageManager.strippingANSI(result.output)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !clean.isEmpty else { return }
-                let shown = clean.count > 80 ? String(clean.prefix(80)) + "…" : clean
-                Task { @MainActor in l2.loadingStatus = shown }
-            }
-            // Stored stripped: the collapsed output view is not a terminal emulator, so raw
-            // CSI sequences rendered as literal "[0;32m" noise around every line.
-            let output = TerminalPackageManager.strippingANSI(result.output)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            await MainActor.run { l2.isLoading = false }
-            await MainActor.run {
-                dockTraceStep(
-                    result.success
-                        ? "Ran \(command)" : "\(command) failed")
-            }
-            // The command run is a step, not a message. Its output rides along as collapsed
-            // detail on the answer below, so the conversation reads as prose with the work
-            // one tap away — instead of a bubble repeating the whole transcript.
-            guard result.success, !output.isEmpty else {
+                let ranCommand = current
                 await MainActor.run {
-                    // No prose answer will follow, so this run has to stand on its own.
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .tool,
-                            content: result.success
-                                ? "\(command) — no output"
-                                : "\(command) — failed",
-                            isError: !result.success,
-                            trace: l2.routerTrace,
-                            runOutput: output.isEmpty ? nil : output
-                        )
-                    )
+                    l2.isLoading = false
+                    dockTraceStep(result.success ? "Ran \(ranCommand)" : "\(ranCommand) failed")
                 }
-                return
-            }
-            do {
-                let history = await MainActor.run { l2.chatMessages }
-                let answer = try await sendToAIProviderWithContext(
-                    query: """
-                        User asked:
-                        \(originalQuestion)
+                transcript.append((ranCommand, output))
 
-                        CLI command:
-                        \(command)
-
-                        CLI output:
-                        \(output)
-
-                        Answer user from this CLI output. Be concise. Do not suggest another command unless output is incomplete.
-                        """,
-                    messageHistory: history
-                )
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant, content: answer,
-                            trace: l2.routerTrace, runOutput: output))
+                // Ask what to do next. A failed or empty run is still worth judging: knowing
+                // the command was wrong is exactly what lets the next step be right, which is
+                // the behaviour that was missing — `pear help list` returned nothing useful
+                // and the loop simply stopped instead of trying `pear --help`.
+                let decision: String
+                do {
+                    let history = await MainActor.run { l2.chatMessages }
+                    decision = try await sendToAIProviderWithContext(
+                        query: scopedLoopPrompt(
+                            originalQuestion: originalQuestion,
+                            transcript: transcript,
+                            canRunAnother: attempt < Self.maxScopedCommandAttempts),
+                        messageHistory: history)
+                } catch {
+                    // No verdict arrived, so surface the raw output rather than losing it.
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .tool, content: ranCommand,
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
                 }
-            } catch {
-                // No prose answer arrived, so surface the raw output rather than losing it.
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .tool, content: command,
-                            trace: l2.routerTrace, runOutput: output))
+
+                // A next step is a command on its own line after RUN:. Anything else is the
+                // answer, which is also what an exhausted attempt budget produces.
+                guard let next = Self.parseLoopCommand(decision),
+                    attempt < Self.maxScopedCommandAttempts
+                else {
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: Self.strippingLoopDirective(decision),
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
                 }
+
+                // The app's own risk policy decides whether a follow-up may run unattended:
+                // safe and low are documented as auto-execute, everything above needs the
+                // user. Letting the model pick its own next command is only acceptable
+                // because that gate is here.
+                let classification = TerminalCommandClassifier.shared.classify(next)
+                guard classification.riskLevel <= .low else {
+                    await MainActor.run {
+                        dockTraceStep("Next step needs your approval: \(next)")
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .approval,
+                                content: next,
+                                structuredData:
+                                    "Continue: \(originalQuestion)|||/\(classification.riskLevel.displayName)",
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+                await MainActor.run { dockTraceStep("Not answered yet — trying \(next)") }
+                current = next
             }
         }
     }
