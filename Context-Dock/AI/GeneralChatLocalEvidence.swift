@@ -74,6 +74,10 @@ enum GeneralChatLocalEvidence {
                 guard commands.count < 4 else { continue }
                 commands.append("\(displayName) (CLI tool `\(command)`)")
 
+            case .adapterAction(_, let appName, _):
+                guard commands.count < 4 else { continue }
+                commands.append("\(doc.title) (\(appName) action you added in App Adapters)")
+
             case .launchPath, .launchBundleId, .activatePID:
                 guard apps.count < appLimit else { continue }
                 let state = running.contains(doc.bundleId.lowercased()) ? "running" : "installed"

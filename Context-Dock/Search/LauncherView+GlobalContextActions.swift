@@ -3044,6 +3044,58 @@ extension LauncherView {
                 results.append(result)
                 continue
 
+            case .adapterAction(let bundleId, let appName, let actionId):
+                // Actions the user authored in App Adapters, runnable from anywhere rather
+                // than only after scoping to the app. Executed through the same
+                // AppAdapterManager.execute the dock and scope rows use.
+                guard
+                    let action = AppAdapterManager.shared
+                        .actions(for: bundleId)
+                        .first(where: { $0.id == actionId })
+                else { continue }
+                icon = doc.icon
+                let capturedDoc = doc
+                let capturedBundleId = bundleId
+                let capturedAppName = appName
+                var result = SearchResult(
+                    title: action.name,
+                    subtitle: "\(appName) · \(action.type.displayName)",
+                    icon: icon,
+                    action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
+                        let capturedContext = effectiveAXContextForConversation()
+                        Task {
+                            AppInteractionStore.shared.record(
+                                bundleId: capturedBundleId,
+                                appName: capturedAppName,
+                                query: query,
+                                kind: action.type == .pageJS ? .pageJS : .adapterAction,
+                                actionId: action.id
+                            )
+                            let outcome = await AppAdapterManager.shared.execute(
+                                action,
+                                context: capturedContext,
+                                targetBundleId: capturedBundleId,
+                                query: query
+                            )
+                            guard !outcome.0 else { return }
+                            let detail = outcome.1.trimmingCharacters(in: .whitespacesAndNewlines)
+                            await MainActor.run {
+                                AppToast.show(
+                                    detail.isEmpty ? "Couldn't run \(action.name)" : detail,
+                                    icon: "exclamationmark.triangle", tint: .orange, duration: 4)
+                            }
+                        }
+                    },
+                    type: .extensionCommand,
+                    filePath: nil,
+                    contactData: nil,
+                    stableID: doc.id
+                )
+                result.score = doc.sourceKind.rawValue
+                results.append(result)
+                continue
+
             case .cachedMenu:
                 continue
 
@@ -3122,7 +3174,7 @@ extension LauncherView {
             if !trimmedQuery.isEmpty {
                 AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
             }
-        case .systemCommandScope, .cliScope:
+        case .systemCommandScope, .cliScope, .adapterAction:
             AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
             AppUsageLearner.shared.recordAction(doc.title, inBundleID: usableBundleId)
         case .cachedMenu(_, _, let path, _, _):
@@ -3281,6 +3333,27 @@ extension LauncherView {
         for pkg in terminalPackageManager.packages
         where pkg.isEnabled && terminalPackageManager.isUserAddedGlobalScope(pkg) {
             addIfNew(.init(cliPackage: pkg, icon: cliIcon))
+        }
+
+        // 5b. Actions the user authored in App Adapters. Menu-bar actions are excluded
+        // because AXMenuReader owns menus and section 7 already indexes them; CLI-tool
+        // actions are excluded because they attach a terminal to a dock scope, which is not
+        // something a global search row can do.
+        for adapter in adapterManager.adapters where adapter.isEnabled {
+            let appName = adapter.appName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let bundleId = adapter.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bundleId.isEmpty, !bundleId.hasPrefix("cli://") else { continue }
+            let adapterIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            for action in adapter.visibleActions
+            where action.type != .menubar && action.type != .cliTool {
+                addIfNew(
+                    .init(
+                        adapterAction: action,
+                        appName: appName.isEmpty ? bundleId : appName,
+                        bundleId: bundleId,
+                        icon: adapterIcon))
+            }
         }
 
         // 6. Global system commands

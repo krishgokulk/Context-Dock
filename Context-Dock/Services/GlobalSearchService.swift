@@ -72,6 +72,8 @@ final class GlobalSearchService {
         case cliScope(command: String, displayName: String)
         case systemCommandScope(commandKey: String)
         case cachedMenu(bundleId: String, appName: String, path: [String], shortcutChar: String?, shortcutModifiers: Int)
+        /// An action the user authored in App Adapters, runnable from anywhere.
+        case adapterAction(bundleId: String, appName: String, actionId: String)
         case browserURL(url: URL, browserBundleId: String, browserName: String, kind: String, domain: String)
     }
 
@@ -446,6 +448,17 @@ final class GlobalSearchService {
             if let bid = appBundleId {
                 boost += min(AppUsageLearner.shared.score(forBundleID: bid) * 75.0, 520)
             }
+        case .adapterAction(let bundleId, _, _):
+            // Same learning signal as a menu command: it is an action the user runs on an
+            // app, and its title is what they see and pick.
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: bundleId.isEmpty ? appBundleId : bundleId
+                ) * 95.0,
+                760
+            )
         case .cliScope:
             boost += min(
                 AppUsageLearner.shared.blendedActionScore(
@@ -625,6 +638,42 @@ extension GlobalSearchService.SearchDocument {
             icon: icon,
             usageTrackingKey: "cli:\(pkg.command)",
             action: .cliScope(command: pkg.command, displayName: pkg.name.isEmpty ? pkg.command : pkg.name)
+        )
+    }
+
+    /// An action the user authored in App Adapters, as a searchable document.
+    init(
+        adapterAction action: AdapterAction,
+        appName: String,
+        bundleId: String,
+        icon: NSImage?
+    ) {
+        let norm = AppMenuCapabilityCache.normalize(action.name)
+        var aliases: [String] = []
+        let appNorm = AppMenuCapabilityCache.normalize(appName)
+        if !appNorm.isEmpty, appNorm != norm { aliases.append(appNorm) }
+        for trigger in action.triggers {
+            let t = AppMenuCapabilityCache.normalize(trigger)
+            if !t.isEmpty { aliases.append(t) }
+        }
+        let descNorm = AppMenuCapabilityCache.normalize(action.description)
+        if !descNorm.isEmpty { aliases.append(descNorm) }
+        self.init(
+            id: "adapter://\(bundleId)/\(action.id)",
+            title: action.name,
+            subtitle: "\(appName) · \(action.type.displayName)",
+            bundleId: bundleId,
+            filePath: nil,
+            normalizedTitle: norm,
+            titleWords: norm.split(separator: " ").map(String.init),
+            acronym: Self.acronym(from: norm),
+            aliases: aliases,
+            aliasWords: Self.words(fromAliases: aliases),
+            sourceKind: .cachedMenu,
+            rankingBoost: 0,
+            icon: icon,
+            usageTrackingKey: "adapter:\(bundleId):\(action.id)",
+            action: .adapterAction(bundleId: bundleId, appName: appName, actionId: action.id)
         )
     }
 
