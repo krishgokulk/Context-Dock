@@ -330,6 +330,38 @@ extension LauncherView {
     func scopedAppIdentityBlock(bundleId: String, appName: String) -> String {
         guard !bundleId.isEmpty || !appName.isEmpty else { return "" }
 
+        // A `cli://` scope is the executable itself, not an app adapter that happens to
+        // have command associations.  Letting it inherit those associations made a `mole`
+        // scope advertise `clean-diff` and the model quite reasonably selected the wrong
+        // tool.  Keep this capability boundary absolute: one CLI scope, one executable.
+        if let command = cliScopeToolCommand(for: bundleId) {
+            let package = TerminalPackageManager.shared.packages.first {
+                $0.command.caseInsensitiveCompare(command) == .orderedSame
+            }
+            var lines = [
+                "## Scoped CLI Tool: \(command) (\(bundleId))",
+                "This chat is scoped exclusively to the `\(command)` executable.",
+                "Only explain, inspect, or run `\(command)` commands. Do not use a linked app CLI, global CLI, adapter, menu, MCP tool, or a different executable.",
+                "For an unknown capability, run `\(command) --help` first; never invent a subcommand or option.",
+            ]
+            if let description = package?.description,
+                !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                lines.append("Description: \(description)")
+            }
+            if let help = package?.helpTextForPrompt,
+                !help.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                lines.append("\n## \(command) help reference\n\(help)")
+            }
+            lines.append(
+                "To run a command, emit exactly one JSON line: "
+                    + "{\"terminal_call\":{\"command\":\"\(command) <arguments>\",\"purpose\":\"<reason>\"}}. "
+                    + "Execution remains subject to Context Dock approval."
+            )
+            return lines.joined(separator: "\n")
+        }
+
         // What kind of surface is this?
         let surface: String = {
             if bundleId.hasPrefix("com.apple.Safari.WebApp") {
@@ -2642,6 +2674,15 @@ extension LauncherView {
             )
         }
 
+        // The scope's own tool, first. A cli:// scope IS a tool, but documentation was only
+        // collected from packages linked to the scope via contextAppBundleIds and from
+        // adapter actions attached to it. A globally pinned tool has neither, so scoping
+        // "mole" produced an empty block — and the model, given a scope named mole and no
+        // facts about it, answered about a different tool entirely. mole's own package
+        // already held 30k of help text and 11 subcommands.
+        if let scopeOwnCommand = cliScopeToolCommand(for: scopedBundleId) {
+            appendCommand(scopeOwnCommand)
+        }
         for action in scopedAdapterActions where action.type == .cliTool {
             appendCommand(action.cliToolCommand ?? "")
         }
@@ -2996,6 +3037,19 @@ extension LauncherView {
             return "Running \(tool)…"
         }
         return "Running \(tool) \(subcommand)…"
+    }
+
+    /// CLI scopes are an executable boundary, not a general shell.  The cloud and
+    /// on-device agents both ultimately arrive at this executor, so enforce the boundary
+    /// here as well as in the prompt.  This makes a stale package association unable to run
+    /// a different command from inside `cli://mole`.
+    func command(_ command: String, targetsScopedCLITool tool: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.split(whereSeparator: \.isWhitespace).first else { return false }
+        let executable = String(first).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        guard !executable.isEmpty else { return false }
+        return executable.caseInsensitiveCompare(tool) == .orderedSame
+            || URL(fileURLWithPath: executable).lastPathComponent.caseInsensitiveCompare(tool) == .orderedSame
     }
 
     func isCancellationError(_ error: Error) -> Bool {
@@ -4117,6 +4171,18 @@ extension LauncherView {
             return
         }
 
+        // ── Page actions (last routing step before a plain answer) ────────────
+        // Nothing above matched, and every route above matches something that already
+        // exists. A page request ("dark mode for this page", "hide the sidebar") has no
+        // menu item or adapter action anywhere — the capability belongs to the page — so
+        // in a browser scope write the userscript instead of explaining how to do it.
+        if tryAuthorBrowserPageAction(
+            query: query, scopedBundleId: scopedBundleId, scopedAppName: scopedAppName)
+        {
+            finishL2AIRequest(l2RequestID)
+            return
+        }
+
         // Display only the user's actual query in the chat UI (not the full context prompt)
         let userMessage = AIChatMessage(role: .user, content: query)
         l2.chatMessages.append(userMessage)
@@ -4362,6 +4428,12 @@ extension LauncherView {
                                 ? "Running linked CLI…"
                                 : self.cliAgentStatus(for: command, tool: cliTool),
                             requestID: l2RequestID)
+                        if let cliTool, !self.command(command, targetsScopedCLITool: cliTool) {
+                            return (
+                                false,
+                                "This chat is scoped to \(cliTool). Commands for other executables are not allowed in this scope."
+                            )
+                        }
                         if self.scopedAppHasPreferredNonTerminalRoute(
                             bundleId: scopedBundleId,
                             appName: scopedAppName.isEmpty
