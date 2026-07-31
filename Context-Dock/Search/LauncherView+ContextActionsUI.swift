@@ -1096,7 +1096,14 @@ extension LauncherView {
     /// + captured output — no fragile PTY-marker wait), appends the result to the chat, and
     /// feeds it back to the model for a plain answer.
     func runApprovedScopedCommand(_ command: String, originalQuestion: String) {
-        if !livePanelVisible || livePanelMode != .terminal {
+        // Only an interactive command needs a visible terminal. Everything else already runs
+        // headless with its output captured, and that output is appended to the chat below —
+        // so opening a PTY panel for it showed the same result twice, the second time as raw
+        // escape-coded transcript. Reveal the terminal only when the command genuinely needs
+        // a tty (top, vim, a REPL); otherwise the answer stays in the conversation.
+        if TerminalAIBridge.shared.isTUICommand(command),
+            !livePanelVisible || livePanelMode != .terminal
+        {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 livePanelMode = .terminal
                 livePanelVisible = true
@@ -1219,7 +1226,11 @@ extension LauncherView {
                         let command = msg.content
                         // Route the bridge to the scoped PTY, then resume the pending tool
                         // call. Sending directly to the PTY left the on-device loop waiting.
-                        if isInCLIToolScope {
+                        // Same rule as runApprovedScopedCommand: the scoped PTY is revealed
+                        // only for commands that need a tty. prepareForExecution also expands
+                        // the panel, so calling it for every approval was what opened a
+                        // terminal for `mole clean`.
+                        if isInCLIToolScope, TerminalAIBridge.shared.isTUICommand(command) {
                             _ = CLIScopeTerminalManager.shared.prepareForExecution()
                         }
                         // Bridge card whose tool loop is still awaiting THIS command →
