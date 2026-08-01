@@ -51,7 +51,17 @@
       "Bash(awk 'NR>=1250 && NR<=1290' Context-Dock/Search/LauncherView+ContextDetection.swift)",
       "Bash(awk 'NR>=624 && NR<=640' Context-Dock/App/ILauncherApp.swift)",
       "Bash(awk 'NR>=288 && NR<=296' Context-Dock/App/ILauncherApp.swift)",
-      "Bash(awk 'NR>=2510 && NR<=2545' Context-Dock/App/ILauncherApp.swift)"
+      "Bash(awk 'NR>=2510 && NR<=2545' Context-Dock/App/ILauncherApp.swift)",
+      "Bash(awk 'NR<=109 && /^    \\(private \\)?func /{f=$0; ln=NR} END{print ln\": \"f}' Context-Dock/Search/LauncherView+AIResponseHandling.swift)",
+      "Bash(awk 'NR>=4571 && NR<=4700' Context-Dock/Search/LauncherView+AIChat.swift)",
+      "Bash(awk 'NR>=1341 && NR<=1450' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
+      "Bash(awk 'NR>=2823 && NR<=2900' Context-Dock/Search/LauncherView+GlobalContextActions.swift)",
+      "Bash(awk 'NR>=5845 && NR<=5930' Context-Dock/Search/LauncherView+GlobalContextActions.swift)",
+      "Bash(awk 'NR>=5995 && NR<=6060' Context-Dock/Search/LauncherView+GlobalContextActions.swift)",
+      "Bash(awk 'NR>=340 && NR<=440' Context-Dock/Search/LauncherView+L2UnifiedDockRow.swift)",
+      "Bash(awk 'NR>=200 && NR<=340' Context-Dock/Search/LauncherView+L2UnifiedDockRow.swift)",
+      "Bash(awk 'NR>=300 && NR<=345' Context-Dock/Search/LauncherView+L2UnifiedDockRow.swift)",
+      "Bash(awk 'NR>=3395 && NR<=3430' Context-Dock/Search/LauncherView.swift)"
     ],
     "additionalDirectories": [
       "/Users/gokulakannan/Developer/Context-Dock"
