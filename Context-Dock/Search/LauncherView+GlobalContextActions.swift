@@ -3343,7 +3343,11 @@ extension LauncherView {
             let appName = adapter.appName.trimmingCharacters(in: .whitespacesAndNewlines)
             let bundleId = adapter.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !bundleId.isEmpty, !bundleId.hasPrefix("cli://") else { continue }
-            let adapterIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+            // The app icon is only a fallback. Each action carries its own SF Symbol and
+            // accent colour — the glyphs shown in Settings — and rows were rendering blank
+            // because a Safari Web App has no bundle URL to take an app icon from, leaving
+            // nil. The action's own symbol is both more available and more informative.
+            let appIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
                 .map { NSWorkspace.shared.icon(forFile: $0.path) }
             for action in adapter.visibleActions
             where action.type != .menubar && action.type != .cliTool {
@@ -3352,7 +3356,7 @@ extension LauncherView {
                         adapterAction: action,
                         appName: appName.isEmpty ? bundleId : appName,
                         bundleId: bundleId,
-                        icon: adapterIcon))
+                        icon: adapterActionSymbolImage(action) ?? appIcon))
             }
         }
 
@@ -5175,6 +5179,32 @@ extension LauncherView {
             ].map(normalizedDockPillText)
             return names.contains(title)
         }?.url
+    }
+
+    /// The action's own SF Symbol, tinted with its accent colour, as a row icon.
+    /// Nil when the symbol name is empty or macOS does not know it, so the caller can fall
+    /// back to the app icon rather than render an empty frame.
+    func adapterActionSymbolImage(_ action: AdapterAction) -> NSImage? {
+        let name = action.icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+            let image = NSImage(systemSymbolName: name, accessibilityDescription: action.name)
+        else { return nil }
+        let tint: NSColor
+        switch (action.accentColor ?? "blue").lowercased() {
+        case "red": tint = .systemRed
+        case "green": tint = .systemGreen
+        case "orange": tint = .systemOrange
+        case "yellow": tint = .systemYellow
+        case "purple": tint = .systemPurple
+        case "indigo": tint = .systemIndigo
+        case "teal": tint = .systemTeal
+        case "pink": tint = .systemPink
+        case "gray", "grey": tint = .secondaryLabelColor
+        default: tint = .systemBlue
+        }
+        let configured = image.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(paletteColors: [tint]))
+        return configured ?? image
     }
 
     func cachedGlobalAppScopeDockPills(
