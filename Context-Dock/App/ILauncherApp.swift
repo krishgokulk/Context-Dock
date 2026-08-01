@@ -61,6 +61,9 @@ class KeyableWindow: NSPanel {
     private var initialWindowOrigin: NSPoint?
     private var applyingDeferredFrame = false
     private var pendingDeferredFrame: (rect: NSRect, display: Bool, animate: Bool)?
+    /// True while the panel is mid surface-transition. Content-churn resizes are dropped
+    /// during it — a second setFrame lands as a visible hitch in the middle of the reveal.
+    private(set) var isAnimatingDockFrame = false
 
     override var canBecomeKey: Bool {
         return true
@@ -178,13 +181,47 @@ class KeyableWindow: NSPanel {
     /// size coordinator, however, has already prepared the matching SwiftUI surface and must not
     /// wait for a second run-loop turn — doing so briefly leaves a tall transparent panel around a
     /// short card.  Keeping this narrow escape hatch here preserves a single owner for anchoring.
-    func applyDockFrame(_ frameRect: NSRect, display: Bool = true) {
+    func applyDockFrame(_ frameRect: NSRect, display: Bool = true, animated: Bool = false) {
         pendingDeferredFrame = nil
-        applyAnchoredFrame(frameRect, display: display, animate: false)
+        guard animated else {
+            applyAnchoredFrame(frameRect, display: display, animate: false)
+            return
+        }
+        // Surface transitions (collapsed capsule ⇄ result sheet) are the ONE motion the user
+        // reads as "the launcher opening". The SwiftUI card is already laid out at its final
+        // height, so animating the panel alone reveals finished content — Spotlight's model.
+        // Core Animation drives it (never NSWindow's blocking animate:true, which freezes the
+        // run loop and stalls typing mid-expansion).
+        let target = anchorAdjusted(frameRect)
+        guard target != frame else { return }
+        isAnimatingDockFrame = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.dockExpansionDuration
+            // Fast start, long settle — matches the macOS system reveal curve. A plain
+            // easeInOut reads as sluggish at this size; a spring overshoot makes a window
+            // resize look wobbly because the glass edge is a hard line.
+            context.timingFunction = CAMediaTimingFunction(
+                controlPoints: 0.22, 1.0, 0.36, 1.0)
+            context.allowsImplicitAnimation = true
+            animator().setFrame(target, display: true)
+        } completionHandler: { [weak self] in
+            guard let self else { return }
+            self.isAnimatingDockFrame = false
+            // The transparent panel's drop shadow is computed from the glass shape; it
+            // keeps the pre-animation outline until invalidated at the final size.
+            self.invalidateShadow()
+        }
     }
 
+    /// One frame duration at 120 Hz, doubled for safety — how long the caller waits for
+    /// SwiftUI to commit the new content before the panel starts revealing it.
+    static let dockContentCommitDelay: UInt64 = 16_000_000
+    static let dockExpansionDuration: TimeInterval = 0.30
+
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        if isInsideSwiftUIDisplayCycle {
+        // Steps of our own Core Animation resize must land immediately: deferring them to
+        // the next run-loop turn drops frames and turns the reveal into a stutter.
+        if isInsideSwiftUIDisplayCycle, !isAnimatingDockFrame {
             deferAnchoredFrame(frameRect, display: flag, animate: false)
             return
         }
