@@ -3392,31 +3392,6 @@ struct LauncherView: View {
     }
 
     @discardableResult
-    func activateSelectedApplicationScopeFromRightArrowIfPossible() -> Bool {
-        guard searchInputCursorIsAtEnd(),
-            let index = searchState.selectedIndex,
-            searchState.results.indices.contains(index)
-        else { return false }
-
-        let result = searchState.results[index]
-        if isGlobalContextActive,
-            result.type == .extensionCommand,
-            result.subtitle.hasPrefix("syscmd://")
-        {
-            let activated = activateGlobalInlineScope(result: result, bundleID: result.subtitle)
-            if activated {
-                focusedAppPillIndex = nil
-                l2.focusedPillIndex = nil
-                reclaimSearchInputFocus()
-            }
-            return activated
-        }
-        guard !isGlobalContextActive,
-            result.type == .application || result.type == .cliTool
-        else { return false }
-        activateSearchContext(for: result)
-        return true
-    }
 
     /// Exits the pinned L2 dock scope (l2.targetApp) without clearing other state.
     func exitL2DockScope() {

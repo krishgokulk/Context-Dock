@@ -1303,6 +1303,16 @@ extension LauncherView {
 
             let presetChanged = self.lastAppliedDockHeightPreset != heightPreset
             let modeChanged = self.lastAppliedDockSurfaceMode != surfaceMode
+            // A reveal in flight owns the frame. Row churn (icons resolving, a late menu
+            // group) must not interrupt it with a second setFrame — that is the "expands,
+            // stops, expands again" stutter. It settles on the next request instead.
+            if let keyableWindow = window as? KeyableWindow,
+                keyableWindow.isAnimatingDockFrame,
+                !presetChanged,
+                !modeChanged
+            {
+                return
+            }
             let widthChanged = abs(currentFrame.width - newWidth) > 1
             let heightDelta = abs(currentFrame.height - newHeight)
             if heightPreset.stabilizesResize
@@ -1376,11 +1386,24 @@ extension LauncherView {
             withTransaction(noAnimation) {
                 self.renderedDockHeight = effectiveHeight
             }
-            await Task.yield()
+            // Collapsed capsule ⇄ result sheet is a surface transition: the panel animates
+            // it as one motion. Everything else (typing, a row appearing) stays instant so
+            // the dock never appears to lag behind the keyboard.
+            let isSurfaceTransition = animated && (presetChanged || modeChanged)
+            if isSurfaceTransition {
+                // The list is a LazyVStack clipped to zero height until it expands, so its
+                // rows do not exist in the frame where the transition begins. Give SwiftUI
+                // one commit to lay them out at the final height — off-window, invisible —
+                // then let the panel reveal finished content. Without this the reveal shows
+                // an empty sheet first and the rows pop in afterwards.
+                try? await Task.sleep(nanoseconds: KeyableWindow.dockContentCommitDelay)
+            } else {
+                await Task.yield()
+            }
             guard !Task.isCancelled, window.isVisible else { return }
 
             if let keyableWindow = window as? KeyableWindow {
-                keyableWindow.applyDockFrame(newFrame)
+                keyableWindow.applyDockFrame(newFrame, animated: isSurfaceTransition)
             } else {
                 window.setFrame(newFrame, display: true)
             }
@@ -2058,12 +2081,12 @@ extension LauncherView {
                 if acceptTopGlobalAppGhostCompletionIfPossible() {
                     return .handled
                 }
-                if activateSelectedApplicationScopeFromRightArrowIfPossible() {
-                    return .handled
-                }
-                if activateFocusedGlobalAppScopeIfPossible() {
-                    return .handled
-                }
+                // Entering an app scope belongs to Tab alone. Both keys used to do it, and
+                // Right Arrow is the one that costs something: inside a text field it means
+                // "move the caret", so editing mid-query could change scope instead. Tab has
+                // no text-editing meaning and is the launcher convention. Right Arrow keeps
+                // its own jobs above and below — accepting ghost text, drilling into a Finder
+                // folder, walking clipboard entries.
                 if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     focusTopGlobalAppResultIfPossible()
                 {
