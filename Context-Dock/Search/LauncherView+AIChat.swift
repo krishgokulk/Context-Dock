@@ -2869,6 +2869,18 @@ extension LauncherView {
     /// Decodes typed `terminal_call` JSON lines, strips them from the displayed message,
     /// and appends inline approval cards that run in the scoped dock terminal.
     @MainActor
+    /// Value of a `[KEY: value]` directive line, unquoted. Returns nil when the line is not
+    /// that directive, so ordinary prose mentioning the key in passing is left alone.
+    static func bracketDirectiveValue(_ line: String, key: String) -> String? {
+        guard line.hasPrefix("[\(key):"), line.hasSuffix("]") else { return nil }
+        let value = line
+            .dropFirst(key.count + 2)
+            .dropLast()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
+        return value.isEmpty ? nil : value
+    }
+
     func extractAndInsertDockApprovalCards(
         from response: String,
         intoMessageAt msgId: UUID
@@ -2876,6 +2888,9 @@ extension LauncherView {
         var cleanedLines: [String] = []
         var extractedCmds: [(command: String, purpose: String)] = []
         var lastNonCmdLine = ""
+
+        // A directive carried over two lines: the purpose usually follows the command.
+        var pendingBracketPurpose: String?
 
         for line in response.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2886,6 +2901,21 @@ extension LauncherView {
                     command,
                     invocation.arguments["purpose"] ?? lastNonCmdLine
                 ))
+            } else if let purpose = Self.bracketDirectiveValue(trimmed, key: "COMMAND_PURPOSE") {
+                // Attach to the command directly above, which is the order the prompt asks for.
+                if !extractedCmds.isEmpty {
+                    extractedCmds[extractedCmds.count - 1].purpose = purpose
+                } else {
+                    pendingBracketPurpose = purpose
+                }
+            } else if let command = Self.bracketDirectiveValue(trimmed, key: "TERMINAL_COMMAND") {
+                // The format AITerminalPrompts documents: [TERMINAL_COMMAND: <command>].
+                // Only typed invocations were recognised here, so a model that followed the
+                // documented instruction had its directive rendered to the user as prose.
+                // Apple Intelligence follows it most literally, which is why it showed there
+                // first — the models that ignored the convention were accidentally exempt.
+                extractedCmds.append((command, pendingBracketPurpose ?? lastNonCmdLine))
+                pendingBracketPurpose = nil
             } else {
                 cleanedLines.append(line)
                 if !trimmed.isEmpty { lastNonCmdLine = trimmed }
