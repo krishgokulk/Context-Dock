@@ -126,6 +126,11 @@ actor AppWorkspaceService {
         guard !readers.isEmpty else { return "" }
 
         var lines: [String] = []
+        // Local reads first: no process spawn, so the block is never empty just because a
+        // shell probe was slow.
+        for (label, value) in Self.localReaders(for: identity) {
+            lines.append("\(label):\n\(value)")
+        }
         for reader in readers {
             guard let value = await run(reader.command, limit: reader.limit), !value.isEmpty else {
                 continue
@@ -233,6 +238,109 @@ actor AppWorkspaceService {
                     limit: 300))
         }
         return readers
+    }
+
+    // MARK: - Local readers (no subprocess)
+
+    /// State that exists as files on this Mac. Read directly — spawning a shell to `cat`
+    /// them would add latency and an approval surface for nothing.
+    private static func localReaders(for identity: AppWorkspaceIdentity) -> [(String, String)] {
+        var out: [(String, String)] = []
+
+        // Claude Code writes a transcript per project. Both the Claude scope and the editor
+        // scope want it: it is the record of what the agent has been asked to do in THIS
+        // project, which is the closest thing the workspace has to a memory today.
+        if let path = identity.projectPath,
+            identity.bundleId == "com.anthropic.claudefordesktop" || isVSCodeFamily(identity.bundleId),
+            let activity = claudeCodeActivity(projectPath: path)
+        {
+            out.append(("Claude Code in this project", activity))
+        }
+
+        if identity.bundleId == "com.anthropic.claudefordesktop",
+            let servers = claudeDesktopMCPServers()
+        {
+            out.append(("Claude Desktop MCP servers", servers))
+        }
+        return out
+    }
+
+    /// Claude Code stores sessions at ~/.claude/projects/<path-with-slashes-as-dashes>/*.jsonl.
+    /// Returns when it last ran here, on which branch, and the last few things it was asked.
+    private static func claudeCodeActivity(projectPath: String) -> String? {
+        let slug = projectPath.replacingOccurrences(of: "/", with: "-")
+        let dir = NSHomeDirectory() + "/.claude/projects/" + slug
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir) else { return nil }
+        let transcripts = names.filter { $0.hasSuffix(".jsonl") }
+            .map { (path: dir + "/" + $0, modified: modificationDate(dir + "/" + $0)) }
+            .sorted { $0.modified > $1.modified }
+        guard let latest = transcripts.first, latest.modified > .distantPast else { return nil }
+
+        var lines: [String] = []
+        let ago = RelativeDateTimeFormatter()
+        ago.unitsStyle = .full
+        lines.append(
+            "Last session: \(ago.localizedString(for: latest.modified, relativeTo: Date())) "
+            + "(\(transcripts.count) session\(transcripts.count == 1 ? "" : "s") recorded)")
+
+        guard let contents = try? String(contentsOfFile: latest.path, encoding: .utf8) else {
+            return lines.joined(separator: "\n")
+        }
+        // Only the tail matters and these files get large — walk backwards.
+        let rows = contents.split(separator: "\n").suffix(400)
+        var branch: String?
+        var prompts: [String] = []
+        for row in rows.reversed() {
+            guard let data = row.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            if branch == nil, let value = object["gitBranch"] as? String, !value.isEmpty {
+                branch = value
+            }
+            guard prompts.count < 3,
+                (object["type"] as? String) == "user",
+                let message = object["message"] as? [String: Any],
+                let content = message["content"]
+            else { continue }
+            // A user row is either plain text or a content array; tool results are noise.
+            let text: String? = {
+                if let plain = content as? String { return plain }
+                guard let parts = content as? [[String: Any]] else { return nil }
+                let texts = parts.compactMap { part -> String? in
+                    guard (part["type"] as? String) == "text" else { return nil }
+                    return part["text"] as? String
+                }
+                return texts.isEmpty ? nil : texts.joined(separator: " ")
+            }()
+            guard var prompt = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !prompt.isEmpty, !prompt.hasPrefix("<")
+            else { continue }
+            if prompt.count > 120 { prompt = String(prompt.prefix(120)) + "…" }
+            prompts.append(prompt.replacingOccurrences(of: "\n", with: " "))
+        }
+        if let branch { lines.append("Branch during that session: \(branch)") }
+        if !prompts.isEmpty {
+            lines.append("Recently asked here:")
+            lines.append(contentsOf: prompts.map { "- \($0)" })
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func claudeDesktopMCPServers() -> String? {
+        let path = NSHomeDirectory()
+            + "/Library/Application Support/Claude/claude_desktop_config.json"
+        guard let data = FileManager.default.contents(atPath: path),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let servers = root["mcpServers"] as? [String: Any]
+        else { return nil }
+        guard !servers.isEmpty else { return "none configured" }
+        return servers.keys.sorted().joined(separator: ", ")
+    }
+
+    private static func modificationDate(_ path: String) -> Date {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+            .flatMap { $0 } ?? .distantPast
     }
 
     private static func isGitRepository(_ path: String) -> Bool {
