@@ -1529,9 +1529,10 @@ class L2UnifiedAssistant: ObservableObject {
 
         // Closure: routes each AI-requested tool call through TerminalAIBridge
         // (all approval UI, risk classification, and audit logging are preserved)
-        let commandExecutor: (String, String) async -> (Bool, String) = { [weak self] command, purpose in
+        let commandExecutor: (String, String, Bool) async -> (Bool, String) = { [weak self] command, purpose, needsApproval in
             guard let self else { return (false, "Internal error") }
-            return await self.terminalBridge.processAICommand(command, purpose: purpose)
+            return await self.terminalBridge.processAICommand(
+                command, purpose: purpose, modelRequiresApproval: needsApproval)
         }
 
         do {

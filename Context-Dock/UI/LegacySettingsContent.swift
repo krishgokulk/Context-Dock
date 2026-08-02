@@ -1868,7 +1868,7 @@ struct AIProviderSettingsView: View {
                 provider: provider,
                 apiKey: key,
                 conversationHistory: [],
-                commandExecutor: { command, _ in
+                commandExecutor: { command, _, _ in
                     (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output")
                 },
                 maxIterations: 2,

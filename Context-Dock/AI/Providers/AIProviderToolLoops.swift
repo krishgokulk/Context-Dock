@@ -197,7 +197,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String?,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         endpoint: String,
@@ -278,7 +278,8 @@ extension AIProviderService {
                     } else if tc.function.name == "run_command",
                        let command = args["command"] as? String,
                        let purpose = args["purpose"] as? String {
-                        (success, output) = await commandExecutor(command, purpose)
+                        let needsApproval = args["requires_approval"] as? Bool ?? false
+                        (success, output) = await commandExecutor(command, purpose, needsApproval)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(command))", output: output, success: success))
                     } else if tc.function.name == "spawn_worker",
                               let command = args["command"] as? String,
@@ -338,7 +339,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         model: String,
@@ -450,7 +451,8 @@ extension AIProviderService {
                 } else if toolName == "run_command",
                    let command = args["command"] as? String,
                    let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
+                    let needsApproval = args["requires_approval"] as? Bool ?? false
+                    (success, output) = await commandExecutor(command, purpose, needsApproval)
                     executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
                 } else if toolName == "spawn_worker",
                           let command = args["command"] as? String,
@@ -488,7 +490,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         imageAttachments: [URL] = [],
@@ -552,7 +554,8 @@ extension AIProviderService {
                 } else if fc.name == "run_command",
                    let command = args["command"] as? String,
                    let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
+                    let needsApproval = args["requires_approval"] as? Bool ?? false
+                    (success, output) = await commandExecutor(command, purpose, needsApproval)
                     executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
                 } else if fc.name == "spawn_worker",
                           let command = args["command"] as? String,

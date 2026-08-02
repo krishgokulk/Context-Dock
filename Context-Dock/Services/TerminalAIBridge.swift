@@ -125,7 +125,15 @@ class TerminalAIBridge: ObservableObject {
     // MARK: - Command Execution
 
     /// Process an AI-generated terminal command
-    func processAICommand(_ command: String, purpose: String) async -> (success: Bool, output: String) {
+    /// `modelRequiresApproval` is the model's own `requires_approval` answer from the
+    /// run_command tool call. It can only ever *add* friction: true forces the approval
+    /// sheet, false grants nothing on its own. The classifier stays the authority on
+    /// what is allowed to auto-run, so a model that lies with `false` changes nothing.
+    func processAICommand(
+        _ command: String,
+        purpose: String,
+        modelRequiresApproval: Bool = false
+    ) async -> (success: Bool, output: String) {
         // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
         // reach the shell. URL-shaped placeholders are substituted with the live page
         // URL when we have one; anything else unresolved blocks with a clear message.
@@ -155,8 +163,11 @@ class TerminalAIBridge: ObservableObject {
             return (false, message)
         }
 
-        // Check if auto-approval applies
-        if classification.shouldAutoExecute || TerminalCommandPreferences.shared.shouldAutoApprove(command) {
+        // Check if auto-approval applies. A model-declared requires_approval vetoes it —
+        // the model is the only party that knows the *intent* behind a command that the
+        // classifier can only see the shape of.
+        if !modelRequiresApproval,
+           classification.shouldAutoExecute || TerminalCommandPreferences.shared.shouldAutoApprove(command) {
             return await executeCommand(command, classification: classification, wasApproved: true)
         }
 

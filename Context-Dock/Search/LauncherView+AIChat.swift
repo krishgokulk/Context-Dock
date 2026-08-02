@@ -1704,7 +1704,8 @@ extension LauncherView {
                                 onInstallProposal: { json in installFromProposal(json) },
                                 onRunOnceProposal: { json in runOnceFromProposal(json) },
                                 onReplaceText: selectionScopeReplaceTextAction(for: message),
-                                onEnableApp: { req in enableAppForGeneralChat(req) }
+                                onPickAction: { choice in runPickedActionChoice(choice) },
+                                            onEnableApp: { req in enableAppForGeneralChat(req) }
                             )
                             .id(message.id)
                         }
@@ -2080,6 +2081,8 @@ extension LauncherView {
                 await MainActor.run {
                     let enableReq = self.aiMode.pendingEnableApp
                     self.aiMode.pendingEnableApp = nil
+                    let choices = self.aiMode.pendingActionChoices
+                    self.aiMode.pendingActionChoices = []
                     withAnimation {
                         // Auto-create: if the AI proposed a runnable extension (no route fit),
                         // tag the message so it shows Run once / Save buttons instead of just
@@ -2089,7 +2092,8 @@ extension LauncherView {
                             recentFiles: recentFiles,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             enableAppRequest: enableReq,
-                            trace: self.aiMode.routerTrace)
+                            trace: self.aiMode.routerTrace,
+                            actionChoices: choices)
                         self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
                         self.aiMode.routerTrace = []
@@ -4489,8 +4493,8 @@ extension LauncherView {
                     // In a CLI tool scope every status names the tool and the step, so the
                     // user can follow the agent: help probe → chosen subcommand → result.
                     let cliTool = self.cliScopeToolCommand(for: scopedBundleId)
-                    let commandExecutor: (String, String) async -> (Bool, String) = {
-                        command, purpose in
+                    let commandExecutor: (String, String, Bool) async -> (Bool, String) = {
+                        command, purpose, modelRequiresApproval in
                         // Run an installed adapter action (New Board, Zoom, Delete, deep link,
                         // shortcut, script) directly — this is the native route the model is told
                         // to prefer over terminal. AppAdapterManager.execute shows its own approval
@@ -4604,7 +4608,8 @@ extension LauncherView {
                             )
                         }
                         return await TerminalCommandExecutor.shared.run(
-                            command, purpose: purpose)
+                            command, purpose: purpose,
+                            modelRequiresApproval: modelRequiresApproval)
                     }
                     let toolQuery = activeContextPrompt.isEmpty
                         ? query
@@ -5314,7 +5319,7 @@ extension LauncherView {
             let next = (try? await AIProviderService.shared.sendWithTools(
                 followup, context: .none, provider: provider, apiKey: apiKey,
                 conversationHistory: transcript,
-                commandExecutor: { _, _ in (false, "") },
+                commandExecutor: { _, _, _ in (false, "") },
                 additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
             ))?.finalResponse ?? ""
             if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

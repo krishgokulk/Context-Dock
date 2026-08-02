@@ -10,9 +10,11 @@ final class TerminalCommandExecutor {
 
     func run(
         _ command: String,
-        purpose: String
+        purpose: String,
+        modelRequiresApproval: Bool = false
     ) async -> (success: Bool, output: String) {
-        await bridge.processAICommand(command, purpose: purpose)
+        await bridge.processAICommand(
+            command, purpose: purpose, modelRequiresApproval: modelRequiresApproval)
     }
 
     func runPreApproved(

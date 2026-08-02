@@ -1006,7 +1006,7 @@ extension LauncherView {
                     provider: provider,
                     apiKey: apiKey,
                     conversationHistory: history,
-                    commandExecutor: { cmd, purpose in
+                    commandExecutor: { cmd, purpose, modelRequiresApproval in
                         // Fix relative paths: if AI used "find . ..." or "ls" without absolute path
                         // and we're in a folder context, rewrite to use the folder's absolute path
                         let fixedCmd: String = {
@@ -1044,7 +1044,8 @@ extension LauncherView {
                             _ = self.panelTerminal(for: ck)
                         }
                         let result = await TerminalCommandExecutor.shared.run(
-                            fixedCmd, purpose: purpose)
+                            fixedCmd, purpose: purpose,
+                            modelRequiresApproval: modelRequiresApproval)
                         // Also send approved command to the panel's embedded PTY for live display
                         await MainActor.run {
                             let ck = self.activeConsoleKey
