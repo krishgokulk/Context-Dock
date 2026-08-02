@@ -410,9 +410,13 @@ extension LauncherView {
         // Integration inventory
         let adapter = adapterManager.adapters.first { $0.bundleId == bundleId }
         let actions = adapter?.actions ?? []
-        let clis = TerminalPackageManager.shared.packages.filter {
-            $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
-        }
+        let clis = promptRelevantCLIPackages(
+            TerminalPackageManager.shared.packages.filter {
+                $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
+            },
+            bundleId: bundleId,
+            query: searchState.query
+        )
         let mcpServers = MCPServerManager.shared.servers(forBundleId: bundleId)
         let apiConns = APIConnectionStore.shared.connections(for: bundleId)
         let shortcuts = actions.filter { $0.type == .shortcut }
@@ -3087,6 +3091,33 @@ extension LauncherView {
     }
 
     /// The CLI tool a `cli://` scope is bound to, or nil outside such a scope.
+    /// The bundle ID whose scope a linked CLI belongs to right now — the chat's own app,
+    /// else the active app scope. Empty in Global Chat, where links are not scoped.
+    func currentScopeBundleIDForToolTrust() -> String {
+        let chatBundle = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !chatBundle.isEmpty { return chatBundle }
+        return currentGlobalScopedBundleID ?? ""
+    }
+
+    /// Linked CLIs worth spending prompt space on for this turn: everything trusted (seeded,
+    /// catalog-matched, or already used here), plus any provisional guess the question names.
+    /// A guessed link stays usable — it just stops taxing every unrelated turn.
+    func promptRelevantCLIPackages(
+        _ packages: [TerminalPackage], bundleId: String, query: String
+    ) -> [TerminalPackage] {
+        guard !bundleId.isEmpty else { return packages }
+        let normalizedQuery = query.lowercased()
+        return packages.filter { package in
+            let command = package.command.lowercased()
+            guard CLILinkTrustStore.shared.isProvisional(command: command, bundleID: bundleId)
+            else { return true }
+            guard !normalizedQuery.isEmpty else { return false }
+            if normalizedQuery.contains(command) { return true }
+            let name = package.name.lowercased()
+            return !name.isEmpty && normalizedQuery.contains(name)
+        }
+    }
+
     /// Binaries the CURRENT scope is allowed to propose. Built from the same inventory the
     /// system prompt advertises: the CLI-tool scope's own binary, the scoped app's linked
     /// packages, and its adapter's CLI actions. Empty in Global Chat, where every enabled

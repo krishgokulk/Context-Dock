@@ -551,6 +551,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Help text is fetched lazily when the user taps "Add to L2".
             try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2s
             await BinaryWatcherService.shared.scanNow(skipHelpScan: true)
+            // Unlink guessed CLI links the user allowed but never used. One wrong Allow
+            // used to tax every prompt for that app forever.
+            CLILinkTrustStore.shared.sweepExpiredLinks()
             #if DEBUG
             print("✅ [AppDelegate] Startup scan complete")
             #endif

@@ -1205,6 +1205,16 @@ extension LauncherView {
                 await MainActor.run {
                     l2.isLoading = false
                     dockTraceStep(result.success ? "Ran \(ranCommand)" : "\(ranCommand) failed")
+                    // Running is the proof a linked tool belongs to this scope: it promotes a
+                    // provisional link so the sweep stops treating it as a wrong guess.
+                    if result.success {
+                        let binary = ranCommand.split(separator: " ").first.map(String.init) ?? ""
+                        let leaf = (binary as NSString).lastPathComponent
+                        let scope = self.currentScopeBundleIDForToolTrust()
+                        if !leaf.isEmpty, !scope.isEmpty {
+                            CLILinkTrustStore.shared.markUsed(command: leaf, bundleID: scope)
+                        }
+                    }
                 }
                 transcript.append((ranCommand, output))
 
