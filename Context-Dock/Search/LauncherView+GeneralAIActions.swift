@@ -103,7 +103,10 @@ extension LauncherView {
 
     /// Runs the route the user picked, by id, so the executed action is exactly the one
     /// offered rather than something re-resolved from the answer text.
-    func runPickedActionChoice(_ choice: ActionChoice) {
+    /// - Parameter inDock: append the result to the Context Dock transcript instead of
+    ///   General Chat's. Both surfaces render the same message type, so a pick made in one
+    ///   must not post its receipt into the other.
+    func runPickedActionChoice(_ choice: ActionChoice, inDock: Bool = false) {
         guard let candidate = pendingActionCandidates.first(where: { $0.id == choice.id })
         else { return }
         let alternatives = pendingActionCandidates.filter { $0.id != choice.id }
@@ -114,9 +117,14 @@ extension LauncherView {
             let result = await runGeneralAIAction(
                 candidate, alternatives: alternatives, query: query)
             await MainActor.run {
-                aiMode.messages.append(
-                    AIChatMessage(
-                        role: .assistant, content: result, trace: aiMode.routerTrace))
+                let receipt = AIChatMessage(
+                    role: .assistant, content: result,
+                    trace: inDock ? l2.routerTrace : aiMode.routerTrace)
+                if inDock {
+                    l2.chatMessages.append(receipt)
+                } else {
+                    aiMode.messages.append(receipt)
+                }
             }
         }
     }

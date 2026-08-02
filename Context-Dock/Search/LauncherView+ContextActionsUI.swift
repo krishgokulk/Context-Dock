@@ -638,10 +638,18 @@ extension LauncherView {
                                 message: message,
                                 onInstallExtension: installSuggestedExtension,
                                 onInstallProposal: { json in installFromProposal(json) },
-                                onRunOnceProposal: { json in runOnceFromProposal(json) }
+                                onRunOnceProposal: { json in runOnceFromProposal(json) },
+                                onPickAction: { choice in
+                                    runPickedActionChoice(choice, inDock: true)
+                                }
                             )
                         } else {
-                            AIChatMessageView(message: message)
+                            AIChatMessageView(
+                                message: message,
+                                onPickAction: { choice in
+                                    runPickedActionChoice(choice, inDock: true)
+                                }
+                            )
                         }
                     }
                     if l2.isLoading { AILoadingView(status: l2.loadingStatus) }

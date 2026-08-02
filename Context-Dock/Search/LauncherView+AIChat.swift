@@ -1407,6 +1407,9 @@ extension LauncherView {
                                             onInstallProposal: { json in installFromProposal(json)
                                             },
                                             onRunOnceProposal: { json in runOnceFromProposal(json) },
+                                            onPickAction: { choice in
+                                                runPickedActionChoice(choice, inDock: true)
+                                            },
                                             userAvatarSymbol: providerSymbol,
                                             assistantAvatarImage: scopedAppIcon
                                         )
@@ -1414,6 +1417,9 @@ extension LauncherView {
                                     } else {
                                         AIChatMessageView(
                                             message: message,
+                                            onPickAction: { choice in
+                                                runPickedActionChoice(choice, inDock: true)
+                                            },
                                             userAvatarSymbol: providerSymbol,
                                             assistantAvatarImage: scopedAppIcon
                                         )
