@@ -2879,6 +2879,39 @@ extension LauncherView {
         return lines.joined(separator: "\n")
     }
 
+    /// What the app itself documents: its homepage, docs, repository and changelog, plus the
+    /// current text of whichever one the question is about. Without this a scope answered
+    /// version-specific questions from whatever the model remembered, which goes stale the
+    /// moment the app ships a release.
+    func appReferenceContextPrompt(
+        bundleId: String, appName: String, query: String
+    ) async -> String {
+        guard !bundleId.isEmpty else { return "" }
+        let references = await AppReferenceIndex.shared.references(
+            bundleId: bundleId, appName: appName)
+        guard !references.isEmpty else { return "" }
+
+        var lines = ["## \(appName) references"]
+        lines.append(contentsOf: references.map { "- \($0.kind.label): \($0.title) — \($0.url)" })
+
+        // Reading a page costs a network round trip, so only a question that is actually
+        // about the product pays for it — and only for the one page it names.
+        if AppReferenceIndex.looksLikeReferenceQuestion(query),
+            let best = AppReferenceIndex.bestReference(for: query, in: references)
+                ?? references.first(where: { $0.kind == .documentation }),
+            let text = await AppReferenceIndex.shared.pageText(for: best, limit: 4_000)
+        {
+            lines.append("")
+            lines.append("### Current content of \(best.title) (\(best.url))")
+            lines.append(text)
+            lines.append("")
+            lines.append(
+                "That text was fetched just now — prefer it over recalled knowledge, and cite "
+                + "the link when the answer comes from it.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// Live state of the workspace this scope is working in — the project, its branch and
     /// changes, the agents running in it. Replaces a keyword-gated `code --status` dump:
     /// a co-worker knows the state of the work before being asked about it.
@@ -4513,6 +4546,13 @@ extension LauncherView {
                     bundleId: scopedBundleId,
                     appName: scopedAppName.isEmpty
                         ? (frontmostName ?? frontmost.name) : scopedAppName)
+                // What the vendor documents about this app, fetched fresh when the question
+                // is about the product rather than the machine.
+                let referenceBlock = await self.appReferenceContextPrompt(
+                    bundleId: scopedBundleId,
+                    appName: scopedAppName.isEmpty
+                        ? (frontmostName ?? frontmost.name) : scopedAppName,
+                    query: query)
                 let identityBlock = await MainActor.run {
                     self.scopedAppIdentityBlock(
                         bundleId: scopedBundleId,
@@ -4536,7 +4576,7 @@ extension LauncherView {
                 }
                 let activeContextPrompt: String = {
                     let parts = [
-                        identityBlock, workspaceBlock, finalContextPrompt,
+                        identityBlock, workspaceBlock, referenceBlock, finalContextPrompt,
                         runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
                         skillsBlock, attachmentBlock,
                     ]
@@ -4548,8 +4588,8 @@ extension LauncherView {
                     // Ordered by what the answer actually needs: who the scope is, then the
                     // live data, then reference material. Reference is cut first.
                     let prioritised = [
-                        identityBlock, workspaceBlock, browserPageBlock, attachmentBlock,
-                        finalContextPrompt, appleData, mcpBlock, skillsBlock,
+                        identityBlock, workspaceBlock, referenceBlock, browserPageBlock,
+                        attachmentBlock, finalContextPrompt, appleData, mcpBlock, skillsBlock,
                         runtimeCLIContextPrompt,
                     ]
                     return Self.budgetedContextPrompt(prioritised)
