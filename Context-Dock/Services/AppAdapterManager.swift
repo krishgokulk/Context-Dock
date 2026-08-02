@@ -110,7 +110,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
          menuPath: [String]? = nil, script: String? = nil, scriptFile: String? = nil,
          urlScheme: String? = nil, cliToolCommand: String? = nil, shortcutName: String? = nil,
          aiPromptTemplate: String? = nil, chain: [String]? = nil,
-         requiresApproval: Bool = false, isDestructive: Bool = false,
+         requiresApproval: Bool? = nil, isDestructive: Bool = false,
          accentColor: String? = nil) {
         self.id = id; self.name = name; self.icon = icon
         self.description = description; self.triggers = triggers; self.category = category
@@ -118,7 +118,10 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         self.menuPath = menuPath; self.script = script; self.scriptFile = scriptFile
         self.urlScheme = urlScheme; self.cliToolCommand = cliToolCommand; self.shortcutName = shortcutName
         self.aiPromptTemplate = aiPromptTemplate; self.chain = chain
-        self.requiresApproval = requiresApproval; self.isDestructive = isDestructive
+        // Unspecified means "derive from risk", not "safe". .shell / .applescript /
+        // .jxa / .scriptFile / .cliTool are .high and therefore ask before running.
+        self.requiresApproval = requiresApproval ?? (type.riskLevel == .high)
+        self.isDestructive = isDestructive
         self.accentColor = accentColor
     }
 
@@ -147,7 +150,11 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         shortcutName = try c.decodeIfPresent(String.self, forKey: .shortcutName)
         aiPromptTemplate = try c.decodeIfPresent(String.self, forKey: .aiPromptTemplate)
         chain = try c.decodeIfPresent([String].self, forKey: .chain)
-        requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval) ?? false
+        // An imported or AI-authored action that omits the flag does not get a free
+        // pass — the default is derived from the action type's risk, so a .shell or
+        // .applescript action must ask before it runs.
+        requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval)
+            ?? (type.riskLevel == .high)
         isDestructive = try c.decodeIfPresent(Bool.self, forKey: .isDestructive) ?? false
         accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor)
     }
