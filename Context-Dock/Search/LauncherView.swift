@@ -2142,6 +2142,17 @@ struct LauncherView: View {
     /// Finder desktop-scope Enter: open the keyboard-focused row, else the first visible
     /// file/folder result. Pure file search — no app-launch fallback, no menu routing.
     @discardableResult
+    /// File behind the pill the user has arrow-keyed to, if that pill stands for one.
+    /// Returns nil unless keyboard navigation is active, which is what keeps Space a
+    /// normal character while the user is still typing a query.
+    func focusedPillPreviewPath() -> String? {
+        guard let idx = l2.focusedPillIndex else { return nil }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pills = renderedOrderDockPills(for: q)
+        guard idx < pills.count, !pills[idx].isSeparator else { return nil }
+        return pills[idx].previewPath
+    }
+
     func executeFirstVisibleFinderDesktopPillIfNeeded() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let displayed = renderedOrderDockPills(for: q)

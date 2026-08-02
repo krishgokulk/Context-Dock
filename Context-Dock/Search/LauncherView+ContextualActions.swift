@@ -1451,7 +1451,22 @@ extension LauncherView {
                     }
                 }
             )
-            if let fileIcon = fileSystemIcon(for: row.icon) {
+            // Real Finder icon — and a QuickLook thumbnail where one is meaningful —
+            // whenever the row points at a file. Authors nearly always put an SF Symbol in
+            // `icon` and the path in `id`, so resolving through the path is what makes a
+            // screenshots scope look like Finder instead of identical repeated glyphs.
+            if let path = Self.customListRowOpenablePath(row) {
+                pill.previewPath = path
+                if let thumb = FileThumbnailCache.shared.thumbnail(for: path, onReady: {
+                    self.scheduleDockPillRebuild(
+                        query: self.searchState.query, delayNanoseconds: 0,
+                        refreshContext: false)
+                }) {
+                    pill.menuItemImage = thumb
+                } else if let fileIcon = fileSystemIcon(for: path) {
+                    pill.menuItemImage = fileIcon
+                }
+            } else if let fileIcon = fileSystemIcon(for: row.icon) {
                 pill.menuItemImage = fileIcon
             }
             if row.badge != nil, let sub = row.subtitle {

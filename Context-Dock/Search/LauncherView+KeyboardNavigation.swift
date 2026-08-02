@@ -224,6 +224,16 @@ extension LauncherView {
                 return routedEvent
             }
 
+            // Space = Quick Look, Finder-style. Gated on keyboard pill navigation being
+            // active: the search field always holds focus here, so an ungated Space would
+            // stop the user typing a space in a query.
+            if event.keyCode == 49,
+                !event.modifierFlags.contains(.command),
+                let path = self.focusedPillPreviewPath() {
+                FileQuickLookPanel.shared.toggle(path: path)
+                return nil
+            }
+
             // The Quick Note split editor owns the keyboard: yield every key to the
             // focused TextEditor / list so the user types freely. Escape exits the
             // scope; ⌘N starts a new note.

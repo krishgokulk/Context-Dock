@@ -20,6 +20,9 @@ struct DockPill: Identifiable {
     var searchTerms: [String] = []
     var rankingScore: Double = 0
     var menuItemImage: NSImage? = nil
+    /// File this row stands for. Set by list extensions whose rows are paths — Space
+    /// then Quick Looks it, the way it does in Finder.
+    var previewPath: String? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil
