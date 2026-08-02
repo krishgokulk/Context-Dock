@@ -894,6 +894,58 @@ struct AIProviderSettingsView: View {
         case failure(String)
     }
     
+    /// One prompt that steers every AI surface. Lives here rather than per-surface so
+    /// tone, language and standing rules are set once — the router folds it into whatever
+    /// system prompt General Chat, Context Dock chat or an extension panel builds.
+    @ViewBuilder
+    private var globalContextPromptSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Global Context Prompt")
+                .font(.headline)
+
+            Text("Prepended to every AI surface — General Chat, Context Dock chat and "
+                 + "extension panels. Use it for standing instructions: who you are, "
+                 + "preferred language, how answers should be formatted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextEditor(text: $settings.globalContextPrompt)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 90)
+                .padding(6)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(alignment: .topLeading) {
+                    if settings.globalContextPrompt.isEmpty {
+                        Text("e.g. Answer concisely. I'm a macOS developer working in Swift.")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 14)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack {
+                Text("\(settings.globalContextPrompt.count) characters")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if !settings.globalContextPrompt.isEmpty {
+                    Button("Clear") { settings.globalContextPrompt = "" }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -907,7 +959,9 @@ struct AIProviderSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                
+
+                globalContextPromptSection
+
                 // Provider Selection
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Select Provider")

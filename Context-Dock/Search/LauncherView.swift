@@ -325,6 +325,30 @@ struct LauncherView: View {
     // Combined search pool
     var allItems: [SearchResult] {
         allApplications + cliToolSearchResults + systemCommandSearchResults
+            + userExtensionSearchResults
+    }
+
+    /// User-authored Global Context extensions. Unlike a command, picking one opens a
+    /// floating panel (the same window class as Quick Note) rather than running once.
+    var userExtensionSearchResults: [SearchResult] {
+        UserGlobalExtensionStore.shared.enabledExtensions.map { ext in
+            var result = SearchResult(
+                title: ext.name,
+                subtitle: "userext://\(ext.id.uuidString)",
+                icon: NSImage(systemSymbolName: ext.icon, accessibilityDescription: ext.name),
+                action: {
+                    ExtensionPanelManager.shared.open(ext)
+                },
+                type: .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                displayBadges: [ext.aiEnabled ? "Extension · AI" : "Extension"],
+                showsTypeLabel: false,
+                stableID: "userext://\(ext.id.uuidString)"
+            )
+            result.dismissesLauncher = true
+            return result
+        }
     }
 
     /// Synthetic Homebrew search result — shows up when user types "brew" or "homebrew".

@@ -3355,9 +3355,13 @@ extension LauncherView {
         let service = CapabilityGapService.shared
 
         switch gap.resolution {
-        case .linkInstalledTool(let packageID, let command, _):
-            service.link(packageID: packageID, to: gap.bundleID)
-            finishCapabilityGap(gap, note: "Linked \(command) to \(gap.appName).")
+        case .linkInstalledTool(let packageID, let command, _, let provisional):
+            service.link(packageID: packageID, to: gap.bundleID, provisional: provisional)
+            finishCapabilityGap(
+                gap,
+                note: provisional
+                    ? "Linked \(command) to \(gap.appName) for now — it stays only if you use it."
+                    : "Linked \(command) to \(gap.appName).")
 
         case .installTool(let command, let formula, _):
             Task { @MainActor in

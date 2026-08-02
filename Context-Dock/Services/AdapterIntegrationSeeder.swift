@@ -246,6 +246,8 @@ enum AdapterIntegrationSeeder {
             spec.candidates.contains(pkg.command)
                 || spec.candidates.contains(where: { $0.hasSuffix("/" + pkg.command) })
         }) {
+            CLILinkTrustStore.shared.markTrusted(
+                command: existing.command, bundleId: bundleId)
             guard !existing.contextAppBundleIds.contains(bundleId) else { return }
             var updated = existing
             updated.contextAppBundleIds = (existing.contextAppBundleIds + [bundleId]).sorted()
@@ -266,6 +268,8 @@ enum AdapterIntegrationSeeder {
             contextAppBundleIds: [bundleId]
         )
         mgr.addPackage(package)
+        // Seeded links ship with the adapter: they are knowledge, not a guess.
+        CLILinkTrustStore.shared.markTrusted(command: package.command, bundleId: bundleId)
 
         // Populate --help knowledge in the background so scoped chat can use it.
         if let resolved {

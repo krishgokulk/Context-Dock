@@ -14,7 +14,11 @@ final class CapabilityGapService {
 
     enum Resolution: Equatable {
         /// The tool is installed on this Mac but not linked to this app scope.
-        case linkInstalledTool(packageID: UUID, command: String, appName: String)
+        /// `provisional` marks a link the scorer guessed at: it works immediately, but it is
+        /// only advertised to the model when the question names it, and it is unlinked again
+        /// if it never actually runs.
+        case linkInstalledTool(
+            packageID: UUID, command: String, appName: String, provisional: Bool)
         /// Nothing installed can do it; a well-known formula can.
         case installTool(command: String, formula: String, appName: String)
     }
@@ -100,7 +104,8 @@ final class CapabilityGapService {
                     bundleID: bundleID,
                     appName: appName,
                     resolution: .linkInstalledTool(
-                        packageID: installed.id, command: installed.command, appName: appName),
+                        packageID: installed.id, command: installed.command, appName: appName,
+                        provisional: false),
                     rationale: known.rationale)
             }
             return Gap(
@@ -133,7 +138,8 @@ final class CapabilityGapService {
                 bundleID: bundleID,
                 appName: appName,
                 resolution: .linkInstalledTool(
-                    packageID: installed.id, command: installed.command, appName: appName),
+                    packageID: installed.id, command: installed.command, appName: appName,
+                    provisional: true),
                 rationale: installed.description.isEmpty
                     ? "\(installed.command) is installed but not available in the \(appName) scope."
                     : installed.description)
@@ -214,9 +220,14 @@ final class CapabilityGapService {
     /// Grants the scope access to an installed tool. This is the whole "permission" step —
     /// the user pressed the button, so the link is written and the tool becomes callable for
     /// this app only.
-    func link(packageID: UUID, to bundleID: String) {
+    func link(packageID: UUID, to bundleID: String, provisional: Bool = false) {
         let manager = TerminalPackageManager.shared
         guard var package = manager.packages.first(where: { $0.id == packageID }) else { return }
+        if provisional {
+            CLILinkTrustStore.shared.markProvisional(command: package.command, bundleID: bundleID)
+        } else {
+            CLILinkTrustStore.shared.markTrusted(command: package.command, bundleID: bundleID)
+        }
         guard !package.contextAppBundleIds.contains(bundleID) else { return }
         package.contextAppBundleIds.append(bundleID)
         package.isEnabled = true
@@ -225,12 +236,12 @@ final class CapabilityGapService {
 
     /// Links a tool by command name after an install finishes (the package list is rescanned by
     /// the caller first, so the freshly installed binary is present).
-    func linkCommand(_ command: String, to bundleID: String) -> Bool {
+    func linkCommand(_ command: String, to bundleID: String, provisional: Bool = false) -> Bool {
         let manager = TerminalPackageManager.shared
         guard let package = manager.packages.first(where: { $0.command == command }) else {
             return false
         }
-        link(packageID: package.id, to: bundleID)
+        link(packageID: package.id, to: bundleID, provisional: provisional)
         return true
     }
 }

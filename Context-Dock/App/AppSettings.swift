@@ -822,6 +822,11 @@ struct OllamaModel: Codable, Identifiable, Equatable {
 class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
+    /// User-authored steering text prepended to the system prompt of *every* AI surface
+    /// — General Chat, Context Dock chat and extension AI panels. One field so the user
+    /// sets tone, language and standing rules in a single place instead of per surface.
+    @AppStorage("globalContextPrompt") var globalContextPrompt: String = ""
+
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =

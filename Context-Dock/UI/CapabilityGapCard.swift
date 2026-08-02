@@ -11,7 +11,7 @@ struct CapabilityGapCard: View {
 
     private var title: String {
         switch gap.resolution {
-        case .linkInstalledTool(_, let command, let appName):
+        case .linkInstalledTool(_, let command, let appName, _):
             return "\(command) is installed but not available in \(appName)"
         case .installTool(let command, _, let appName):
             return "\(appName) has no tool for this — \(command) would do it"
@@ -20,7 +20,7 @@ struct CapabilityGapCard: View {
 
     private var primaryLabel: String {
         switch gap.resolution {
-        case .linkInstalledTool(_, let command, let appName):
+        case .linkInstalledTool(_, let command, let appName, _):
             return "Link \(command) to \(appName)"
         case .installTool(_, let formula, _):
             return "Install \(formula) with Homebrew"

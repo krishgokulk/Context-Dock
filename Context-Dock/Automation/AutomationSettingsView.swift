@@ -95,6 +95,7 @@ struct AutomationSettingsView: View {
     @State private var selectedMenuCacheBundleID: String?
     @State private var selectedSystemCommandID: UUID?
     @StateObject private var sysRegistry = SystemCommandsRegistryObservable.shared
+    @ObservedObject private var userExtStore = UserGlobalExtensionStore.shared
     @State private var installedAppsByBundleId: [String: InstalledApplicationEntry] = [:]
     @State private var menuCacheSummaries: [String: AppMenuCapabilitySummary] = [:]
     @State private var refreshingMenuCacheBundleID: String?
@@ -105,6 +106,7 @@ struct AutomationSettingsView: View {
     @State private var showAdapterSheet = false
     @State private var showGlobalCLIPicker = false
     @State private var showSystemCommandSheet = false
+    @State private var showUserExtensionSheet = false
     @State private var showAIImportSheet = false
     @State private var importPreview: AdapterPackPreview?
     @State private var importError: String?
@@ -184,6 +186,12 @@ struct AutomationSettingsView: View {
                 settings.pinCLITool(package.command)
                 focusOnGlobalCLIScope(package.id)
                 showGlobalCLIPicker = false
+            }
+        }
+        .sheet(isPresented: $showUserExtensionSheet) {
+            UserGlobalExtensionCreateSheet { ext in
+                UserGlobalExtensionStore.shared.add(ext)
+                showUserExtensionSheet = false
             }
         }
         .sheet(isPresented: $showSystemCommandSheet) {
@@ -726,11 +734,16 @@ struct AutomationSettingsView: View {
                 }
 
             case .extensionsGlobalWithoutSelection:
-                if cmds.isEmpty {
+                if cmds.isEmpty && userExtStore.extensions.isEmpty {
                     listEmpty(icon: "globe", label: "No global commands", action: { showSystemCommandSheet = true })
                 } else {
                     List(selection: $selectedSystemCommandID) {
-                        globalCommandSection(cmds)
+                        if !userExtStore.extensions.isEmpty {
+                            userExtensionSection
+                        }
+                        if !cmds.isEmpty {
+                            globalCommandSection(cmds)
+                        }
                     }
                     .listStyle(.inset)
                 }
@@ -782,6 +795,37 @@ struct AutomationSettingsView: View {
             $0.name.localizedCaseInsensitiveContains(searchText)
                 || $0.description.localizedCaseInsensitiveContains(searchText)
                 || $0.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+
+    /// User-authored panel extensions. Listed above commands because they are the
+    /// heavier, stateful thing — a command runs and vanishes, an extension opens a window.
+    private var userExtensionSection: some View {
+        Section("Global Extensions") {
+            ForEach(userExtStore.extensions) { ext in
+                HStack(spacing: 10) {
+                    AutomationRow(
+                        icon: ext.icon,
+                        color: .teal,
+                        title: ext.name,
+                        subtitle: ext.aiEnabled ? "\(ext.description) · AI" : ext.description,
+                        isEnabled: ext.isEnabled
+                    )
+                    Spacer(minLength: 4)
+                    Button {
+                        ExtensionPanelManager.shared.open(ext)
+                    } label: {
+                        Image(systemName: "macwindow")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open this panel now")
+                }
+            }
+            .onDelete { idx in
+                idx.map { userExtStore.extensions[$0] }.forEach { userExtStore.remove($0) }
+            }
         }
     }
 
@@ -1082,6 +1126,13 @@ struct AutomationSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             } else if settingsPage == .extensionsGlobalWithoutSelection {
+                Button(action: { showUserExtensionSheet = true }) {
+                    Label("Add Extension", systemImage: "square.grid.2x2")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("An extension opens a floating panel with rows and optional AI, "
+                      + "instead of running once like a command.")
                 Button(action: { showSystemCommandSheet = true }) {
                     Label("Add Command", systemImage: "plus")
                 }

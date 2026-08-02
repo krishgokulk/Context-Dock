@@ -12,6 +12,44 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The floating-glass panel Quick Note uses. Extracted so other surfaces (user
+/// extension panels) inherit exactly the same behaviour — always on top, on every
+/// Space, non-activating, resizable, transparent for Liquid Glass — instead of each
+/// re-deriving a subtly different window.
+@MainActor
+enum GlassFloatingPanel {
+    static func make(size: NSSize, minSize: NSSize) -> NSPanel {
+        let p = NSPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        p.titlebarAppearsTransparent = true
+        p.titleVisibility = .hidden
+        // Transparent window so the SwiftUI Liquid Glass material shows the desktop
+        // behind it — otherwise the opaque panel renders the material as solid black.
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.isMovableByWindowBackground = true
+        p.level = .floating
+        p.hidesOnDeactivate = false
+        p.isFloatingPanel = true
+        p.becomesKeyOnlyIfNeeded = true
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        p.isReleasedWhenClosed = false
+        p.minSize = minSize
+        // Hide native window buttons + tabbing — the SwiftUI header owns all of it, so
+        // nothing opaque or square floats over the glass.
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
+        p.tabbingMode = .disallowed
+        return p
+    }
+}
+
 @MainActor
 final class StickyNotesManager: ObservableObject {
     static let shared = StickyNotesManager()
@@ -64,34 +102,10 @@ final class StickyNotesManager: ObservableObject {
     private func ensureWindow() {
         guard panel == nil else { return }
 
-        let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
+        let p = GlassFloatingPanel.make(
+            size: NSSize(width: 820, height: 520),
+            minSize: NSSize(width: 620, height: 380)
         )
-        p.titlebarAppearsTransparent = true
-        p.titleVisibility = .hidden
-        // Transparent window so the SwiftUI Liquid Glass material shows the desktop
-        // behind it — otherwise the opaque panel renders the material as solid black.
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = true
-        p.isMovableByWindowBackground = true
-        p.level = .floating
-        p.hidesOnDeactivate = false
-        p.isFloatingPanel = true
-        p.becomesKeyOnlyIfNeeded = true
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        p.isReleasedWhenClosed = false
-        p.minSize = NSSize(width: 620, height: 380)
-        // Hide native window buttons + tabbing — the SwiftUI header/tab strip owns all
-        // of it, so nothing opaque or square floats over the glass.
-        p.standardWindowButton(.closeButton)?.isHidden = true
-        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        p.standardWindowButton(.zoomButton)?.isHidden = true
-        p.tabbingMode = .disallowed
-
         p.contentView = NSHostingView(rootView: StickyRootView())
 
         if let screen = NSScreen.main {

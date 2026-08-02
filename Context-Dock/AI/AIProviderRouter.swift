@@ -510,7 +510,19 @@ final class AIProviderRouter {
         )
     }
 
-    func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt: String) async throws -> String {
+    /// Fold the user's Settings-level prompt into whatever system prompt a surface built.
+    /// Applied at the router because every AI surface funnels through here — putting it
+    /// in each caller would guarantee one gets missed.
+    private func withGlobalContext(_ contextPrompt: String) -> String {
+        let global = settings.globalContextPrompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !global.isEmpty else { return contextPrompt }
+        guard !contextPrompt.isEmpty else { return global }
+        return "\(global)\n\n\(contextPrompt)"
+    }
+
+    func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt rawContextPrompt: String) async throws -> String {
+        let contextPrompt = withGlobalContext(rawContextPrompt)
         if !safetyPolicy.isLocal(provider),
             request.liveContext?.selectedTextCharacterCount ?? 0 > 0,
             !settings.allowSelectedTextCloudSharing
@@ -591,11 +603,12 @@ final class AIProviderRouter {
         provider: AIProvider,
         message: String,
         context: UserContext,
-        contextPrompt: String,
+        contextPrompt rawContextPrompt: String,
         apiKeyOverride: String? = nil,
         conversationHistory: [ChatMessage] = [],
         attachments: [AIAttachment] = []
     ) async throws -> String {
+        let contextPrompt = withGlobalContext(rawContextPrompt)
         let request = AIRequest(
             text: message,
             context: context,
