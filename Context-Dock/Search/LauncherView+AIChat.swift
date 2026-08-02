@@ -3557,6 +3557,45 @@ extension LauncherView {
         return true
     }
 
+    /// "install this" on a GitHub repository page. Installing belongs to this Mac, not to
+    /// the browser, so a browser scope used to refuse it outright ("cannot be done from a
+    /// browser script") and stop there. The page URL is the repository, the local toolchain
+    /// decides the route, and the user approves the command — no model involved, so the
+    /// command can be offered directly.
+    @discardableResult
+    func tryHandleGitHubInstallRequest(_ query: String, scopedBundleId: String) -> Bool {
+        let browserBundle = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        guard isContextDockBrowserBundle(browserBundle) else { return false }
+        guard GitHubInstallRouter.isInstallIntent(query) else { return false }
+        guard let pageURL = currentBrowserPageURL(),
+            let repo = GitHubInstallRouter.repository(from: pageURL)
+        else { return false }
+
+        l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+        l2.isLoading = true
+        l2.loadingStatus = "Checking how \(repo.name) installs…"
+        let requestID = beginL2AIRequest()
+
+        l2.currentTask = Task {
+            let plan = await GitHubInstallRouter.plan(for: repo)
+            await MainActor.run {
+                l2.isLoading = false
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: "**\(repo.owner)/\(repo.name)**\n\n\(plan.summary)"))
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .approval,
+                        content: plan.command,
+                        structuredData: "dock_cmd|||\(plan.purpose)"))
+                finishL2AIRequest(requestID)
+                requestWindowSizeUpdate(reason: .chatChanged, animated: true)
+            }
+        }
+        return true
+    }
+
     func tryHandleNotesMCPQuery(_ query: String, scopedBundleId: String) -> Bool {
         guard scopedBundleId == "com.apple.Notes",
               AppSettings.shared.noteMCPEnabled
@@ -3753,6 +3792,10 @@ extension LauncherView {
         }
 
         if tryHandleNotesMCPQuery(query, scopedBundleId: scopedBundleId) {
+            return
+        }
+
+        if tryHandleGitHubInstallRequest(query, scopedBundleId: scopedBundleId) {
             return
         }
 
