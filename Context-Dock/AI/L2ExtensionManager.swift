@@ -121,15 +121,17 @@ struct L2Extension: Codable, Identifiable {
         folderPath?.appendingPathComponent(script)
     }
 
-    // Computed: interpreter command for scriptType
-    var interpreter: String {
+    // Computed: interpreter argv prefix for scriptType. The script path is appended
+    // as a separate argument by the caller — never concatenated into a command string,
+    // so a script filename containing quotes or $( ) cannot break out into a shell.
+    var interpreterArgv: [String] {
         switch scriptType {
-        case .bash:        return "/bin/bash"
-        case .python:      return "/usr/bin/env python3"
-        case .ruby:        return "/usr/bin/env ruby"
-        case .node:        return "/usr/bin/env node"
-        case .appleScript: return "/usr/bin/osascript"
-        case .jxa:         return "/usr/bin/osascript"
+        case .bash:        return ["/bin/bash"]
+        case .python:      return ["/usr/bin/env", "python3"]
+        case .ruby:        return ["/usr/bin/env", "ruby"]
+        case .node:        return ["/usr/bin/env", "node"]
+        case .appleScript: return ["/usr/bin/osascript"]
+        case .jxa:         return ["/usr/bin/osascript", "-l", "JavaScript"]
         }
     }
 }
@@ -238,17 +240,10 @@ class L2ExtensionManager: ObservableObject {
         process.environment    = env
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
-        // Run script via its interpreter
-        if ext.scriptType == .appleScript {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = [scriptURL.path]
-        } else if ext.scriptType == .jxa {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-l", "JavaScript", scriptURL.path]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", "\(ext.interpreter) \"\(scriptURL.path)\""]
-        }
+        // Run script via its interpreter, always as argv — never through a shell.
+        let argv = ext.interpreterArgv
+        process.executableURL = URL(fileURLWithPath: argv[0])
+        process.arguments = Array(argv.dropFirst()) + [scriptURL.path]
 
         do {
             try process.run()
