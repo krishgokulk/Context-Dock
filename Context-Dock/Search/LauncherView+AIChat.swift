@@ -2775,9 +2775,6 @@ extension LauncherView {
         query: String
     ) async -> String {
         let normalizedApp = "\(bundleId) \(appName)".lowercased()
-        if normalizedApp.contains("vscode") || bundleId == "com.microsoft.VSCode" {
-            return await vsCodeRuntimeContextPrompt(query: query)
-        }
         if bundleId == "com.apple.MobileSMS" {
             return await messagesRuntimeContextPrompt(query: query)
         }
@@ -2868,34 +2865,25 @@ extension LauncherView {
         return lines.joined(separator: "\n")
     }
 
-    /// Live VS Code state: `code --status` prints the running instance's workspace
-    /// folders and open windows — so "what am I working with?" is answered with real
-    /// data instead of asking the user. Read-only, runs only for state-style queries.
-    func vsCodeRuntimeContextPrompt(query: String) async -> String {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let wantsState =
-            q.contains("work") || q.contains("project") || q.contains("workspace")
-            || q.contains("file") || q.contains("open") || q.contains("folder")
-            || q.contains("what") || q.contains("which") || q.contains("current")
-        guard wantsState else { return "" }
-
-        // The `code` shim often isn't on PATH — use the linked package's resolved
-        // binary (app-bundle path needs quoting for its spaces).
-        let codeBinary = TerminalPackageManager.shared.packages.first {
-            $0.command == "code" && $0.isInstalled
-        }?.installedPath
-        let codeInvocation = codeBinary.map { "\"\($0)\"" } ?? "code"
-        let result = await TerminalCommandExecutor.shared.run(
-            "\(codeInvocation) --status", purpose: "Read VS Code workspace and window state")
-        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard result.success, !output.isEmpty else { return "" }
-        return """
-        ## Live VS Code Snapshot (`code --status`)
-        Read-only output from the running VS Code instance. The "Workspace Stats" \
-        section lists the folders and windows actually open — use it as factual state.
-
-        \(String(output.prefix(3000)))
-        """
+    /// Live state of the workspace this scope is working in — the project, its branch and
+    /// changes, the agents running in it. Replaces a keyword-gated `code --status` dump:
+    /// a co-worker knows the state of the work before being asked about it.
+    func appWorkspaceContextPrompt(bundleId: String, appName: String) async -> String {
+        guard !bundleId.isEmpty else { return "" }
+        let windowTitle = await MainActor.run {
+            self.axContext.bundleId == bundleId ? self.axContext.windowTitle : nil
+        }
+        let finderFolder = bundleId == "com.apple.finder"
+            ? AppleAppsAPI.shared.getCurrentFolder() : nil
+        let identity = AppWorkspaceService.identity(
+            bundleId: bundleId,
+            appName: appName,
+            windowTitle: windowTitle,
+            finderFolder: finderFolder
+        )
+        let linkedCLIs = await MainActor.run { self.scopeRunnableCommandBinaries() }
+        return await AppWorkspaceService.shared.contextBlock(
+            for: identity, linkedCLIs: linkedCLIs)
     }
 
     /// Decodes typed `terminal_call` JSON lines, strips them from the displayed message,
@@ -4431,6 +4419,12 @@ extension LauncherView {
                 // timeout. A frontmost-app question is exactly what on-device should answer,
                 // so the scope is described compactly instead of dropping to the cloud.
                 let usesOnDeviceModel = provider == .onDevice
+                // What the app is DOING right now — project, branch, changes, running
+                // agents. Without this a scope could only describe its own tool inventory.
+                let workspaceBlock = await self.appWorkspaceContextPrompt(
+                    bundleId: scopedBundleId,
+                    appName: scopedAppName.isEmpty
+                        ? (frontmostName ?? frontmost.name) : scopedAppName)
                 let identityBlock = await MainActor.run {
                     self.scopedAppIdentityBlock(
                         bundleId: scopedBundleId,
@@ -4454,8 +4448,9 @@ extension LauncherView {
                 }
                 let activeContextPrompt: String = {
                     let parts = [
-                        identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
-                        mcpBlock, browserPageBlock, skillsBlock, attachmentBlock,
+                        identityBlock, workspaceBlock, finalContextPrompt,
+                        runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
+                        skillsBlock, attachmentBlock,
                     ]
                     guard usesOnDeviceModel else {
                         return parts
@@ -4465,8 +4460,9 @@ extension LauncherView {
                     // Ordered by what the answer actually needs: who the scope is, then the
                     // live data, then reference material. Reference is cut first.
                     let prioritised = [
-                        identityBlock, browserPageBlock, attachmentBlock, finalContextPrompt,
-                        appleData, mcpBlock, skillsBlock, runtimeCLIContextPrompt,
+                        identityBlock, workspaceBlock, browserPageBlock, attachmentBlock,
+                        finalContextPrompt, appleData, mcpBlock, skillsBlock,
+                        runtimeCLIContextPrompt,
                     ]
                     return Self.budgetedContextPrompt(prioritised)
                 }()
