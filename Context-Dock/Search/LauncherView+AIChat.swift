@@ -327,7 +327,29 @@ extension LauncherView {
     /// every tool it may pick (actions, CLI, MCP, API, shortcuts) — or what to
     /// suggest adding when nothing fits.
     @MainActor
-    func scopedAppIdentityBlock(bundleId: String, appName: String) -> String {
+    /// Joins prompt sections in priority order while staying inside a character budget the
+    /// on-device model can actually hold. Sections that no longer fit are dropped whole —
+    /// a truncated JSON block or half a menu list is worse than its absence.
+    static func budgetedContextPrompt(_ sections: [String], limit: Int = 3_200) -> String {
+        var used = 0
+        var kept: [String] = []
+        for section in sections {
+            let trimmed = section.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let cost = trimmed.count + 2
+            guard used + cost <= limit else { continue }
+            kept.append(trimmed)
+            used += cost
+        }
+        return kept.joined(separator: "\n\n")
+    }
+
+    /// - Parameter compact: trims the block for Apple's on-device model, whose context
+    ///   window the full inventory (50 menu paths + every rule paragraph) overruns — the
+    ///   model then stalls with no token and the chat times out.
+    func scopedAppIdentityBlock(
+        bundleId: String, appName: String, compact: Bool = false
+    ) -> String {
         guard !bundleId.isEmpty || !appName.isEmpty else { return "" }
 
         // A `cli://` scope is the executable itself, not an app adapter that happens to
@@ -437,7 +459,8 @@ extension LauncherView {
         // DOES things (Minimize, New Tab, Export, Close…) instead of narrating a shortcut.
         if !bundleId.isEmpty {
             let menuItems = AppMenuCapabilityCache.shared.menuItems(
-                bundleIdentifier: bundleId, appName: appName, query: "", maxResults: 60)
+                bundleIdentifier: bundleId, appName: appName, query: "",
+                maxResults: compact ? 14 : 60)
             let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
             if !leaves.isEmpty {
                 lines.append(
@@ -453,12 +476,18 @@ extension LauncherView {
                     guard seen.insert(key).inserted else { continue }
                     let shortcut = item.shortcutDisplay.map { " (\($0))" } ?? ""
                     lines.append("    • \(item.path.joined(separator: " ▸ "))\(shortcut)")
-                    if seen.count >= 50 { break }
+                    if seen.count >= (compact ? 12 : 50) { break }
                 }
             }
         }
 
         lines.append("")
+        if compact {
+            lines.append(
+                "Tool choice order: adapter/native action → MCP tool → API/Shortcut → live app "
+                + "menu → linked CLI. Never propose a tool that is not listed above.")
+            return lines.joined(separator: "\n")
+        }
         lines.append(
             "Tool choice order: adapter/native action → MCP tool → API/Shortcut → verified live app menu → linked CLI fallback → answer from "
             + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, say what "
@@ -2728,8 +2757,11 @@ extension LauncherView {
             "If no scoped CLI fits, fall back to app-scoped reasoning for \(scopedAppName). When the provider is On-Device, continue using Foundation Models in this same dock."
         )
         lines.append("")
+        // The shape only — never a runnable example. A literal sample command here was
+        // copied verbatim by weaker models, so an unrelated tool's command surfaced as an
+        // approval card in a scope that never linked it.
         lines.append(
-            "IMPORTANT: When the request warrants a CLI command, output one exact JSON line: {\"terminal_call\":{\"command\":\"pear list-orphaned\",\"purpose\":\"List orphaned packages\"}}. Never place executable requests in prose or code fences."
+            "IMPORTANT: When the request warrants a CLI command, output one exact JSON line: {\"terminal_call\":{\"command\":\"<the exact command, built from the tools listed above>\",\"purpose\":\"<why it is being run>\"}}. Never place executable requests in prose or code fences, and never emit a command for a tool that is not listed above."
         )
         lines.append(
             "NEVER invent placeholder values like CURRENT_VIDEO_URL or <url>. When the context includes a CURRENT PAGE URL, paste that exact URL into the command. If a required value is genuinely missing from the context, ask the user for it instead of emitting a command."
@@ -2922,6 +2954,11 @@ extension LauncherView {
             }
         }
 
+        // A scope may only offer to run tools it actually links. Prompt text is not a
+        // contract — a weaker model can echo an example command or invent a tool it read
+        // about — so the card itself is gated here, where the scope is known.
+        extractedCmds = extractedCmds.filter { commandIsRunnableInCurrentScope($0.command) }
+
         guard !extractedCmds.isEmpty else { return }
 
         // Strip typed invocation lines from the displayed message; keep explanation if any.
@@ -3052,6 +3089,65 @@ extension LauncherView {
     }
 
     /// The CLI tool a `cli://` scope is bound to, or nil outside such a scope.
+    /// Binaries the CURRENT scope is allowed to propose. Built from the same inventory the
+    /// system prompt advertises: the CLI-tool scope's own binary, the scoped app's linked
+    /// packages, and its adapter's CLI actions. Empty in Global Chat, where every enabled
+    /// package is fair game.
+    func scopeRunnableCommandBinaries() -> Set<String> {
+        let scopedBundleId =
+            l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (currentGlobalScopedBundleID ?? "")
+            : l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !scopedBundleId.isEmpty else { return [] }
+
+        var allowed: Set<String> = []
+        if let own = cliScopeToolCommand(for: scopedBundleId) {
+            allowed.insert(own.lowercased())
+        }
+        for package in TerminalPackageManager.shared.packages
+        where package.isEnabled && package.contextAppBundleIds.contains(scopedBundleId) {
+            allowed.insert(package.command.lowercased())
+        }
+        if let adapter = adapterManager.adapters.first(where: { $0.bundleId == scopedBundleId }) {
+            for action in adapter.actions where action.type == .cliTool {
+                let command = (action.cliToolCommand ?? "")
+                    .split(separator: " ").first.map(String.init) ?? ""
+                if !command.isEmpty { allowed.insert(command.lowercased()) }
+            }
+        }
+        return allowed
+    }
+
+    /// True when the scope may surface an approval card for this command.
+    func commandIsRunnableInCurrentScope(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let allowed = scopeRunnableCommandBinaries()
+        // Global Chat / no scope: the existing classifier and approval card own the risk.
+        guard !allowed.isEmpty else { return true }
+
+        // Read the first real binary, skipping env assignments and an absolute path.
+        var binary = ""
+        for token in trimmed.split(separator: " ").map(String.init) {
+            if token.contains("=") { continue }
+            binary = token
+            break
+        }
+        guard !binary.isEmpty else { return false }
+        let leaf = (binary as NSString).lastPathComponent.lowercased()
+        if allowed.contains(leaf) { return true }
+        // A shell wrapper hides the real binary — allow only when the scoped tool appears
+        // somewhere in the command, so `sh -c "code --status"` still works in a Code scope.
+        if ["sh", "bash", "zsh", "env", "sudo"].contains(leaf) {
+            let lowered = trimmed.lowercased()
+            return allowed.contains { lowered.contains($0) }
+        }
+        #if DEBUG
+        print("🚫 [DockChat] Blocked out-of-scope command card: \(trimmed)")
+        #endif
+        return false
+    }
+
     func cliScopeToolCommand(for bundleID: String) -> String? {
         guard bundleID.hasPrefix("cli://") else { return nil }
         let command = String(bundleID.dropFirst("cli://".count))
@@ -4329,11 +4425,18 @@ extension LauncherView {
                 // Always-present identity + tool inventory: WHICH app this chat is
                 // scoped to and every integration it can use. Without this the model
                 // claims it "cannot see which app is open".
+                // Apple's on-device model has a small context window: the full inventory
+                // (every menu path, every rule paragraph, full --help text) overran it, the
+                // model produced no token at all, and the chat fell through to the 30s
+                // timeout. A frontmost-app question is exactly what on-device should answer,
+                // so the scope is described compactly instead of dropping to the cloud.
+                let usesOnDeviceModel = provider == .onDevice
                 let identityBlock = await MainActor.run {
                     self.scopedAppIdentityBlock(
                         bundleId: scopedBundleId,
                         appName: scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        compact: usesOnDeviceModel
                     )
                 }
                 // Capture Text / screenshots / uploaded files attached via the + menu — inject
@@ -4349,12 +4452,24 @@ extension LauncherView {
                 let scopedImageAttachments = contextDockChatFiles.filter {
                     scopedImageExts.contains($0.pathExtension.lowercased())
                 }
-                let activeContextPrompt = [
-                    identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
-                    mcpBlock, browserPageBlock, skillsBlock, attachmentBlock,
-                ]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n\n")
+                let activeContextPrompt: String = {
+                    let parts = [
+                        identityBlock, finalContextPrompt, runtimeCLIContextPrompt, appleData,
+                        mcpBlock, browserPageBlock, skillsBlock, attachmentBlock,
+                    ]
+                    guard usesOnDeviceModel else {
+                        return parts
+                            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                            .joined(separator: "\n\n")
+                    }
+                    // Ordered by what the answer actually needs: who the scope is, then the
+                    // live data, then reference material. Reference is cut first.
+                    let prioritised = [
+                        identityBlock, browserPageBlock, attachmentBlock, finalContextPrompt,
+                        appleData, mcpBlock, skillsBlock, runtimeCLIContextPrompt,
+                    ]
+                    return Self.budgetedContextPrompt(prioritised)
+                }()
 
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
