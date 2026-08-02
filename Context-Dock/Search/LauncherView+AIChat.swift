@@ -286,6 +286,7 @@ extension LauncherView {
         var pageURL = ""
         var pageText = ""
         var selected = ""
+        var links: [SafariPageLink] = []
 
         // 1) Safari Web Extension payload — preferred when fresh.
         if SafariBrowserBridge.shared.isFresh,
@@ -294,6 +295,7 @@ extension LauncherView {
             pageURL = ext.url
             pageText = ext.pageTextForAI
             selected = ext.selectedText
+            links = ext.links
         }
 
         // 2) AX snapshot fallback (extension disabled, or other browser).
@@ -313,12 +315,24 @@ extension LauncherView {
         guard !pageText.isEmpty || !pageURL.isEmpty else { return "" }
         let selectedSection = selected.isEmpty
             ? "" : "\nSELECTED TEXT:\n\(String(selected.prefix(1500)))"
+        // Where the page can take the user. Page text drops every href, so a download or
+        // docs button reads as an ordinary word — the model then says it cannot find one.
+        let linkSection: String = {
+            guard !links.isEmpty else { return "" }
+            let rows = links.prefix(30).map { "- \($0.text) → \($0.url)" }
+            return """
+
+                PAGE LINKS (action links first, as they appear on the page):
+                \(rows.joined(separator: "\n"))
+                Use these exact URLs when the answer is a page to open — never invent one,                 and never tell the user to hunt for a button that is listed here.
+                """
+        }()
         return """
             CURRENT PAGE TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
             CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)
             \(pageText.isEmpty
                 ? "PAGE TEXT: (unavailable — could not read the page)"
-                : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")
+                : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")\(linkSection)
             """
     }
 

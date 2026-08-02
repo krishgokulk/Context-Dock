@@ -57,6 +57,12 @@ enum SafariBridgeKey {
 
 // MARK: - Model
 
+/// A link on the page, as the user sees it: the words on the anchor and where it goes.
+struct SafariPageLink: Equatable {
+    let url: String
+    let text: String
+}
+
 struct SafariPageContext {
     let url: String
     let title: String
@@ -65,6 +71,10 @@ struct SafariPageContext {
     let description: String
     let scrollPercent: Int
     let activeFieldText: String
+    /// Anchors on the page, action-shaped ones first. Page text loses every href, so
+    /// without these a question like "how do I install it" cannot reach the download link
+    /// that is sitting right there as a button.
+    let links: [SafariPageLink]
     let trigger: String          // "load" | "select" | "navigate" | "scroll"
     let timestamp: Date          // page clock (display only — never trust for freshness)
     let receivedAt: Date         // stamped by the extension process
@@ -85,6 +95,7 @@ struct SafariPageContext {
             description:     description.isEmpty ? previous.description : description,
             scrollPercent:   scrollPercent,
             activeFieldText: activeFieldText,
+            links:           links.isEmpty ? previous.links : links,
             trigger:         trigger,
             timestamp:       timestamp,
             receivedAt:      receivedAt
@@ -220,6 +231,16 @@ final class SafariBrowserBridge: ObservableObject {
         )
     }
 
+    private static func decodeLinks(_ raw: Any?) -> [SafariPageLink] {
+        guard let rows = raw as? [[String: Any]] else { return [] }
+        return rows.compactMap { row in
+            guard let url = row["url"] as? String, !url.isEmpty,
+                let text = row["text"] as? String, !text.isEmpty
+            else { return nil }
+            return SafariPageLink(url: url, text: text)
+        }
+    }
+
     private func decode(_ d: [String: Any]) -> SafariPageContext? {
         guard let url = d["url"] as? String, !url.isEmpty else { return nil }
         let tsMillis = d["timestamp"] as? Double ?? 0
@@ -235,6 +256,7 @@ final class SafariBrowserBridge: ObservableObject {
             description:     d["description"] as? String ?? "",
             scrollPercent:   d["scrollPercent"] as? Int ?? 0,
             activeFieldText: d["activeFieldText"] as? String ?? "",
+            links:           Self.decodeLinks(d["links"]),
             trigger:         d["trigger"] as? String ?? "unknown",
             timestamp:       date,
             receivedAt:      received

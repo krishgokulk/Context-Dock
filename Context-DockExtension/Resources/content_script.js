@@ -10,6 +10,7 @@
   const PAGE_TEXT_TRIGGERS = new Set(["load", "navigate", "activate"]);
   const PAGE_TEXT_LIMIT = 8000;
   const FIELD_TEXT_LIMIT = 500;
+  const LINK_LIMIT = 60;
 
   // --- Helpers ---
 
@@ -25,6 +26,45 @@
       document.querySelector("main") ||
       document.body;
     return (el ? el.innerText : "").trim().slice(0, PAGE_TEXT_LIMIT);
+  }
+
+  // Anchors, not just words. Page TEXT loses every href, which is why "how do I install
+  // this?" could not find a download link that was sitting in the page as a button.
+  // Action-shaped links are ranked first so the cap never drops the one that matters.
+  const ACTION_LINK_PATTERN =
+    /download|install|get\s|get$|releases?|docs?|documentation|guide|repo|github|source|pricing|buy|sign\s?up|sign\s?in|log\s?in|start|try/i;
+
+  function pageLinks() {
+    const seen = new Set();
+    const primary = [];
+    const rest = [];
+    const anchors = document.querySelectorAll("a[href]");
+    for (const a of anchors) {
+      let href = "";
+      try {
+        href = new URL(a.getAttribute("href"), location.href).href;
+      } catch (e) {
+        continue;
+      }
+      if (!/^https?:/i.test(href)) continue;
+      if (href.replace(/#.*$/, "") === location.href.replace(/#.*$/, "")) continue;
+      if (seen.has(href)) continue;
+      seen.add(href);
+
+      const text = (a.innerText || a.getAttribute("aria-label") || a.title || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      if (!text) continue;
+      const entry = { url: href, text: text };
+      if (ACTION_LINK_PATTERN.test(text) || ACTION_LINK_PATTERN.test(href)) {
+        primary.push(entry);
+      } else {
+        rest.push(entry);
+      }
+      if (primary.length + rest.length >= 300) break;
+    }
+    return primary.concat(rest).slice(0, LINK_LIMIT);
   }
 
   function metaContent(name) {
@@ -89,6 +129,8 @@
       selectedText: selectedText(),
       // Empty on scroll/select — the native bridge reuses the last text for this URL.
       pageText: PAGE_TEXT_TRIGGERS.has(trigger) ? pageText() : "",
+      // Same triggers as pageText: a scroll must not re-walk every anchor.
+      links: PAGE_TEXT_TRIGGERS.has(trigger) ? pageLinks() : [],
       description: metaContent("og:description") || metaContent("description"),
       image: metaContent("og:image"),
       scrollPercent: scrollPercent(),
