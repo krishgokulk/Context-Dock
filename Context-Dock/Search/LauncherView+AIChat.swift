@@ -4650,44 +4650,16 @@ extension LauncherView {
                     // (narrated "I'll minimize…" + JSON) instead of routing it through the tool
                     // loop, so the executor never ran it. Execute it now and replace the JSON
                     // blob with a plain confirmation.
-                    if let invocation = AITypedInvocationResolver.invocation(from: finalResponse) {
-                        let scopeName = scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName
-                        if invocation.kind == .menuAction {
-                            let path = (invocation.arguments["path"] ?? "")
-                                .components(separatedBy: "\u{1F}").filter { !$0.isEmpty }
-                            let bundle = (invocation.arguments["bundleId"].flatMap {
-                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
-                            if !path.isEmpty {
-                                let label = path.joined(separator: " ▸ ")
-                                await self.setL2LoadingStatus(
-                                    "Running \(label)…", requestID: l2RequestID)
-                                let (ok, out) = await AppAdapterManager.shared.runMenuPath(
-                                    path, targetBundleId: bundle, appName: scopeName)
-                                finalResponse = ok
-                                    ? "Done — \(label)."
-                                    : (out.isEmpty ? "Couldn't run \(label)." : out)
-                                toolsRan.append(label)
-                            }
-                        } else if invocation.kind == .adapterAction {
-                            let actionId = invocation.arguments["actionId"] ?? ""
-                            let bundle = (invocation.arguments["bundleId"].flatMap {
-                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
-                            if let adapter = AppAdapterManager.shared.adapter(for: bundle),
-                                let action = adapter.actions.first(where: { $0.id == actionId }) {
-                                await self.setL2LoadingStatus(
-                                    "Running \(action.name)…", requestID: l2RequestID)
-                                let ctx = self.sanitizedAXContextForScope(
-                                    self.axContext, scopedBundleId: bundle)
-                                let (ok, out) = await AppAdapterManager.shared.execute(
-                                    action, context: ctx, targetBundleId: bundle,
-                                    query: invocation.arguments["query"] ?? query)
-                                finalResponse = ok
-                                    ? (out.isEmpty ? "Done — \(action.name)." : out)
-                                    : (out.isEmpty ? "Couldn't run \(action.name)." : out)
-                                toolsRan.append(action.name)
-                            }
-                        }
+                    if let applied = await self.resolveTypedAppInvocation(
+                        in: finalResponse,
+                        scopedBundleId: scopedBundleId,
+                        scopeName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        userQuery: query,
+                        requestID: l2RequestID)
+                    {
+                        finalResponse = applied.answer
+                        toolsRan += applied.toolsRan
                     }
                     await MainActor.run {
                         var msg = AIChatMessage(
@@ -4866,18 +4838,35 @@ extension LauncherView {
                     let onDeviceReply = await MainActor.run {
                         self.l2.chatMessages.first(where: { $0.id == msgId })?.content ?? ""
                     }
+                    let onDeviceScopeName = scopedAppName.isEmpty
+                        ? (frontmostName ?? frontmost.name) : scopedAppName
                     if let resolved = await self.resolveMCPToolCall(
                         in: onDeviceReply, bundleId: scopedBundleId, userQuery: query,
                         provider: provider, apiKey: apiKey, history: onDeviceHistory,
                         systemPrompt: activeContextPrompt,
-                        appName: scopedAppName.isEmpty
-                            ? (frontmostName ?? frontmost.name) : scopedAppName)
+                        appName: onDeviceScopeName)
                     {
                         await MainActor.run {
                             if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
                                 self.l2.chatMessages[idx] = AIChatMessage(
                                     id: msgId, role: .assistant, content: resolved.answer,
                                     mcpToolsRan: resolved.toolsRan)
+                            }
+                        }
+                    } else if let applied = await self.resolveTypedAppInvocation(
+                        in: onDeviceReply,
+                        scopedBundleId: scopedBundleId,
+                        scopeName: onDeviceScopeName,
+                        userQuery: query,
+                        requestID: l2RequestID)
+                    {
+                        // The on-device model routes actions as plain-text directives; without
+                        // this the raw {"adapter_call":…} line was printed to the user.
+                        await MainActor.run {
+                            if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
+                                self.l2.chatMessages[idx] = AIChatMessage(
+                                    id: msgId, role: .assistant, content: applied.answer,
+                                    mcpToolsRan: applied.toolsRan)
                             }
                         }
                     }
@@ -4919,6 +4908,16 @@ extension LauncherView {
                         {
                             finalReply = resolved.answer
                             toolsRan = resolved.toolsRan
+                        } else if let applied = await self.resolveTypedAppInvocation(
+                            in: reply,
+                            scopedBundleId: scopedBundleId,
+                            scopeName: scopedAppName.isEmpty
+                                ? (frontmostName ?? frontmost.name) : scopedAppName,
+                            userQuery: query,
+                            requestID: l2RequestID)
+                        {
+                            finalReply = applied.answer
+                            toolsRan = applied.toolsRan
                         }
                         await MainActor.run {
                             var msg = AIChatMessage(
@@ -5153,6 +5152,69 @@ extension LauncherView {
             }
         }
         return block
+    }
+
+    /// Runs a `menu_call` / `adapter_call` the model emitted as plain text and returns the
+    /// confirmation that replaces the JSON. Every provider path needs this: only the cloud
+    /// tool loop used to execute these, so an on-device or Shortcuts reply printed the raw
+    /// `{"adapter_call":…}` blob into the chat and the action never ran.
+    /// Returns nil when the reply carries no such directive.
+    func resolveTypedAppInvocation(
+        in response: String,
+        scopedBundleId: String,
+        scopeName: String,
+        userQuery: String,
+        requestID: UUID
+    ) async -> (answer: String, toolsRan: [String])? {
+        guard let invocation = AITypedInvocationResolver.invocation(from: response) else {
+            return nil
+        }
+        let bundle = (invocation.arguments["bundleId"].flatMap { $0.isEmpty ? nil : $0 })
+            ?? scopedBundleId
+
+        switch invocation.kind {
+        case .menuAction:
+            let path = (invocation.arguments["path"] ?? "")
+                .components(separatedBy: "\u{1F}").filter { !$0.isEmpty }
+            guard !path.isEmpty else { return nil }
+            let label = path.joined(separator: " ▸ ")
+            await setL2LoadingStatus("Running \(label)…", requestID: requestID)
+            let (ok, out) = await AppAdapterManager.shared.runMenuPath(
+                path, targetBundleId: bundle, appName: scopeName)
+            return (
+                ok ? "Done — \(label)." : (out.isEmpty ? "Couldn't run \(label)." : out),
+                [label]
+            )
+
+        case .adapterAction:
+            let actionId = invocation.arguments["actionId"] ?? ""
+            guard let adapter = AppAdapterManager.shared.adapter(for: bundle),
+                let action = adapter.actions.first(where: { $0.id == actionId })
+            else {
+                // A hallucinated action id must not reach the user as JSON.
+                return (
+                    "That action isn’t available in \(scopeName). Add it in Settings → App "
+                        + "Adapters → \(scopeName), or ask for something its current tools cover.",
+                    []
+                )
+            }
+            await setL2LoadingStatus("Running \(action.name)…", requestID: requestID)
+            let ctx = await MainActor.run {
+                self.sanitizedAXContextForScope(self.axContext, scopedBundleId: bundle)
+            }
+            let (ok, out) = await AppAdapterManager.shared.execute(
+                action, context: ctx, targetBundleId: bundle,
+                query: invocation.arguments["query"] ?? userQuery)
+            return (
+                ok
+                    ? (out.isEmpty ? "Done — \(action.name)." : out)
+                    : (out.isEmpty ? "Couldn't run \(action.name)." : out),
+                [action.name]
+            )
+
+        default:
+            return nil
+        }
     }
 
     /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.

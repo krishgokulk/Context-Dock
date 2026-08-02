@@ -898,8 +898,16 @@ extension LauncherView {
                 if isContextDockChatLocked {
                     syncScopeChatSpaceHold()
                     syncL2DockSession(force: l2.activeDockSessionKey == nil)
-                    if AppDelegate.shared?.launcherWindow?.isVisible == true {
-                        DispatchQueue.main.async { self.ensureSearchInputFocusReady() }
+                    // Do NOT reclaim focus here. The user switching apps is the user going
+                    // to work in that app — ensureSearchInputFocusReady() calls
+                    // NSApp.activate(ignoringOtherApps:) and retries, which yanked focus
+                    // straight back out of the app they just clicked. Only re-seat the caret
+                    // when the dock still owns key focus (a Space switch can drop the field
+                    // editor while the window stays key).
+                    if AppDelegate.shared?.launcherWindow?.isKeyWindow == true {
+                        DispatchQueue.main.async {
+                            self.isSearchFieldFocused = true
+                        }
                     }
                     return
                 }
