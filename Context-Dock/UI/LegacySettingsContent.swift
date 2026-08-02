@@ -3625,14 +3625,34 @@ Rules:
 - Optional "presets": [..] adds tappable preset values.
 
 ────────────────────────────────────────────────────────
-ADVANCED — LIVE SCOPE (a searchable auto-refreshing list, like Process Monitor):
-Add keyword "provider:custom" to turn the command into a live LIST. Then:
+ADVANCED — LIVE SCOPE (a panel of rows, like Process Monitor):
+Add keyword "provider:custom" to turn the command into a live PANEL. Then:
 - "script" is a ROWS script printing ONE JSON object PER LINE (NDJSON):
   {"id":"unique","title":"shown","subtitle":"dim","badge":"tag","icon":"SFSymbol-or-/abs/path"}
   Only "id" and "title" are required. No other output — one object per line.
 - "undoScript" is the ROW ACTION, run on Return. Selected row = $CD_ROW_ID, $CD_ROW_TITLE.
-- $CD_QUERY = typed text; filter rows with it for search-as-you-type.
 - Add "refresh:N" to auto-refresh every N seconds. All runs in the background.
+
+FIRST decide which of the TWO panel kinds you are building — they behave differently:
+
+1. BROWSE panel — the rows exist independently of what the user types
+   (ports, files, containers, branches). Print ALL rows; Context Dock filters
+   them by the typed text for you. Do NOT read $CD_QUERY.
+
+2. COMPUTED panel — the typed text IS the input; the rows are the answer
+   (currency converter, unit converter, calculator, a web search).
+   Read $CD_QUERY and print the RESULT rows. Never filter by the query — the
+   answer to "20 gbp" does not contain the text "20 gbp", so filtering it would
+   leave the panel empty.
+
+Reading $CD_QUERY in the rows script is what marks a panel COMPUTED. The script
+then re-runs as the user types (debounced), instead of being filtered.
+
+A COMPUTED panel MUST handle the empty query — print one hint row telling the
+user what to type, or the panel looks broken before they start typing.
+
+For file rows: put the ABSOLUTE PATH in "id". That gives the row the real file
+icon and thumbnail, Return opens it, and Space previews it in Quick Look.
 
 Live-scope example (Ports — Return kills the process):
 {
@@ -3651,8 +3671,29 @@ Live-scope example (Ports — Return kills the process):
     }
   ]
 }
+COMPUTED-panel example (Celsius → Fahrenheit; note the hint row and that the
+query is READ, never used as a filter):
+{
+  "version": "1.0",
+  "type": "system_commands",
+  "systemCommands": [
+    {
+      "name": "Temp Convert",
+      "description": "Convert Celsius to Fahrenheit and Kelvin.",
+      "icon": "thermometer.medium",
+      "keywords": ["temp", "celsius", "provider:custom"],
+      "scriptType": "bash",
+      "script": "q=$CD_QUERY; if [ -z \\"$q\\" ]; then echo '{\\"id\\":\\"hint\\",\\"title\\":\\"Type a temperature in Celsius\\",\\"subtitle\\":\\"e.g. 21\\",\\"icon\\":\\"questionmark.circle\\"}'; else echo \\"$q\\" | awk '{f=$1*9/5+32; k=$1+273.15; printf \\"{\\\\\\"id\\\\\\":\\\\\\"f\\\\\\",\\\\\\"title\\\\\\":\\\\\\"%.2f degF\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s degC\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"thermometer.sun\\\\\\"}\\\\n{\\\\\\"id\\\\\\":\\\\\\"k\\\\\\",\\\\\\"title\\\\\\":\\\\\\"%.2f K\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s degC\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"thermometer.snowflake\\\\\\"}\\\\n\\", f, $1, k, $1}'; fi",
+      "undoScriptType": "bash",
+      "undoScript": "printf '%s' \\"$CD_ROW_TITLE\\" | pbcopy"
+    }
+  ]
+}
+A currency converter is the same shape: read $CD_QUERY, call a rates API with
+curl, print one row per target currency, and copy the row on Return.
+
 Build anything as a live scope: ports, Docker containers, git branches, a
-password store, a file box, a web-app dashboard.
+password store, a file box, a converter, a web-app dashboard.
 
 Now create one for: "<describe the command OR live scope you want>"
 """

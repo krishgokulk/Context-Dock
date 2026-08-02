@@ -7083,19 +7083,23 @@ end tell
                             }
                         }
                         .pickerStyle(.menu)
-                        Picker("Dynamic list", selection: $scopeProvider) {
-                            Text("None").tag("none")
+                        // This picker — not the Type picker above — is what decides
+                        // whether the thing runs once or opens a panel. Named for that
+                        // consequence, since "Dynamic list" read like a minor detail.
+                        Picker("Opens a panel", selection: $scopeProvider) {
+                            Text("No — runs once on Return").tag("none")
                             Text("Bluetooth devices").tag("bluetooth")
                             Text("Wi-Fi networks").tag("wifi")
                             Text("Window layouts").tag("windows")
                             Text("Quick notes").tag("notepad")
-                            Text("List Extension (custom rows)").tag("custom")
+                            Text("Yes — my own rows (List Extension)").tag("custom")
                         }
                         .pickerStyle(.menu)
                         if scopeProvider == "custom" {
                             Text("Script above = JSON rows source. Undo field = per-row action ($CD_ROW_ID). Add keyword refresh:N for auto-refresh.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                            ListExtensionTester(script: script, scriptType: scriptType)
                         }
                         TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
                             .textFieldStyle(.roundedBorder)
@@ -7497,6 +7501,11 @@ struct SystemCommandEditorView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
+                        Text("Put an absolute file path in \"id\" to get the real file icon, "
+                             + "Return-to-open and Space-to-preview.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                        ListExtensionTester(script: script, scriptType: scriptType)
                         Text("Only title (or id) is required. icon = an SF Symbol name or a file/app path. Non-JSON lines become title-only rows.")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
