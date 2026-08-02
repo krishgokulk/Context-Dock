@@ -386,10 +386,17 @@ private struct StickyNoteContent: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 if !isUser {
-                    Button("Add to note") { appendToNote(message.content) }
-                        .font(.system(size: 10, weight: .medium))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
+                    // The model never edits notes itself — every write is one of these
+                    // explicit choices, so a wrong answer can't destroy what's written.
+                    HStack(spacing: 12) {
+                        Button("Add to note") { appendToNote(message.content) }
+                        Button("New note") { createNote(from: message.content) }
+                        Button("Replace") { replaceNote(with: message.content) }
+                            .foregroundStyle(.orange)
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
                 }
             }
             .padding(.horizontal, 10)
@@ -405,6 +412,20 @@ private struct StickyNoteContent: View {
     private func appendToNote(_ text: String) {
         let existing = store.notes.first(where: { $0.id == noteID })?.text ?? ""
         store.updateText(existing.isEmpty ? text : existing + "\n\n" + text, for: noteID)
+    }
+
+    /// Put the reply into a brand-new note and open it as its own tab, leaving the
+    /// note the user was working in untouched.
+    private func createNote(from text: String) {
+        let id = store.create()
+        store.updateText(text, for: id)
+        StickyNotesManager.shared.pin(id)
+    }
+
+    /// Overwrite this note with the reply. Destructive, so it is never automatic —
+    /// only ever the user pressing Replace.
+    private func replaceNote(with text: String) {
+        store.updateText(text, for: noteID)
     }
 
     /// Composer stays inside the sidecar, so typing to AI never changes the note.
@@ -477,7 +498,8 @@ private struct StickyNoteContent: View {
                     apiKey: key.isEmpty ? nil : key,
                     conversationHistory: Array(chatMessages.dropLast()),
                     additionalContextPrompt: noteContext,
-                    attachments: noteAttachments
+                    attachments: noteAttachments,
+                    surfaceScoped: true
                 )
             } catch {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
@@ -492,7 +514,22 @@ private struct StickyNoteContent: View {
         let note = store.notes.first(where: { $0.id == noteID })
         let text = note?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let filenames = note?.attachments ?? []
-        var parts = ["You are the sidecar assistant for a Quick Note. Keep the note itself unchanged unless the user explicitly asks to add text."]
+        var parts = ["""
+        You are the assistant inside a Quick Note. Your ONLY domain is this user's notes: \
+        writing them, editing them, summarising them, answering questions about them.
+
+        You cannot run shell commands, open apps, browse the web or touch files. Never emit \
+        directives like [TERMINAL_COMMAND: …] or any other bracketed command protocol — \
+        those belong to a different surface and do nothing here. If a request needs any of \
+        that, say plainly that it's outside a note and offer the note-shaped alternative.
+
+        When the user asks for note content, reply with the content itself and nothing else \
+        — no preamble, no "here's your note". The user gets buttons to create a new note or \
+        add your reply to the current one, so your whole reply should be exactly what they'd \
+        want written down.
+
+        Never rewrite the note silently; the user decides via those buttons.
+        """]
         if !text.isEmpty { parts.append("Current note:\n\(text)") }
         if !filenames.isEmpty { parts.append("Attached files: \(filenames.joined(separator: ", "))") }
         return parts.joined(separator: "\n\n")

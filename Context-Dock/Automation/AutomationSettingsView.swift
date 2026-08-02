@@ -741,8 +741,17 @@ struct AutomationSettingsView: View {
                         if !userExtStore.extensions.isEmpty {
                             userExtensionSection
                         }
-                        if !cmds.isEmpty {
-                            globalCommandSection(cmds)
+                        // Built-ins split by behaviour: ones that open a control or a list
+                        // are extensions, the rest are one-shot commands. Keeping them in
+                        // one "Global Commands" bucket stopped making sense once users
+                        // could author extensions of their own.
+                        let panels = cmds.filter(\.behavesAsPanel)
+                        let oneShots = cmds.filter { !$0.behavesAsPanel }
+                        if !panels.isEmpty {
+                            builtInExtensionSection(panels)
+                        }
+                        if !oneShots.isEmpty {
+                            globalCommandSection(oneShots)
                         }
                     }
                     .listStyle(.inset)
@@ -825,6 +834,30 @@ struct AutomationSettingsView: View {
             }
             .onDelete { idx in
                 idx.map { userExtStore.extensions[$0] }.forEach { userExtStore.remove($0) }
+            }
+        }
+    }
+
+    /// Built-ins that open a panel or a live control rather than firing once.
+    private func builtInExtensionSection(_ cmds: [SystemCommand]) -> some View {
+        Section("Built-in Extensions") {
+            ForEach(cmds) { cmd in
+                AutomationRow(
+                    icon: cmd.icon,
+                    color: .teal,
+                    title: cmd.name,
+                    subtitle: cmd.description,
+                    isEnabled: cmd.isEnabled
+                )
+                .tag(cmd.id)
+            }
+            .onDelete { idx in
+                let toRemove = idx.map { cmds[$0] }
+                toRemove.forEach { sysRegistry.remove($0) }
+                if let selectedSystemCommandID,
+                   toRemove.contains(where: { $0.id == selectedSystemCommandID }) {
+                    self.selectedSystemCommandID = nil
+                }
             }
         }
     }
@@ -1188,7 +1221,7 @@ struct AutomationSettingsView: View {
         case .extensionsGlobalWithSelection:
             return "Actions that require selected text, files, URLs, images, or media."
         case .extensionsGlobalWithoutSelection:
-            return "Always-available system and global commands."
+            return "Extensions open a panel; commands run once."
         case .extensionsCLIToolScope:
             return "Pinned command-line tools available everywhere."
         case .frontmostAppAdapters:

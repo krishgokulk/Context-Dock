@@ -188,7 +188,8 @@ class AIProviderService: ObservableObject {
         apiKey: String? = nil,
         conversationHistory: [ChatMessage] = [],
         additionalContextPrompt: String = "",
-        attachments: [AIAttachment] = []
+        attachments: [AIAttachment] = [],
+        surfaceScoped: Bool = false
     ) async throws -> String {
 
         #if DEBUG
@@ -208,8 +209,14 @@ class AIProviderService: ObservableObject {
             isProcessing = false
         }
 
-        // Match query against registered L2 packages for tool-specific context injection
-        let matchedPackage = TerminalPackageManager.shared.findPackageForQuery(message)
+        // Match query against registered L2 packages for tool-specific context injection.
+        // Surface-scoped callers (the Quick Note sidecar, extension panels) opt out: they
+        // own a narrow domain, and package matching would teach the model the
+        // [TERMINAL_COMMAND: …] protocol — "new note" once matched an L2 package and came
+        // back as a terminal directive instead of a note.
+        let matchedPackage = surfaceScoped
+            ? nil
+            : TerminalPackageManager.shared.findPackageForQuery(message)
 
         // Capture current Finder folder only when Finder is the active context.
         // A pinned app scope in the dock should not inherit frontmost Finder folder context.
@@ -232,7 +239,8 @@ class AIProviderService: ObservableObject {
             currentFolder: currentFolder,
             originalQuery: message,
             includePrivateSafariData: shouldIncludePrivateSafariData(for: provider),
-            additionalContextPrompt: additionalContextPrompt
+            additionalContextPrompt: additionalContextPrompt,
+            surfaceScoped: surfaceScoped
         )
 
         #if DEBUG
@@ -300,8 +308,20 @@ class AIProviderService: ObservableObject {
         forToolUse: Bool = false,
         forOnDevice: Bool = false,
         includePrivateSafariData: Bool = false,
-        additionalContextPrompt: String = ""
+        additionalContextPrompt: String = "",
+        surfaceScoped: Bool = false
     ) async -> String {
+        // A scoped surface supplies its own identity in additionalContextPrompt. Layering
+        // the launcher-wide preamble on top makes the model believe it can run files, apps
+        // and shell commands from inside a note sidecar.
+        if surfaceScoped {
+            var scoped = additionalContextPrompt
+            if !AppSettings.shared.onDeviceSystemPrompt.isEmpty {
+                scoped = AppSettings.shared.onDeviceSystemPrompt + "\n\n" + scoped
+            }
+            return scoped
+        }
+
         var prompt = "You are a helpful AI assistant integrated into ILauncher, a macOS launcher application. "
         prompt += "You help users with file management, app workflows, and productivity tasks. "
         prompt += "Be concise, helpful, and actionable. "

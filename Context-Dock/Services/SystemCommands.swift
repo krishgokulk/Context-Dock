@@ -96,6 +96,22 @@ struct SystemCommand: Codable, Identifiable, Equatable {
     }
 }
 
+extension SystemCommand {
+    /// True when this built-in behaves like an extension rather than a one-shot command:
+    /// it either renders a live control (slider/toggle) or expands into a list of rows.
+    /// Wi-Fi, Bluetooth, Volume and Process Monitor are extensions by this test; Sleep,
+    /// Restart and Empty Trash are commands. Derived rather than hardcoded so a
+    /// user-edited built-in lands in the right group automatically.
+    var behavesAsPanel: Bool {
+        if interaction != SystemCommandInteraction.none.rawValue { return true }
+        return keywords.contains { keyword in
+            let lower = keyword.lowercased()
+            guard lower.hasPrefix("provider:") else { return false }
+            return lower.dropFirst("provider:".count) != "none"
+        }
+    }
+}
+
 enum SystemCommandInteraction: String, CaseIterable, Identifiable {
     case none = "none"
     case slider = "slider"

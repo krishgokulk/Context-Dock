@@ -381,7 +381,18 @@ struct ExtensionPanelAIComposer: View {
         isSending = true
 
         let priorHistory = history
-        let extensionPrompt = ext.aiPrompt
+        // Scoped to this panel: without an identity of its own the model inherits the
+        // launcher-wide persona and starts proposing shell commands it cannot run here.
+        let scopedPrompt = """
+        You are the assistant inside the "\(ext.name)" panel in Context Dock.
+        \(ext.description)
+
+        Stay within this panel's subject. You cannot run commands, open apps or touch \
+        files — if a request needs that, say so plainly instead of emitting any bracketed \
+        command directive.
+
+        \(ext.aiPrompt)
+        """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
             defer { isSending = false }
@@ -391,7 +402,8 @@ struct ExtensionPanelAIComposer: View {
                     context: .none,
                     provider: settings.selectedAIProvider,
                     conversationHistory: priorHistory,
-                    additionalContextPrompt: extensionPrompt
+                    additionalContextPrompt: scopedPrompt,
+                    surfaceScoped: true
                 )
                 history.append(ChatMessage(role: .assistant, content: reply))
             } catch {
