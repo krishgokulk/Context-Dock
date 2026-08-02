@@ -200,6 +200,10 @@ struct LauncherView: View {
     /// Adapter / menu-command approval rendered inline in the chat (instead of the
     /// floating panel) whenever a chat surface is already on screen.
     @State var pendingAdapterApproval: AdapterActionRequest?
+    /// Candidates behind the pick-one buttons on the last answer, kept so a click runs the
+    /// exact route that was offered.
+    @State var pendingActionCandidates: [DoraXActionCandidate] = []
+    @State var pendingActionQuery: String = ""
     /// "This scope has no tool for that" offer — link an installed CLI, or install one.
     @State var pendingCapabilityGap: CapabilityGapService.Gap?
     @State var capabilityGapWorking = false

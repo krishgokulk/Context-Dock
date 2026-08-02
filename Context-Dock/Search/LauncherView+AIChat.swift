@@ -1704,8 +1704,8 @@ extension LauncherView {
                                 onInstallProposal: { json in installFromProposal(json) },
                                 onRunOnceProposal: { json in runOnceFromProposal(json) },
                                 onReplaceText: selectionScopeReplaceTextAction(for: message),
-                                onPickAction: { choice in runPickedActionChoice(choice) },
-                                            onEnableApp: { req in enableAppForGeneralChat(req) }
+                                onEnableApp: { req in enableAppForGeneralChat(req) },
+                                onPickAction: { choice in runPickedActionChoice(choice) }
                             )
                             .id(message.id)
                         }

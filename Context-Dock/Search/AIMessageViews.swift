@@ -320,6 +320,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
+    var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
     var runOutput: String?  // terminal/script output, collapsed behind a disclosure
 
@@ -336,7 +337,7 @@ struct AIChatMessage: Identifiable, Equatable {
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
-        runOutput: String? = nil
+        runOutput: String? = nil, actionChoices: [ActionChoice] = []
     ) {
         self.id = UUID()
         self.role = role
@@ -352,6 +353,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.enableAppRequest = enableAppRequest
         self.trace = trace
         self.runOutput = runOutput
+        self.actionChoices = actionChoices
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
@@ -361,7 +363,7 @@ struct AIChatMessage: Identifiable, Equatable {
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
-        runOutput: String? = nil
+        runOutput: String? = nil, actionChoices: [ActionChoice] = []
     ) {
         self.id = id
         self.role = role
@@ -377,6 +379,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.enableAppRequest = enableAppRequest
         self.trace = trace
         self.runOutput = runOutput
+        self.actionChoices = actionChoices
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -450,6 +453,7 @@ struct AIChatMessageView: View {
     var onReplaceText: (() -> Void)? = nil
     /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
     var onEnableApp: ((EnableAppRequest) -> Void)? = nil
+    var onPickAction: ((ActionChoice) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
@@ -548,6 +552,48 @@ struct AIChatMessageView: View {
                 .padding(.vertical, 7)
                 .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
+        }
+    }
+
+    /// Pick-one routes as buttons. The same information the bullet list carried, except a
+    /// click runs the route instead of asking the user to retype what they wanted.
+    @ViewBuilder
+    private var actionChoiceButtons: some View {
+        if !message.actionChoices.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(message.actionChoices) { choice in
+                    Button {
+                        onPickAction?(choice)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(choice.title)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                Text(
+                                    [choice.appName, choice.routeLabel]
+                                        .compactMap { $0 }
+                                        .joined(separator: " · ")
+                                )
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 2)
         }
     }
 
@@ -843,6 +889,7 @@ struct AIChatMessageView: View {
 
                 if message.enableAppRequest != nil {
                     enableAppButton
+                    actionChoiceButtons
                 }
 
                 if message.role == .assistant, let onReplaceText, !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

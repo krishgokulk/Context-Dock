@@ -100,6 +100,8 @@ struct AIModeState {
     // Set when a query targeted an app the user hasn't selected — the answer bubble shows a
     // one-tap "Enable <app> for this chat" button that adds it to the picker and re-runs.
     var pendingEnableApp: EnableAppRequest? = nil
+    /// Routes offered for the current answer, rendered as buttons on it.
+    var pendingActionChoices: [ActionChoice] = []
 }
 
 /// A two-phase delivery request: the router recognised "do X to this, then mail it to
@@ -121,6 +123,19 @@ struct EnableAppRequest: Equatable {
     let name: String
     let bundleId: String
     let query: String
+}
+
+/// One route the user can pick when several fit the request equally well.
+///
+/// The alternatives used to be printed into the answer as a bullet list, which asked a
+/// question the user could not answer by clicking — they had to read the options and retype
+/// their intent. `id` is the candidate's id, so the pick executes the exact route that was
+/// offered rather than re-resolving from text.
+struct ActionChoice: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let routeLabel: String
+    let appName: String?
 }
 
 /// Tiny planner-progress model for General AI Chat's DoraX Action Chat pipeline. Ordered

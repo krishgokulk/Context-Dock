@@ -101,6 +101,26 @@ extension LauncherView {
         return lines.joined(separator: "\n")
     }
 
+    /// Runs the route the user picked, by id, so the executed action is exactly the one
+    /// offered rather than something re-resolved from the answer text.
+    func runPickedActionChoice(_ choice: ActionChoice) {
+        guard let candidate = pendingActionCandidates.first(where: { $0.id == choice.id })
+        else { return }
+        let alternatives = pendingActionCandidates.filter { $0.id != choice.id }
+        let query = pendingActionQuery
+        pendingActionCandidates = []
+        aiMode.pendingActionChoices = []
+        Task {
+            let result = await runGeneralAIAction(
+                candidate, alternatives: alternatives, query: query)
+            await MainActor.run {
+                aiMode.messages.append(
+                    AIChatMessage(
+                        role: .assistant, content: result, trace: aiMode.routerTrace))
+            }
+        }
+    }
+
     /// Executable-action interception for General AI Chat. Returns the final chat
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
@@ -204,10 +224,18 @@ extension LauncherView {
                     aiMode.actionProgress = nil
                     aiMode.pendingToolChips = ["DoraX route lookup"]
                 }
-                let list = candidates.prefix(3)
-                    .map { "• \($0.title) — \($0.routeLabel)" }
-                    .joined(separator: "\n")
-                return "I found these possible actions — which one should I run?\n" + list
+                await MainActor.run {
+                    // Offered as buttons on the answer instead of printed into it: the old
+                    // bullet list asked a question the user could not answer by clicking.
+                    aiMode.pendingActionChoices = candidates.prefix(3).map {
+                        ActionChoice(
+                            id: $0.id, title: $0.title, routeLabel: $0.routeLabel,
+                            appName: $0.appName)
+                    }
+                    pendingActionCandidates = Array(candidates.prefix(3))
+                    pendingActionQuery = query
+                }
+                return "I found more than one way to do that — pick one:" 
             }
             return await runGeneralAIAction(
                 best, alternatives: Array(candidates.dropFirst()), query: query)
