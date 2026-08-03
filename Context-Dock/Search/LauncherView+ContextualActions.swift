@@ -1420,6 +1420,29 @@ extension LauncherView {
             }
 
         let hasAction = !command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // Pin detaches this live list into a floating panel, exactly as Quick Note
+        // does. Offered as a row because the scope has no chrome of its own — and it
+        // stays last so it never displaces the rows the user came for.
+        var pinPill = DockPill(
+            id: "syscmd-custom-pin-\(command.id)",
+            name: ScopedListPanelManager.shared.isPinned(command.id)
+                ? "Unpin \(command.name)" : "Pin \(command.name) as a panel",
+            icon: ScopedListPanelManager.shared.isPinned(command.id) ? "pin.slash" : "pin",
+            accentColorName: "yellow",
+            badge: "Keeps it open while you work",
+            execute: {
+                ScopedListPanelManager.shared.toggle(command)
+                self.forceHideLauncherAfterResultExecution()
+            }
+        )
+        pinPill.rankingKind = "systemCommand"
+        pinPill.sourceBundleId = scopedBundleId
+        pinPill.sourceAppName = command.name
+        pinPill.trackingIdentifier = "syscmd-custom-pin:\(command.id)"
+        pinPill.keyboardShortcutLabel = "Pin"
+        pinPill.searchTerms = ["pin", "panel", "float", command.name]
+
         return filtered.enumerated().map { index, row in
             var pill = DockPill(
                 // Index keeps the id unique even when a script emits duplicate row ids
@@ -1483,7 +1506,7 @@ extension LauncherView {
             }
             pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
             return pill
-        }
+        } + [pinPill]
     }
 
     /// Row has no undoScript but its id/icon is a real file or app path → Enter opens it.
