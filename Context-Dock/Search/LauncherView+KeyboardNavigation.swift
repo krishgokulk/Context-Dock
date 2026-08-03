@@ -1853,6 +1853,17 @@ extension LauncherView {
                 if isGlobalContextActive {
                     let q = searchState.query.trimmingCharacters(in: .whitespaces)
                     if !q.isEmpty {
+                        // Tab has to act on the row the sheet is showing. Focus lands either
+                        // on an app (focusedAppPillIndex) or on a command/menu pill
+                        // (l2.focusedPillIndex) — and both lookups below return apps only.
+                        // So with a global command focused, "screenshot" displayed the
+                        // Screenshot command while Tab scoped whichever app matched the word
+                        // loosely: a different target from the one under the highlight.
+                        //
+                        // A pill is not an app scope, so Tab does nothing here rather than
+                        // scoping something the user never pointed at. Enter still runs the
+                        // focused row, which is what a command row is for.
+                        if l2.focusedPillIndex != nil { return .handled }
                         let hit =
                             focusedGlobalAppResultForInputPreview()
                             ?? topGlobalAppResultForInputPreview()
