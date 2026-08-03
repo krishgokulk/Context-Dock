@@ -1512,6 +1512,7 @@ extension LauncherView {
                 pill.compareIcon = row.centerIcon
                 pill.compareLeftQuery = row.leftQuery
                 pill.compareRightQuery = row.rightQuery
+                pill.compareCommandID = command.id
             }
             pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
             return pill

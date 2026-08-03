@@ -31,6 +31,8 @@ struct DockPill: Identifiable {
     /// Tapping a compare caption replaces the dock query with this string.
     var compareLeftQuery: String? = nil
     var compareRightQuery: String? = nil
+    /// List extension that produced this row — the caption dropdown re-runs it.
+    var compareCommandID: UUID? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil

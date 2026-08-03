@@ -568,10 +568,12 @@ extension LauncherView {
         // across rather than down — the shape every calculator uses for a conversion.
         HStack(spacing: 0) {
             comparePane(value: left, caption: pill.name, alignment: .leading,
-                        isResult: false, drillQuery: pill.compareLeftQuery)
+                        isResult: false, drillQuery: pill.compareLeftQuery,
+                        commandID: pill.compareCommandID)
             comparePane(value: pill.compareRight ?? "", caption: pill.badge,
                         alignment: .trailing, isResult: true,
-                        drillQuery: pill.compareRightQuery)
+                        drillQuery: pill.compareRightQuery,
+                        commandID: pill.compareCommandID)
         }
         .frame(height: 104)
         .overlay {
@@ -601,7 +603,8 @@ extension LauncherView {
     @ViewBuilder
     private func comparePane(value: String, caption: String?,
                              alignment: HorizontalAlignment, isResult: Bool,
-                             drillQuery: String? = nil) -> some View {
+                             drillQuery: String? = nil,
+                             commandID: UUID? = nil) -> some View {
         VStack(alignment: .center, spacing: 8) {
             Text(value)
                 .font(.system(size: 21, weight: isResult ? .bold : .semibold, design: .rounded))
@@ -609,27 +612,17 @@ extension LauncherView {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
             if let caption, !caption.isEmpty {
-                // A caption with a drill query is a control, not a label: tapping it
-                // rewrites the query so the extension can answer with a picker.
-                if let drillQuery {
-                    Button {
-                        searchState.query = drillQuery
-                        isSearchFieldFocused = true
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(caption)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 7, weight: .bold))
-                        }
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.12), in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
+                // A caption with a drill query is a control, not a label: it opens a
+                // dropdown rather than typing the extension's private token into the
+                // input, which is what the first version did.
+                if let drillQuery, let commandID {
+                    CompareCaptionPill(
+                        caption: caption, drillQuery: drillQuery, commandID: commandID,
+                        onPicked: {
+                            scheduleDockPillRebuild(
+                                query: searchState.query, delayNanoseconds: 0,
+                                refreshContext: false)
+                        })
                 } else {
                     Text(caption)
                         .font(.system(size: 10, weight: .medium))
