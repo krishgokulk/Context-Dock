@@ -563,46 +563,59 @@ extension LauncherView {
     /// becoming the other only when they sit either side of a centre mark.
     @ViewBuilder
     func compareRowBody(pill: DockPill, left: String, accent: SwiftUI.Color) -> some View {
+        // A card, not a row. Two equal halves split by a rule with the operator
+        // sitting on it, so input and result carry the same weight and the eye reads
+        // across rather than down — the shape every calculator uses for a conversion.
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(left)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if !pill.name.isEmpty {
-                    Text(pill.name)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
+            comparePane(value: left, caption: pill.name, alignment: .leading, isResult: false)
+            comparePane(value: pill.compareRight ?? "", caption: pill.badge,
+                        alignment: .trailing, isResult: true)
+        }
+        .frame(height: 104)
+        .overlay {
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 1)
+        }
+        .overlay {
             Image(systemName: pill.compareIcon ?? "arrow.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(accent)
+                .foregroundStyle(.secondary)
                 .frame(width: 30, height: 30)
-                .background(accent.opacity(0.14), in: Circle())
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(pill.compareRight ?? "")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let badge = pill.badge, !badge.isEmpty {
-                    Text(badge)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
         }
-        .frame(height: 52)
-        .padding(.horizontal, 14)
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func comparePane(value: String, caption: String?,
+                             alignment: HorizontalAlignment, isResult: Bool) -> some View {
+        VStack(alignment: .center, spacing: 8) {
+            Text(value)
+                .font(.system(size: 21, weight: isResult ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(isResult ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if let caption, !caption.isEmpty {
+                Text(caption)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
     }
 
     /// Pin lives on the scope header, not in the row list: it acts on the whole
