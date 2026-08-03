@@ -19,9 +19,11 @@ final class ScopedListPanelManager: ObservableObject {
     static let shared = ScopedListPanelManager()
 
     @Published private(set) var pinnedCommandIDs: [UUID] = []
-    @Published var activeCommandID: UUID?
 
-    private var panel: NSPanel?
+    /// One window per pinned extension, like a sticky note. A single tabbed window
+    /// made two unrelated extensions share a size and a position, which is wrong for
+    /// panels the user pins precisely because they want them side by side.
+    private var panels: [UUID: NSPanel] = [:]
 
     private init() {}
 
@@ -32,100 +34,43 @@ final class ScopedListPanelManager: ObservableObject {
     }
 
     func pin(_ command: SystemCommand) {
-        ensureWindow()
-        if !pinnedCommandIDs.contains(command.id) { pinnedCommandIDs.append(command.id) }
-        activeCommandID = command.id
-        panel?.makeKeyAndOrderFront(nil)
-        panel?.orderFrontRegardless()
-    }
-
-    func unpin(_ id: UUID) {
-        guard let idx = pinnedCommandIDs.firstIndex(of: id) else { return }
-        pinnedCommandIDs.remove(at: idx)
-        if activeCommandID == id {
-            activeCommandID = pinnedCommandIDs.indices.contains(idx)
-                ? pinnedCommandIDs[idx]
-                : pinnedCommandIDs.last
+        if let existing = panels[command.id] {
+            existing.makeKeyAndOrderFront(nil)
+            existing.orderFrontRegardless()
+            return
         }
-        if pinnedCommandIDs.isEmpty { panel?.close() }
-    }
-
-    private func ensureWindow() {
-        guard panel == nil else { return }
         let p = GlassFloatingPanel.make(
-            size: NSSize(width: 480, height: 460),
-            minSize: NSSize(width: 360, height: 260)
+            size: NSSize(width: 460, height: 440),
+            minSize: NSSize(width: 340, height: 240)
         )
-        p.contentView = NSHostingView(rootView: ScopedListPanelRootView())
+        p.contentView = NSHostingView(rootView: ScopedListPanelContent(command: command))
 
+        // Cascade so a second pin doesn't land exactly on top of the first.
         if let screen = NSScreen.main {
             let f = screen.visibleFrame
-            p.setFrameTopLeftPoint(NSPoint(x: f.maxX - 520, y: f.maxY - 80))
+            let step = CGFloat(panels.count) * 28
+            p.setFrameTopLeftPoint(NSPoint(x: f.maxX - 500 - step, y: f.maxY - 80 - step))
         }
 
+        let id = command.id
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: p, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.panel = nil
-                self?.pinnedCommandIDs = []
-                self?.activeCommandID = nil
+                self?.panels[id] = nil
+                self?.pinnedCommandIDs.removeAll { $0 == id }
             }
         }
-        panel = p
+
+        panels[id] = p
+        if !pinnedCommandIDs.contains(id) { pinnedCommandIDs.append(id) }
         p.orderFrontRegardless()
     }
-}
 
-// MARK: - Root
-
-struct ScopedListPanelRootView: View {
-    @ObservedObject private var manager = ScopedListPanelManager.shared
-
-    private var command: SystemCommand? {
-        guard let id = manager.activeCommandID else { return nil }
-        return SystemCommandsRegistry.shared.commands.first { $0.id == id }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if manager.pinnedCommandIDs.count > 1 { tabStrip }
-            if let command {
-                ScopedListPanelContent(command: command)
-                    .id(command.id)
-            } else {
-                Spacer()
-                Text("Nothing pinned").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
-    }
-
-    private var tabStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(manager.pinnedCommandIDs, id: \.self) { id in
-                    if let cmd = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }) {
-                        Button { manager.activeCommandID = id } label: {
-                            Text(cmd.name)
-                                .font(.system(size: 11, weight: .medium))
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 4)
-                                .background(
-                                    manager.activeCommandID == id
-                                        ? Color.accentColor.opacity(0.25)
-                                        : Color.primary.opacity(0.06),
-                                    in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-        }
+    func unpin(_ id: UUID) {
+        panels[id]?.close()
+        panels[id] = nil
+        pinnedCommandIDs.removeAll { $0 == id }
     }
 }
 
@@ -178,6 +123,19 @@ struct ScopedListPanelContent: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            // Close sits at the leading edge, where macOS puts it — the panel hides
+            // the real traffic lights to keep the glass unbroken.
+            Button { manager.unpin(command.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .background(Color.primary.opacity(0.10), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Close")
+
             Image(systemName: command.icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tint)
@@ -191,13 +149,10 @@ struct ScopedListPanelContent: View {
                     .background(Color.accentColor.opacity(0.15), in: Capsule())
             }
             Spacer()
-            Button { manager.unpin(command.id) } label: {
-                Image(systemName: "pin.slash")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Unpin — the scope stays available in the dock")
+            Image(systemName: "pin.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .help("Pinned — the scope also stays available in the dock")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
