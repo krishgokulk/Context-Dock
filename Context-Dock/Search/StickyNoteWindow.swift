@@ -609,9 +609,18 @@ private struct StickyNoteContent: View {
                     ForEach(attachments, id: \.self) { name in
                         let url = store.attachmentURL(name)
                         HStack(spacing: 5) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                                .resizable()
-                                .frame(width: 16, height: 16)
+                            // A screenshot chip showed the generic PNG glyph, so a note
+                            // full of captures was a column of identical icons. Same
+                            // QuickLook thumbnail the dock rows use.
+                            FileThumbnailImage(
+                                filePath: url.path,
+                                fallbackImage: NSWorkspace.shared.icon(forFile: url.path),
+                                systemName: "doc",
+                                tint: .secondary,
+                                size: 16,
+                                cornerRadius: 3
+                            )
+                            .frame(width: 16, height: 16)
                             Text(name)
                                 .font(.system(size: 10, weight: .medium))
                                 .lineLimit(1)

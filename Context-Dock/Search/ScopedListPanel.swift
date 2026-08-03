@@ -192,10 +192,18 @@ struct ScopedListPanelContent: View {
                         refresh()
                     } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: symbol(row.icon))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.tint)
-                                .frame(width: 16)
+                            // Same treatment the inline dock rows get: a row whose id is
+                            // a real file shows that file, not a generic glyph. The panel
+                            // had its own simpler renderer and missed out.
+                            FileThumbnailImage(
+                                filePath: filePath(for: row),
+                                fallbackImage: nil,
+                                systemName: symbol(row.icon),
+                                tint: .accentColor,
+                                size: 22,
+                                cornerRadius: 4
+                            )
+                            .frame(width: 22, height: 22)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(row.title).font(.system(size: 12, weight: .medium))
                                 if let sub = row.subtitle, !sub.isEmpty {
@@ -229,6 +237,16 @@ struct ScopedListPanelContent: View {
             $0.title.lowercased().contains(q)
                 || ($0.subtitle?.lowercased().contains(q) ?? false)
         }
+    }
+
+    /// A row stands for a file when its id (or icon) is a path that exists.
+    private func filePath(for row: CustomListRow) -> String? {
+        for candidate in [row.id, row.icon].compactMap({ $0 }) {
+            guard candidate.hasPrefix("/") || candidate.hasPrefix("~") else { continue }
+            let path = (candidate as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: path) { return path }
+        }
+        return nil
     }
 
     private func symbol(_ icon: String?) -> String {
