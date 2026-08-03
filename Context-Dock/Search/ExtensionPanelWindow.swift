@@ -175,7 +175,8 @@ struct ExtensionPanelContentView: View {
 
             if ext.aiEnabled {
                 Divider().opacity(0.3)
-                ExtensionPanelAIComposer(ext: ext)
+                ExtensionPanelAIComposer(title: ext.name, subtitle: ext.description,
+                                         extraPrompt: ext.aiPrompt)
                     .frame(minHeight: 180)
             }
         }
@@ -292,7 +293,12 @@ struct ExtensionPanelContentView: View {
 /// Global Context Prompt is folded in by the router automatically; the extension's
 /// own `aiPrompt` rides along as the per-surface addendum.
 struct ExtensionPanelAIComposer: View {
-    let ext: UserGlobalExtension
+    /// Plain strings rather than a model, so both extension routes — a
+    /// UserGlobalExtension and a SystemCommand list extension — host the same
+    /// composer instead of each growing its own.
+    let title: String
+    let subtitle: String
+    let extraPrompt: String
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var history: [ChatMessage] = []
@@ -312,7 +318,7 @@ struct ExtensionPanelAIComposer: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     if history.isEmpty && errorText == nil {
-                        Text("Ask about \(ext.name)")
+                        Text("Ask about \(title)")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -384,14 +390,14 @@ struct ExtensionPanelAIComposer: View {
         // Scoped to this panel: without an identity of its own the model inherits the
         // launcher-wide persona and starts proposing shell commands it cannot run here.
         let scopedPrompt = """
-        You are the assistant inside the "\(ext.name)" panel in Context Dock.
-        \(ext.description)
+        You are the assistant inside the "\(title)" panel in Context Dock.
+        \(subtitle)
 
         Stay within this panel's subject. You cannot run commands, open apps or touch \
         files — if a request needs that, say so plainly instead of emitting any bracketed \
         command directive.
 
-        \(ext.aiPrompt)
+        \(extraPrompt)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {

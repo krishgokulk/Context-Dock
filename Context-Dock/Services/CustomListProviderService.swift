@@ -202,6 +202,13 @@ final class CustomListProviderService {
 
     // MARK: Config
 
+    /// Extension wants a chat surface in its pinned panel. Opt-in per extension, so a
+    /// pinned panel comes in two flavours: rows only, or rows plus an assistant scoped
+    /// to that extension — the same split Quick Note already has.
+    static func hasAIPanel(_ command: SystemCommand) -> Bool {
+        command.keywords.contains { $0.lowercased() == "ai:panel" }
+    }
+
     /// Whether a command is a user-authored list extension.
     static func isListProvider(_ command: SystemCommand) -> Bool {
         command.keywords.contains { $0.lowercased() == "provider:custom" }

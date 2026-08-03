@@ -141,6 +141,8 @@ struct ScopedListPanelContent: View {
 
     private var isComputed: Bool { CustomListProviderService.isLiveQuery(command) }
 
+    private var hasAI: Bool { CustomListProviderService.hasAIPanel(command) }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -148,9 +150,30 @@ struct ScopedListPanelContent: View {
             searchField
             Divider().opacity(0.3)
             rowList
+            if hasAI {
+                Divider().opacity(0.3)
+                ExtensionPanelAIComposer(
+                    title: command.name,
+                    subtitle: command.description,
+                    extraPrompt: aiContext
+                )
+                .frame(minHeight: 190)
+            }
         }
         .onAppear { start() }
         .onDisappear { ticker?.invalidate() }
+    }
+
+    /// Hand the model what the panel is currently showing. Without it the assistant
+    /// is talking about the extension in the abstract while the user is looking at
+    /// concrete rows.
+    private var aiContext: String {
+        let lines = displayedRows.prefix(20).map { row -> String in
+            let sub = (row.subtitle?.isEmpty == false) ? " — \(row.subtitle!)" : ""
+            return "• \(row.title)\(sub)"
+        }
+        guard !lines.isEmpty else { return "" }
+        return "Rows currently shown in this panel:\n" + lines.joined(separator: "\n")
     }
 
     private var header: some View {
@@ -159,6 +182,14 @@ struct ScopedListPanelContent: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tint)
             Text(command.name).font(.system(size: 13, weight: .semibold))
+            if hasAI {
+                Text("AI")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+            }
             Spacer()
             Button { manager.unpin(command.id) } label: {
                 Image(systemName: "pin.slash")
