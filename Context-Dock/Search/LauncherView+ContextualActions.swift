@@ -1518,6 +1518,7 @@ extension LauncherView {
                 pill.compareLeftQuery = row.leftQuery
                 pill.compareRightQuery = row.rightQuery
                 pill.compareCommandID = command.id
+                pill.compareCenterAction = row.centerAction
             }
             // Include the raw query: see the note on the status row. A compare card for
             // "12" contains none of the characters the user typed.

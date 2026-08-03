@@ -36,6 +36,9 @@ struct CustomListRow: Identifiable {
     /// drill-in ("which currency?") without the dock knowing what the row means.
     let leftQuery: String?
     let rightQuery: String?
+    /// Row id to run when the centre symbol is tapped — makes it a control (a swap)
+    /// rather than decoration.
+    let centerAction: String?
 
     var isCompare: Bool {
         layout?.lowercased() == "compare" && (left != nil || right != nil)
@@ -43,12 +46,14 @@ struct CustomListRow: Identifiable {
 
     init(id: String, title: String, subtitle: String?, badge: String?, icon: String?,
          layout: String? = nil, left: String? = nil, right: String? = nil,
-         centerIcon: String? = nil, leftQuery: String? = nil, rightQuery: String? = nil) {
+         centerIcon: String? = nil, leftQuery: String? = nil, rightQuery: String? = nil,
+         centerAction: String? = nil) {
         self.id = id; self.title = title; self.subtitle = subtitle
         self.badge = badge; self.icon = icon
         self.layout = layout; self.left = left; self.right = right
         self.centerIcon = centerIcon
         self.leftQuery = leftQuery; self.rightQuery = rightQuery
+        self.centerAction = centerAction
     }
 }
 
@@ -364,6 +369,7 @@ final class CustomListProviderService {
             let centerIcon: String?
             let leftQuery: String?
             let rightQuery: String?
+            let centerAction: String?
         }
         var rows: [CustomListRow] = []
         var autoIndex = 0
@@ -388,7 +394,8 @@ final class CustomListProviderService {
                         right: raw.right,
                         centerIcon: raw.centerIcon,
                         leftQuery: raw.leftQuery,
-                        rightQuery: raw.rightQuery))
+                        rightQuery: raw.rightQuery,
+                        centerAction: raw.centerAction))
             } else {
                 autoIndex += 1
                 rows.append(

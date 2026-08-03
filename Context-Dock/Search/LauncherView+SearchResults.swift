@@ -582,12 +582,39 @@ extension LauncherView {
                 .frame(width: 1)
         }
         .overlay {
-            Image(systemName: pill.compareIcon ?? "arrow.right")
+            // With a centre action the symbol is a control — a swap — so it gets accent
+            // treatment and a tap. Tap gesture, not a Button: this whole card is
+            // already the label of the row's Button.
+            Image(systemName: pill.compareCenterAction != nil
+                  ? "arrow.left.arrow.right"
+                  : (pill.compareIcon ?? "arrow.right"))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(pill.compareCenterAction != nil
+                                 ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
                 .frame(width: 30, height: 30)
                 .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                .overlay(Circle().strokeBorder(
+                    pill.compareCenterAction != nil
+                        ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.12),
+                    lineWidth: 1))
+                .contentShape(Circle())
+                .onTapGesture {
+                    guard let action = pill.compareCenterAction,
+                          let id = pill.compareCommandID,
+                          let command = SystemCommandsRegistry.shared.commands
+                              .first(where: { $0.id == id })
+                    else { return }
+                    let synthetic = CustomListRow(
+                        id: action, title: action, subtitle: nil, badge: nil, icon: nil)
+                    CustomListProviderService.shared.runAction(
+                        command, row: synthetic, query: searchState.query
+                    ) {
+                        CustomListProviderService.shared.invalidate(command)
+                        scheduleDockPillRebuild(
+                            query: searchState.query, delayNanoseconds: 0,
+                            refreshContext: false)
+                    }
+                }
         }
         .background(Color.primary.opacity(0.05),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))

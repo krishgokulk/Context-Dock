@@ -10,6 +10,9 @@ SUPPORT = os.path.expanduser("~/Library/Application Support/Context-Dock")
 CACHE = os.path.join(SUPPORT, "fx-rates.json")
 PREF = os.path.join(SUPPORT, "currency-target.json")
 DEFAULT_TARGET = "INR"
+# Shown first in the picker. Alphabetical order buried USD under AED and ARS.
+POPULAR = ["USD", "EUR", "GBP", "INR", "JPY", "AUD", "CAD", "CHF", "CNY",
+           "AED", "SGD", "HKD", "NZD"]
 
 SYMBOL = {"USD": "$", "EUR": "€", "GBP": "£", "INR": "₹", "JPY": "¥",
           "AUD": "A$", "CAD": "C$", "NZD": "NZ$", "CNY": "¥", "KRW": "₩",
@@ -91,7 +94,7 @@ def convert_row(amount, base, code, table):
         layout="compare",
         left=money(amount, base), right=money(amount * table[code] / table[base], code),
         title=name_of(base), badge=code, centerIcon="arrow.right",
-        leftQuery=f"{amt} from?", rightQuery=f"{amt} to?")
+        leftQuery=f"{amt} from?", rightQuery=f"{amt} to?", centerAction="swap")
 
 def picker_rows(term, table, current, amount, base, side="target"):
     """The currency list, filtered as the user types. Return makes that currency the
@@ -101,8 +104,9 @@ def picker_rows(term, table, current, amount, base, side="target"):
             else [c for c in sorted(table)
                   if term in c.lower() or term in name_of(c).lower()])
     # Familiar currencies first: an alphabetical dump buries USD under AED.
-    known = [c for c in hits if c in NAMES]
-    hits = known + [c for c in hits if c not in NAMES]
+    popular = [c for c in POPULAR if c in hits]
+    known = [c for c in hits if c in NAMES and c not in popular]
+    hits = popular + known + [c for c in hits if c not in NAMES and c not in popular]
     if not hits:
         row(id="none", title=f"No currency matching “{term}”",
             subtitle="Try a code (jpy) or a name (yen)", icon="magnifyingglass")
@@ -117,6 +121,10 @@ def picker_rows(term, table, current, amount, base, side="target"):
             icon="checkmark.circle.fill" if on else "circle")
 
 def do_action(row_id, row_title):
+    if row_id == "swap":
+        b, t = load_pref()
+        save_pref(base=t, target=b)
+        return
     if row_id.startswith("pick:"):
         save_pref(target=row_id[5:])
         return

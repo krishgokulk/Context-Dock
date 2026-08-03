@@ -33,6 +33,8 @@ struct DockPill: Identifiable {
     var compareRightQuery: String? = nil
     /// List extension that produced this row — the caption dropdown re-runs it.
     var compareCommandID: UUID? = nil
+    /// Row id run when the centre symbol is tapped (a swap, typically).
+    var compareCenterAction: String? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil
