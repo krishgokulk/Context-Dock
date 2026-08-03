@@ -91,6 +91,10 @@ struct ScopedListPanelContent: View {
     /// go and edit the extension.
     @State private var showAI: Bool? = nil
     @State private var gridView = false
+    /// Selection so the panel is navigable, not just clickable. Defaults to the first
+    /// row and follows the rows as they change, so arrow keys and Space work the
+    /// moment the panel opens.
+    @State private var selectedID: String?
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("extensionPanelAIWidth") private var aiWidth = 300.0
     private var aiVisible: Bool { showAI ?? CustomListProviderService.hasAIPanel(command) }
@@ -107,35 +111,39 @@ struct ScopedListPanelContent: View {
             // uses. Stacked, the assistant pushed the rows into a sliver and the
             // panel stopped being useful for the thing it was pinned for.
             GeometryReader { proxy in
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    if showsFilterField {
-                        searchField
-                        Divider().opacity(0.3)
-                    }
-                    if gridView && hasFileRows { fileGrid } else { rowList }
-                    if hasFileRows {
-                        Divider().opacity(0.3)
-                        viewModeFooter
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                // Both panes get an explicit width, the way the note does. With the
+                // content pane on maxWidth:.infinity the drag fought the flexible
+                // side and the divider felt stuck.
+                let maxAI = max(220, min(460, proxy.size.width - 260))
+                let paneAI = aiVisible ? min(max(220, aiWidth), maxAI) : 0
+                let paneContent = aiVisible
+                    ? max(240, proxy.size.width - paneAI - 1)
+                    : proxy.size.width
 
-                if aiVisible {
-                    // Draggable, like Quick Note's — a fixed split meant the assistant
-                    // or the rows were always the wrong size for the job at hand.
-                    StickySplitDivider(
-                        width: $aiWidth,
-                        maximumWidth: max(220, min(460, proxy.size.width - 220))
-                    )
-                    ExtensionPanelAIComposer(
-                        title: command.name,
-                        subtitle: command.description,
-                        extraPrompt: aiContext
-                    )
-                    .frame(width: min(aiWidth, max(220, proxy.size.width - 220)))
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        if showsFilterField {
+                            searchField
+                            Divider().opacity(0.3)
+                        }
+                        if gridView && hasFileRows { fileGrid } else { rowList }
+                        if hasFileRows {
+                            Divider().opacity(0.3)
+                            viewModeFooter
+                        }
+                    }
+                    .frame(width: paneContent)
+
+                    if aiVisible {
+                        StickySplitDivider(width: $aiWidth, maximumWidth: maxAI)
+                        ExtensionPanelAIComposer(
+                            title: command.name,
+                            subtitle: command.description,
+                            extraPrompt: aiContext
+                        )
+                        .frame(width: paneAI)
+                    }
                 }
-            }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -156,6 +164,24 @@ struct ScopedListPanelContent: View {
         )
         .onAppear { start() }
         .onDisappear { ticker?.invalidate() }
+        .onChange(of: displayedRows.map(\.id)) { _, ids in
+            if selectedID == nil || !(ids.contains(selectedID ?? "")) {
+                selectedID = ids.first
+            }
+        }
+        .focusable()
+        .onMoveCommand { direction in
+            move(direction)
+        }
+        .onKeyPress(.space) {
+            if let path = selectedPath { FileQuickLookPanel.shared.toggle(path: path); return .handled }
+            return .ignored
+        }
+        .onKeyPress(.return) {
+            guard let row = displayedRows.first(where: { $0.id == selectedID }) else { return .ignored }
+            CustomListProviderService.shared.runAction(command, row: row, query: query)
+            return .handled
+        }
     }
 
     /// Hand the model what the panel is currently showing. Without it the assistant
@@ -268,8 +294,13 @@ struct ScopedListPanelContent: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
+                        .background(
+                            selectedID == row.id
+                                ? Color.accentColor.opacity(0.18) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { selectedID = row.id })
                     .modifier(FileRowDrag(path: filePath(for: row)))
                     }
                 }
@@ -297,6 +328,27 @@ struct ScopedListPanelContent: View {
             if FileManager.default.fileExists(atPath: path) { return path }
         }
         return nil
+    }
+
+    private var selectedPath: String? {
+        displayedRows.first { $0.id == selectedID }.flatMap { filePath(for: $0) }
+    }
+
+    /// Grid moves by a row of tiles; the list moves one line.
+    private func move(_ direction: MoveCommandDirection) {
+        let ids = displayedRows.map(\.id)
+        guard !ids.isEmpty else { return }
+        let current = ids.firstIndex(of: selectedID ?? "") ?? 0
+        let stride = (gridView && hasFileRows) ? 4 : 1
+        let next: Int
+        switch direction {
+        case .up:    next = current - stride
+        case .down:  next = current + stride
+        case .left:  next = current - 1
+        case .right: next = current + 1
+        default:     return
+        }
+        selectedID = ids[min(max(next, 0), ids.count - 1)]
     }
 
     private func symbol(_ icon: String?) -> String {
@@ -463,8 +515,13 @@ extension ScopedListPanelContent {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
+                        .background(
+                            selectedID == row.id
+                                ? Color.accentColor.opacity(0.18) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { selectedID = row.id })
                     .modifier(FileRowDrag(path: filePath(for: row)))
                 }
             }
