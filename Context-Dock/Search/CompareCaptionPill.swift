@@ -46,23 +46,22 @@ struct CompareCaptionPill: View {
     }
 
     var body: some View {
-        Button {
-            isPresented = true
-        } label: {
-            HStack(spacing: 3) {
-                Text(caption)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.primary.opacity(0.12), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
-            .contentShape(Capsule())
+        // A tap gesture, not a Button: this sits inside the row's own Button label,
+        // and a Button nested in another Button's label does not render reliably on
+        // macOS — it blanked the whole result panel.
+        HStack(spacing: 3) {
+            Text(caption)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7, weight: .bold))
         }
-        .buttonStyle(.plain)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.primary.opacity(0.12), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+        .contentShape(Capsule())
+        .onTapGesture { isPresented = true }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             dropdown
         }
