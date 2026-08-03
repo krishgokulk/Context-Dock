@@ -191,8 +191,8 @@ private struct StickyRootView: View {
                 .help("Pinned — notes stay open until closed")
 
             Button { settings.quickNoteAISidecarVisible.toggle() } label: {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(settings.quickNoteAISidecarVisible
                                      ? Color.accentColor : .secondary)
                     .frame(width: 18, height: 18)
@@ -694,7 +694,9 @@ private struct StickyNoteContent: View {
 
 /// A real AppKit tracking view prevents a panel's draggable background from stealing
 /// a divider drag. SwiftUI owns the persisted width; AppKit only handles the mouse.
-private struct StickySplitDivider: NSViewRepresentable {
+/// Draggable split divider. Shared with the extension panels so every split
+/// in the app resizes the same way.
+struct StickySplitDivider: NSViewRepresentable {
     @Binding var width: Double
     var maximumWidth: CGFloat
 

@@ -91,6 +91,8 @@ struct ScopedListPanelContent: View {
     /// go and edit the extension.
     @State private var showAI: Bool? = nil
     @State private var gridView = false
+    @ObservedObject private var settings = AppSettings.shared
+    @AppStorage("extensionPanelAIWidth") private var aiWidth = 300.0
     private var aiVisible: Bool { showAI ?? CustomListProviderService.hasAIPanel(command) }
 
     /// The panel's own field filters rows. A computed extension takes its input from
@@ -104,6 +106,7 @@ struct ScopedListPanelContent: View {
             // AI sits beside the content, not under it — the same split Quick Note
             // uses. Stacked, the assistant pushed the rows into a sliver and the
             // panel stopped being useful for the thing it was pinned for.
+            GeometryReader { proxy in
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     if showsFilterField {
@@ -119,21 +122,33 @@ struct ScopedListPanelContent: View {
                 .frame(maxWidth: .infinity)
 
                 if aiVisible {
-                    Divider()
+                    // Draggable, like Quick Note's — a fixed split meant the assistant
+                    // or the rows were always the wrong size for the job at hand.
+                    StickySplitDivider(
+                        width: $aiWidth,
+                        maximumWidth: max(220, min(460, proxy.size.width - 220))
+                    )
                     ExtensionPanelAIComposer(
                         title: command.name,
                         subtitle: command.description,
                         extraPrompt: aiContext
                     )
-                    .frame(width: 300)
+                    .frame(width: min(aiWidth, max(220, proxy.size.width - 220)))
                 }
+            }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The panel itself is transparent so Liquid Glass can show the desktop; the
         // material has to come from the content. Removing the old tabbed root view
         // took the background with it and left the rows floating on the wallpaper.
-        .background(.ultraThinMaterial)
+        // Match the sticky note exactly: material plus the glass-darkness overlay.
+        // Plain .ultraThinMaterial read as washed-out next to a note on the same desktop.
+        .background(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
+        )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -177,8 +192,8 @@ struct ScopedListPanelContent: View {
             Spacer()
 
             Button { showAI = !aiVisible } label: {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(aiVisible ? Color.accentColor : .secondary)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
@@ -255,6 +270,7 @@ struct ScopedListPanelContent: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .modifier(FileRowDrag(path: filePath(for: row)))
                     }
                 }
             }
@@ -449,9 +465,28 @@ extension ScopedListPanelContent {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .modifier(FileRowDrag(path: filePath(for: row)))
                 }
             }
             .padding(10)
+        }
+    }
+}
+
+
+/// Makes a file row draggable out of the panel — into Finder, a Quick Note, the
+/// clipboard scope, any app that takes a file. A browse panel that can only open
+/// things is a dead end; the whole point of listing files is moving them around.
+private struct FileRowDrag: ViewModifier {
+    let path: String?
+
+    func body(content: Content) -> some View {
+        if let path {
+            content.onDrag {
+                NSItemProvider(contentsOf: URL(fileURLWithPath: path)) ?? NSItemProvider()
+            }
+        } else {
+            content
         }
     }
 }
