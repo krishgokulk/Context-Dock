@@ -28,6 +28,9 @@ struct DockPill: Identifiable {
     var compareLeft: String? = nil
     var compareRight: String? = nil
     var compareIcon: String? = nil
+    /// Tapping a compare caption replaces the dock query with this string.
+    var compareLeftQuery: String? = nil
+    var compareRightQuery: String? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil

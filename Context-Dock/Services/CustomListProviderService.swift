@@ -32,6 +32,10 @@ struct CustomListRow: Identifiable {
     let left: String?
     let right: String?
     let centerIcon: String?
+    /// Tapping a caption rewrites the dock query to this string. Lets a row offer a
+    /// drill-in ("which currency?") without the dock knowing what the row means.
+    let leftQuery: String?
+    let rightQuery: String?
 
     var isCompare: Bool {
         layout?.lowercased() == "compare" && (left != nil || right != nil)
@@ -39,11 +43,12 @@ struct CustomListRow: Identifiable {
 
     init(id: String, title: String, subtitle: String?, badge: String?, icon: String?,
          layout: String? = nil, left: String? = nil, right: String? = nil,
-         centerIcon: String? = nil) {
+         centerIcon: String? = nil, leftQuery: String? = nil, rightQuery: String? = nil) {
         self.id = id; self.title = title; self.subtitle = subtitle
         self.badge = badge; self.icon = icon
         self.layout = layout; self.left = left; self.right = right
         self.centerIcon = centerIcon
+        self.leftQuery = leftQuery; self.rightQuery = rightQuery
     }
 }
 
@@ -318,6 +323,8 @@ final class CustomListProviderService {
             let left: String?
             let right: String?
             let centerIcon: String?
+            let leftQuery: String?
+            let rightQuery: String?
         }
         var rows: [CustomListRow] = []
         var autoIndex = 0
@@ -340,7 +347,9 @@ final class CustomListProviderService {
                         layout: raw.layout,
                         left: raw.left,
                         right: raw.right,
-                        centerIcon: raw.centerIcon))
+                        centerIcon: raw.centerIcon,
+                        leftQuery: raw.leftQuery,
+                        rightQuery: raw.rightQuery))
             } else {
                 autoIndex += 1
                 rows.append(

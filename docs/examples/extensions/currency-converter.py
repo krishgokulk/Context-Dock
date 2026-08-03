@@ -42,16 +42,23 @@ def row(**kw):
 def name_of(code):
     return NAMES.get(code, code)
 
-def load_target():
+def load_pref():
     try:
         v = json.load(open(PREF))
-        return v.get("target") or DEFAULT_TARGET
+        return v.get("base") or "USD", v.get("target") or DEFAULT_TARGET
     except Exception:
-        return DEFAULT_TARGET
+        return "USD", DEFAULT_TARGET
+
+def save_pref(base=None, target=None):
+    b, t = load_pref()
+    os.makedirs(SUPPORT, exist_ok=True)
+    json.dump({"base": base or b, "target": target or t}, open(PREF, "w"))
+
+def load_target():
+    return load_pref()[1]
 
 def save_target(code):
-    os.makedirs(SUPPORT, exist_ok=True)
-    json.dump({"target": code}, open(PREF, "w"))
+    save_pref(target=code)
 
 def rates():
     # One call an hour: this re-runs on every keystroke and the feed moves daily.
@@ -79,17 +86,23 @@ def money(v, code):
 def convert_row(amount, base, code, table):
     """One card. A wall of currencies is a picker's job — the panel answers the
     question actually asked and stays one row tall."""
+    amt = format(amount, "g")
     row(id=f"copy:{money(amount * table[code] / table[base], code)}",
         layout="compare",
         left=money(amount, base), right=money(amount * table[code] / table[base], code),
-        title=name_of(base), badge=code, centerIcon="arrow.right")
+        title=name_of(base), badge=code, centerIcon="arrow.right",
+        leftQuery=f"{amt} from?", rightQuery=f"{amt} to?")
 
-def picker_rows(term, table, current, amount, base):
+def picker_rows(term, table, current, amount, base, side="target"):
     """The currency list, filtered as the user types. Return makes that currency the
     one the panel converts to, and it sticks."""
     term = term.lower()
-    hits = [c for c in sorted(table)
-            if term in c.lower() or term in name_of(c).lower()]
+    hits = ([c for c in sorted(table)] if term in ("", "?")
+            else [c for c in sorted(table)
+                  if term in c.lower() or term in name_of(c).lower()])
+    # Familiar currencies first: an alphabetical dump buries USD under AED.
+    known = [c for c in hits if c in NAMES]
+    hits = known + [c for c in hits if c not in NAMES]
     if not hits:
         row(id="none", title=f"No currency matching “{term}”",
             subtitle="Try a code (jpy) or a name (yen)", icon="magnifyingglass")
@@ -97,7 +110,7 @@ def picker_rows(term, table, current, amount, base):
     for code in hits[:12]:
         on = code == current
         preview = money(amount * table[code] / table[base], code) if code in table else ""
-        row(id=f"pick:{code}",
+        row(id=f"{'base' if side == 'base' else 'pick'}:{code}",
             title=f"{name_of(code)}",
             subtitle=f"{code} · {preview}",
             badge="current" if on else None,
@@ -105,7 +118,10 @@ def picker_rows(term, table, current, amount, base):
 
 def do_action(row_id, row_title):
     if row_id.startswith("pick:"):
-        save_target(row_id[5:])
+        save_pref(target=row_id[5:])
+        return
+    if row_id.startswith("base:"):
+        save_pref(base=row_id[5:])
         return
     value = row_id[5:] if row_id.startswith("copy:") else row_title
     # Pipe the bytes straight to pbcopy: shelling out through json.dumps escaped
@@ -129,14 +145,16 @@ def main():
         row(id="err", title="Rates unavailable", subtitle=str(e)[:70],
             icon="exclamationmark.triangle")
         return
-    target = load_target()
+    pref_base, target = load_pref()
     if target not in table:
         target = DEFAULT_TARGET
+    if pref_base not in table:
+        pref_base = "USD"
 
     # Resting state uses the same card a real conversion does, so entering the
     # scope and typing never change the panel's shape.
     if not q:
-        convert_row(1, "USD", target, table)
+        convert_row(1, pref_base, target, table)
         return
 
     m = re.match(r"\s*([0-9][0-9,]*\.?[0-9]*)\s*(.*)$", q)
@@ -151,10 +169,17 @@ def main():
     codes = [t.upper() for t in tokens if len(t) == 3 and t.upper() in table]
     unknown = [t for t in tokens if not (len(t) == 3 and t.upper() in table)]
 
-    base = codes[0] if codes else "USD"
+    base = codes[0] if codes else pref_base
     targets = [c for c in codes[1:] if c != base]
 
     # A word that isn't a code means the user is hunting for a currency.
+    lowered = [u.lower() for u in unknown]
+    if "from?" in lowered:
+        picker_rows("?", table, base, amount, base, side="base")
+        return
+    if "to?" in lowered:
+        picker_rows("?", table, target, amount, base, side="target")
+        return
     if unknown:
         picker_rows(" ".join(unknown), table, target, amount, base)
         return
