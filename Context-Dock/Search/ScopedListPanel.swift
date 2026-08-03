@@ -105,6 +105,16 @@ struct ScopedListPanelContent: View {
                 .frame(minHeight: 190)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The panel itself is transparent so Liquid Glass can show the desktop; the
+        // material has to come from the content. Removing the old tabbed root view
+        // took the background with it and left the rows floating on the wallpaper.
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        )
         .onAppear { start() }
         .onDisappear { ticker?.invalidate() }
     }
