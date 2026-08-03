@@ -1827,7 +1827,17 @@ extension LauncherView {
                                     }
                                 } else if searchState.query.isEmpty {
                                     // Normal placeholders (always visible when field is empty)
-                                    if let feedback = launcherViewModel.inlineDockFeedback {
+                                    //
+                                    // The extension-scope check comes FIRST. That scope's overlay
+                                    // owns the whole input layer, so anything drawn here lands
+                                    // underneath its pill — which is how a leftover action toast
+                                    // ("…ed to Screenshot") ended up painted behind the Currency
+                                    // Converter pill.
+                                    if currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
+                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                                    {
+                                        EmptyView()
+                                    } else if let feedback = launcherViewModel.inlineDockFeedback {
                                         Text(feedback.title)
                                             .foregroundStyle(.secondary.opacity(0.46))
                                             .font(.system(size: 15, weight: .medium))
@@ -1837,13 +1847,6 @@ extension LauncherView {
                                         Text("filter…")
                                             .foregroundStyle(.secondary.opacity(0.4))
                                             .font(.system(size: 15, weight: .regular))
-                                    } else if currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
-                                        || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-                                    {
-                                        // The extension scope overlay owns this entire input
-                                        // layer. Do not render the generic "Search menus" prompt
-                                        // underneath its pill and caret.
-                                        EmptyView()
                                     } else if currentDockSurfaceMode == .generalChat {
                                         Text("Ask \(settings.selectedAIProvider.shortName)...")
                                             .foregroundStyle(.secondary.opacity(0.5))
