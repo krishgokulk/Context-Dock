@@ -116,8 +116,11 @@ struct ScopedListPanelContent: View {
                 // side and the divider felt stuck.
                 let maxAI = max(220, min(460, proxy.size.width - 260))
                 let paneAI = aiVisible ? min(max(220, aiWidth), maxAI) : 0
+                // Reserve a real grab area for the divider. At 1pt there was nothing
+                // to hit, which is why it looked draggable and wasn't.
+                let dividerWidth: CGFloat = 8
                 let paneContent = aiVisible
-                    ? max(240, proxy.size.width - paneAI - 1)
+                    ? max(240, proxy.size.width - paneAI - dividerWidth)
                     : proxy.size.width
 
                 HStack(spacing: 0) {
@@ -135,7 +138,9 @@ struct ScopedListPanelContent: View {
                     .frame(width: paneContent)
 
                     if aiVisible {
-                        StickySplitDivider(width: $aiWidth, maximumWidth: maxAI)
+                        StickySplitDivider(width: $aiWidth, maximumWidth: maxAI,
+                                           minimumWidth: 220)
+                            .frame(width: dividerWidth)
                         ExtensionPanelAIComposer(
                             title: command.name,
                             subtitle: command.description,
@@ -169,7 +174,10 @@ struct ScopedListPanelContent: View {
                 selectedID = ids.first
             }
         }
+        // Focusable for arrow-key navigation, but without the ring: a focus halo
+        // around the whole panel read as the window being broken.
         .focusable()
+        .focusEffectDisabled()
         .onMoveCommand { direction in
             move(direction)
         }

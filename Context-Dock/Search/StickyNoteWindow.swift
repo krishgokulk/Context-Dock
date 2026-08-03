@@ -699,21 +699,27 @@ private struct StickyNoteContent: View {
 struct StickySplitDivider: NSViewRepresentable {
     @Binding var width: Double
     var maximumWidth: CGFloat
+    /// A hardcoded floor inverted the clamp on a narrow panel — max fell below it and
+    /// the pane locked to one width. Callers state their own minimum.
+    var minimumWidth: CGFloat = 260
 
     func makeNSView(context: Context) -> DividerView {
         let view = DividerView()
-        view.update(width: width, maximumWidth: maximumWidth, binding: $width)
+        view.update(width: width, maximumWidth: maximumWidth,
+                    minimumWidth: minimumWidth, binding: $width)
         return view
     }
 
     func updateNSView(_ view: DividerView, context: Context) {
-        view.update(width: width, maximumWidth: maximumWidth, binding: $width)
+        view.update(width: width, maximumWidth: maximumWidth,
+                    minimumWidth: minimumWidth, binding: $width)
     }
 
     final class DividerView: NSView {
         private var startingWidth: Double = 330
         private var startingMouseX: CGFloat = 0
         private var maximumWidth: CGFloat = 480
+        private var minimumWidth: CGFloat = 260
         private var binding: Binding<Double>?
 
         override var mouseDownCanMoveWindow: Bool { false }
@@ -727,8 +733,10 @@ struct StickySplitDivider: NSViewRepresentable {
             addCursorRect(bounds, cursor: .resizeLeftRight)
         }
 
-        func update(width: Double, maximumWidth: CGFloat, binding: Binding<Double>) {
+        func update(width: Double, maximumWidth: CGFloat,
+                    minimumWidth: CGFloat = 260, binding: Binding<Double>) {
             self.maximumWidth = maximumWidth
+            self.minimumWidth = minimumWidth
             self.binding = binding
             needsDisplay = true
         }
@@ -740,7 +748,9 @@ struct StickySplitDivider: NSViewRepresentable {
 
         override func mouseDragged(with event: NSEvent) {
             let proposed = startingWidth - Double(event.locationInWindow.x - startingMouseX)
-            binding?.wrappedValue = min(max(proposed, 260), Double(maximumWidth))
+            let lower = Double(minimumWidth)
+            let upper = max(lower, Double(maximumWidth))
+            binding?.wrappedValue = min(max(proposed, lower), upper)
         }
     }
 }
