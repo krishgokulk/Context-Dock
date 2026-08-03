@@ -199,7 +199,32 @@ final class CustomListProviderService {
     /// mode from the script removes a magic keyword the author had no way to guess.
     static func isLiveQuery(_ command: SystemCommand) -> Bool {
         if command.keywords.contains(where: { $0.lowercased() == "query:live" }) { return true }
-        return scriptReadsQuery(command.script)
+        if scriptReadsQuery(command.script) { return true }
+        // An external script is opaque: the command line is just an interpreter and a
+        // path, so the CD_QUERY reference lives in a file we cannot see. Read the file.
+        // Without this a converter looked like a browse list, and its rows — which are
+        // the answer to the query, not a match for it — were filtered away the moment
+        // the user typed.
+        return referencedScriptFileReadsQuery(command.script)
+    }
+
+    /// Follow a quoted or bare path in the command line and look for CD_QUERY inside it.
+    private static func referencedScriptFileReadsQuery(_ command: String) -> Bool {
+        let candidates = command
+            .split(whereSeparator: { $0 == " " || $0 == "\"" || $0 == "'" })
+            .map(String.init)
+            .filter { $0.contains("/") }
+        for raw in candidates {
+            let path = (raw as NSString).expandingTildeInPath
+            guard FileManager.default.fileExists(atPath: path),
+                  let size = try? FileManager.default
+                      .attributesOfItem(atPath: path)[.size] as? Int,
+                  size < 512_000,
+                  let text = try? String(contentsOfFile: path, encoding: .utf8)
+            else { continue }
+            if text.contains("CD_QUERY") { return true }
+        }
+        return false
     }
 
     /// Does the rows script reference the query variable in any of its spellings?

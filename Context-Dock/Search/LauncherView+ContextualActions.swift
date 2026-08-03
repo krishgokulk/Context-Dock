@@ -1442,6 +1442,11 @@ extension LauncherView {
             status.sourceBundleId = scopedBundleId
             status.sourceAppName = command.name
             status.trackingIdentifier = "syscmd-custom-status:\(command.id)"
+            // The dock ranks/filters pills by searchTerms. A computed extension's rows
+            // are an ANSWER to the query, not a match for it — "12" appears nowhere in
+            // "US Dollar" — so without the raw query here the dock drops every row the
+            // moment the user types, leaving the sheet expanded and empty.
+            status.searchTerms = [query, command.name]
             return [status]
         }
 
@@ -1514,7 +1519,9 @@ extension LauncherView {
                 pill.compareRightQuery = row.rightQuery
                 pill.compareCommandID = command.id
             }
-            pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
+            // Include the raw query: see the note on the status row. A compare card for
+            // "12" contains none of the characters the user typed.
+            pill.searchTerms = [row.title, row.subtitle ?? "", command.name, query]
             return pill
         }
     }
