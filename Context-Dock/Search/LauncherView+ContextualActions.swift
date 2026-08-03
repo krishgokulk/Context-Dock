@@ -1421,6 +1421,30 @@ extension LauncherView {
 
         let hasAction = !command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
+        // An extension scope owns the sheet the moment it is entered, so the shell can
+        // already be expanded when the rows script has produced nothing — which renders
+        // as a large empty box that looks like a crash. Always give the sheet one row
+        // saying what is actually happening.
+        if filtered.isEmpty {
+            let refreshing = service.isRefreshing(command) || !service.hasRun(command)
+            var status = DockPill(
+                id: "syscmd-custom-status-\(command.id)",
+                name: refreshing ? "Working…" : "No results",
+                icon: refreshing ? "hourglass" : "magnifyingglass",
+                accentColorName: refreshing ? "blue" : "secondary",
+                badge: refreshing
+                    ? nil
+                    : (trimmed.isEmpty ? "Nothing to show" : "Nothing matched “\(query)”"),
+                execute: {}
+            )
+            status.isEnabled = false
+            status.rankingKind = "systemCommand"
+            status.sourceBundleId = scopedBundleId
+            status.sourceAppName = command.name
+            status.trackingIdentifier = "syscmd-custom-status:\(command.id)"
+            return [status]
+        }
+
         return filtered.enumerated().map { index, row in
             var pill = DockPill(
                 // Index keeps the id unique even when a script emits duplicate row ids

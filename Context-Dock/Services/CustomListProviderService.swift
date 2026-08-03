@@ -77,6 +77,19 @@ final class CustomListProviderService {
         cache[command.id]?.rows ?? []
     }
 
+    /// True while a rows script is running. The scope shows a status row instead of
+    /// an empty sheet — the shell can be expanded before the first rows arrive, and a
+    /// blank panel reads as a broken app rather than a working one that is thinking.
+    func isRefreshing(_ command: SystemCommand) -> Bool {
+        cache[command.id]?.refreshing ?? false
+    }
+
+    /// Has this command ever produced a result? Distinguishes "still starting up"
+    /// from "ran and genuinely found nothing".
+    func hasRun(_ command: SystemCommand) -> Bool {
+        cache[command.id]?.at ?? .distantPast > .distantPast
+    }
+
     func isStale(_ command: SystemCommand, query: String) -> Bool {
         guard let entry = cache[command.id] else { return true }
         // Live-query extensions re-run whenever the typed query changes, so the rows
