@@ -1482,6 +1482,11 @@ extension LauncherView {
             } else if Self.customListRowOpenablePath(row) != nil {
                 pill.keyboardShortcutLabel = "Open"
             }
+            if row.isCompare {
+                pill.compareLeft = row.left
+                pill.compareRight = row.right
+                pill.compareIcon = row.centerIcon
+            }
             pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
             return pill
         }

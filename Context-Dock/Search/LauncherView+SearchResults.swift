@@ -558,6 +558,53 @@ extension LauncherView {
         .padding(.bottom, 4)
     }
 
+    /// Two values with a symbol between them. A conversion is a transformation, and
+    /// a title+subtitle line can't show that — the input and the result read as one
+    /// becoming the other only when they sit either side of a centre mark.
+    @ViewBuilder
+    func compareRowBody(pill: DockPill, left: String, accent: SwiftUI.Color) -> some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(left)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if !pill.name.isEmpty {
+                    Text(pill.name)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: pill.compareIcon ?? "arrow.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 30, height: 30)
+                .background(accent.opacity(0.14), in: Circle())
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(pill.compareRight ?? "")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let badge = pill.badge, !badge.isEmpty {
+                    Text(badge)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(height: 52)
+        .padding(.horizontal, 14)
+        .contentShape(Rectangle())
+    }
+
     /// Pin lives on the scope header, not in the row list: it acts on the whole
     /// extension, and as a row it both displaced real results and made an empty
     /// panel look like it had content.
@@ -729,6 +776,9 @@ extension LauncherView {
             // Teach intent: user picked a menu action for this query
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         } label: {
+            if let left = pill.compareLeft ?? pill.compareRight, pill.compareRight != nil {
+                compareRowBody(pill: pill, left: left, accent: accent)
+            } else {
             HStack(spacing: 10) {
                 // Icon
                 ZStack {
@@ -841,6 +891,7 @@ extension LauncherView {
                 )
             }
             .contentShape(Rectangle())
+            }
         }
         .buttonStyle(.plain)
         // Live control sits above the button so the slider/toggle receives

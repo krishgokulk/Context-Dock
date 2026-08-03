@@ -23,6 +23,11 @@ struct DockPill: Identifiable {
     /// File this row stands for. Set by list extensions whose rows are paths — Space
     /// then Quick Looks it, the way it does in Finder.
     var previewPath: String? = nil
+    /// Two-value comparison layout: left value, a symbol, right value. Conversions
+    /// read as one thing becoming another, which a title+subtitle line cannot show.
+    var compareLeft: String? = nil
+    var compareRight: String? = nil
+    var compareIcon: String? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil

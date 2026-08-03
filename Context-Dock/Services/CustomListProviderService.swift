@@ -24,6 +24,27 @@ struct CustomListRow: Identifiable {
     let subtitle: String?
     let badge: String?
     let icon: String?   // SF Symbol name, or an absolute file/app path
+
+    /// Optional row layout. nil / "row" = the standard title+subtitle line.
+    /// "compare" = two values side by side with a symbol between them, for
+    /// conversions and before/after results.
+    let layout: String?
+    let left: String?
+    let right: String?
+    let centerIcon: String?
+
+    var isCompare: Bool {
+        layout?.lowercased() == "compare" && (left != nil || right != nil)
+    }
+
+    init(id: String, title: String, subtitle: String?, badge: String?, icon: String?,
+         layout: String? = nil, left: String? = nil, right: String? = nil,
+         centerIcon: String? = nil) {
+        self.id = id; self.title = title; self.subtitle = subtitle
+        self.badge = badge; self.icon = icon
+        self.layout = layout; self.left = left; self.right = right
+        self.centerIcon = centerIcon
+    }
 }
 
 final class CustomListProviderService {
@@ -280,6 +301,10 @@ final class CustomListProviderService {
             let subtitle: String?
             let badge: String?
             let icon: String?
+            let layout: String?
+            let left: String?
+            let right: String?
+            let centerIcon: String?
         }
         var rows: [CustomListRow] = []
         var autoIndex = 0
@@ -298,7 +323,11 @@ final class CustomListProviderService {
                         title: title,
                         subtitle: raw.subtitle,
                         badge: raw.badge,
-                        icon: raw.icon))
+                        icon: raw.icon,
+                        layout: raw.layout,
+                        left: raw.left,
+                        right: raw.right,
+                        centerIcon: raw.centerIcon))
             } else {
                 autoIndex += 1
                 rows.append(

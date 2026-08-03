@@ -3654,6 +3654,21 @@ user what to type, or the panel looks broken before they start typing.
 For file rows: put the ABSOLUTE PATH in "id". That gives the row the real file
 icon and thumbnail, Return opens it, and Space previews it in Quick Look.
 
+ROW LAYOUTS — a row can choose how it draws:
+- default: title + subtitle on one line, icon on the left.
+- "layout":"compare" — two values with a symbol between them, for conversions
+  and before/after results. Extra fields:
+    "left"        the input value, shown dimmer on the left
+    "right"       the result, shown large on the right
+    "centerIcon"  SF Symbol between them (default "arrow.right";
+                  "arrow.up.arrow.down" reads as a swap)
+  With compare, "title" becomes the small caption under the left value and
+  "badge" the caption under the right.
+  {"id":"gbp","layout":"compare","left":"100 USD","right":"78.40 GBP",
+   "title":"US Dollar","badge":"Pound Sterling","centerIcon":"arrow.right"}
+Pick compare whenever the row means "X becomes Y". Use the default row for
+lists of things.
+
 Live-scope example (Ports — Return kills the process):
 {
   "version": "1.0",
