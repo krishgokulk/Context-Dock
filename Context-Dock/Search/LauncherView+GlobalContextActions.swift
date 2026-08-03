@@ -6038,8 +6038,25 @@ extension LauncherView {
     func updateMeasuredGlobalListHeight(_ height: CGFloat) {
         let clamped = max(0, height)
         guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
+        let previous = measuredGlobalListContentHeight
         measuredGlobalListContentHeight = clamped
-        guard !isGlobalContextActive else { return }
+        guard isGlobalContextActive else { return }
+
+        // The expanded sheet is sized from an estimate — rows × 52 + 36 — taken before the
+        // rows exist. Real rows are not 52pt (the codebase carries 52, 58 and 66 for
+        // different lists), so when they are taller the window is short and the last row is
+        // clipped. This measurement is the true height, and it was being stored and then
+        // ignored: the early return meant the window was never corrected while Global
+        // Context was active, which is the one mode that uses the estimate.
+        //
+        // Correct only once the sheet is already expanded, so compact typing keeps its
+        // suppression and the window does not chase every keystroke. The threshold is well
+        // above the 2pt noise floor above, so sub-pixel reflow cannot start a resize loop.
+        guard globalContextViewModel.typingSnapshot.phase == .expanded,
+            abs(previous - clamped) > 6
+        else { return }
+        requestWindowSizeUpdate(
+            reason: .modeChanged, animated: true, debounceNanoseconds: 30_000_000)
     }
 
 }
