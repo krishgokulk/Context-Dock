@@ -142,10 +142,14 @@ struct CompareCaptionPill: View {
 
     private func choose(_ row: CustomListRow) {
         guard let command else { return }
-        CustomListProviderService.shared.runAction(command, row: row, query: drillQuery)
         isPresented = false
-        // The action mutates state the rows script reads, so the card behind the
-        // dropdown is stale until the scope re-runs.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onPicked() }
+        // Wait for the action to actually exit, then throw the cached rows away —
+        // otherwise the rebuild re-renders the same card and the choice looks ignored.
+        CustomListProviderService.shared.runAction(
+            command, row: row, query: drillQuery
+        ) {
+            CustomListProviderService.shared.invalidate(command)
+            onPicked()
+        }
     }
 }

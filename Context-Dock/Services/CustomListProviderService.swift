@@ -171,14 +171,28 @@ final class CustomListProviderService {
     }
 
     /// Run the row-action script (the command's undo field) for the tapped row.
-    func runAction(_ command: SystemCommand, row: CustomListRow, query: String) {
+    /// `completion` fires on the main thread once the script has exited — a picker needs
+    /// to know the choice has actually been written before it re-reads the rows.
+    func runAction(_ command: SystemCommand, row: CustomListRow, query: String,
+                   completion: (() -> Void)? = nil) {
         let script = command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !script.isEmpty else { return }
+        guard !script.isEmpty else { completion?(); return }
         let interpreter = command.undoActionType
         let env = environment(query: query, row: row)
         queue.async {
             _ = Self.runCapturing(script: command.undoScript, interpreter: interpreter, env: env)
+            if let completion {
+                DispatchQueue.main.async(execute: completion)
+            }
         }
+    }
+
+    /// Drop cached rows so the next read re-runs the script. A row action that changes
+    /// what the script would print (picking a currency) leaves the cache describing the
+    /// old choice, and `isStale` would keep serving it until the refresh interval passed.
+    func invalidate(_ command: SystemCommand) {
+        cache[command.id] = nil
+        lastQuery[command.id] = nil
     }
 
     // MARK: Config
