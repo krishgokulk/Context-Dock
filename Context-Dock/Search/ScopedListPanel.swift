@@ -40,8 +40,8 @@ final class ScopedListPanelManager: ObservableObject {
             return
         }
         let p = GlassFloatingPanel.make(
-            size: NSSize(width: 460, height: 440),
-            minSize: NSSize(width: 340, height: 240)
+            size: NSSize(width: 620, height: 440),
+            minSize: NSSize(width: 380, height: 240)
         )
         p.contentView = NSHostingView(rootView: ScopedListPanelContent(command: command))
 
@@ -92,17 +92,26 @@ struct ScopedListPanelContent: View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.3)
-            searchField
-            Divider().opacity(0.3)
-            rowList
-            if hasAI {
-                Divider().opacity(0.3)
-                ExtensionPanelAIComposer(
-                    title: command.name,
-                    subtitle: command.description,
-                    extraPrompt: aiContext
-                )
-                .frame(minHeight: 190)
+            // AI sits beside the content, not under it — the same split Quick Note
+            // uses. Stacked, the assistant pushed the rows into a sliver and the
+            // panel stopped being useful for the thing it was pinned for.
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    searchField
+                    Divider().opacity(0.3)
+                    rowList
+                }
+                .frame(maxWidth: .infinity)
+
+                if hasAI {
+                    Divider()
+                    ExtensionPanelAIComposer(
+                        title: command.name,
+                        subtitle: command.description,
+                        extraPrompt: aiContext
+                    )
+                    .frame(width: 300)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -186,6 +195,12 @@ struct ScopedListPanelContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(displayedRows) { row in
+                    if row.isCompare {
+                        PanelCompareCard(row: row, command: command, query: query) {
+                            CustomListProviderService.shared.invalidate(command)
+                            refresh()
+                        }
+                    } else {
                     Button {
                         CustomListProviderService.shared.runAction(
                             command, row: row, query: query)
@@ -222,6 +237,7 @@ struct ScopedListPanelContent: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(.vertical, 4)
@@ -271,5 +287,83 @@ struct ScopedListPanelContent: View {
             }
         }
         rows = service.rows(for: command)
+    }
+}
+
+
+// MARK: - Compare card (panel)
+
+/// The same two-value card the dock renders, so a converter looks identical whether
+/// it is inline or pinned. Separate from the dock's copy because that one lives on
+/// LauncherView and reads its state.
+struct PanelCompareCard: View {
+    let row: CustomListRow
+    let command: SystemCommand
+    let query: String
+    let onChanged: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            pane(value: row.left ?? "", caption: row.title,
+                 drill: row.leftQuery, isResult: false)
+
+            Image(systemName: row.centerAction != nil
+                  ? "arrow.left.arrow.right" : (row.centerIcon ?? "arrow.right"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(row.centerAction != nil
+                                 ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .frame(width: 26, height: 26)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                .contentShape(Circle())
+                .onTapGesture {
+                    guard let action = row.centerAction else { return }
+                    let synthetic = CustomListRow(
+                        id: action, title: action, subtitle: nil, badge: nil, icon: nil)
+                    CustomListProviderService.shared.runAction(
+                        command, row: synthetic, query: query
+                    ) { onChanged() }
+                }
+
+            pane(value: row.right ?? "", caption: row.badge,
+                 drill: row.rightQuery, isResult: true)
+        }
+        .frame(height: 92)
+        .overlay { Rectangle().fill(Color.primary.opacity(0.10)).frame(width: 1) }
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func pane(value: String, caption: String?,
+                      drill: String?, isResult: Bool) -> some View {
+        VStack(spacing: 6) {
+            Text(value)
+                .font(.system(size: 18, weight: isResult ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(isResult ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if let caption, !caption.isEmpty {
+                if let drill {
+                    CompareCaptionPill(caption: caption, drillQuery: drill,
+                                       commandID: command.id, onPicked: onChanged)
+                } else {
+                    Text(caption)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.08), in: Capsule())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 12)
     }
 }
