@@ -388,6 +388,20 @@ extension LauncherView {
         }
     }
 
+    /// The scoped SystemCommand when the user is inside a user-authored list
+    /// extension (`provider:custom`), else nil. Drives the pin control in the result
+    /// header — pinning belongs to the scope, not to any one row.
+    var activeCustomListScopeCommand: SystemCommand? {
+        guard isGlobalContextActive,
+            let bundle = currentGlobalScopedBundleID,
+            bundle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(bundle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            CustomListProviderService.isListProvider(command)
+        else { return nil }
+        return command
+    }
+
     /// The scoped SystemCommand when the user is inside a provider:notepad scope,
     /// else nil. Drives the Quick Note split editor surface.
     var activeNotepadScopeCommand: SystemCommand? {

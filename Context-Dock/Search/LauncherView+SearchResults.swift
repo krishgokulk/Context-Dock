@@ -551,10 +551,35 @@ extension LauncherView {
                 .foregroundStyle(.secondary.opacity(0.82))
                 .textCase(.uppercase)
             Spacer()
+            scopePinControl
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 4)
+    }
+
+    /// Pin lives on the scope header, not in the row list: it acts on the whole
+    /// extension, and as a row it both displaced real results and made an empty
+    /// panel look like it had content.
+    @ViewBuilder
+    private var scopePinControl: some View {
+        if let command = activeCustomListScopeCommand {
+            let pinned = ScopedListPanelManager.shared.isPinned(command.id)
+            Button {
+                ScopedListPanelManager.shared.toggle(command)
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pinned ? AnyShapeStyle(Color.yellow)
+                                            : AnyShapeStyle(.secondary))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(pinned
+                  ? "Unpin — closes the floating panel"
+                  : "Pin as a floating panel, like Quick Note")
+        }
     }
 
     @ViewBuilder
