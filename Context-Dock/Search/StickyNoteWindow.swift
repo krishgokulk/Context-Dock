@@ -162,9 +162,17 @@ private struct StickyRootView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: "note.text")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+            // New note lives at the leading edge; the controls that act on the whole
+            // window group together on the right, matching the extension panels.
+            Button { manager.newTab() } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("New note tab")
 
             // One glass chip per open note. A single tab reads as a plain title.
             ScrollView(.horizontal, showsIndicators: false) {
@@ -177,18 +185,28 @@ private struct StickyRootView: View {
 
             Spacer(minLength: 4)
 
-            Button { manager.newTab() } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
+            Image(systemName: "pin.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .help("Pinned — notes stay open until closed")
+
+            Button { settings.quickNoteAISidecarVisible.toggle() } label: {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(settings.quickNoteAISidecarVisible
+                                     ? Color.accentColor : .secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("New note tab")
+            .help(settings.quickNoteAISidecarVisible ? "Hide assistant" : "Show assistant")
 
             Button { manager.closeWindow() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Close notes")
@@ -259,15 +277,21 @@ private struct StickyNoteContent: View {
         Group {
             if store.notes.contains(where: { $0.id == noteID }) {
                 GeometryReader { proxy in
-                    let chatWidth = sidePaneWidth(for: proxy.size.width)
-                    let editorWidth = max(310, proxy.size.width - chatWidth - 8)
+                    let showsChat = settings.quickNoteAISidecarVisible
+                    let chatWidth = showsChat ? sidePaneWidth(for: proxy.size.width) : 0
+                    let editorWidth = showsChat
+                        ? max(310, proxy.size.width - chatWidth - 8)
+                        : proxy.size.width
                     HStack(spacing: 0) {
                         notePane(width: editorWidth)
-                        StickySplitDivider(
-                            width: $aiChatWidth,
-                            maximumWidth: max(260, min(480, proxy.size.width - 310))
-                        )
-                        chatPane(width: chatWidth)
+                        // Hiding the assistant gives the whole window back to the note.
+                        if showsChat {
+                            StickySplitDivider(
+                                width: $aiChatWidth,
+                                maximumWidth: max(260, min(480, proxy.size.width - 310))
+                            )
+                            chatPane(width: chatWidth)
+                        }
                     }
                 }
             } else {

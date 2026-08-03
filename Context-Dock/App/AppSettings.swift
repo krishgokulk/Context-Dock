@@ -827,6 +827,10 @@ class AppSettings: ObservableObject {
     /// sets tone, language and standing rules in a single place instead of per surface.
     @AppStorage("globalContextPrompt") var globalContextPrompt: String = ""
 
+    /// Quick Note's assistant pane. Persisted so hiding it stays hidden — a note
+    /// window is often wanted as just a note.
+    @AppStorage("quickNoteAISidecarVisible") var quickNoteAISidecarVisible: Bool = true
+
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =

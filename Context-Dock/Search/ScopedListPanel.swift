@@ -86,7 +86,16 @@ struct ScopedListPanelContent: View {
 
     private var isComputed: Bool { CustomListProviderService.isLiveQuery(command) }
 
-    private var hasAI: Bool { CustomListProviderService.hasAIPanel(command) }
+    /// Every panel can show the assistant; the keyword only decides the default.
+    /// A user who wants AI on an extension that never declared it should not have to
+    /// go and edit the extension.
+    @State private var showAI: Bool? = nil
+    @State private var gridView = false
+    private var aiVisible: Bool { showAI ?? CustomListProviderService.hasAIPanel(command) }
+
+    /// The panel's own field filters rows. A computed extension takes its input from
+    /// the dock, so a second box here would be a duplicate that does nothing useful.
+    private var showsFilterField: Bool { !isComputed }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -97,13 +106,19 @@ struct ScopedListPanelContent: View {
             // panel stopped being useful for the thing it was pinned for.
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
-                    searchField
-                    Divider().opacity(0.3)
-                    rowList
+                    if showsFilterField {
+                        searchField
+                        Divider().opacity(0.3)
+                    }
+                    if gridView && hasFileRows { fileGrid } else { rowList }
+                    if hasFileRows {
+                        Divider().opacity(0.3)
+                        viewModeFooter
+                    }
                 }
                 .frame(maxWidth: .infinity)
 
-                if hasAI {
+                if aiVisible {
                     Divider()
                     ExtensionPanelAIComposer(
                         title: command.name,
@@ -159,15 +174,18 @@ struct ScopedListPanelContent: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tint)
             Text(command.name).font(.system(size: 13, weight: .semibold))
-            if hasAI {
-                Text("AI")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.accentColor.opacity(0.15), in: Capsule())
-            }
             Spacer()
+
+            Button { showAI = !aiVisible } label: {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(aiVisible ? Color.accentColor : .secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(aiVisible ? "Hide assistant" : "Show assistant")
+
             Image(systemName: "pin.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
@@ -365,5 +383,75 @@ struct PanelCompareCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
+    }
+}
+
+
+// MARK: - File grid
+
+extension ScopedListPanelContent {
+    /// Only a panel whose rows are files gains a grid — a list of ports or branches
+    /// has nothing to show as a tile.
+    var hasFileRows: Bool {
+        displayedRows.contains { filePath(for: $0) != nil }
+    }
+
+    var viewModeFooter: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            ForEach([false, true], id: \.self) { isGrid in
+                Button { gridView = isGrid } label: {
+                    Image(systemName: isGrid ? "square.grid.2x2" : "list.bullet")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(gridView == isGrid
+                                         ? AnyShapeStyle(Color.accentColor)
+                                         : AnyShapeStyle(.secondary))
+                        .frame(width: 22, height: 18)
+                        .background(gridView == isGrid
+                                    ? Color.accentColor.opacity(0.15) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isGrid ? "Icon view" : "List view")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+    }
+
+    var fileGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 10)], spacing: 10) {
+                ForEach(displayedRows) { row in
+                    Button {
+                        CustomListProviderService.shared.runAction(
+                            command, row: row, query: query)
+                    } label: {
+                        VStack(spacing: 5) {
+                            FileThumbnailImage(
+                                filePath: filePath(for: row),
+                                fallbackImage: nil,
+                                systemName: "doc",
+                                tint: .accentColor,
+                                size: 64,
+                                cornerRadius: 6
+                            )
+                            .frame(width: 64, height: 64)
+                            Text(row.title)
+                                .font(.system(size: 10))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .truncationMode(.middle)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+        }
     }
 }
