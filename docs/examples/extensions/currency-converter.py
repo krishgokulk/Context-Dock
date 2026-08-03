@@ -8,8 +8,8 @@ import json, os, re, sys, time, urllib.request
 
 SUPPORT = os.path.expanduser("~/Library/Application Support/Context-Dock")
 CACHE = os.path.join(SUPPORT, "fx-rates.json")
-FAVS = os.path.join(SUPPORT, "currency-favourites.json")
-DEFAULT_FAVS = ["EUR", "GBP", "INR", "JPY"]
+PREF = os.path.join(SUPPORT, "currency-target.json")
+DEFAULT_TARGET = "INR"
 
 SYMBOL = {"USD": "$", "EUR": "€", "GBP": "£", "INR": "₹", "JPY": "¥",
           "AUD": "A$", "CAD": "C$", "NZD": "NZ$", "CNY": "¥", "KRW": "₩",
@@ -42,16 +42,16 @@ def row(**kw):
 def name_of(code):
     return NAMES.get(code, code)
 
-def load_favs():
+def load_target():
     try:
-        v = json.load(open(FAVS))
-        return [c for c in v if isinstance(c, str)] or list(DEFAULT_FAVS)
+        v = json.load(open(PREF))
+        return v.get("target") or DEFAULT_TARGET
     except Exception:
-        return list(DEFAULT_FAVS)
+        return DEFAULT_TARGET
 
-def save_favs(v):
+def save_target(code):
     os.makedirs(SUPPORT, exist_ok=True)
-    json.dump(v, open(FAVS, "w"))
+    json.dump({"target": code}, open(PREF, "w"))
 
 def rates():
     # One call an hour: this re-runs on every keystroke and the feed moves daily.
@@ -76,16 +76,17 @@ def money(v, code):
     else:             s = format(v, ",.4f").rstrip("0").rstrip(".")
     return f"{sym}{s}" if sym else f"{s} {code}"
 
-def convert_rows(amount, base, targets, table):
-    for code in targets:
-        row(id=f"copy:{money(amount * table[code] / table[base], code)}",
-            layout="compare",
-            left=money(amount, base), right=money(amount * table[code] / table[base], code),
-            title=name_of(base), badge=code, centerIcon="arrow.right")
+def convert_row(amount, base, code, table):
+    """One card. A wall of currencies is a picker's job — the panel answers the
+    question actually asked and stays one row tall."""
+    row(id=f"copy:{money(amount * table[code] / table[base], code)}",
+        layout="compare",
+        left=money(amount, base), right=money(amount * table[code] / table[base], code),
+        title=name_of(base), badge=code, centerIcon="arrow.right")
 
-def picker_rows(term, table, favs, amount, base):
-    """The currency list, filtered as the user types. Return toggles a currency in
-    the saved set, so the picker teaches itself: pick once, it stays."""
+def picker_rows(term, table, current, amount, base):
+    """The currency list, filtered as the user types. Return makes that currency the
+    one the panel converts to, and it sticks."""
     term = term.lower()
     hits = [c for c in sorted(table)
             if term in c.lower() or term in name_of(c).lower()]
@@ -94,23 +95,17 @@ def picker_rows(term, table, favs, amount, base):
             subtitle="Try a code (jpy) or a name (yen)", icon="magnifyingglass")
         return
     for code in hits[:12]:
-        on = code in favs
+        on = code == current
         preview = money(amount * table[code] / table[base], code) if code in table else ""
         row(id=f"pick:{code}",
             title=f"{name_of(code)}",
             subtitle=f"{code} · {preview}",
-            badge="✓ shown" if on else "add",
+            badge="current" if on else None,
             icon="checkmark.circle.fill" if on else "circle")
 
 def do_action(row_id, row_title):
     if row_id.startswith("pick:"):
-        code = row_id[5:]
-        favs = load_favs()
-        if code in favs:
-            favs.remove(code)
-        else:
-            favs.append(code)
-        save_favs(favs)
+        save_target(row_id[5:])
         return
     value = row_id[5:] if row_id.startswith("copy:") else row_title
     # Pipe the bytes straight to pbcopy: shelling out through json.dumps escaped
@@ -134,18 +129,20 @@ def main():
         row(id="err", title="Rates unavailable", subtitle=str(e)[:70],
             icon="exclamationmark.triangle")
         return
-    favs = [c for c in load_favs() if c in table]
+    target = load_target()
+    if target not in table:
+        target = DEFAULT_TARGET
 
     # Resting state uses the same card a real conversion does, so entering the
     # scope and typing never change the panel's shape.
     if not q:
-        convert_rows(1, "USD", favs[:3] or ["INR"], table)
+        convert_row(1, "USD", target, table)
         return
 
     m = re.match(r"\s*([0-9][0-9,]*\.?[0-9]*)\s*(.*)$", q)
     if not m:
         # No amount yet — treat the whole query as a currency search.
-        picker_rows(q, table, favs, 1, "USD")
+        picker_rows(q, table, load_target(), 1, "USD")
         return
 
     amount = float(m.group(1).replace(",", ""))
@@ -159,11 +156,16 @@ def main():
 
     # A word that isn't a code means the user is hunting for a currency.
     if unknown:
-        picker_rows(" ".join(unknown), table, favs, amount, base)
+        picker_rows(" ".join(unknown), table, target, amount, base)
         return
 
-    if not targets:
-        targets = [c for c in favs if c != base] or ["EUR"]
-    convert_rows(amount, base, targets, table)
+    # An explicit target in the query also becomes the remembered one, so the next
+    # bare amount answers in the currency the user last cared about.
+    if targets:
+        save_target(targets[0])
+        target = targets[0]
+    if target == base:
+        target = "USD" if base != "USD" else "EUR"
+    convert_row(amount, base, target, table)
 
 main()
