@@ -455,6 +455,8 @@ extension LauncherView {
             return
         }
         if newQuery != lastPillQuery {
+            // A changed query starts a new search: back to the compact capsule.
+            collapseScopedCapsuleSheet()
             scheduleDockPillRebuild(
                 query: newQuery,
                 delayNanoseconds: 20_000_000,

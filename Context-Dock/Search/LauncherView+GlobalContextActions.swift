@@ -246,9 +246,20 @@ extension LauncherView {
         globalContextViewModel.scopedSheetExpanded = true
         if selectFirst {
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let state = visibleGlobalGroupedListNavigationState(for: q)
-            if state.totalCount > 0 {
-                setGlobalGroupedFocus(globalGroupedVisibleOrder(state: state).first, state: state)
+            if isGlobalContextActive {
+                let state = visibleGlobalGroupedListNavigationState(for: q)
+                if state.totalCount > 0 {
+                    setGlobalGroupedFocus(
+                        globalGroupedVisibleOrder(state: state).first, state: state)
+                }
+            } else {
+                // Frontmost Context Dock renders dock pills: seat the first non-separator row
+                // so ↓ lands on something and the next ↓ moves down the list.
+                let pills = renderedOrderDockPills(for: q)
+                if let index = pills.firstIndex(where: { !$0.isSeparator }) {
+                    l2.pillNavViaKeyboard = true
+                    l2.focusedPillIndex = index
+                }
             }
         }
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
@@ -5946,6 +5957,9 @@ extension LauncherView {
         // like the sheet jumps up/down. Once the list opens, reserve the same fixed list
         // height as Global Context; only row content changes inside the scroll area.
         if showContextInDock, !isGlobalContextActive {
+            // Compact until ↓, so the window does not reserve a sheet the user has not asked
+            // for. isInCLIToolScope keeps its embedded terminal surface.
+            guard globalContextViewModel.scopedSheetExpanded || isInCLIToolScope else { return 0 }
             return listViewVisibleHeight
         }
 
@@ -6045,7 +6059,8 @@ extension LauncherView {
             return "global:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         if showContextInDock {
-            return "scoped:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
+            let expanded = globalContextViewModel.scopedSheetExpanded ? "open" : "compact"
+            return "scoped:\(expanded):\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
         // per app, so row count alone undercounts) — react to the measured height in 8px
