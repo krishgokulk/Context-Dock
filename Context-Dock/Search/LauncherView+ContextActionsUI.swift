@@ -247,16 +247,22 @@ extension LauncherView {
     /// Regular (user-visible) running apps for the chat focus picker, excluding
     /// Context-Dock itself, sorted by name.
     func runningAppsForChatFocus() -> [(name: String, bundleId: String, icon: NSImage)] {
-        NSWorkspace.shared.runningApplications
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications
             .filter {
                 $0.activationPolicy == .regular
                     && !$0.isTerminated
                     && $0.bundleIdentifier != Bundle.main.bundleIdentifier
             }
             .compactMap { app -> (name: String, bundleId: String, icon: NSImage)? in
-                guard let name = app.localizedName, let bundleId = app.bundleIdentifier else {
-                    return nil
-                }
+                guard let name = app.localizedName, let bundleId = app.bundleIdentifier,
+                    !bundleId.isEmpty
+                else { return nil }
+                // macOS reports one NSRunningApplication per PROCESS, so the same bundle can
+                // appear twice — a relaunch mid-quit, or an app running from two copies. The
+                // picker keys its rows by bundle id, and duplicate identifiers in a ForEach
+                // are undefined behaviour that takes the app down when the list is built.
+                guard seen.insert(bundleId.lowercased()).inserted else { return nil }
                 let icon = resolvedRunningAppIcon(for: app) ?? app.icon
                     ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
                 return (name, bundleId, icon)
@@ -296,7 +302,10 @@ extension LauncherView {
                         withBundleIdentifier: a.bundleId)?.path ?? "")
             rows.append((name: a.appName, bundleId: a.bundleId, icon: icon, isRunning: false))
         }
-        return rows
+        // Belt and braces: the rows are keyed by bundle id downstream, so guarantee the
+        // uniqueness here rather than trusting every future source to preserve it.
+        var uniqueIds = Set<String>()
+        return rows.filter { uniqueIds.insert($0.bundleId.lowercased()).inserted }
     }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
