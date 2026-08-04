@@ -509,6 +509,10 @@ extension LauncherView {
             !isDockResultSheetRevealed,
             !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return [] }
+        // One promise at a time. When the query completes a command of the scoped app, the
+        // ghost and Enter own the capsule — app icons beside them implied Enter might switch
+        // apps instead of running "Show All". Switching stays available through ↓.
+        guard ghostPillCompletion == nil else { return [] }
         let pills = contextDockViewModel.visiblePills.isEmpty
             ? cachedDockPills : contextDockViewModel.visiblePills
         return Array(pills.filter { $0.rankingKind == "appSwitch" }.prefix(3))
