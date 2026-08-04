@@ -40,9 +40,11 @@ enum GlassFloatingPanel {
         p.hidesOnDeactivate = false
         p.isFloatingPanel = true
         p.becomesKeyOnlyIfNeeded = true
-        // fullScreenAuxiliary rides along on other Spaces but refuses real full
-        // screen. A pinned panel the user wants to fill the display should be able to.
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenPrimary]
+        // fullScreenAuxiliary, NOT fullScreenPrimary. A non-activating panel cannot
+        // own a full-screen Space: dragging one to the top edge started a tiling
+        // transition, the menu bar revealed, and waking the status item threw through
+        // ViewBridge and aborted the app. Zoom-to-fill is offered instead.
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         p.isReleasedWhenClosed = false
         p.minSize = minSize
         // Hide native window buttons + tabbing — the SwiftUI header owns all of it, so

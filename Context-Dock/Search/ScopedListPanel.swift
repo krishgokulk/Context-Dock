@@ -277,7 +277,7 @@ struct ScopedListPanelContent: View {
             .buttonStyle(.plain)
             .help("Minimise")
 
-            Button { hostWindow?.toggleFullScreen(nil) } label: {
+            Button { toggleZoom() } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -286,7 +286,7 @@ struct ScopedListPanelContent: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Full screen")
+            .help("Zoom")
 
             Image(systemName: command.icon)
                 .font(.system(size: 12, weight: .semibold))
@@ -410,11 +410,27 @@ struct ScopedListPanelContent: View {
 
     /// Tracks the grid's real column count so Up/Down move a visual row.
     @State private var gridColumns: Int = 4
+    @State private var preZoomFrame: NSRect?
 
     /// The panel this content is hosted in, for the window controls.
     private var hostWindow: NSWindow? {
         NSApp.windows.first {
             $0.identifier == GlassFloatingPanel.identifier && $0.title == command.name
+        }
+    }
+
+    /// Fill the screen and back again. Real full screen is unavailable to a
+    /// non-activating panel — attempting it crashed the app — so this zooms to the
+    /// visible frame, which is what the green button does for most windows anyway.
+    private func toggleZoom() {
+        guard let window = hostWindow, let screen = window.screen ?? NSScreen.main else { return }
+        let target = screen.visibleFrame
+        if window.frame.equalTo(target) {
+            window.setFrame(preZoomFrame ?? target.insetBy(dx: 120, dy: 80), display: true,
+                            animate: true)
+        } else {
+            preZoomFrame = window.frame
+            window.setFrame(target, display: true, animate: true)
         }
     }
 
