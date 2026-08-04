@@ -46,7 +46,19 @@ enum GlassFloatingPanel {
         p.standardWindowButton(.miniaturizeButton)?.isHidden = true
         p.standardWindowButton(.zoomButton)?.isHidden = true
         p.tabbingMode = .disallowed
+        // Tag every floating panel so the dock's key monitors can tell "the user is
+        // typing in a panel" from "the user is driving the dock". A local monitor sees
+        // key events for the whole app, so without this an arrow press inside a pinned
+        // panel also drove Global Context behind it.
+        p.identifier = Self.identifier
         return p
+    }
+
+    static let identifier = NSUserInterfaceItemIdentifier("contextdock.glass-panel")
+
+    /// True when the event belongs to one of these panels rather than the dock.
+    static func ownsEvent(_ event: NSEvent) -> Bool {
+        event.window?.identifier == identifier
     }
 }
 

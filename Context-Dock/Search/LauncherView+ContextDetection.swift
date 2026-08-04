@@ -508,6 +508,9 @@ extension LauncherView {
         // This works even when the text field has focus
         quickLookEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [self] event in
+            // A pinned panel owns its own keys — Space there is Quick Look for that
+            // panel, not for the dock's selection.
+            if GlassFloatingPanel.ownsEvent(event) { return event }
             // Only handle Space key (keyCode 49)
             guard event.keyCode == 49 else { return event }
 

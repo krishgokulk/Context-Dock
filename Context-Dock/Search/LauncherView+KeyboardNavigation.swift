@@ -165,6 +165,9 @@ extension LauncherView {
 
     func setupDockPillKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // A pinned panel is its own surface. Hand its keys straight back, or
+            // navigating a folder panel also arrows through Global Context behind it.
+            if GlassFloatingPanel.ownsEvent(event) { return event }
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
             // .onKeyPress ever sees it.
@@ -1157,6 +1160,7 @@ extension LauncherView {
 
         cmdHoldMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [self] event in
+            if GlassFloatingPanel.ownsEvent(event) { return event }
             if event.type == .keyDown {
                 // Any keyDown while Cmd held → cancel the long-press timer
                 cmdHoldTask?.cancel()
