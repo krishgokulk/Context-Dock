@@ -2535,6 +2535,8 @@ extension LauncherView {
             globalContextViewModel.idleCollapseTask?.cancel()
             globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.scopedSheetExpanded = false
+            measuredGlobalListContentHeight = 0
             globalContextViewModel.stickyLeadingMatchIcon = nil
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
@@ -2557,7 +2559,14 @@ extension LauncherView {
             preparedResultsVersion: preparedVersion
         )
         scheduleBackgroundGlobalContextPreparation(q)
-        scheduleEligibleGlobalContextAutoExpansion(query: q)
+        // No auto-expansion. The dock's contract is one the user drives: typing shows the
+        // ghost match in a compact capsule, ↓ opens the sheet. A timer that opened it 360ms
+        // after a typing pause made the surface behave differently depending on how fast you
+        // type — compact in a fast burst, expanded the moment you hesitated — and once open
+        // the phase stays expanded while refining, so every later keystroke rendered the
+        // full sheet.
+        globalContextViewModel.autoExpandTask?.cancel()
+        globalContextViewModel.autoExpandTask = nil
         if wasExpanded { scheduleGlobalContextIdleCollapse() }
 
         // Search the immutable Global Context index away from the main actor. Every
@@ -2766,32 +2775,6 @@ extension LauncherView {
                     // here would replay the sheet's entrance on every keystroke.
                 }
             }
-        }
-    }
-
-    /// Auto-reveal is limited to Global Context's launcher sources. Frontmost-app actions,
-    /// Finder/file results, selection actions, and provider-backed scopes stay compact until ↓.
-    func scheduleEligibleGlobalContextAutoExpansion(query: String) {
-        globalContextViewModel.autoExpandTask?.cancel()
-        globalContextViewModel.autoExpandTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 360_000_000)
-            defer { globalContextViewModel.autoExpandTask = nil }
-            guard !Task.isCancelled,
-                isGlobalContextActive,
-                shouldUsePureGlobalAppSearch,
-                globalInlineAppScope == nil,
-                currentGlobalScopedBundleID == nil,
-                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased() == query,
-                globalContextViewModel.typingSnapshot.phase != .expanded
-            else { return }
-
-            let state = visibleGlobalGroupedListNavigationState(for: query)
-            let hasAppsOrRunningApps = !state.appResults.isEmpty
-            let hasGlobalCommandsOrCachedMenus =
-                !state.menuPills.isEmpty || !state.menuGroups.isEmpty || !state.appMenuGroups.isEmpty
-            guard hasAppsOrRunningApps || hasGlobalCommandsOrCachedMenus else { return }
-            _ = expandGlobalContextTypingMatch(selectFirst: true)
         }
     }
 
@@ -3481,6 +3464,11 @@ extension LauncherView {
             pendingGlobalAppQuery = nil
             pendingGlobalGroupedQuery = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            // Clearing the field is a fresh start: drop the capsule's expanded flag and the
+            // last measured sheet height too, or the next query inherits the previous
+            // session's open sheet and its size.
+            globalContextViewModel.scopedSheetExpanded = false
+            measuredGlobalListContentHeight = 0
             globalContextViewModel.preparedResults = nil
             cachedGlobalAppQuery = ""
             cachedGlobalAppMatches = []
