@@ -6086,6 +6086,10 @@ extension LauncherView {
     /// sheet sizes to this (via currentListViewDockContentHeight) and the resize token
     /// reacts to it, so the window settles to fit the actual rendered rows.
     func updateMeasuredGlobalListHeight(_ height: CGFloat) {
+        // A clipped list measures itself as zero. Recording that wiped the real height, so
+        // the first ↓ sized the sheet to nothing (a transparent card) and only a second pass
+        // — after the rows re-measured — showed it. Keep the last real measurement instead.
+        guard isDockResultSheetRevealed else { return }
         let clamped = max(0, height)
         guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
         let previous = measuredGlobalListContentHeight

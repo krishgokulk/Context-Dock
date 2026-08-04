@@ -601,15 +601,21 @@ extension LauncherView {
                 .frame(width: resultsPanelLeadingInset)
             VStack(spacing: 0) {
                 if usesVerticalListDockLayout && inDockMode {
+                    // The list stays mounted while the capsule is compact (clipped to zero),
+                    // so its chrome must follow the same state — an unconditional separator
+                    // drew a hairline under the pill with nothing beneath it.
+                    let revealed = isDockResultSheetRevealed
                     currentListDockSurface
                         .frame(width: resultsPanelWidth, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                        .padding(.bottom, 8)
-                    Rectangle()
-                        .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
-                        .frame(height: 1)
-                        .padding(.horizontal, 22)
+                        .padding(.top, revealed ? 6 : 0)
+                        .padding(.bottom, revealed ? 8 : 0)
+                    if revealed {
+                        Rectangle()
+                            .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
+                            .frame(height: 1)
+                            .padding(.horizontal, 22)
+                    }
                 }
 
                 dockBaseView(inDockMode: inDockMode, fillWidth: true, embeddedInSheet: !idle)
@@ -632,15 +638,18 @@ extension LauncherView {
                     }
 
                 if usesVerticalListDockLayout && !inDockMode {
-                    Rectangle()
-                        .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
-                        .frame(height: 1)
-                        .padding(.horizontal, 22)
+                    let revealed = isDockResultSheetRevealed
+                    if revealed {
+                        Rectangle()
+                            .fill(Color.white.opacity(isEffectiveDark ? 0.08 : 0.10))
+                            .frame(height: 1)
+                            .padding(.horizontal, 22)
+                    }
                     currentListDockSurface
                         .frame(width: resultsPanelWidth, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                        .padding(.bottom, 8)
+                        .padding(.top, revealed ? 6 : 0)
+                        .padding(.bottom, revealed ? 8 : 0)
                 }
 
                 // Mode-specific content below the input: search results (global / context dock),
