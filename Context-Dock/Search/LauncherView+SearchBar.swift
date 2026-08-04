@@ -499,6 +499,49 @@ extension LauncherView {
         }
     }
 
+    /// Running apps matching the query, as icons in the trailing controls of the compact
+    /// capsule. In a frontmost-app scope the ghost completes that app's own commands, so an
+    /// app you want to SWITCH to only appeared once the sheet was open — the icons make the
+    /// switch reachable without expanding. Read from the already-built pills, never rebuilt
+    /// here: this is evaluated on every render.
+    var contextDockAppSwitchTrailingPills: [DockPill] {
+        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive,
+            !isDockResultSheetRevealed,
+            !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [] }
+        let pills = contextDockViewModel.visiblePills.isEmpty
+            ? cachedDockPills : contextDockViewModel.visiblePills
+        return Array(pills.filter { $0.rankingKind == "appSwitch" }.prefix(3))
+    }
+
+    @ViewBuilder
+    var contextDockAppSwitchTrailingIcons: some View {
+        let pills = contextDockAppSwitchTrailingPills
+        if !pills.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(pills) { pill in
+                    Button {
+                        pill.execute()
+                    } label: {
+                        FileThumbnailImage(
+                            filePath: pill.quickLookURL?.path ?? pill.resolvedURL?.path,
+                            fallbackImage: pill.menuItemImage,
+                            systemName: pill.icon,
+                            tint: accentColor(for: pill.accentColorName),
+                            size: 16,
+                            cornerRadius: 4,
+                            isApplication: true
+                        )
+                        .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Switch to \(pill.name)")
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+
     /// Icon of the command the ghost text is completing, drawn in the trailing controls so
     /// the input reads "mini[mize]  — ↵" with the match's icon over on the right, next to
     /// Clear, instead of an icon wedged between the ghost and its hint.
@@ -2499,6 +2542,7 @@ extension LauncherView {
                                     if shouldShowSelectionCompactAIAction {
                                         compactAIActionButton
                                     }
+                                    contextDockAppSwitchTrailingIcons
                                     ghostMatchTrailingIcon
                                     Button(action: clearInputQuery) {
                                         Image(systemName: "xmark.circle.fill")
