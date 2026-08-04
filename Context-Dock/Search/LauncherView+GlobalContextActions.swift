@@ -244,6 +244,14 @@ extension LauncherView {
     func expandScopedCapsuleSheet(selectFirst: Bool) {
         guard !globalContextViewModel.scopedSheetExpanded else { return }
         globalContextViewModel.scopedSheetExpanded = true
+        // `typingSnapshot.phase` is the documented single source of truth for expansion, and
+        // several gates key off it (the Global Context surface only renders when the snapshot
+        // stops asking for the top match alone). A scoped capsule never runs the typing
+        // pipeline, so its phase would sit at .typing forever and ↓ would set a flag nothing
+        // downstream believed — the dock stayed a transparent pill with no sheet.
+        if globalContextViewModel.typingSnapshot.phase != .expanded {
+            globalContextViewModel.typingSnapshot.phase = .expanded
+        }
         if selectFirst {
             let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if isGlobalContextActive {
@@ -270,6 +278,12 @@ extension LauncherView {
     func collapseScopedCapsuleSheet() {
         guard globalContextViewModel.scopedSheetExpanded else { return }
         globalContextViewModel.scopedSheetExpanded = false
+        // Back to the compact contract: the snapshot asks for the top match alone again.
+        if globalContextViewModel.typingSnapshot.phase == .expanded {
+            globalContextViewModel.typingSnapshot.phase =
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .idle : .typing
+        }
         l2.focusedPillIndex = nil
         focusedAppPillIndex = nil
         requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
