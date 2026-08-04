@@ -128,7 +128,11 @@
       "Bash(grep -oE '\"\\(exceptionReason|reason\\)\"[^,]{0,400}' /Users/gokulakannan/Library/Logs/DiagnosticReports/Context-Dock-2026-08-04-034901.ips)",
       "Bash(awk 'NR<=1422 && /^    func /{f=$0; ln=NR} END{print ln\": \"f}' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
       "Bash(awk 'NR>=178 && NR<=232 && /return \\(nil|event\\)/ {print NR\": \"$0}' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
-      "Bash(pgrep -x xcodebuild >/dev/null && echo \"codex building — waiting\" || echo \"no concurrent build\"; for i in $\\(seq 1 20\\); do pgrep -x xcodebuild >/dev/null || break; sleep 15; done; rm -f .build/XcodeDerivedData/Build/Intermediates.noindex/XCBuildData/build.db*; ./scripts/build-debug.sh 2>&1 | grep -E \"error:|BUILD\" | head -4)"
+      "Bash(pgrep -x xcodebuild >/dev/null && echo \"codex building — waiting\" || echo \"no concurrent build\"; for i in $\\(seq 1 20\\); do pgrep -x xcodebuild >/dev/null || break; sleep 15; done; rm -f .build/XcodeDerivedData/Build/Intermediates.noindex/XCBuildData/build.db*; ./scripts/build-debug.sh 2>&1 | grep -E \"error:|BUILD\" | head -4)",
+      "Bash(awk 'NR>=1700 && NR<=1760' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=1790 && NR<=1830' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(grep -n \"xmark.circle\\\\|clearButton\\\\|Button {\\\\s*$\" Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=2420 && NR<=2500' Context-Dock/Search/LauncherView+SearchBar.swift)"
     ],
     "additionalDirectories": [
       "/Users/gokulakannan/Developer/Context-Dock",

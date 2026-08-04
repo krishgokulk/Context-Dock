@@ -499,6 +499,26 @@ extension LauncherView {
         }
     }
 
+    /// Icon of the command the ghost text is completing, drawn in the trailing controls so
+    /// the input reads "mini[mize]  — ↵" with the match's icon over on the right, next to
+    /// Clear, instead of an icon wedged between the ghost and its hint.
+    @ViewBuilder
+    var ghostMatchTrailingIcon: some View {
+        if let ghost = ghostPillCompletion {
+            FileThumbnailImage(
+                filePath: ghost.quickLookURL?.path ?? ghost.resolvedURL?.path,
+                fallbackImage: ghost.menuItemImage,
+                systemName: ghost.icon,
+                tint: accentColor(for: ghost.accentColorName),
+                size: 16,
+                cornerRadius: 4,
+                isApplication: ghost.rankingKind == "appLaunch"
+            )
+            .frame(width: 18, height: 18)
+            .transition(.opacity)
+        }
+    }
+
     /// True when the dock should show the glowing pill rather than the results/chat card.
     /// - Chat modes: stay a pill while COMPOSING the query and only expand once the chat actually
     ///   has content (first user/assistant message / loading), so the glow hides on the first
@@ -527,12 +547,26 @@ extension LauncherView {
             {
                 return true
             }
+            // Same rule for an app-scope capsule: compact means the glowing pill.
+            if isActiveGlobalRunningAppMenuScope(),
+                !globalContextViewModel.scopedSheetExpanded
+            {
+                return true
+            }
             if hasExpandedGlobalContextResults { return false }
             return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !shouldShowUnifiedDockModeContent
                 && !usesVerticalListDockLayout
                 && !hasResultsToShow
         case .contextDock:
+            // The capsule now stays compact while the user types and opens only on ↓, so the
+            // glow belongs to the pill surface, not to an empty field. Without this the glow
+            // dropped on the first keystroke even though the pill was still what was on screen.
+            if !globalContextViewModel.scopedSheetExpanded, !hasSelectionScopeSurface,
+                !isFinderDesktopOnlyMode, !isInCLIToolScope
+            {
+                return true
+            }
             // Auto-arm shows the compact idle pill ONLY when there are no menu results. If a
             // stale auto-arm flag stayed set once the query started matching menus, returning
             // idle here rendered the input pill AND the results card together — the "two
@@ -1809,18 +1843,9 @@ extension LauncherView {
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.35))
                                             .lineLimit(1)
-                                        FileThumbnailImage(
-                                            filePath: ghost.quickLookURL?.path
-                                                ?? ghost.resolvedURL?.path,
-                                            fallbackImage: ghost.menuItemImage,
-                                            systemName: ghost.icon,
-                                            tint: accentColor(for: ghost.accentColorName),
-                                            size: 16,
-                                            cornerRadius: 4,
-                                            isApplication: ghost.rankingKind == "appLaunch"
-                                        )
-                                        .frame(width: 18, height: 18)
-                                        .padding(.leading, 8)
+                                        // The match's icon lives in the trailing controls, next
+                                        // to Clear — inline it sat mid-sentence between the
+                                        // ghost text and its ↵ hint.
                                         Text("  — ↵")
                                             .font(.system(size: 15))
                                             .foregroundStyle(.secondary.opacity(0.2))
@@ -2469,6 +2494,7 @@ extension LauncherView {
                                     if shouldShowSelectionCompactAIAction {
                                         compactAIActionButton
                                     }
+                                    ghostMatchTrailingIcon
                                     Button(action: clearInputQuery) {
                                         Image(systemName: "xmark.circle.fill")
                                             .foregroundStyle(.secondary.opacity(0.5))
