@@ -95,6 +95,9 @@ struct ScopedListPanelContent: View {
     /// row and follows the rows as they change, so arrow keys and Space work the
     /// moment the panel opens.
     @State private var selectedID: String?
+    /// Whether the filter field owns the keyboard. Space must type a space there and
+    /// Quick Look everywhere else — one key, two jobs, decided by focus.
+    @FocusState private var filterFocused: Bool
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("extensionPanelAIWidth") private var aiWidth = 300.0
     private var aiVisible: Bool { showAI ?? CustomListProviderService.hasAIPanel(command) }
@@ -179,14 +182,19 @@ struct ScopedListPanelContent: View {
         .focusable()
         .focusEffectDisabled()
         .onMoveCommand { direction in
+            // Left/right belong to the caret while the filter field has focus.
+            guard !filterFocused else { return }
             move(direction)
         }
         .onKeyPress(.space) {
-            if let path = selectedPath { FileQuickLookPanel.shared.toggle(path: path); return .handled }
-            return .ignored
+            // Never steal the space bar from someone typing a filter.
+            guard !filterFocused, let path = selectedPath else { return .ignored }
+            FileQuickLookPanel.shared.toggle(path: path)
+            return .handled
         }
         .onKeyPress(.return) {
-            guard let row = displayedRows.first(where: { $0.id == selectedID }) else { return .ignored }
+            guard !filterFocused,
+                  let row = displayedRows.first(where: { $0.id == selectedID }) else { return .ignored }
             CustomListProviderService.shared.runAction(command, row: row, query: query)
             return .handled
         }
@@ -196,12 +204,40 @@ struct ScopedListPanelContent: View {
     /// is talking about the extension in the abstract while the user is looking at
     /// concrete rows.
     private var aiContext: String {
-        let lines = displayedRows.prefix(20).map { row -> String in
+        let lines = displayedRows.prefix(40).map { row -> String in
             let sub = (row.subtitle?.isEmpty == false) ? " — \(row.subtitle!)" : ""
             return "• \(row.title)\(sub)"
         }
-        guard !lines.isEmpty else { return "" }
-        return "Rows currently shown in this panel:\n" + lines.joined(separator: "\n")
+        let listing = lines.isEmpty
+            ? ""
+            : "\n\nCurrently shown in this panel:\n" + lines.joined(separator: "\n")
+
+        // The persona follows what the panel holds. A folder assistant should behave
+        // like a colleague who can see the files — free to summarise, compare, suggest
+        // names, spot duplicates. A converter assistant should stay on money, because
+        // wandering off is how it starts inventing rates.
+        if hasFileRows {
+            return """
+            You are a file assistant for this folder. You can see the listing below and \
+            may talk about it freely: summarise what is here, spot duplicates or odd \
+            names, group things by date or subject, suggest names or an organisation \
+            scheme, work out which file the user means from a vague description, or \
+            answer general questions that help them deal with these files.
+
+            You cannot open, move, rename or delete anything yourself — the panel does \
+            that. Say what you would do and let the user act. Never invent a file that \
+            is not listed.\(listing)
+            """
+        }
+
+        return """
+        You answer only about \(command.name.lowercased()) — \(command.description)
+
+        Use the values shown below when the user refers to "this" or "that". If a \
+        question falls outside this subject, say so in one line and stop; do not guess. \
+        Never state a figure that is not shown here or that you cannot derive from it — \
+        rates and values change, and a plausible invention is worse than a refusal.\(listing)
+        """
     }
 
     private var header: some View {
@@ -252,6 +288,7 @@ struct ScopedListPanelContent: View {
             TextField(isComputed ? "Type input…" : "Filter…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .focused($filterFocused)
                 .onChange(of: query) { _, _ in refresh() }
         }
         .padding(.horizontal, 12)
