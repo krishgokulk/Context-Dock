@@ -1588,6 +1588,14 @@ extension LauncherView {
             .onKeyPress(.downArrow) {
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
                 if activeNotepadScopeCommand != nil { return .ignored }
+                // ↓ is what opens an app-scope capsule's sheet. Until then the capsule shows
+                // only its inline top match, so typing never throws the list open.
+                if isActiveGlobalRunningAppMenuScope(),
+                    !globalContextViewModel.scopedSheetExpanded
+                {
+                    expandScopedCapsuleSheet(selectFirst: true)
+                    return .handled
+                }
                 if isGlobalContextActive,
                     shouldUsePureGlobalAppSearch,
                     !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

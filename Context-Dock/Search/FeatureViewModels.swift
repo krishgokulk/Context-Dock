@@ -134,6 +134,11 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var liveSelectionPreviewText: String?
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
     @Published var typingSnapshot = GlobalContextTypingSnapshot()
+    /// Whether an app-scope capsule (Global Context with a running-app scope) has been
+    /// expanded into its result sheet. Typing keeps the capsule compact — the sheet opens
+    /// only on ↓, the same contract pure Global Context already follows through `typingSnapshot`.
+    /// Reset whenever the query or the scope changes.
+    @Published var scopedSheetExpanded = false
     @Published var preparedResults: GlobalContextPreparedResults?
     @Published var isResolvingFastMatches = false
     /// Last resolved top match icon. Held across the in-flight window of a keystroke

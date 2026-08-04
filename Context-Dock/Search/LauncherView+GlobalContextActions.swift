@@ -238,6 +238,32 @@ extension LauncherView {
             ?? globalGroupedListNavigationState(for: query)
     }
 
+    /// Opens an app-scope capsule's result sheet. Typing keeps the capsule compact; this is
+    /// the one transition that reveals its rows, so it also seats the first selection and
+    /// animates the panel as a single motion.
+    func expandScopedCapsuleSheet(selectFirst: Bool) {
+        guard !globalContextViewModel.scopedSheetExpanded else { return }
+        globalContextViewModel.scopedSheetExpanded = true
+        if selectFirst {
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let state = visibleGlobalGroupedListNavigationState(for: q)
+            if state.totalCount > 0 {
+                setGlobalGroupedFocus(globalGroupedVisibleOrder(state: state).first, state: state)
+            }
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+    }
+
+    /// Collapses the capsule back to its input. Called whenever the query or the scope
+    /// changes, so a new search starts compact instead of inheriting the open sheet.
+    func collapseScopedCapsuleSheet() {
+        guard globalContextViewModel.scopedSheetExpanded else { return }
+        globalContextViewModel.scopedSheetExpanded = false
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+    }
+
     func isActiveGlobalRunningAppMenuScope() -> Bool {
         guard isGlobalContextActive, currentGlobalScopedBundleID != nil else { return false }
         return !(currentGlobalScopedBundleID == "com.apple.finder" && isFinderDesktopOnlyMode)
@@ -5881,6 +5907,9 @@ extension LauncherView {
         // place as the visible glass; otherwise the old 372pt reservation leaves a clear
         // window tail that intercepts clicks below a short scoped result list.
         if isActiveGlobalRunningAppMenuScope() {
+            // Compact until ↓: no reserved viewport, so the window stays a capsule while
+            // the user types instead of throwing the sheet open on the first keystroke.
+            guard globalContextViewModel.scopedSheetExpanded else { return 0 }
             let isExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
@@ -6006,7 +6035,8 @@ extension LauncherView {
     var listViewResizeToken: String {
         guard usesVerticalListDockLayout else { return "off" }
         if isActiveGlobalRunningAppMenuScope() {
-            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
+            let expanded = globalContextViewModel.scopedSheetExpanded ? "open" : "compact"
+            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(expanded):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
         }
         // Pure Global Context must feel like Spotlight/Raycast: once results are visible,
         // the window frame stays fixed and only row content changes inside the scroll area.

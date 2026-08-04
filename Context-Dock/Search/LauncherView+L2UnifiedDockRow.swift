@@ -307,11 +307,20 @@ extension LauncherView {
         // continuously from the first key press.
         let scopedGlobalMenuActive =
             isGlobalContextActive && currentGlobalScopedBundleID != nil && !isFinderDesktopOnlyMode
-        let expanded =
-            isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive
-            ? hasExpandedGlobalContextResults
-            : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
-                && !isDeferredMenuOnlyPresentation(presentation))
+        // An app-scope capsule stays compact while the user types and opens only on ↓ —
+        // the same contract pure Global Context follows. Its expansion was previously
+        // ungated, so every keystroke threw the full sheet open under the input.
+        let expanded: Bool = {
+            if isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive {
+                return hasExpandedGlobalContextResults
+            }
+            if scopedGlobalMenuActive {
+                return globalContextViewModel.scopedSheetExpanded
+                    && !isDeferredMenuOnlyPresentation(presentation)
+            }
+            return !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+                && !isDeferredMenuOnlyPresentation(presentation)
+        }()
         globalAppSearchListView(
             query: presentation.query,
             matches: presentation.matches,
@@ -431,6 +440,9 @@ extension LauncherView {
             l2.appCompletion = nil
             l2.showResultsPopover = false
             if currentGlobalScopedBundleID != nil || globalInlineAppScope != nil {
+                // Editing the query starts a new search: back to the compact capsule, so the
+                // sheet only ever opens because the user pressed ↓.
+                collapseScopedCapsuleSheet()
                 scheduleGlobalGroupedListRebuild(query: newQuery)
             } else {
                 updateGlobalContextTypingSnapshot(query: newQuery)
