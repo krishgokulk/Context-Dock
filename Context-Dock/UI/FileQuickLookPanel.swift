@@ -16,6 +16,13 @@ final class FileQuickLookPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPan
 
     private var urls: [URL] = []
 
+    /// True when the event belongs to the Quick Look panel, or Quick Look is simply
+    /// up. Its own arrow keys walk the preview set; the dock must not also act on them.
+    func ownsEvent(_ event: NSEvent) -> Bool {
+        if let w = event.window, w is QLPreviewPanel { return true }
+        return isOpen
+    }
+
     var isOpen: Bool {
         QLPreviewPanel.sharedPreviewPanelExists()
             && (QLPreviewPanel.shared()?.isVisible ?? false)

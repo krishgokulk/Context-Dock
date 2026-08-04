@@ -511,6 +511,7 @@ extension LauncherView {
             // A pinned panel owns its own keys — Space there is Quick Look for that
             // panel, not for the dock's selection.
             if GlassFloatingPanel.ownsEvent(event) { return event }
+            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
             // Only handle Space key (keyCode 49)
             guard event.keyCode == 49 else { return event }
 

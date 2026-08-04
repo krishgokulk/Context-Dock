@@ -1171,6 +1171,7 @@ extension LauncherView {
         cmdHoldMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [self] event in
             if GlassFloatingPanel.ownsEvent(event) { return event }
+            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
             if event.type == .keyDown {
                 // Any keyDown while Cmd held → cancel the long-press timer
                 cmdHoldTask?.cancel()
