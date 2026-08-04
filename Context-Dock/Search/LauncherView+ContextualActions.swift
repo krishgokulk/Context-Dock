@@ -3755,7 +3755,7 @@ extension LauncherView {
             remPanelIsProcessing = false
         }
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             if hasLegacyPanelState {
                 searchState.contextApp = nil
                 searchState.activeSmartQueryKey = nil
@@ -3879,7 +3879,7 @@ extension LauncherView {
         clipboardSourceFilterBundleId = ""
         clipboardSourceFilterName = ""
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             searchState.contextApp = nil
             searchState.activeSmartQueryKey = "clipboard"
             l2.targetApp = nil
@@ -3922,7 +3922,7 @@ extension LauncherView {
         remPanelAITask?.cancel()
         remPanelIsProcessing = false
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             searchState.contextApp = nil
             searchState.activeSmartQueryKey = "notifications"
             l2.targetApp = nil

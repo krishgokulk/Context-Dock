@@ -1409,7 +1409,7 @@ struct LauncherView: View {
                     }
                 } else {
                     if pendingAdapterApproval != nil {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                        withAnimation(.dockSoft) {
                             pendingAdapterApproval = nil
                         }
                         requestWindowSizeUpdate(reason: .chatChanged)
@@ -1443,7 +1443,7 @@ struct LauncherView: View {
                 }
             } else {
                 if pendingPrivacyApproval != nil {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                    withAnimation(.dockSoft) {
                         pendingPrivacyApproval = nil
                     }
                     requestWindowSizeUpdate(reason: .chatChanged)
@@ -3189,7 +3189,7 @@ struct LauncherView: View {
             ZStack(alignment: .topTrailing) {
                 DLogoButton(
                     action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        withAnimation(.dockSheet) {
                             showNotificationDock.toggle()
                             if showNotificationDock { notifDockTab = 0 }
                         }

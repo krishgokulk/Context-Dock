@@ -1298,7 +1298,7 @@ extension LauncherView {
             !aiMode.isActive,
             let snapshot = currentSelectionActivationSnapshot(refresh: false)
         else { return }
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             // Freeze the selection only — do NOT touch globalContextActivation. The selection
             // came from the frontmost app, so the scope opens on the surface the user launched
             // into (Context Dock), instead of jumping them to Global Context.
@@ -1356,7 +1356,7 @@ extension LauncherView {
         searchState.query = ""
         searchState.results = []
         searchState.selectedIndex = nil
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             searchState.activeSmartQueryKey = nil
             searchState.contextApp = nil
             searchState.isInSmartMode = false
@@ -1404,7 +1404,7 @@ extension LauncherView {
     }
 
     private func applySelectionScopePayload(_ snapshot: GlobalContextActivation) {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             selectionScopePayload = snapshot
             showContextInDock = true
             isSearchBarExpanded = true

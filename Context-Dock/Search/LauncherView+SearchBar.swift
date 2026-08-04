@@ -835,7 +835,7 @@ extension LauncherView {
                                 {
                                     activateNotificationScope()
                                 } else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    withAnimation(.dockSheet) {
                                         expandSearchBar()
                                     }
                                     requestWindowSizeUpdate(reason: .rowLayoutChanged)
@@ -896,7 +896,7 @@ extension LauncherView {
                                                 .scale(scale: 0.8).combined(with: .opacity))
                                             .id("global-top-\(topMatch.bundleID ?? topMatch.id)")
                                             .animation(
-                                                .spring(response: 0.22, dampingFraction: 0.78),
+                                                .dockCrisp,
                                                 value: topMatch.id)
                                     } else {
                                         LiquidGlassArrow(size: 24)
@@ -1049,7 +1049,7 @@ extension LauncherView {
                                                     .scale(scale: 0.8).combined(with: .opacity))
                                                 .id("global-top-\(topMatch.bundleID ?? topMatch.id)")
                                                 .animation(
-                                                    .spring(response: 0.22, dampingFraction: 0.78),
+                                                    .dockCrisp,
                                                     value: topMatch.id)
                                         } else {
                                             LiquidGlassArrow(size: 24)
@@ -1277,7 +1277,7 @@ extension LauncherView {
                                 if isFrontmostChatPinned {
                                     Button {
                                         withAnimation(
-                                            .spring(response: 0.22, dampingFraction: 0.84)
+                                            .dockStandard
                                         ) {
                                             exitPinnedFrontmostChat()
                                         }
@@ -2789,7 +2789,7 @@ extension LauncherView {
                         if hovering { l2.pillNavViaKeyboard = false }
                     }
                     .animation(
-                        .spring(response: 0.3, dampingFraction: 0.75), value: showContextInDock
+                        .dockSheet, value: showContextInDock
                     )
                     .animation(
                         .spring(response: 0.28, dampingFraction: 0.82), value: showMediaLayer)

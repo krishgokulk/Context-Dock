@@ -370,7 +370,7 @@ extension LauncherView {
                 self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed
             {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                withAnimation(.dockStandard) {
                     self.l2.chatMessages = []
                     if let key = self.l2.activeDockSessionKey {
                         AppPanelChatStore.shared.clear(for: key)
@@ -1451,7 +1451,7 @@ extension LauncherView {
             .onExitCommand {
                 // Layer overlays close first
                 if showMediaLayer {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(.dockSheet) {
                         showMediaLayer = false
                     }
                     return
@@ -1548,7 +1548,7 @@ extension LauncherView {
                 if searchState.activeSmartQueryKey == "notifications" {
                     guard searchState.selectedIndex != nil else { return .handled }
                     if searchState.selectedIndex == 0 {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        withAnimation(.dockStandard) {
                             searchState.selectedIndex = nil
                             isKeyboardNavigation = false
                             isSearchFieldFocused = true
@@ -2010,7 +2010,7 @@ extension LauncherView {
                     if isContextDockChatConnected,
                         AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
                     {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        withAnimation(.dockStandard) {
                             exitContextDockChatSheet()
                             WebResearchSession.shared.clear()
                             searchState.revision += 1
@@ -2019,14 +2019,14 @@ extension LauncherView {
                         return .handled
                     }
                     if shouldShowContextDockChatSheet || l2.showChatPopover {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        withAnimation(.dockStandard) {
                             exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true
                         return .handled
                     }
                     if l2.chatArmed {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+                        withAnimation(.dockStandard) {
                             exitContextDockChatBackToContext()
                         }
                         isSearchFieldFocused = true

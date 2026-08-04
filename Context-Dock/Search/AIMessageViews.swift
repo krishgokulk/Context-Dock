@@ -684,7 +684,7 @@ struct AIChatMessageView: View {
     private var routerTraceView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                withAnimation(.dockSoft) {
                     isTraceExpanded.toggle()
                 }
             } label: {
@@ -731,7 +731,7 @@ struct AIChatMessageView: View {
         let lineCount = output.split(separator: "\n", omittingEmptySubsequences: false).count
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                withAnimation(.dockSoft) {
                     isRunOutputExpanded.toggle()
                 }
             } label: {

@@ -189,7 +189,7 @@ extension LauncherView {
 
                 // Collapse button
                 Button {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.78)) {
+                    withAnimation(.dockCrisp) {
                         clipboardHistoryExpanded = false
                     }
                 } label: {
@@ -207,7 +207,7 @@ extension LauncherView {
                 .spring(response: 0.25, dampingFraction: 0.78), value: clipboardHistoryExpanded)
         } else if showDropTarget {
             Button {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.78)) {
+                withAnimation(.dockCrisp) {
                     showClipboardHistory.toggle()
                 }
             } label: {
@@ -246,9 +246,9 @@ extension LauncherView {
                 handleClipboardIconDrop(providers)
             }
             .help("Drop here to pin for later")
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: hasContent)
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: count)
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: clipboardDropTargeted)
+            .animation(.dockCrisp, value: hasContent)
+            .animation(.dockCrisp, value: count)
+            .animation(.dockCrisp, value: clipboardDropTargeted)
         } else {
             EmptyView()
         }
@@ -686,7 +686,7 @@ extension LauncherView {
     }
 
     func revealClipboardDropTarget() {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.78)) {
+        withAnimation(.dockCrisp) {
             clipboardDropTargetVisible = true
         }
     }
@@ -1221,7 +1221,7 @@ extension LauncherView {
             row.focus()
             refreshQuickLookPreviewForCurrentFocusIfVisible()
         }
-        .animation(.spring(response: 0.22, dampingFraction: 0.84), value: row.isFocused)
+        .animation(.dockStandard, value: row.isFocused)
         .contextMenu {
             if let copy = row.copy {
                 Button("Copy") { copy() }
@@ -2330,7 +2330,7 @@ extension LauncherView {
                                     removal: .opacity.combined(with: .scale(scale: 0.9))))
                     }
                 }
-                .animation(.spring(response: 0.22, dampingFraction: 0.78), value: focIdx)
+                .animation(.dockCrisp, value: focIdx)
             } else {
                 // ── Normal scrollable row ─────────────────────────────────────────────
                 ScrollViewReader { proxy in

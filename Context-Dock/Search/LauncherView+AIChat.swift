@@ -957,7 +957,7 @@ extension LauncherView {
     /// Shared exit used by the header button and empty-field Backspace. Clear the current
     /// app chat, cancel any in-flight work, then return the unified shell to Context Dock.
     func clearAndExitContextDockChatBackToContext() {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             l2.chatMessages = []
             if let key = l2.activeDockSessionKey {
                 AppPanelChatStore.shared.clear(for: key)
@@ -1155,7 +1155,7 @@ extension LauncherView {
     /// and never auto-hides until unpinned.
     var contextDockChatCloseButton: some View {
         Button {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            withAnimation(.dockStandard) {
                 settings.launcherPinned.toggle()
                 // Pin changes dockJoinsAllSpaces — re-apply the window collectionBehavior
                 // now, otherwise the dock keeps moveToActiveSpace and vanishes when the
@@ -1996,7 +1996,7 @@ extension LauncherView {
         if !chatFocusApps.contains(where: {
             $0.bundleId.caseInsensitiveCompare(req.bundleId) == .orderedSame
         }) {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            withAnimation(.dockStandard) {
                 chatFocusApps.append(.init(name: req.name, bundleId: req.bundleId))
             }
         }
@@ -3055,7 +3055,7 @@ extension LauncherView {
                 appName: appName
             )
         } else {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+            withAnimation(.dockStandard) {
                 showContextInDock = true
                 aiMode.isActive = false
                 isSearchBarExpanded = true
@@ -3479,7 +3479,7 @@ extension LauncherView {
 
     private func finishCapabilityGap(_ gap: CapabilityGapService.Gap, note: String) {
         capabilityGapWorking = false
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+        withAnimation(.dockSoft) {
             pendingCapabilityGap = nil
         }
         l2.chatMessages.append(AIChatMessage(role: .assistant, content: note))
@@ -3492,7 +3492,7 @@ extension LauncherView {
 
     func dismissCapabilityGap() {
         capabilityGapWorking = false
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+        withAnimation(.dockSoft) {
             pendingCapabilityGap = nil
         }
         requestWindowSizeUpdate(reason: .chatChanged)

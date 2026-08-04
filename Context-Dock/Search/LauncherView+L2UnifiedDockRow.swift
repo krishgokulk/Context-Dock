@@ -522,7 +522,7 @@ extension LauncherView {
         } else if !showMediaLayer && settings.enableLayer3 {
             Task {
                 await mediaObserver.refreshNowPlaying()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                withAnimation(.dockSheet) {
                     showContextInDock = true
                     showMediaLayer = true
                 }

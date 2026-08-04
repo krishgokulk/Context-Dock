@@ -1250,13 +1250,13 @@ extension LauncherView {
         if !cached.isEmpty,
             cached.map(\.id) != safariTabPickerTabs.map(\.id)
         {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            withAnimation(.dockSoft) {
                 safariTabPickerTabs = cached
             }
         }
         SafariTabManager.shared.refreshCachedTabsIfNeeded(force: force) { tabs in
             guard tabs.map(\.id) != safariTabPickerTabs.map(\.id) else { return }
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            withAnimation(.dockSoft) {
                 safariTabPickerTabs = tabs
             }
         }
@@ -1282,7 +1282,7 @@ extension LauncherView {
                 } else {
                     tabs.insert(tab, at: 0)
                 }
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                withAnimation(.dockSoft) {
                     safariTabPickerTabs = tabs
                     if isContextDockChatConnected {
                         attachBrowserPageSnapshotToCurrentChat(

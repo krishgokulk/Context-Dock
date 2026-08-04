@@ -244,7 +244,7 @@ extension LauncherView {
                             removal: .opacity.combined(with: .scale(scale: 0.9))))
                 }
             }
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: focusedAppPillIndex)
+            .animation(.dockCrisp, value: focusedAppPillIndex)
         } else {
             // ── Normal scrollable row — all apps visible, frontmost auto-highlighted ──
             ScrollViewReader { proxy in
@@ -382,7 +382,7 @@ extension LauncherView {
                             removal: .opacity.combined(with: .scale(scale: 0.9))))
                 }
             }
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: focIdx)
+            .animation(.dockCrisp, value: focIdx)
         } else {
             // ── Normal scrollable row ──
             ScrollViewReader { proxy in
