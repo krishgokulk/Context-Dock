@@ -84,6 +84,7 @@ struct AutomationSettingsView: View {
     @ObservedObject private var pkgMgr          = TerminalPackageManager.shared
     @ObservedObject private var l2Mgr           = L2ExtensionManager.shared
     @ObservedObject private var adapterMgr      = AppAdapterManager.shared
+    @ObservedObject private var layeredExtensionManager = LayeredExtensionManager.shared
 
     @State private var selectedCategory: AutomationCategory = .appActions
     @State private var searchText = ""
@@ -428,7 +429,11 @@ struct AutomationSettingsView: View {
             }
 
         case .contextTriggers:
-            if let id = selectedRuleID,
+            if settingsPage == .shortcutSheetWorkflows,
+               let id = selectedRuleID,
+               let ext = selectionScopeExtensions.first(where: { $0.id == id }) {
+                SelectionScopeExtensionDetailView(extensionItem: ext)
+            } else if let id = selectedRuleID,
                let idx = settings.axTriggerRules.firstIndex(where: { $0.id == id }) {
                 AXRuleDetailView(rule: $settings.axTriggerRules[idx])
             } else {
@@ -561,7 +566,7 @@ struct AutomationSettingsView: View {
                 listEmpty(icon: "scope", label: "No trigger rules", action: { presentCreateFlow() })
             } else {
                 List(selection: $selectedRuleID) {
-                    Section(settingsPage == .shortcutSheetWorkflows ? "Selection Scope Extensions" : "Triggers") {
+                    Section(settingsPage == .shortcutSheetWorkflows ? "Built-in & legacy rules" : "Triggers") {
                         ForEach(filteredTriggers) { rule in
                             let displayPill = rule.pills.first
                             AutomationRow(
@@ -572,6 +577,20 @@ struct AutomationSettingsView: View {
                                 isEnabled: rule.isEnabled
                             )
                             .tag(rule.id)
+                        }
+                    }
+                    if settingsPage == .shortcutSheetWorkflows, !selectionScopeExtensions.isEmpty {
+                        Section("Selection Scope extensions") {
+                            ForEach(selectionScopeExtensions) { ext in
+                                AutomationRow(
+                                    icon: ext.icon,
+                                    color: .indigo,
+                                    title: ext.name,
+                                    subtitle: selectionScopeTriggerSummary(ext),
+                                    isEnabled: ext.enabled
+                                )
+                                .tag(ext.id)
+                            }
                         }
                     }
                 }
@@ -959,6 +978,36 @@ struct AutomationSettingsView: View {
         return rules.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
+    /// The current executable Selection Scope extensions. They share this Settings page with
+    /// legacy AX rules so imported, AI-created, and manually-created actions are inspectable in
+    /// one place instead of becoming invisible after creation.
+    private var selectionScopeExtensions: [ILExtension] {
+        guard settingsPage == .shortcutSheetWorkflows else { return [] }
+        return layeredExtensionManager.allExtensions
+            .filter { $0.layer == .l2_context && $0.category == "shortcutSheet" }
+            .filter { ext in
+                guard !searchText.isEmpty else { return true }
+                return ext.name.localizedCaseInsensitiveContains(searchText)
+                    || ext.description.localizedCaseInsensitiveContains(searchText)
+                    || ext.tags.contains { $0.rawValue.localizedCaseInsensitiveContains(searchText) }
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func selectionScopeTriggerSummary(_ ext: ILExtension) -> String {
+        let triggers = ext.triggers.map { trigger -> String in
+            switch trigger {
+            case .selection: return "selection"
+            case .always: return "always"
+            case .keyword(let words): return "keyword: \(words.first ?? "")"
+            case .fileType(let types): return ".\(types.first ?? "file")"
+            case .appContext(let app): return app
+            case .urlPattern(let pattern): return "URL: \(pattern)"
+            }
+        }.joined(separator: " · ")
+        return triggers.isEmpty ? "Selection-aware script" : triggers
+    }
+
     private var filteredAdapters: [AppAdapter] {
         let adapters = appActionAdapters
         guard !searchText.isEmpty else { return adapters }
@@ -1087,6 +1136,7 @@ struct AutomationSettingsView: View {
 
     private var createButtonTitle: String {
         if settingsPage == .extensionsCLIToolScope { return "Pin CLI" }
+        if settingsPage == .shortcutSheetWorkflows { return "Create Extension" }
         if selectedCategory == .appActions { return "Choose App" }
         return "New"
     }
@@ -1113,6 +1163,55 @@ struct AutomationSettingsView: View {
         }
         guard !missing.isEmpty else { return }
         settings.axTriggerRules.append(contentsOf: missing)
+    }
+
+    /// A portable contract for an external AI.  The app only imports the final JSON; questions
+    /// stay in the user's chosen provider, where they can answer them before pasting a draft.
+    private func copySelectionScopeAuthoringPrompt() {
+        let prompt = """
+        Create one Context Dock Selection Scope extension for macOS.
+
+        First, ask concise clarifying questions only if the goal is ambiguous: required input
+        (selected text, URL, files/folders, or a file extension), expected output/location, and
+        whether it may write files, use the network, control another app, or change clipboard.
+        After the user answers, output ONLY valid JSON in the exact schema below — no Markdown
+        fence and no explanation.
+
+        {
+          "version": "1.0",
+          "source": "AI name",
+          "extensions": [{
+            "name": "Short action name",
+            "description": "One sentence",
+            "icon": "SF Symbol",
+            "layer": "l2_context",
+            "tags": ["automation"],
+            "triggers": [
+              {"type": "selection"},
+              {"type": "fileType", "value": "pdf"}
+            ],
+            "scriptType": "bash",
+            "script": "Complete runnable script",
+            "permissions": [],
+            "outputMode": "text",
+            "version": "1.0"
+          }]
+        }
+
+        Valid trigger types: selection, fileType, appContext, urlPattern, keyword.
+        Use selection for every Selection Scope extension. Add fileType only for file-specific
+        actions. All non-keyword triggers are requirements, so never use unrelated triggers.
+        Valid scriptType values: bash, python, applescript, jxa, swift.
+        Available values: {selectedText}, {file}, {files}, {url}, {appName}, {bundleId}.
+        Quote every shell value (for example: "{file}"). Never hard-code personal paths.
+        Prefer macOS-native tools and check optional CLIs with `command -v` before use.
+        Do not use rm. Declare "network" or "automation" in permissions when applicable.
+        The app asks for confirmation before risky scripts run and captures a 60-second bounded
+        execution result. Make the script print a concise, truthful result or error.
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
+        AppToast.show("Selection Scope AI prompt copied", icon: "doc.on.doc", tint: .indigo)
     }
 
     private func colorForAccentName(_ name: String?) -> Color? {
@@ -1418,6 +1517,27 @@ struct AutomationSettingsView: View {
                     onboardingStep(number: "4", title: "Respect approval and scope", detail: "Read-only actions can run immediately. Anything that writes, deletes, sends, moves, or opens another app should ask first and should only receive the selected content.")
                 }
 
+                HStack(spacing: 10) {
+                    Button {
+                        showingImportPanel = true
+                    } label: {
+                        Label("Create Selection Extension", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        copySelectionScopeAuthoringPrompt()
+                    } label: {
+                        Label("Copy AI Authoring Prompt", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Paste this into Claude, ChatGPT, or another AI. Answer its clarifying questions, then paste its final JSON into Import Extension.")
+                }
+
+                Text("The authoring prompt is provider-neutral: it makes the AI ask clarifying questions first when needed, then return one validated JSON extension for this Selection Scope only.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Useful starter actions")
                         .font(.system(size: 12, weight: .semibold))
@@ -1649,7 +1769,14 @@ struct AutomationSettingsView: View {
         case .cliTools:
             showPackageSheet = true
         case .contextTriggers:
-            showRuleSheet = true
+            // Selection Scope extensions use the same LayeredExtensionManager-backed format
+            // that the sheet executes.  Do not send a new Selection Scope action through the
+            // older AX-rule-only editor, or import/AI-created actions become uneditable twins.
+            if settingsPage == .shortcutSheetWorkflows {
+                showingImportPanel = true
+            } else {
+                showRuleSheet = true
+            }
         case .appActions:
             showAdapterSheet = true
         case .clipboardActions:
@@ -6681,6 +6808,110 @@ private struct CreatedExtensionDraft {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count > 1 }
         return words.isEmpty ? [value.lowercased()] : Array(Set(words)).sorted()
+    }
+}
+
+/// Inspector for the one Selection Scope extension format used by Import, AI proposals, and
+/// the manual creator. Keeping it here makes an extension visible and controllable after it is
+/// saved instead of leaving only the legacy AX-rule inspector on this Settings page.
+private struct SelectionScopeExtensionDetailView: View {
+    let extensionItem: ILExtension
+    @ObservedObject private var manager = LayeredExtensionManager.shared
+    @State private var confirmDelete = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Image(systemName: extensionItem.icon)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.indigo)
+                        .frame(width: 42, height: 42)
+                        .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(extensionItem.name).font(.title3.bold())
+                        Text(extensionItem.description).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
+                Toggle("Enabled in Selection Scope", isOn: Binding(
+                    get: { extensionItem.enabled },
+                    set: { enabled in
+                        var updated = extensionItem
+                        updated.enabled = enabled
+                        manager.updateExtension(updated)
+                    }
+                ))
+
+                GroupBox("Eligibility") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("All of these requirements must match the frozen selection before this action is shown.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(extensionItem.triggers.enumerated()), id: \.offset) { _, trigger in
+                            Label(triggerDescription(trigger), systemImage: "checkmark.circle")
+                                .font(.subheadline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                }
+
+                GroupBox("Runner & safety") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("\(extensionItem.scriptType.rawValue.capitalized) · \(extensionItem.author) · v\(extensionItem.version)")
+                        if SelectionScopeExtensionPolicy.needsApproval(extensionItem) {
+                            Label("Confirmation required before this script runs", systemImage: "lock.shield")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label("Local read-only script", systemImage: "checkmark.shield")
+                                .foregroundStyle(.green)
+                        }
+                        if !extensionItem.requiresPermissions.isEmpty {
+                            Text("Permissions: \(extensionItem.requiresPermissions.joined(separator: ", "))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                }
+
+                GroupBox("Script") {
+                    ScrollView(.horizontal) {
+                        Text(extensionItem.scriptContent ?? "No inline script was saved.")
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 120, maxHeight: 220)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Delete Extension", role: .destructive) { confirmDelete = true }
+                }
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .alert("Delete \(extensionItem.name)?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) { manager.deleteExtension(extensionItem) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the script and its Selection Scope action. This cannot be undone.")
+        }
+    }
+
+    private func triggerDescription(_ trigger: ExtensionTrigger) -> String {
+        switch trigger {
+        case .selection: return "A text, URL, or file selection exists"
+        case .always: return "Always available for a selection"
+        case .keyword(let values): return "Search terms: \(values.joined(separator: ", "))"
+        case .fileType(let values): return "File type: \(values.map { ".\($0)" }.joined(separator: ", "))"
+        case .appContext(let value): return "Frontmost app: \(value)"
+        case .urlPattern(let value): return "URL matches: \(value)"
+        }
     }
 }
 

@@ -684,12 +684,29 @@ extension LauncherView {
             default: return .bash
             }
         }()
+        var triggers = proposal.triggers.compactMap { trigger -> ExtensionTrigger? in
+            switch trigger.type {
+            case "selection": return .selection
+            case "fileType": return .fileType([trigger.value])
+            case "appContext": return .appContext(trigger.value)
+            case "urlPattern": return .urlPattern(trigger.value)
+            case "keyword": return .keyword([trigger.value])
+            case "always": return .always
+            default: return nil
+            }
+        }
+        // A proposal belongs to Selection Scope only when it has a selected payload boundary.
+        // Preserve its typed restrictions, then add the common selection requirement.
+        if !triggers.contains(where: { if case .selection = $0 { return true }; return false }) {
+            triggers.insert(.selection, at: 0)
+        }
         let ext = ILExtension(
             name: proposal.name,
             description: proposal.description,
             icon: proposal.icon ?? "sparkles",
             layer: .l2_context,
             category: "shortcutSheet",
+            triggers: triggers,
             enabled: true,
             scriptContent: proposal.script,
             scriptType: scriptType,

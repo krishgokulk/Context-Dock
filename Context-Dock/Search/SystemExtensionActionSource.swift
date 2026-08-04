@@ -2,6 +2,23 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private final class SelectionExtensionRunState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timedOut = false
+
+    func markTimedOut() {
+        lock.lock()
+        timedOut = true
+        lock.unlock()
+    }
+
+    var didTimeOut: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return timedOut
+    }
+}
+
 extension LauncherView {
     func prewarmFinderContextualActionsForSelection(delayNanoseconds: UInt64 = 180_000_000) {
         let selectedURLs = effectiveFinderSelectionURLsForPills()
@@ -337,8 +354,11 @@ extension LauncherView {
         query: String,
         excludingTitles: Set<String> = []
     ) -> [DockPill] {
+        let selectionContext = effectiveShareAXContext()
+        let selectedPaths = effectiveSelectedFileURLsForConversation().map(\.path)
         let exts = LayeredExtensionManager.shared.allExtensions.filter {
-            $0.enabled && $0.layer == .l2_context && $0.category == "shortcutSheet"
+            SelectionScopeExtensionPolicy.isEligible(
+                $0, context: selectionContext, filePaths: selectedPaths)
         }
         guard !exts.isEmpty else { return [] }
         let normalizedQuery = normalizedDockPillText(query)
@@ -370,6 +390,10 @@ extension LauncherView {
     /// Run an imported selection extension against the frozen selection and toast its output.
     private func runCustomSelectionExtension(_ ext: ILExtension) {
         guard let rawScript = ext.scriptContent, !rawScript.isEmpty else { return }
+        if SelectionScopeExtensionPolicy.needsApproval(ext), !confirmSelectionExtensionRun(ext) {
+            AppToast.show("Cancelled \(ext.name)", icon: "xmark.circle", tint: .secondary)
+            return
+        }
         // Same expansion the proposal "Run Once" path uses: extensions are written against the
         // documented {file}/{selectedText}/{url} placeholders, so they must be substituted here
         // or the script runs with the literal braces and silently does nothing.
@@ -383,8 +407,12 @@ extension LauncherView {
             "CD_FILES":     filePaths.joined(separator: "\n"),
             "CD_APP":       ctx.appName,
             "CD_BUNDLE":    ctx.bundleId,
-            "CD_CLIPBOARD": NSPasteboard.general.string(forType: .string) ?? "",
         ]
+        // Clipboard is not part of selection context. Only expose it when the extension
+        // explicitly asks for it instead of leaking it to every imported script.
+        if rawScript.contains("{clipboard}") || rawScript.contains("CD_CLIPBOARD") {
+            env["CD_CLIPBOARD"] = NSPasteboard.general.string(forType: .string) ?? ""
+        }
         let interpreter: (url: String, args: [String]) = {
             switch ext.scriptType {
             case .bash:        return ("/bin/zsh", ["-lc", script])
@@ -404,13 +432,22 @@ extension LauncherView {
             for (k, v) in env { processEnv[k] = v }
             process.environment = processEnv
             let pipe = Pipe()
-            let errorPipe = Pipe()
+            // One pipe means a noisy stderr cannot deadlock behind an unread stdout pipe.
             process.standardOutput = pipe
-            process.standardError = errorPipe
+            process.standardError = pipe
             let inputPipe = Pipe()
             if ext.scriptType == .swift {
                 process.standardInput = inputPipe
             }
+            let runState = SelectionExtensionRunState()
+            let timeout = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timeout.schedule(deadline: .now() + 60)
+            timeout.setEventHandler {
+                guard process.isRunning else { return }
+                runState.markTimedOut()
+                process.terminate()
+            }
+            timeout.resume()
             do {
                 try process.run()
                 if ext.scriptType == .swift {
@@ -418,6 +455,7 @@ extension LauncherView {
                     inputPipe.fileHandleForWriting.closeFile()
                 }
             } catch {
+                timeout.cancel()
                 DispatchQueue.main.async {
                     self.setScriptRunStatus(nil)
                     AppToast.show("Failed: \(extName)", icon: "exclamationmark.triangle", tint: .orange)
@@ -425,19 +463,17 @@ extension LauncherView {
                 return
             }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            timeout.cancel()
             let output = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            // stderr was previously read by nobody and the exit code was never checked, so a
-            // script that failed still toasted "Ran <name>". Report what actually happened.
-            let errorOutput = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let exitCode = process.terminationStatus
             _ = env  // keep env alive for the closure
             DispatchQueue.main.async {
                 guard exitCode == 0 else {
-                    let detail = errorOutput.isEmpty ? output : errorOutput
+                    let detail = runState.didTimeOut
+                        ? "Timed out after 60 seconds.\n\(output)"
+                        : output
                     AppToast.show(
                         "\(extName) failed", icon: "exclamationmark.triangle", tint: .orange)
                     self.reportExtensionRun(
@@ -454,6 +490,20 @@ extension LauncherView {
                     name: extName, succeeded: true, detail: output, exitCode: 0)
             }
         }
+    }
+
+    /// Imported scripts are code, not ordinary menu items.  A provider route therefore cannot
+    /// execute a script that writes, sends, automates, or accesses the network without a clear
+    /// person-in-the-loop decision.
+    @MainActor
+    private func confirmSelectionExtensionRun(_ ext: ILExtension) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Run \(ext.name)?"
+        alert.informativeText = "This Selection Scope extension may \(SelectionScopeExtensionPolicy.approvalSummary(ext)). It receives only the frozen selection captured when this sheet opened."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Run Extension")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func macOSExtensionActionMatches(query: String, terms: [String]) -> Bool {
