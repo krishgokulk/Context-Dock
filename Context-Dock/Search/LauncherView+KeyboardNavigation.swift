@@ -600,8 +600,10 @@ extension LauncherView {
                 return nil
             }
             // Tab: app ghost completion (non-global L2 scope sub-scope entry).
-            if let completion = self.l2.appCompletion, !completion.ghost.isEmpty,
-                event.keyCode == 48
+            // Never in pure Global Context — there Tab has exactly one meaning, entering the
+            // app scope, and letting a leftover completion answer first made it ambiguous.
+            if event.keyCode == 48, !self.shouldUsePureGlobalAppSearch,
+                let completion = self.l2.appCompletion, !completion.ghost.isEmpty
             {
                 self.acceptL2AppCompletion(completion)
                 return nil

@@ -3448,7 +3448,14 @@ extension LauncherView {
             let trimmed = newValue.trimmingCharacters(in: .whitespaces)
             let installedScopeMode = contextDockInstalledAppScopeMatching
             let dockOnlyMode = contextDockRunningOnlyAppMatching && !installedScopeMode
-            if !allowMenuOrCrossAppMatching || shouldUseFinderSearchPopover(for: trimmed) {
+            if shouldUsePureGlobalAppSearch {
+                // Pure Global Context neither draws this ghost (its ghost comes from the top
+                // match) nor uses it for Tab, which enters the app scope instead. Computing it
+                // anyway ran appScopeTarget and installedAppMenuTarget — both documented hot
+                // paths over every installed app — on every keystroke, and a stale non-nil
+                // value made Tab accept a text completion instead of entering the scope.
+                l2.appCompletion = nil
+            } else if !allowMenuOrCrossAppMatching || shouldUseFinderSearchPopover(for: trimmed) {
                 l2.appCompletion = nil
             } else if trimmed.isEmpty
                 || {
