@@ -21,7 +21,10 @@ enum GlassFloatingPanel {
     static func make(size: NSSize, minSize: NSSize) -> NSPanel {
         let p = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            // Miniaturizable so these behave like real windows: minimise, zoom,
+            // double-click-to-zoom and full screen all come from the style mask.
+            styleMask: [.titled, .closable, .miniaturizable, .resizable,
+                        .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -37,7 +40,9 @@ enum GlassFloatingPanel {
         p.hidesOnDeactivate = false
         p.isFloatingPanel = true
         p.becomesKeyOnlyIfNeeded = true
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        // fullScreenAuxiliary rides along on other Spaces but refuses real full
+        // screen. A pinned panel the user wants to fill the display should be able to.
+        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenPrimary]
         p.isReleasedWhenClosed = false
         p.minSize = minSize
         // Hide native window buttons + tabbing — the SwiftUI header owns all of it, so

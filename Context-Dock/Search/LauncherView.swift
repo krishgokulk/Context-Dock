@@ -2146,11 +2146,23 @@ struct LauncherView: View {
     /// Returns nil unless keyboard navigation is active, which is what keeps Space a
     /// normal character while the user is still typing a query.
     func focusedPillPreviewPath() -> String? {
-        guard let idx = l2.focusedPillIndex else { return nil }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let pills = renderedOrderDockPills(for: q)
-        guard idx < pills.count, !pills[idx].isSeparator else { return nil }
-        return pills[idx].previewPath
+        if let idx = l2.focusedPillIndex, idx < pills.count, !pills[idx].isSeparator {
+            return pills[idx].previewPath
+        }
+        // Nothing arrow-selected yet: a file scope still highlights its first row, so
+        // Space should preview that. Requiring a keypress first meant Space did
+        // nothing on a freshly opened Screenshots scope.
+        guard isActiveCustomListFileScope else { return nil }
+        return pills.first(where: { !$0.isSeparator && $0.previewPath != nil })?.previewPath
+    }
+
+    /// True when the current scope is a list extension whose rows are files.
+    var isActiveCustomListFileScope: Bool {
+        guard activeCustomListScopeCommand != nil else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return renderedOrderDockPills(for: q).contains { $0.previewPath != nil }
     }
 
     func executeFirstVisibleFinderDesktopPillIfNeeded() -> Bool {

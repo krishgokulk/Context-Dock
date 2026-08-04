@@ -43,6 +43,9 @@ final class ScopedListPanelManager: ObservableObject {
             size: NSSize(width: 620, height: 440),
             minSize: NSSize(width: 380, height: 240)
         )
+        // Titled (even though the title bar is hidden) so the content view can find
+        // its own window for the minimise / zoom controls.
+        p.title = command.name
         p.contentView = NSHostingView(rootView: ScopedListPanelContent(command: command))
 
         // Cascade so a second pin doesn't land exactly on top of the first.
@@ -79,6 +82,12 @@ final class ScopedListPanelManager: ObservableObject {
 struct ScopedListPanelContent: View {
     let command: SystemCommand
 
+    init(command: SystemCommand) {
+        self.command = command
+        // Per-extension, so a gallery stays a gallery and a port list stays a list.
+        _gridView = AppStorage(wrappedValue: false, "panelGridView.\(command.id.uuidString)")
+    }
+
     @ObservedObject private var manager = ScopedListPanelManager.shared
     @State private var rows: [CustomListRow] = []
     @State private var query = ""
@@ -90,7 +99,7 @@ struct ScopedListPanelContent: View {
     /// A user who wants AI on an extension that never declared it should not have to
     /// go and edit the extension.
     @State private var showAI: Bool? = nil
-    @State private var gridView = false
+    @AppStorage private var gridView: Bool
     /// Selection so the panel is navigable, not just clickable. Defaults to the first
     /// row and follows the rows as they change, so arrow keys and Space work the
     /// moment the panel opens.
@@ -255,6 +264,30 @@ struct ScopedListPanelContent: View {
             .buttonStyle(.plain)
             .help("Close")
 
+            // Minimise and zoom beside close, since the real traffic lights are hidden
+            // to keep the glass unbroken. Same order macOS uses.
+            Button { hostWindow?.miniaturize(nil) } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .background(Color.primary.opacity(0.10), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Minimise")
+
+            Button { hostWindow?.toggleFullScreen(nil) } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 16)
+                    .background(Color.primary.opacity(0.10), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Full screen")
+
             Image(systemName: command.icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.tint)
@@ -375,16 +408,27 @@ struct ScopedListPanelContent: View {
         return nil
     }
 
+    /// Tracks the grid's real column count so Up/Down move a visual row.
+    @State private var gridColumns: Int = 4
+
+    /// The panel this content is hosted in, for the window controls.
+    private var hostWindow: NSWindow? {
+        NSApp.windows.first {
+            $0.identifier == GlassFloatingPanel.identifier && $0.title == command.name
+        }
+    }
+
     private var selectedPath: String? {
         displayedRows.first { $0.id == selectedID }.flatMap { filePath(for: $0) }
     }
 
-    /// Grid moves by a row of tiles; the list moves one line.
+    /// Grid moves by a row of tiles; the list moves one line. The column count is
+    /// measured, not guessed — a hardcoded 4 meant Down barely moved in a wide window.
     private func move(_ direction: MoveCommandDirection) {
         let ids = displayedRows.map(\.id)
         guard !ids.isEmpty else { return }
         let current = ids.firstIndex(of: selectedID ?? "") ?? 0
-        let stride = (gridView && hasFileRows) ? 4 : 1
+        let stride = (gridView && hasFileRows) ? max(1, gridColumns) : 1
         let next: Int
         switch direction {
         case .up:    next = current - stride
@@ -534,6 +578,7 @@ extension ScopedListPanelContent {
     }
 
     var fileGrid: some View {
+        GeometryReader { proxy in
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 10)], spacing: 10) {
                 ForEach(displayedRows) { row in
@@ -547,7 +592,7 @@ extension ScopedListPanelContent {
                                 fallbackImage: nil,
                                 systemName: "doc",
                                 tint: .accentColor,
-                                size: 64,
+                                size: 72,
                                 cornerRadius: 6
                             )
                             .frame(width: 64, height: 64)
@@ -572,6 +617,15 @@ extension ScopedListPanelContent {
             }
             .padding(10)
         }
+        .onAppear { recomputeColumns(width: proxy.size.width) }
+        .onChange(of: proxy.size.width) { _, w in recomputeColumns(width: w) }
+        }
+    }
+
+    /// Mirrors the adaptive grid's own arithmetic: minimum tile 88, spacing 10.
+    func recomputeColumns(width: CGFloat) {
+        let usable = max(0, width - 20)
+        gridColumns = max(1, Int((usable + 10) / 98))
     }
 }
 
