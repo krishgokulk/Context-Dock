@@ -2850,9 +2850,8 @@ extension LauncherView {
         //    was suppressed during compact typing, so the stale value would size the
         //    window to the compact bar (the "↓ shrinks the dock" bug). The rendered
         //    list refines this via updateMeasuredGlobalListHeight right after commit.
-        let estimatedRows = CGFloat(min(state.totalCount, 12))
-        measuredGlobalListContentHeight = min(
-            max(estimatedRows * 52 + 36, 86), listViewVisibleHeight)
+        measuredGlobalListContentHeight = DockMetrics.globalListEstimatedHeight(
+            rowCount: min(state.totalCount, 12), maximum: listViewVisibleHeight)
 
         // 6. Let SwiftUI reconcile the committed row payload before revealing its shell. The
         // compact dock continues showing its spinner during this single turn; the expanded
@@ -5893,13 +5892,8 @@ extension LauncherView {
             if measured > 1 {
                 return min(max(measured, 86), listViewVisibleHeight)
             }
-            let rowHeight: CGFloat = 52
-            let headerReserve: CGFloat = 24
-            let contentPadding: CGFloat = 12
-            return min(
-                max(CGFloat(rowCount) * rowHeight + headerReserve + contentPadding, 86),
-                listViewVisibleHeight
-            )
+            return DockMetrics.globalListEstimatedHeight(
+                rowCount: rowCount, maximum: listViewVisibleHeight)
         }
         if shouldUsePureGlobalAppSearch,
             !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
@@ -5938,11 +5932,8 @@ extension LauncherView {
         if isFinderDesktopOnlyMode {
             return listViewVisibleHeight
         }
-        let rowHeight: CGFloat = 52
-        let headerReserve: CGFloat = rowCount > 0 ? 24 : 0
-        let contentPadding: CGFloat = 12
-        let dynamicHeight = CGFloat(rowCount) * rowHeight + headerReserve + contentPadding
-        return min(max(dynamicHeight, 86), listViewVisibleHeight)
+        return DockMetrics.globalListEstimatedHeight(
+            rowCount: rowCount, includesHeader: rowCount > 0, maximum: listViewVisibleHeight)
     }
 
     var isExplicitAppScopeLocked: Bool {

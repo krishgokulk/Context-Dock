@@ -468,7 +468,7 @@ extension LauncherView {
         }
         if !searchState.results.isEmpty {
             let sectionCount = max(searchState.grouped.sections.count, 1)
-            let rowHeight: CGFloat = 66
+            let rowHeight: CGFloat = DockMetrics.searchPanelRow
             let headerHeight: CGFloat = sectionCount > 1 ? CGFloat(sectionCount) * 28 : 0
             let contentHeight = CGFloat(searchState.results.count) * rowHeight + headerHeight + 18
             return min(searchResultsPanelMaxHeight, max(120, contentHeight))

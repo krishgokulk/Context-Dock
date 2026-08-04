@@ -259,7 +259,7 @@ struct DockHeightResolver {
     static func l1ResultsHeight(for resultCount: Int) -> CGFloat {
         guard resultCount > 0 else { return 0 }
         let headerHeight: CGFloat = 32
-        let rowHeight: CGFloat = 58
+        let rowHeight: CGFloat = DockMetrics.l1ResultRow
         let verticalPadding: CGFloat = 12
         let contentHeight = headerHeight + CGFloat(resultCount) * rowHeight + verticalPadding
         let minimumHeight: CGFloat = resultCount <= 2 ? contentHeight : 112
