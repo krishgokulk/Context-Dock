@@ -345,6 +345,15 @@ extension LauncherView {
 
     @ViewBuilder
     func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
+        dockPillContentBody(presentation)
+            .frame(maxHeight: isDockResultSheetRevealed ? nil : 0, alignment: .top)
+            .opacity(isDockResultSheetRevealed ? 1 : 0)
+            .clipped()
+            .allowsHitTesting(isDockResultSheetRevealed)
+    }
+
+    @ViewBuilder
+    private func dockPillContentBody(_ presentation: L2DockRowPresentation) -> some View {
         if activeNotepadScopeCommand != nil {
             NotepadScopeView(
                 selectedNoteID: $notepadSelectedNoteID,
@@ -395,6 +404,20 @@ extension LauncherView {
                 dockPillListView(pills: presentation.pills)
             }
         }
+    }
+
+    /// Whether the result sheet is revealed. The rows stay MOUNTED either way: building the
+    /// list only when ↓ is pressed rebuilt view identity at exactly the moment the window was
+    /// animating, which is the stutter this replaces. Compact simply clips them to zero.
+    var isDockResultSheetRevealed: Bool {
+        if hasSelectionScopeSurface || isFinderDesktopOnlyMode || isInCLIToolScope
+            || isCompactSmartScope || isContextDockChatRoutingLocked
+        {
+            return true
+        }
+        // Pure Global Context has its own phase-driven reveal in l2GlobalSearchListContent.
+        if isGlobalContextActive, !isActiveGlobalRunningAppMenuScope() { return true }
+        return globalContextViewModel.scopedSheetExpanded
     }
 
     /// The scoped SystemCommand when the user is inside a user-authored list

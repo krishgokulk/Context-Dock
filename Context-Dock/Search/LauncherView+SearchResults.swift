@@ -1411,13 +1411,6 @@ extension LauncherView {
             return true
         }
         guard !q.isEmpty else { return false }
-        // Frontmost Context Dock: typing keeps the capsule compact — the ghost shows the top
-        // match and Enter runs it. The sheet is a deliberate second step, opened with ↓.
-        if !isGlobalContextActive, !isFinderDesktopOnlyMode, !isInCLIToolScope,
-            !globalContextViewModel.scopedSheetExpanded
-        {
-            return false
-        }
         // Finder desktop search must keep its shared sheet alive while its cache and
         // Spotlight passes exchange snapshots. The rendered list supplies either files,
         // setup guidance, or a no-results row, so an empty intermediate array is not a
