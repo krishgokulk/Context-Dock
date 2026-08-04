@@ -5906,6 +5906,23 @@ extension LauncherView {
         return 0
     }
 
+    /// Never collapse an open sheet below one comfortable row — a 40pt sliver reads as a
+    /// rendering bug rather than a short result list.
+    var listViewMinimumContentHeight: CGFloat { 86 }
+
+    /// Height to reserve for the first frame of a reveal, before the rendered list has
+    /// reported its real height. Row metrics match `pillListRow`; the extra covers one
+    /// section header and the list's own padding.
+    func estimatedListContentHeight(rowCount: Int) -> CGFloat {
+        let rowHeight: CGFloat = 52
+        let headerReserve: CGFloat = 24
+        let contentPadding: CGFloat = 12
+        return max(
+            CGFloat(rowCount) * rowHeight + headerReserve + contentPadding,
+            listViewMinimumContentHeight
+        )
+    }
+
     var currentListViewDockContentHeight: CGFloat {
         let rowCount = currentListViewDockRowCount
         // `shouldShowSeparateActionList` can become true one render before async app/menu
@@ -5924,6 +5941,7 @@ extension LauncherView {
                 (bundle?.hasPrefix("syscmd://") == true || bundle?.hasPrefix("cli://") == true)
                 && activeNotepadScopeCommand == nil
             if isExtensionListScope { return 0 }
+            guard isDockResultSheetRevealed else { return 0 }
             return usesVerticalListDockLayout ? listViewVisibleHeight : 0
         }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -5944,7 +5962,7 @@ extension LauncherView {
             if isExtensionScope { return listViewVisibleHeight }
             let measured = measuredGlobalListContentHeight
             if measured > 1 {
-                return min(max(measured, 86), listViewVisibleHeight)
+                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
             }
             return DockMetrics.globalListEstimatedHeight(
                 rowCount: rowCount, maximum: listViewVisibleHeight)
@@ -5974,7 +5992,15 @@ extension LauncherView {
             // Compact until ↓, so the window does not reserve a sheet the user has not asked
             // for. Surfaces that are their own list stay open — see isDockResultSheetRevealed.
             guard isDockResultSheetRevealed else { return 0 }
-            return listViewVisibleHeight
+            // Hug the rows. The fixed 372pt drawer existed because the sheet used to be open
+            // WHILE typing, where measuring made the window chase every keystroke. The sheet
+            // now opens once, on ↓, and typing collapses it — so it can end where its content
+            // ends instead of leaving dead space under two rows.
+            let measured = measuredGlobalListContentHeight
+            if measured > 1 {
+                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
+            }
+            return min(estimatedListContentHeight(rowCount: rowCount), listViewVisibleHeight)
         }
 
         // Non-Context scopes can still hug measured content.

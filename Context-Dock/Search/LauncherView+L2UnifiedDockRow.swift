@@ -345,9 +345,15 @@ extension LauncherView {
 
     @ViewBuilder
     func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
+        // Geometry alone made rows appear fully formed the instant the clip lifted. A short
+        // opacity ramp with a few points of rise lets them arrive with the panel, which is
+        // what reads as one motion. Only opacity and offset animate — animating the subtree's
+        // HEIGHT here would fight the panel and bring back the flicker this surface had.
         dockPillContentBody(presentation)
             .frame(maxHeight: isDockResultSheetRevealed ? nil : 0, alignment: .top)
             .opacity(isDockResultSheetRevealed ? 1 : 0)
+            .offset(y: isDockResultSheetRevealed ? 0 : -6)
+            .animation(.easeOut(duration: 0.18), value: isDockResultSheetRevealed)
             .clipped()
             .allowsHitTesting(isDockResultSheetRevealed)
     }
