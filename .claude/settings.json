@@ -132,7 +132,17 @@
       "Bash(awk 'NR>=1700 && NR<=1760' Context-Dock/Search/LauncherView+SearchBar.swift)",
       "Bash(awk 'NR>=1790 && NR<=1830' Context-Dock/Search/LauncherView+SearchBar.swift)",
       "Bash(grep -n \"xmark.circle\\\\|clearButton\\\\|Button {\\\\s*$\" Context-Dock/Search/LauncherView+SearchBar.swift)",
-      "Bash(awk 'NR>=2420 && NR<=2500' Context-Dock/Search/LauncherView+SearchBar.swift)"
+      "Bash(awk 'NR>=2420 && NR<=2500' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=598 && NR<=625' Context-Dock/Search/LauncherView.swift)",
+      "Bash(awk 'NR>=2755 && NR<=2775' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=2782 && NR<=2812' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=630 && NR<=650' Context-Dock/Search/LauncherView.swift)",
+      "Bash(awk 'NR>=3040 && NR<=3085' Context-Dock/Search/LauncherView.swift)",
+      "Bash(awk 'NR>=505 && NR<=520' Context-Dock/Search/LauncherView.swift)",
+      "Bash(awk 'NR>=3060 && NR<=3110' Context-Dock/Search/LauncherView.swift)",
+      "Bash(awk 'NR>=2890 && NR<=2960' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=795 && NR<=830' Context-Dock/Search/LauncherView+SearchBar.swift)",
+      "Bash(awk 'NR>=596 && NR<=672' Context-Dock/Search/LauncherView+SearchBar.swift)"
     ],
     "additionalDirectories": [
       "/Users/gokulakannan/Developer/Context-Dock",
