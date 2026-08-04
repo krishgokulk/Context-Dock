@@ -168,7 +168,26 @@ extension LauncherView {
         if isCLIScope {
             return emptyGlobalGroupedListNavigationState()
         }
-        let resolvedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
+        var scopedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
+        if isBrowserMenuSource(scope.scopedBundleId), !scopedQuery.isEmpty {
+            if LiveMenuHistoryCache.usesLiveMenuHistory(scope.scopedBundleId) {
+                // Privacy browsers deliberately have no disk-history reader. Reuse the same
+                // freshness-guarded live History-menu cache as Context Dock; the cache performs
+                // at most one bounded refresh per freshness window, not one scan per keystroke.
+                scopedPills += buildLiveMenuHistoryPills(
+                    query: scopedQuery,
+                    bundleId: scope.scopedBundleId
+                )
+            } else {
+                scopedPills += buildBrowserURLLibraryPills(
+                    query: scopedQuery,
+                    scopedBrowserBundleId: scope.scopedBundleId,
+                    requireExplicitHistoryQuery: false,
+                    limit: maxListViewDockPills
+                )
+            }
+        }
+        let resolvedPills = scopedPills
             .filter { pill in
                 guard !pill.isSeparator else { return false }
                 if isSystemCommandScope { return pill.rankingKind == "systemCommand" }
@@ -178,7 +197,10 @@ extension LauncherView {
                 // and Global Context actions belong to other surfaces — but actions the
                 // user authored for THIS app in App Adapters are exactly what an app scope
                 // is for, and were being filtered out of the surface they belong to.
-                return ["menu", "submenuChild", "finderMenu", "adapter"]
+                return [
+                    "menu", "submenuChild", "finderMenu", "adapter",
+                    "recentURL", "browserCommand",
+                ]
                     .contains(pill.rankingKind)
             }
         // System-command providers define semantic display order directly:

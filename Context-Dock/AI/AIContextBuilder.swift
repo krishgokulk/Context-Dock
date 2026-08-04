@@ -21,6 +21,14 @@ final class AIContextBuilder {
                 liveBundleID: request.liveContext?.bundleID
             )
         }
+        if request.source != .mediaDock {
+            let appBundleID = request.source == .contextDock ? request.liveContext?.bundleID : nil
+            let memory = MarkdownMemoryStore.shared.contextBlock(
+                query: request.text,
+                appBundleID: appBundleID
+            )
+            if !memory.isEmpty { prompt += "\n\n" + memory }
+        }
         if !request.attachments.isEmpty {
             let attachmentSummary = request.attachments.prefix(20).map { attachment in
                 "- \(attachment.kind.rawValue): \(metadata(for: attachment.url))"

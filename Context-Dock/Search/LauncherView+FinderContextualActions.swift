@@ -1949,11 +1949,12 @@ extension LauncherView {
 
         let analyticalTerms = [
             "summarize", "summary", "explain", "review", "translate", "compare",
-            "analyze", "analyse", "why", "how", "read", "rewrite", "draft",
+            "analyze", "analyse", "why", "how", "read", "rewrite", "draft", "prepare",
             "rename", "organize", "sort", "clean up", "compress", "zip",
             "convert", "export", "save", "open", "move", "copy", "share", "send",
             "attach", "upload", "delete", "trash", "remove", "duplicate",
-            "reveal", "preview", "quick look", "print", "merge", "split",
+            "reveal", "preview", "quick look", "print", "merge", "split", "combine",
+            "package", "email",
             "extract", "encode", "transcode",
         ]
         return !analyticalTerms.contains(where: normalized.contains)

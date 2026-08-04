@@ -3809,6 +3809,93 @@ extension LauncherView {
             && !scopedBundleId.isEmpty
             && !scopedAppName.isEmpty
 
+        if let memoryAnswer = MarkdownMemoryStore.shared.cacheFromCommand(query) {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: memoryAnswer,
+                    mcpToolsRan: ["Local Markdown cache"]
+                )
+            )
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.replaceFromCommand(
+            query,
+            appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        ) {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: memoryAnswer,
+                    mcpToolsRan: ["Local Markdown memory"]
+                )
+            )
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.forgetFromCommand(
+            query,
+            appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        ) {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: memoryAnswer,
+                    mcpToolsRan: ["Local Markdown memory"]
+                )
+            )
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.remember(
+            query,
+            appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId,
+            appName: scopedAppName.isEmpty ? frontmost.name : scopedAppName
+        ) {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: memoryAnswer))
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+        if let memoryURL = MarkdownMemoryStore.shared.requestedMemoryURL(from: query) {
+            NSWorkspace.shared.open(memoryURL)
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "Opened \(memoryURL.lastPathComponent) from local Markdown memory.",
+                    mcpToolsRan: ["Local Markdown memory"]
+                )
+            )
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.recallAnswer(
+            for: query,
+            appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+        ) {
+            l2.chatMessages.append(AIChatMessage(role: .user, content: query))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: memoryAnswer,
+                    mcpToolsRan: ["Local Markdown memory"]
+                )
+            )
+            l2.isLoading = false
+            requestWindowSizeUpdate(reason: .chatChanged)
+            return
+        }
+
         // Start this turn's trace, and say which app the request is being resolved against.
         l2.routerTrace = []
         if !scopedAppName.isEmpty {
@@ -4449,8 +4536,20 @@ extension LauncherView {
             return
         }
 
-        // Display only the user's actual query in the chat UI (not the full context prompt)
-        let userMessage = AIChatMessage(role: .user, content: query)
+        // Attachments belong to this submitted turn. Move them out of the composer immediately
+        // so a later turn cannot accidentally resend the same capture.
+        let submittedContextDockFiles = contextDockChatFiles
+        let submittedContextDockText = contextDockChatCapturedText
+        contextDockChatFiles = []
+        contextDockChatCapturedText = nil
+
+        // Display only the user's actual query in the chat UI (not the full context prompt),
+        // with the transferred files visible on that message as proof of what was sent.
+        let userMessage = AIChatMessage(
+            role: .user,
+            content: query,
+            attachments: submittedContextDockFiles
+        )
         l2.chatMessages.append(userMessage)
         l2.isLoading = true
 
@@ -4579,20 +4678,31 @@ extension LauncherView {
                 // so the scoped agentic model actually receives what the user captured (images
                 // are OCR'd since sendWithTools can't send vision). Without this the chip showed
                 // but the content never reached the model.
-                let attachmentBlock = contextDockChatAttachmentPromptBlock()
+                let attachmentBlock = contextDockChatAttachmentPromptBlock(
+                    files: submittedContextDockFiles,
+                    capturedText: submittedContextDockText
+                )
+                let memoryBlock = MarkdownMemoryStore.shared.contextBlock(
+                    query: query,
+                    appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+                )
+                let memoryToolChips = MarkdownMemoryStore.shared.relevantSourceChips(
+                    query: query,
+                    appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+                )
                 // Image captures/uploads go to the model as REAL vision (not just OCR) for
                 // vision-capable cloud providers via sendWithTools(imageAttachments:).
                 let scopedImageExts: Set<String> = [
                     "png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp",
                 ]
-                let scopedImageAttachments = contextDockChatFiles.filter {
+                let scopedImageAttachments = submittedContextDockFiles.filter {
                     scopedImageExts.contains($0.pathExtension.lowercased())
                 }
                 let activeContextPrompt: String = {
                     let parts = [
                         identityBlock, workspaceBlock, referenceBlock, finalContextPrompt,
                         runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
-                        skillsBlock, attachmentBlock,
+                        skillsBlock, attachmentBlock, memoryBlock,
                     ]
                     guard usesOnDeviceModel else {
                         return parts
@@ -4604,7 +4714,7 @@ extension LauncherView {
                     let prioritised = [
                         identityBlock, workspaceBlock, referenceBlock, browserPageBlock,
                         attachmentBlock, finalContextPrompt, appleData, mcpBlock, skillsBlock,
-                        runtimeCLIContextPrompt,
+                        memoryBlock, runtimeCLIContextPrompt,
                     ]
                     return Self.budgetedContextPrompt(prioritised)
                 }()
@@ -4770,7 +4880,7 @@ extension LauncherView {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
-                    var toolsRan = await mcpRan.tools
+                    var toolsRan = memoryToolChips + (await mcpRan.tools)
                     await self.setL2LoadingStatus(
                         cliTool.map { "Reading the \($0) output…" } ?? "Checking the result…",
                         requestID: l2RequestID)
@@ -4835,7 +4945,8 @@ extension LauncherView {
                     // On-device Apple Intelligence: trim history + use minimal context for scoped apps
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))
-                    let placeholder = AIChatMessage(role: .assistant, content: "")
+                    let placeholder = AIChatMessage(
+                        role: .assistant, content: "", mcpToolsRan: memoryToolChips)
                     await MainActor.run { l2.chatMessages.append(placeholder) }
                     let msgId = placeholder.id
                     // Pass the raw query — buildContextPrompt inside streamOnDeviceResponse handles
@@ -4888,6 +4999,7 @@ extension LauncherView {
                         }
                         AIProviderService.shared.streamOnDeviceResponse(
                             message: onDeviceMessage,
+                            imageURLs: scopedImageAttachments,
                             context: onDeviceContext,
                             history: onDeviceHistory,
                             additionalContextPrompt: activeContextPrompt,
@@ -4898,7 +5010,8 @@ extension LauncherView {
                                     }) {
                                         self.l2.chatMessages[idx] = AIChatMessage(
                                             id: msgId, role: .assistant,
-                                            content: self.l2.chatMessages[idx].content + token
+                                            content: self.l2.chatMessages[idx].content + token,
+                                            mcpToolsRan: memoryToolChips
                                         )
                                     }
                                 }
@@ -4923,7 +5036,8 @@ extension LauncherView {
                                         let rawContent = self.l2.chatMessages[idx].content
                                         let tagged = self.tagMessageWithProposal(
                                             AIChatMessage(
-                                                id: msgId, role: .assistant, content: rawContent)
+                                                id: msgId, role: .assistant, content: rawContent,
+                                                mcpToolsRan: memoryToolChips)
                                         )
                                         self.l2.chatMessages[idx] = tagged
                                         let finalContent = tagged.content
@@ -4989,7 +5103,7 @@ extension LauncherView {
                             if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
                                 self.l2.chatMessages[idx] = AIChatMessage(
                                     id: msgId, role: .assistant, content: resolved.answer,
-                                    mcpToolsRan: resolved.toolsRan)
+                                    mcpToolsRan: memoryToolChips + resolved.toolsRan)
                             }
                         }
                     } else if let applied = await self.resolveTypedAppInvocation(
@@ -5005,7 +5119,7 @@ extension LauncherView {
                             if let idx = self.l2.chatMessages.firstIndex(where: { $0.id == msgId }) {
                                 self.l2.chatMessages[idx] = AIChatMessage(
                                     id: msgId, role: .assistant, content: applied.answer,
-                                    mcpToolsRan: applied.toolsRan)
+                                    mcpToolsRan: memoryToolChips + applied.toolsRan)
                             }
                         }
                     }
@@ -5033,7 +5147,7 @@ extension LauncherView {
                             return
                         }
                         var finalReply = reply
-                        var toolsRan: [String] = []
+                        var toolsRan: [String] = memoryToolChips
                         if let resolved = await self.resolveMCPToolCall(
                             in: reply,
                             bundleId: scopedBundleId,
@@ -5046,7 +5160,7 @@ extension LauncherView {
                                 ? (frontmostName ?? frontmost.name) : scopedAppName)
                         {
                             finalReply = resolved.answer
-                            toolsRan = resolved.toolsRan
+                            toolsRan += resolved.toolsRan
                         } else if let applied = await self.resolveTypedAppInvocation(
                             in: reply,
                             scopedBundleId: scopedBundleId,
@@ -5056,7 +5170,7 @@ extension LauncherView {
                             requestID: l2RequestID)
                         {
                             finalReply = applied.answer
-                            toolsRan = applied.toolsRan
+                            toolsRan += applied.toolsRan
                         }
                         await MainActor.run {
                             var msg = AIChatMessage(
@@ -5866,6 +5980,50 @@ extension LauncherView {
             explicitlyRequested: false
         ) ? ContextCollector.shared.snapshot() : nil
 
+        if let memoryAnswer = MarkdownMemoryStore.shared.cacheFromCommand(query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown cache"]
+            }
+            return memoryAnswer
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.replaceFromCommand(query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown memory"]
+            }
+            return memoryAnswer
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.forgetFromCommand(query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown memory"]
+            }
+            return memoryAnswer
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.remember(query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown memory"]
+            }
+            return memoryAnswer
+        }
+        if let memoryURL = MarkdownMemoryStore.shared.requestedMemoryURL(from: query) {
+            await MainActor.run {
+                NSWorkspace.shared.open(memoryURL)
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown memory"]
+            }
+            return "Opened \(memoryURL.lastPathComponent) from local Markdown memory."
+        }
+        if let memoryAnswer = MarkdownMemoryStore.shared.recallAnswer(for: query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["Local Markdown memory"]
+            }
+            return memoryAnswer
+        }
+
         // ── Selection Scope router ───────────────────────────────────────────────────────
         // Action requests on a selection are resolved against the rows the result sheet
         // already exposes (share destinations, extensions, app menus, Shortcuts, built-ins)
@@ -5954,6 +6112,9 @@ extension LauncherView {
             your visible text is prose for the user, never call scaffolding.
             \(currentDateTimeContextBlock())
             """
+        let memoryBlock = MarkdownMemoryStore.shared.contextBlock(query: query)
+        let memoryToolChips = MarkdownMemoryStore.shared.relevantSourceChips(query: query)
+        if !memoryBlock.isEmpty { sysContent += "\n\n" + memoryBlock }
         // App Store picker: the user explicitly chose a running app to focus on, so
         // ground answers on it (and treat it as allowed for this conversation).
         if !chatFocusApps.isEmpty {
@@ -6138,7 +6299,7 @@ extension LauncherView {
                 let toolSystemPrompt = sysContent + "\n\n" + appToolsBlock
                 var loopHistory = history
                 var loopQuery = query
-                var toolChips: [String] = []
+                var toolChips: [String] = memoryToolChips
                 for _ in 0..<4 {
                     await MainActor.run {
                         aiMode.loadingStatus = toolChips.isEmpty
@@ -6227,7 +6388,7 @@ extension LauncherView {
             liveContext: requestLiveContext
         )
         await MainActor.run { aiMode.loadingStatus = "Writing answer…" }
-        return try await AIOrchestrationEngine.shared.submit(
+        let answer = try await AIOrchestrationEngine.shared.submit(
             AIOrchestrationRequest(
                 providerRequest: request,
                 scope: currentAISelectionSnapshot.isEmpty
@@ -6237,6 +6398,8 @@ extension LauncherView {
                 contextPrompt: sysContent
             )
         ).text
+        await MainActor.run { aiMode.pendingToolChips = memoryToolChips }
+        return answer
     }
 
     /// Expand only explicit retry phrases. The current user message may already be present

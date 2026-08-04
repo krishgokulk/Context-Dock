@@ -548,6 +548,12 @@ extension LauncherView {
             // Tab must NOT switch to a same-named app (e.g. "screen" → Screen Sharing),
             // which would hijack the Finder scope and drop the file results.
             if event.keyCode == 48, self.isGlobalContextActive, !self.isFinderDesktopOnlyMode {
+                // First Tab accepts the same visible ghost completion as Right Arrow. A second
+                // Tab on the completed app name may enter its scope. This prevents a partial
+                // query such as "duck" from collapsing immediately into an icon-only scope.
+                if self.acceptTopGlobalAppGhostCompletionIfPossible() {
+                    return nil
+                }
                 if self.shouldUsePureGlobalAppSearch,
                     let result = self.focusedOrTopGlobalAppResult(),
                     let bundleId = self.bundleIdentifier(forApplicationResult: result)
@@ -1914,6 +1920,12 @@ extension LauncherView {
                 if isGlobalContextActive {
                     let q = searchState.query.trimmingCharacters(in: .whitespaces)
                     if !q.isEmpty {
+                        // Match the event-monitor path: complete the visible app name before
+                        // turning it into a scope chip. Tab and Right Arrow now share one
+                        // completion transaction.
+                        if acceptTopGlobalAppGhostCompletionIfPossible() {
+                            return .handled
+                        }
                         // Tab has to act on the row the sheet is showing. Focus lands either
                         // on an app (focusedAppPillIndex) or on a command/menu pill
                         // (l2.focusedPillIndex) — and both lookups below return apps only.

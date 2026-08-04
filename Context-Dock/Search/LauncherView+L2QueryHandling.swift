@@ -292,21 +292,28 @@ extension LauncherView {
     /// menu (Capture Text, screenshots, uploads) — injected so the scoped model can
     /// act on what's visible (e.g. a captured Messages thread).
     func contextDockChatAttachmentPromptBlock() -> String {
+        contextDockChatAttachmentPromptBlock(
+            files: contextDockChatFiles,
+            capturedText: contextDockChatCapturedText
+        )
+    }
+
+    func contextDockChatAttachmentPromptBlock(files: [URL], capturedText: String?) -> String {
         var parts: [String] = []
-        if let captured = contextDockChatCapturedText?
+        if let captured = capturedText?
             .trimmingCharacters(in: .whitespacesAndNewlines), !captured.isEmpty
         {
             parts.append(
                 "CAPTURED ON-SCREEN TEXT (use this to answer the user):\n"
                     + String(captured.prefix(4000)))
         }
-        if !contextDockChatFiles.isEmpty {
+        if !files.isEmpty {
             let imageExts: Set<String> = [
                 "png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp",
             ]
-            let files = Array(contextDockChatFiles.prefix(10))
-            let imageFiles = files.filter { imageExts.contains($0.pathExtension.lowercased()) }
-            let docFiles = files.filter { !imageExts.contains($0.pathExtension.lowercased()) }
+            let submittedFiles = Array(files.prefix(10))
+            let imageFiles = submittedFiles.filter { imageExts.contains($0.pathExtension.lowercased()) }
+            let docFiles = submittedFiles.filter { !imageExts.contains($0.pathExtension.lowercased()) }
 
             // Screenshots / Capture Area are images — the scoped agentic path can't send vision,
             // so OCR them locally and inject the recognized text. This is what makes a captured

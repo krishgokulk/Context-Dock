@@ -5,6 +5,7 @@ struct DataStorageSettingsPage: View {
     @State private var menuCacheSize: String = "…"
     @State private var appDataSize: String = "…"
     @State private var aiHistorySize: String = "…"
+    @State private var memoryFiles: [MarkdownMemoryFileSummary] = []
 
     var body: some View {
         ScrollView {
@@ -71,6 +72,47 @@ struct DataStorageSettingsPage: View {
                     }
                 }
 
+                CardSection(title: "Markdown Memory", systemImage: "brain.head.profile.fill") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Local, readable, and user-controlled")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("General memory and app-scoped memory are stored as plain Markdown files.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                NSWorkspace.shared.open(MarkdownMemoryStore.shared.folderURL)
+                            } label: {
+                                Label("Open Folder", systemImage: "folder")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+
+                        Divider()
+
+                        if memoryFiles.isEmpty {
+                            Text("Memory files are created when the feature is first used.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 6)
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(memoryFiles.enumerated()), id: \.element.id) { index, file in
+                                    MemoryFileRow(file: file) {
+                                        NSWorkspace.shared.open(file.url)
+                                    }
+                                    if index < memoryFiles.count - 1 { Divider() }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+                }
+
                 CardSection(title: "Search Directories", systemImage: "folder.fill") {
                     SearchDirectoriesListView()
                         .padding(.vertical, 12)
@@ -80,6 +122,7 @@ struct DataStorageSettingsPage: View {
         }
         .task {
             await loadCacheSizes()
+            memoryFiles = MarkdownMemoryStore.shared.fileSummaries()
         }
     }
 
@@ -161,6 +204,42 @@ struct DataStorageSettingsPage: View {
         }
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+private struct MemoryFileRow: View {
+    let file: MarkdownMemoryFileSummary
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: file.relativePath.hasPrefix("cache/") ? "clock.arrow.circlepath" : "doc.text")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(file.relativePath.hasPrefix("apps/") ? .blue : .purple)
+                .frame(width: 30, height: 30)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(file.relativePath)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                Text(fileSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Open", action: onOpen)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 9)
+    }
+
+    private var fileSubtitle: String {
+        if let freshness = file.freshness { return freshness }
+        if file.relativePath == "MEMORY.md" {
+            return "Index · \(file.factCount) mapped location\(file.factCount == 1 ? "" : "s")"
+        }
+        return "\(file.factCount) saved fact\(file.factCount == 1 ? "" : "s")"
     }
 }
 
