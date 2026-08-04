@@ -198,7 +198,7 @@ struct ScopedListPanelContent: View {
         .onKeyPress(.space) {
             // Never steal the space bar from someone typing a filter.
             guard !filterFocused, let path = selectedPath else { return .ignored }
-            FileQuickLookPanel.shared.toggle(path: path)
+            FileQuickLookPanel.shared.toggle(path: path, siblings: allFilePaths)
             return .handled
         }
         .onKeyPress(.return) {
@@ -329,6 +329,7 @@ struct ScopedListPanelContent: View {
     }
 
     private var rowList: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(displayedRows) { row in
@@ -380,10 +381,17 @@ struct ScopedListPanelContent: View {
                     .buttonStyle(.plain)
                     .simultaneousGesture(TapGesture().onEnded { selectedID = row.id })
                     .modifier(FileRowDrag(path: filePath(for: row)))
+                    .id(row.id)
                     }
                 }
             }
             .padding(.vertical, 4)
+        }
+        // Keyboard selection must stay on screen in a short panel.
+        .onChange(of: selectedID) { _, id in
+            guard let id else { return }
+            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .center) }
+        }
         }
     }
 
@@ -432,6 +440,11 @@ struct ScopedListPanelContent: View {
             preZoomFrame = window.frame
             window.setFrame(target, display: true, animate: true)
         }
+    }
+
+    /// Every file in the panel, so Quick Look can arrow through the set.
+    private var allFilePaths: [String] {
+        displayedRows.compactMap { filePath(for: $0) }
     }
 
     private var selectedPath: String? {
@@ -595,6 +608,7 @@ extension ScopedListPanelContent {
 
     var fileGrid: some View {
         GeometryReader { proxy in
+        ScrollViewReader { scroller in
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 10)], spacing: 10) {
                 ForEach(displayedRows) { row in
@@ -629,9 +643,15 @@ extension ScopedListPanelContent {
                     .buttonStyle(.plain)
                     .simultaneousGesture(TapGesture().onEnded { selectedID = row.id })
                     .modifier(FileRowDrag(path: filePath(for: row)))
+                    .id(row.id)
                 }
             }
             .padding(10)
+        }
+        .onChange(of: selectedID) { _, id in
+            guard let id else { return }
+            withAnimation(.easeOut(duration: 0.12)) { scroller.scrollTo(id, anchor: .center) }
+        }
         }
         .onAppear { recomputeColumns(width: proxy.size.width) }
         .onChange(of: proxy.size.width) { _, w in recomputeColumns(width: w) }

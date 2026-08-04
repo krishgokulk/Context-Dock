@@ -2158,6 +2158,12 @@ struct LauncherView: View {
         return pills.first(where: { !$0.isSeparator && $0.previewPath != nil })?.previewPath
     }
 
+    /// Every previewable file currently listed, so Quick Look can walk the scope.
+    func visiblePreviewPaths() -> [String] {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return renderedOrderDockPills(for: q).compactMap { $0.previewPath }
+    }
+
     /// True when the current scope is a list extension whose rows are files.
     var isActiveCustomListFileScope: Bool {
         guard activeCustomListScopeCommand != nil else { return false }

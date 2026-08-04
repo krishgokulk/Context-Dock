@@ -14,7 +14,7 @@ final class FileQuickLookPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPan
     static let shared = FileQuickLookPanel()
     private override init() { super.init() }
 
-    private var url: URL?
+    private var urls: [URL] = []
 
     var isOpen: Bool {
         QLPreviewPanel.sharedPreviewPanelExists()
@@ -22,21 +22,28 @@ final class FileQuickLookPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPan
     }
 
     /// Preview a path, or toggle the panel shut if it's already showing that path.
-    func toggle(path: String) {
+    /// `siblings` lets Quick Look's own arrow keys walk the rest of the list instead
+    /// of previewing a single file in isolation.
+    func toggle(path: String, siblings: [String] = []) {
         let target = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard FileManager.default.fileExists(atPath: target.path) else { return }
-
         guard let panel = QLPreviewPanel.shared() else { return }
 
-        if isOpen, url == target {
+        if isOpen, urls.first(where: { $0 == target }) != nil,
+           panel.currentPreviewItemIndex == (urls.firstIndex(of: target) ?? -1) {
             panel.orderOut(nil)
             return
         }
 
-        url = target
+        let all = siblings.isEmpty
+            ? [target]
+            : siblings.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        urls = all.contains(target) ? all : [target]
+
         panel.dataSource = self
         panel.delegate = self
         panel.reloadData()
+        panel.currentPreviewItemIndex = urls.firstIndex(of: target) ?? 0
         // The dock is a non-activating panel; makeKeyAndOrderFront would steal the
         // field's focus and break the user's typing flow when the preview closes.
         panel.orderFront(nil)
@@ -49,9 +56,10 @@ final class FileQuickLookPanel: NSObject, QLPreviewPanelDataSource, QLPreviewPan
 
     // MARK: - QLPreviewPanelDataSource
 
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { url == nil ? 0 : 1 }
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { urls.count }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        url as (any QLPreviewItem)?
+        guard urls.indices.contains(index) else { return nil }
+        return urls[index] as (any QLPreviewItem)
     }
 }

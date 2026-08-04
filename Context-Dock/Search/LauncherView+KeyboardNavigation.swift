@@ -233,7 +233,8 @@ extension LauncherView {
             if event.keyCode == 49,
                 !event.modifierFlags.contains(.command),
                 let path = self.focusedPillPreviewPath() {
-                FileQuickLookPanel.shared.toggle(path: path)
+                FileQuickLookPanel.shared.toggle(
+                    path: path, siblings: self.visiblePreviewPaths())
                 return nil
             }
 
