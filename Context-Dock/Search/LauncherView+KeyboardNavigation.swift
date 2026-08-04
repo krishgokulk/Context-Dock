@@ -625,6 +625,26 @@ extension LauncherView {
                 return nil
             }
 
+            // ↓ opens the compact capsule before it navigates anything. This monitor runs
+            // ahead of SwiftUI's .onKeyPress, so the expansion has to live here: downstream
+            // the key is consumed by row navigation, which only moved the selection and made
+            // ↓ look dead while the ghost text cycled.
+            if event.keyCode == 125,
+                !self.globalContextViewModel.scopedSheetExpanded,
+                self.showContextInDock,
+                !self.aiMode.isActive,
+                !self.isCompactSmartScope,
+                !self.hasSelectionScopeSurface,
+                !self.isFinderDesktopOnlyMode,
+                !self.isInCLIToolScope,
+                !self.isContextDockChatRoutingLocked,
+                self.isActiveGlobalRunningAppMenuScope()
+                    || (!self.isGlobalContextActive && !q.isEmpty)
+            {
+                self.expandScopedCapsuleSheet(selectFirst: true)
+                return nil
+            }
+
             if event.keyCode == 36, self.aiMode.isActive {
                 self.submitAIQuery()
                 return nil
