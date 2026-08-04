@@ -6052,7 +6052,7 @@ extension LauncherView {
         }
 
         if !chatFocusApps.isEmpty {
-            let focusedContext = await selectedGeneralChatAppContext()
+            let focusedContext = await selectedGeneralChatAppContext(query: query)
             if focusedContext.cancelled {
                 return "Cancelled — selected app context was not read."
             }

@@ -13,6 +13,7 @@
 import SwiftUI
 import EventKit
 import Contacts
+import UniformTypeIdentifiers
 
 extension LauncherView {
 
@@ -1323,12 +1324,12 @@ extension LauncherView {
     /// Reads live context for the app explicitly selected in General Chat. App selection
     /// chooses the scope; the native approval card grants the first read. The provider
     /// never participates in permission handling and only receives verified context.
-    func selectedGeneralChatAppContext() async -> (block: String, cancelled: Bool) {
+    func selectedGeneralChatAppContext(query: String) async -> (block: String, cancelled: Bool) {
         guard !chatFocusApps.isEmpty else { return ("", false) }
         var blocks: [String] = []
         for app in chatFocusApps {
             let context = await selectedGeneralChatAppContext(
-                appName: app.name, bundleID: app.bundleId)
+                appName: app.name, bundleID: app.bundleId, query: query)
             if context.cancelled { return ("", true) }
             if !context.block.isEmpty { blocks.append(context.block) }
         }
@@ -1336,7 +1337,7 @@ extension LauncherView {
     }
 
     private func selectedGeneralChatAppContext(
-        appName: String, bundleID: String
+        appName: String, bundleID: String, query: String
     ) async -> (block: String, cancelled: Bool) {
 
         let permissionKey = "generalAI.read.focusedApp.\(bundleID)"
@@ -1385,6 +1386,16 @@ extension LauncherView {
             details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
         }
 
+        // Finder's generic adapter reader only knows the front-window path. Ground
+        // folder-content questions with a bounded native inventory so the model can
+        // answer "does Downloads contain images?" from facts instead of claiming it
+        // cannot see the directory. This is read-only and never recursively scans.
+        if bundleID == "com.apple.finder",
+           let finderInventory = selectedFinderFolderInventory(query: query)
+        {
+            details.append(finderInventory)
+        }
+
         // Every open tab, not just the frontmost page. Without this the block said only
         // "current page", so "show all opened tabs" had no tab data and the model answered
         // from whatever unrelated context was nearby.
@@ -1421,6 +1432,71 @@ extension LauncherView {
             If the requested detail is absent, say it was not readable; never request permission in chat.
             """
         return (block, false)
+    }
+
+    @MainActor
+    private func selectedFinderFolderInventory(query: String) -> String? {
+        guard let path = ContextDetector.shared.getCurrentFinderDirectory(), !path.isEmpty else {
+            return nil
+        }
+
+        let folderURL = URL(fileURLWithPath: path, isDirectory: true)
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .contentTypeKey, .fileSizeKey, .contentModificationDateKey,
+        ]
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else {
+            return "Current Finder folder: \(path)\nFolder inventory: unreadable."
+        }
+
+        struct InventoryItem {
+            let url: URL
+            let isDirectory: Bool
+            let isImage: Bool
+        }
+
+        let items = children.map { url -> InventoryItem in
+            let values = try? url.resourceValues(forKeys: keys)
+            return InventoryItem(
+                url: url,
+                isDirectory: values?.isDirectory == true,
+                isImage: values?.contentType?.conforms(to: .image) == true
+            )
+        }
+        let imageCount = items.lazy.filter(\.isImage).count
+        let folderCount = items.lazy.filter(\.isDirectory).count
+        let fileCount = items.count - folderCount
+        let asksAboutImages = query.localizedCaseInsensitiveContains("image")
+            || query.localizedCaseInsensitiveContains("photo")
+            || query.localizedCaseInsensitiveContains("picture")
+            || query.localizedCaseInsensitiveContains("png")
+            || query.localizedCaseInsensitiveContains("jpg")
+            || query.localizedCaseInsensitiveContains("jpeg")
+            || query.localizedCaseInsensitiveContains("heic")
+
+        let ordered = items.sorted { lhs, rhs in
+            if asksAboutImages, lhs.isImage != rhs.isImage { return lhs.isImage }
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            return lhs.url.lastPathComponent.localizedStandardCompare(rhs.url.lastPathComponent)
+                == .orderedAscending
+        }
+        let visible = ordered.prefix(120)
+        let lines = visible.map { item in
+            let kind = item.isDirectory ? "folder" : (item.isImage ? "image" : "file")
+            return "- [\(kind)] \(item.url.lastPathComponent) — \(item.url.path)"
+        }
+        let omitted = max(0, items.count - visible.count)
+        let suffix = omitted > 0 ? "\n- …\(omitted) more items not included" : ""
+
+        return """
+            Current Finder folder: \(path)
+            Direct children: \(items.count) total (\(folderCount) folders, \(fileCount) files, \(imageCount) images).
+            Folder inventory (exact names and paths; non-recursive):
+            \(lines.joined(separator: "\n"))\(suffix)
+            """
     }
 
     /// All open tabs of a browser bundle, formatted for the live-context block. Returns
