@@ -548,9 +548,7 @@ extension LauncherView {
                 return true
             }
             // Same rule for an app-scope capsule: compact means the glowing pill.
-            if isActiveGlobalRunningAppMenuScope(),
-                !globalContextViewModel.scopedSheetExpanded
-            {
+            if isActiveGlobalRunningAppMenuScope(), !isDockResultSheetRevealed {
                 return true
             }
             if hasExpandedGlobalContextResults { return false }
@@ -562,9 +560,7 @@ extension LauncherView {
             // The capsule now stays compact while the user types and opens only on ↓, so the
             // glow belongs to the pill surface, not to an empty field. Without this the glow
             // dropped on the first keystroke even though the pill was still what was on screen.
-            if !globalContextViewModel.scopedSheetExpanded, !hasSelectionScopeSurface,
-                !isFinderDesktopOnlyMode, !isInCLIToolScope
-            {
+            if !isDockResultSheetRevealed {
                 return true
             }
             // Auto-arm shows the compact idle pill ONLY when there are no menu results. If a

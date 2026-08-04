@@ -5934,7 +5934,7 @@ extension LauncherView {
         if isActiveGlobalRunningAppMenuScope() {
             // Compact until ↓: no reserved viewport, so the window stays a capsule while
             // the user types instead of throwing the sheet open on the first keystroke.
-            guard globalContextViewModel.scopedSheetExpanded else { return 0 }
+            guard isDockResultSheetRevealed else { return 0 }
             let isExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
@@ -5972,8 +5972,8 @@ extension LauncherView {
         // height as Global Context; only row content changes inside the scroll area.
         if showContextInDock, !isGlobalContextActive {
             // Compact until ↓, so the window does not reserve a sheet the user has not asked
-            // for. isInCLIToolScope keeps its embedded terminal surface.
-            guard globalContextViewModel.scopedSheetExpanded || isInCLIToolScope else { return 0 }
+            // for. Surfaces that are their own list stay open — see isDockResultSheetRevealed.
+            guard isDockResultSheetRevealed else { return 0 }
             return listViewVisibleHeight
         }
 
@@ -6063,7 +6063,7 @@ extension LauncherView {
     var listViewResizeToken: String {
         guard usesVerticalListDockLayout else { return "off" }
         if isActiveGlobalRunningAppMenuScope() {
-            let expanded = globalContextViewModel.scopedSheetExpanded ? "open" : "compact"
+            let expanded = isDockResultSheetRevealed ? "open" : "compact"
             return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(expanded):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
         }
         // Pure Global Context must feel like Spotlight/Raycast: once results are visible,
@@ -6073,7 +6073,7 @@ extension LauncherView {
             return "global:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         if showContextInDock {
-            let expanded = globalContextViewModel.scopedSheetExpanded ? "open" : "compact"
+            let expanded = isDockResultSheetRevealed ? "open" : "compact"
             return "scoped:\(expanded):\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         // Frontmost Context Dock now also hugs the MEASURED content (section headers vary

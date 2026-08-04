@@ -630,14 +630,9 @@ extension LauncherView {
             // the key is consumed by row navigation, which only moved the selection and made
             // ↓ look dead while the ghost text cycled.
             if event.keyCode == 125,
-                !self.globalContextViewModel.scopedSheetExpanded,
+                !self.isDockResultSheetRevealed,
                 self.showContextInDock,
                 !self.aiMode.isActive,
-                !self.isCompactSmartScope,
-                !self.hasSelectionScopeSurface,
-                !self.isFinderDesktopOnlyMode,
-                !self.isInCLIToolScope,
-                !self.isContextDockChatRoutingLocked,
                 self.isActiveGlobalRunningAppMenuScope()
                     || (!self.isGlobalContextActive && !q.isEmpty)
             {
@@ -1611,7 +1606,7 @@ extension LauncherView {
                 // ↓ is what opens the result sheet — in an app-scope capsule and in the
                 // frontmost Context Dock alike. Until then only the inline ghost shows, so
                 // typing never throws the list open.
-                if !globalContextViewModel.scopedSheetExpanded,
+                if !isDockResultSheetRevealed,
                     showContextInDock,
                     !aiMode.isActive,
                     !isCompactSmartScope,
