@@ -145,7 +145,8 @@
       "Bash(awk 'NR>=596 && NR<=672' Context-Dock/Search/LauncherView+SearchBar.swift)",
       "Bash(awk 'NR>=670 && NR<=800' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
       "Bash(awk 'NR>=800 && NR<=900' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
-      "Bash(awk 'NR>=600 && NR<=672' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)"
+      "Bash(awk 'NR>=600 && NR<=672' Context-Dock/Search/LauncherView+KeyboardNavigation.swift)",
+      "Bash(awk 'NR>=5880 && NR<=5935' Context-Dock/Search/LauncherView+GlobalContextActions.swift)"
     ],
     "additionalDirectories": [
       "/Users/gokulakannan/Developer/Context-Dock",
