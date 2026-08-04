@@ -209,6 +209,10 @@ struct LauncherView: View {
     @State var capabilityGapWorking = false
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
+    /// Global Context's collapsed⇄expanded phase at the last applied frame. The height preset
+    /// and surface mode both stay put across that transition, so without this the resize
+    /// cannot tell it apart from a row appearing.
+    @State var lastAppliedGlobalTypingPhase: GlobalContextTypingPhase?
     // Visible shell height is staged separately from the NSWindow's target capacity so the
     // input stays pinned while only the area beneath it animates open/closed.
     @State var renderedDockHeight: CGFloat?

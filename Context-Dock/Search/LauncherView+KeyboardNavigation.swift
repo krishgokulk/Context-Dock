@@ -168,6 +168,22 @@ extension LauncherView {
             // A pinned panel is its own surface. Hand its keys straight back, or
             // navigating a folder panel also arrows through Global Context behind it.
             if GlassFloatingPanel.ownsEvent(event) { return event }
+            // Quick Look is modal to the keyboard while it is up: its arrows page
+            // through the preview set. Without this the dock also read them and
+            // switched app scope behind the preview.
+            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
+
+            // Space = Quick Look, handled before anything else in this monitor can
+            // consume it. Sitting further down, an earlier branch swallowed it and
+            // Space did nothing in a file scope.
+            if event.keyCode == 49,
+                !event.modifierFlags.contains(.command),
+                let path = self.focusedPillPreviewPath() {
+                FileQuickLookPanel.shared.toggle(
+                    path: path, siblings: self.visiblePreviewPaths())
+                return nil
+            }
+
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
             // .onKeyPress ever sees it.
@@ -230,13 +246,6 @@ extension LauncherView {
             // Space = Quick Look, Finder-style. Gated on keyboard pill navigation being
             // active: the search field always holds focus here, so an ungated Space would
             // stop the user typing a space in a query.
-            if event.keyCode == 49,
-                !event.modifierFlags.contains(.command),
-                let path = self.focusedPillPreviewPath() {
-                FileQuickLookPanel.shared.toggle(
-                    path: path, siblings: self.visiblePreviewPaths())
-                return nil
-            }
 
             // The Quick Note split editor owns the keyboard: yield every key to the
             // focused TextEditor / list so the user types freely. Escape exits the
@@ -1318,6 +1327,14 @@ extension LauncherView {
 
             let presetChanged = self.lastAppliedDockHeightPreset != heightPreset
             let modeChanged = self.lastAppliedDockSurfaceMode != surfaceMode
+            // Global Context collapsing and expanding is a surface transition, but neither
+            // check above sees it: the preset is already .large (any result count sets it,
+            // so it flips on the first keystroke, long before the sheet opens) and the mode
+            // stays .globalContext throughout. So the expand took the "typing" branch — a
+            // bare yield instead of the content-commit delay — and revealed an empty sheet
+            // with the rows popping in after, which is the exact case the delay exists for.
+            let globalPhase = self.globalContextViewModel.typingSnapshot.phase
+            let globalPhaseChanged = self.lastAppliedGlobalTypingPhase != globalPhase
             // A reveal in flight owns the frame. Row churn (icons resolving, a late menu
             // group) must not interrupt it with a second setFrame — that is the "expands,
             // stops, expands again" stutter. It settles on the next request instead.
@@ -1404,7 +1421,8 @@ extension LauncherView {
             // Collapsed capsule ⇄ result sheet is a surface transition: the panel animates
             // it as one motion. Everything else (typing, a row appearing) stays instant so
             // the dock never appears to lag behind the keyboard.
-            let isSurfaceTransition = animated && (presetChanged || modeChanged)
+            let isSurfaceTransition =
+                animated && (presetChanged || modeChanged || globalPhaseChanged)
             if isSurfaceTransition {
                 // The list is a LazyVStack clipped to zero height until it expands, so its
                 // rows do not exist in the frame where the transition begins. Give SwiftUI
@@ -1428,6 +1446,7 @@ extension LauncherView {
 
             self.lastAppliedDockHeightPreset = heightPreset
             self.lastAppliedDockSurfaceMode = surfaceMode
+            self.lastAppliedGlobalTypingPhase = globalPhase
 
             // SwiftUI's @FocusState reconciliation fires asynchronously after setFrame and
             // calls becomeFirstResponder → selectAll on the NSTextField.
