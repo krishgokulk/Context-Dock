@@ -240,6 +240,14 @@ struct GeneralSettingsView: View {
                             caption: "Detects dev / browse / comms sessions and re-ranks adapter pills.")
                         Toggle("", isOn: $settings.sessionDetectionPills).labelsHidden()
                     }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Let the AI decide how to answer",
+                            caption: "Keyword matches become suggestions the AI can weigh, "
+                                + "instead of answering for it. Turn off to restore the older "
+                                + "keyword-first behaviour.")
+                        Toggle("", isOn: $settings.agentModelFirstRouting).labelsHidden()
+                    }
                 }
             }
 

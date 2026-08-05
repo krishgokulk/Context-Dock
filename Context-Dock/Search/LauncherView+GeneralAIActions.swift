@@ -909,6 +909,41 @@ extension LauncherView {
     ///   - a denial string when the user cancels,
     ///   - nil to fall through (not a read request, or a domain with no direct read yet — it
     ///     is already approved, so the existing enrichment/tool-loop reads it).
+    /// The keyword routers' scoring, rendered as advice for the model rather than used to
+    /// answer on its behalf.
+    ///
+    /// The scoring itself is genuinely useful — it knows which of the user's installed apps,
+    /// adapters and capabilities relate to a query, which is real local knowledge no model
+    /// has. What made it harmful was its authority: on a keyword hit it produced the answer,
+    /// so the model never saw the request and could not notice that the match was wrong.
+    /// "recent commit" scoring as a Recent-files read is the canonical example.
+    ///
+    /// As a hint it keeps the value and loses the veto. The model reads "these look
+    /// relevant", checks them against what was actually asked, and calls a tool — or ignores
+    /// the list entirely when it does not fit, which is exactly the judgement the routers
+    /// could not make.
+    ///
+    /// Discovery only. Nothing here reads user data or executes anything; that happens if
+    /// and when the model calls run_capability, which still goes through the approval path.
+    func routerCandidateHints(query: String) async -> String {
+        let candidates = await GeneralAIActionResolver.shared.resolveReadCandidates(query: query)
+        guard !candidates.isEmpty else { return "" }
+        let lines = candidates.prefix(6).map { candidate -> String in
+            let app = candidate.appName.map { " in \($0)" } ?? ""
+            let capability = candidate.capabilityID.map { " (\($0))" } ?? ""
+            return "- \(candidate.title)\(app)\(capability)"
+        }
+        return """
+            ## Possibly relevant local routes
+            DoraX matched these against the request using local metadata. They are suggestions,
+            not instructions: use one only if it actually answers what was asked, and ignore
+            the list when it does not. If none fit, use find_capability or run_command instead
+            of saying you have no access.
+
+            \(lines.joined(separator: "\n"))
+            """
+    }
+
     func readOnlyCapabilityAnswer(query: String) async -> String? {
         if let domain = readOnlyDataDomain(for: query) {
             guard await requestReadApproval(domain: domain) else {

@@ -6222,10 +6222,20 @@ extension LauncherView {
             }
         }
 
+        // Model-first: the keyword routers below stop being able to answer, and become a
+        // hint instead. See AppSettings.agentModelFirstRouting for why.
+        let modelFirst = AppSettings.shared.agentModelFirstRouting
+        if modelFirst {
+            let hints = await routerCandidateHints(query: query)
+            if !hints.isEmpty {
+                sysContent += "\n\n" + hints
+            }
+        }
+
         // Read-only capability router first. Queries like "show Salman Khan email" are
         // contact lookups, not Mail/share commands. Run this before executable routing so
         // personal-data reads don't get misclassified as actions.
-        if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+        if !modelFirst, attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let readAnswer = await readOnlyCapabilityAnswer(query: query) {
             return readAnswer
         }
@@ -6240,7 +6250,7 @@ extension LauncherView {
             return prefAnswer
         }
 
-        if attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+        if !modelFirst, attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer
         }
@@ -6254,7 +6264,7 @@ extension LauncherView {
             sysContent += "\n\n" + appRuntimeBlock
         }
 
-        if currentAISelectionSnapshot.isEmpty,
+        if !modelFirst, currentAISelectionSnapshot.isEmpty,
            let mcpAnswer = try await directGeneralAppMCPAnswer(
             query: query,
             history: history,

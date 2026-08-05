@@ -849,6 +849,25 @@ class AppSettings: ObservableObject {
     /// window is often wanted as just a note.
     @AppStorage("quickNoteAISidecarVisible") var quickNoteAISidecarVisible: Bool = true
 
+    /// When true, General Chat lets the model decide what to do with a request instead of
+    /// letting keyword routers answer it first.
+    ///
+    /// The routers were written when the model had no tools and could only narrate. They
+    /// score a query against known words and, on a hit, produce the answer themselves — so
+    /// the model never sees requests they claim. That is why "what is recent commit i did?"
+    /// offered to read the Open Recent menu of three different apps: the word "recent"
+    /// scored, and the word "commit" was read by nothing.
+    ///
+    /// With tools reachable (AgentToolRegistry, find_capability, run_capability), the same
+    /// scoring is more useful as a hint in the prompt than as a verdict. The routers still
+    /// run; their candidates are offered to the model as "these look relevant" rather than
+    /// returned as the answer.
+    ///
+    /// Set to false to restore the old behaviour if a regression shows up. Deterministic
+    /// commands — memory writes, preference commands — are unaffected either way: those are
+    /// instructions, not questions, and there is nothing for a model to decide.
+    @AppStorage("agentModelFirstRouting") var agentModelFirstRouting: Bool = true
+
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
