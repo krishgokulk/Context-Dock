@@ -1927,17 +1927,22 @@ extension LauncherView {
                         if acceptTopGlobalAppGhostCompletionIfPossible() {
                             return .handled
                         }
-                        // Tab has to act on the row the sheet is showing. Focus lands either
-                        // on an app (focusedAppPillIndex) or on a command/menu pill
-                        // (l2.focusedPillIndex) — and both lookups below return apps only.
-                        // So with a global command focused, "screenshot" displayed the
-                        // Screenshot command while Tab scoped whichever app matched the word
-                        // loosely: a different target from the one under the highlight.
+                        // Tab completes whatever the input is ghosting, which is the row
+                        // under the highlight. That logic already exists and Right Arrow uses
+                        // it: it follows the visible selection, enters the scope for a
+                        // syscmd:// or cli:// row, and fills the title for an app.
                         //
-                        // A pill is not an app scope, so Tab does nothing here rather than
-                        // scoping something the user never pointed at. Enter still runs the
-                        // focused row, which is what a command row is for.
-                        if l2.focusedPillIndex != nil { return .handled }
+                        // Tab used to run its own lookup instead — focused-or-top *app*
+                        // result — and system commands live in appResults alongside apps. So
+                        // with "Screenshots · System Command" highlighted and ghosted, Tab
+                        // skipped it and filled the first app in the list: typing "scree"
+                        // ghosted "screenshot" and completed to "iPhone Mirroring".
+                        //
+                        // One implementation for both keys, so they cannot disagree about
+                        // what the user is pointing at.
+                        if acceptTopGlobalAppGhostCompletionIfPossible() {
+                            return .handled
+                        }
                         let hit =
                             focusedGlobalAppResultForInputPreview()
                             ?? topGlobalAppResultForInputPreview()
