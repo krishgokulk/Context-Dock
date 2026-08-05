@@ -305,6 +305,10 @@ struct ExtensionPanelAIComposer: View {
     @State private var draft = ""
     @State private var isSending = false
     @State private var errorText: String?
+    /// Extra context the user pinned onto the conversation. Named apps and files are
+    /// described to the model; nothing is read without being shown as a chip first.
+    @State private var attachedApps: [String] = []
+    @State private var attachedFiles: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -352,29 +356,124 @@ struct ExtensionPanelAIComposer: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("Message…", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .lineLimit(1...4)
-                .onSubmit { send() }
-
-            if isSending {
-                ProgressView().controlSize(.small)
-            } else {
-                Button {
-                    send()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 16))
+        VStack(alignment: .leading, spacing: 6) {
+            // Attached context reads back as chips, so what the model will see is
+            // visible before sending rather than implied.
+            if !attachedApps.isEmpty || !attachedFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(attachedApps, id: \.self) { app in
+                            contextChip(app, icon: "app.badge") {
+                                attachedApps.removeAll { $0 == app }
+                            }
+                        }
+                        ForEach(attachedFiles, id: \.self) { file in
+                            contextChip((file as NSString).lastPathComponent, icon: "doc") {
+                                attachedFiles.removeAll { $0 == file }
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .frame(height: 22)
             }
+
+            HStack(spacing: 8) {
+                Menu {
+                    Section("Attach app context") {
+                        ForEach(runningApps, id: \.self) { app in
+                            Button(app) {
+                                if !attachedApps.contains(app) { attachedApps.append(app) }
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Attach file…") { pickFiles() }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 22)
+
+                TextField("Ask AI…", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .lineLimit(1...5)
+                    .onSubmit { send() }
+
+                if isSending {
+                    ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                } else {
+                    Button { send() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(canSend ? Color.white : Color.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(canSend ? Color.accentColor : Color.primary.opacity(0.10),
+                                        in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(Color.primary.opacity(0.04))
+    }
+
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespaces).isEmpty && !isSending
+    }
+
+    /// Apps with a visible window, newest first — the same set the dock shows.
+    private var runningApps: [String] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && !$0.isTerminated }
+            .compactMap(\.localizedName)
+            .sorted()
+    }
+
+    @ViewBuilder
+    private func contextChip(_ label: String, icon: String,
+                             remove: @escaping () -> Void) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 8))
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.primary.opacity(0.08), in: Capsule())
+    }
+
+    private func pickFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !attachedFiles.contains(url.path) {
+            attachedFiles.append(url.path)
+        }
     }
 
     private func send() {
@@ -387,6 +486,18 @@ struct ExtensionPanelAIComposer: View {
         isSending = true
 
         let priorHistory = history
+        let attachmentNote: String = {
+            var parts: [String] = []
+            if !attachedApps.isEmpty {
+                parts.append("The user attached these apps for context: "
+                             + attachedApps.joined(separator: ", ") + ".")
+            }
+            if !attachedFiles.isEmpty {
+                parts.append("The user attached these files: "
+                             + attachedFiles.joined(separator: ", ") + ".")
+            }
+            return parts.isEmpty ? "" : "\n\n" + parts.joined(separator: "\n")
+        }()
         // Scoped to this panel: without an identity of its own the model inherits the
         // launcher-wide persona and starts proposing shell commands it cannot run here.
         let scopedPrompt = """
@@ -397,7 +508,7 @@ struct ExtensionPanelAIComposer: View {
         files — if a request needs that, say so plainly instead of emitting any bracketed \
         command directive.
 
-        \(extraPrompt)
+        \(extraPrompt)\(attachmentNote)
         """.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
