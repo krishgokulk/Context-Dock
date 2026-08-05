@@ -524,7 +524,22 @@ private struct StickyNoteContent: View {
         isGenerating = true
         let provider = settings.selectedAIProvider
         let key = settings.getAPIKey(for: provider)
+        let apps = attachedContextApps
         Task { @MainActor in
+            // Same live gather the extension panels do, so "summarise the page I'm on"
+            // works from a note as well as from a panel.
+            var knowledge: [String] = []
+            for app in apps {
+                let block = await AppKnowledgeService.context(forAppNamed: app)
+                if !block.isEmpty { knowledge.append(block) }
+            }
+            let prompt = knowledge.isEmpty
+                ? noteContext
+                : noteContext + "\n\n# Attached context\n\n"
+                    + knowledge.joined(separator: "\n\n")
+                    + "\n\nThis is a live reading taken just now. Answer from it; never "
+                    + "invent a tab, link or file that is not listed."
+
             let reply: String
             do {
                 reply = try await AIProviderService.shared.sendMessage(
@@ -533,7 +548,7 @@ private struct StickyNoteContent: View {
                     provider: provider,
                     apiKey: key.isEmpty ? nil : key,
                     conversationHistory: Array(chatMessages.dropLast()),
-                    additionalContextPrompt: noteContext,
+                    additionalContextPrompt: prompt,
                     attachments: noteAttachments,
                     surfaceScoped: true
                 )

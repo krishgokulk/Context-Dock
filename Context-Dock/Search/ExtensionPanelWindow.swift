@@ -445,57 +445,45 @@ struct ExtensionPanelAIComposer: View {
         isSending = true
 
         let priorHistory = history
-        let attachmentNote: String = {
-            var parts: [String] = []
-            for app in attachedApps {
-                var lines = ["App attached for context: \(app)."]
-                // The adapter is what the app actually knows how to do, so the model
-                // can answer in terms of real actions instead of guessing at features.
-                if let adapter = AppAdapterManager.shared.adapters.first(where: {
-                    $0.appName == app && $0.isEnabled
-                }) {
-                    let actions = adapter.actions.prefix(25).map(\.name)
-                    if !actions.isEmpty {
-                        lines.append("Actions Context Dock can run in it: "
-                                     + actions.joined(separator: ", ") + ".")
-                    }
-                }
-                let ctx = AXContextReader.shared.current
-                if ctx.appName == app {
-                    if let title = ctx.windowTitle, !title.isEmpty {
-                        lines.append("Its front window: \(title)")
-                    }
-                    if let url = ctx.currentURL, !url.isEmpty {
-                        lines.append("Its current URL: \(url)")
-                    }
-                    if let sel = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !sel.isEmpty {
-                        lines.append("Selected text there:\n\(sel.prefix(1500))")
-                    }
-                }
-                parts.append(lines.joined(separator: "\n"))
-            }
-            if !attachedFiles.isEmpty {
-                parts.append("The user attached these files: "
-                             + attachedFiles.joined(separator: ", ") + ".")
-            }
-            return parts.isEmpty ? "" : "\n\n" + parts.joined(separator: "\n")
-        }()
-        // Scoped to this panel: without an identity of its own the model inherits the
-        // launcher-wide persona and starts proposing shell commands it cannot run here.
-        let scopedPrompt = """
-        You are the assistant inside the "\(title)" panel in Context Dock.
-        \(subtitle)
-
-        Stay within this panel's subject. You cannot run commands, open apps or touch \
-        files — if a request needs that, say so plainly instead of emitting any bracketed \
-        command directive.
-
-        \(extraPrompt)\(attachmentNote)
-        """.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apps = attachedApps
+        let files = attachedFiles
+        let panelIdentity = title
+        let panelSubtitle = subtitle
+        let panelPrompt = extraPrompt
 
         Task {
             defer { isSending = false }
+            // Gathered at send time, not attach time: "what tabs are open" must mean
+            // now, not whenever the chip was added.
+            var knowledge: [String] = []
+            for app in apps {
+                let block = await AppKnowledgeService.context(forAppNamed: app)
+                if !block.isEmpty { knowledge.append(block) }
+            }
+            if !files.isEmpty {
+                knowledge.append("## Attached files\n" + files.joined(separator: "\n"))
+            }
+            let attachmentNote = knowledge.isEmpty
+                ? ""
+                : "\n\n# Attached context\n\n" + knowledge.joined(separator: "\n\n")
+
+            // Scoped to this panel: without an identity of its own the model inherits
+            // the launcher-wide persona and proposes shell commands it cannot run here.
+            // Attached apps widen that scope deliberately — the user asked for them.
+            let scopedPrompt = """
+            You are the assistant inside the "\(panelIdentity)" panel in Context Dock.
+            \(panelSubtitle)
+
+            Stay within this panel's subject, plus anything the user has attached below. \
+            You cannot run commands, open apps or touch files — if a request needs that, \
+            say so plainly instead of emitting any bracketed command directive.
+
+            Attached context is a live reading taken just now. Answer from it; never \
+            invent a tab, link or file that is not listed.
+
+            \(panelPrompt)\(attachmentNote)
+            """.trimmingCharacters(in: .whitespacesAndNewlines)
+
             do {
                 let reply = try await AIProviderService.shared.sendMessage(
                     text,
