@@ -275,50 +275,17 @@ extension AIProviderService {
                         success = true
                         output = "Simulated \(tc.function.name) tool call"
                         executedCommands.append(ExecutedCommand(command: tc.function.name, output: output, success: true))
-                    } else if tc.function.name == "run_command",
-                       let command = args["command"] as? String,
-                       let purpose = args["purpose"] as? String {
-                        let needsApproval = args["requires_approval"] as? Bool ?? false
-                        (success, output) = await commandExecutor(command, purpose, needsApproval)
-                        executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(command))", output: output, success: success))
-                    } else if tc.function.name == "spawn_worker",
-                              let command = args["command"] as? String,
-                              let purpose = args["purpose"] as? String {
-                        let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                        output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\", \"message\": \"'\(command)' started in background.\"}"
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                    } else if tc.function.name == "send_keys",
-                              let keys = args["keys"] as? String {
-                        let purpose = args["purpose"] as? String ?? ""
-                        output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                        // Small delay after key injection so TUI can react before next tool call
-                        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                        _ = purpose
-                    } else if tc.function.name == "get_messages_conversations" {
-                        let contactFilter = args["contact_filter"] as? String ?? ""
-                        let limit = args["limit"] as? Int ?? 15
-                        output = MessagesAutomation.conversationSnapshot(
-                            contactFilter: contactFilter,
-                            limit: limit
-                        )
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "get_messages_conversations", output: output, success: true))
-                    } else if tc.function.name == "search_messages",
-                              let query = args["query"] as? String {
-                        output = await MessagesAutomation.openSearch(query: query)
-                        success = !output.hasPrefix("❌")
-                        executedCommands.append(ExecutedCommand(command: "search_messages(\(query))", output: output, success: success))
-                    } else if tc.function.name == "compose_message",
-                              let recipient = args["recipient"] as? String {
-                        let body = args["body"] as? String ?? ""
-                        output = await MessagesAutomation.composeMessage(to: recipient, body: body)
-                        success = !output.hasPrefix("❌")
-                        executedCommands.append(ExecutedCommand(command: "compose_message(\(recipient))", output: output, success: success))
+                    } else if let result = await AgentToolRegistry.shared.dispatch(
+                        name: tc.function.name,
+                        arguments: args,
+                        context: AgentToolContext(commandExecutor: commandExecutor)
+                    ) {
+                        success = result.success
+                        output = result.output
+                        executedCommands.append(ExecutedCommand(
+                            command: result.displayCommand, output: output, success: success))
                     } else {
-                        // Custom L2 extension tool call
+                        // Not a registered tool — an L2 extension, resolved by name at run time.
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
                     }
@@ -448,26 +415,17 @@ extension AIProviderService {
                     success = true
                     output = "Simulated \(toolName) tool call"
                     executedCommands.append(ExecutedCommand(command: toolName, output: output, success: true))
-                } else if toolName == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    let needsApproval = args["requires_approval"] as? Bool ?? false
-                    (success, output) = await commandExecutor(command, purpose, needsApproval)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if toolName == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if toolName == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                } else if let result = await AgentToolRegistry.shared.dispatch(
+                    name: toolName,
+                    arguments: args,
+                    context: AgentToolContext(commandExecutor: commandExecutor)
+                ) {
+                    success = result.success
+                    output = result.output
+                    executedCommands.append(ExecutedCommand(
+                        command: result.displayCommand, output: output, success: success))
                 } else {
+                    // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
                     executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
                 }
@@ -551,26 +509,17 @@ extension AIProviderService {
                     success = true
                     output = "Simulated \(fc.name) tool call"
                     executedCommands.append(ExecutedCommand(command: fc.name, output: output, success: true))
-                } else if fc.name == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    let needsApproval = args["requires_approval"] as? Bool ?? false
-                    (success, output) = await commandExecutor(command, purpose, needsApproval)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if fc.name == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if fc.name == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                } else if let result = await AgentToolRegistry.shared.dispatch(
+                    name: fc.name,
+                    arguments: args,
+                    context: AgentToolContext(commandExecutor: commandExecutor)
+                ) {
+                    success = result.success
+                    output = result.output
+                    executedCommands.append(ExecutedCommand(
+                        command: result.displayCommand, output: output, success: success))
                 } else {
+                    // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)
                     executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
                 }
