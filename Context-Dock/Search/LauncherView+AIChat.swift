@@ -6297,6 +6297,47 @@ extension LauncherView {
                 characterBudget: AIContextBudget.characterBudget(for: toolProvider))
             if !appToolsBlock.isEmpty {
                 let toolSystemPrompt = sysContent + "\n\n" + appToolsBlock
+
+                // Providers with real function calling get the same path Context Dock uses:
+                // schemas from AgentToolRegistry, a structured tool call back, dispatch by
+                // name. The prose protocol below stays only for Apple Intelligence, which
+                // has no function-calling API at all.
+                //
+                // General Chat previously used the prose protocol for EVERY provider, so
+                // run_command, find_capability and run_capability were unreachable here —
+                // the model could only ask for a tool by writing JSON into its answer, and
+                // the same system prompt told it never to do that.
+                if toolProvider.supportsNativeTools {
+                    let rawKey = toolProvider.requiresAPIKey
+                        ? AppSettings.shared.getAPIKey(for: toolProvider) : ""
+                    let toolAPIKey: String? = rawKey.isEmpty ? nil : rawKey
+                    let generalCommandExecutor:
+                        (String, String, Bool) async -> (Bool, String) = { command, purpose, needsApproval in
+                            await TerminalCommandExecutor.shared.run(
+                                command, purpose: purpose,
+                                modelRequiresApproval: needsApproval)
+                        }
+                    await MainActor.run { aiMode.loadingStatus = "Working…" }
+                    let (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
+                        query,
+                        context: .none,
+                        provider: toolProvider,
+                        apiKey: toolAPIKey,
+                        conversationHistory: history,
+                        commandExecutor: generalCommandExecutor,
+                        additionalSystemPrompt: toolSystemPrompt
+                    )
+                    await MainActor.run {
+                        aiMode.loadingStatus = nil
+                        // Chips report what actually ran. They used to be derived from words
+                        // in the query, which meant asking about "uncommitted changes" showed
+                        // a `git log -1` chip because the string contained "commit" — the chip
+                        // described the question, not the work.
+                        aiMode.pendingToolChips = memoryToolChips + executed.map(\.command)
+                    }
+                    return finalResponse
+                }
+
                 var loopHistory = history
                 var loopQuery = query
                 var toolChips: [String] = memoryToolChips

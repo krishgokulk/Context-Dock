@@ -723,6 +723,24 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// True when the provider accepts a tool schema and answers with a structured tool call,
+    /// i.e. everything AIProviderService.sendWithTools knows how to drive.
+    ///
+    /// The two exceptions are real: Apple Intelligence has no function-calling API, and
+    /// Shortcuts is not a chat model at all. Those are the only cases that need the older
+    /// "ask the model to reply with JSON and parse it back out of the prose" protocol —
+    /// which is worth avoiding everywhere else, because the model can leak that JSON into
+    /// its visible answer and there is no way to tell a tool call from a sentence about one.
+    var supportsNativeTools: Bool {
+        switch self {
+        case .onDevice, .shortcuts:
+            return false
+        case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible,
+             .claudeBridge, .chatGPTBridge:
+            return true
+        }
+    }
+
     var shortName: String {
         switch self {
         case .onDevice: return "Apple Intelligence"
