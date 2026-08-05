@@ -1966,7 +1966,20 @@ extension LauncherView {
 
     func executeFocusedGlobalGroupedListRow() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
+        var state = visibleGlobalGroupedListNavigationState(for: q)
+        // Before the sheet expands there is no committed grouped state — that method returns
+        // empty on purpose, so SwiftUI body evaluation never starts index work per keystroke.
+        // The prepared snapshot is what exists at that point, and it is what the leading icon
+        // and the ghost are already drawn from. Without it Enter did nothing at all until the
+        // user pressed Down to expand, which is what committed the state.
+        if state.totalCount == 0,
+            let prepared = globalContextViewModel.preparedResults,
+            prepared.query == q,
+            let preparedState = prepared.navigationState,
+            preparedState.totalCount > 0
+        {
+            state = preparedState
+        }
         guard state.totalCount > 0 else { return false }
 
         let index =
