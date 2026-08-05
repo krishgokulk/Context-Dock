@@ -191,18 +191,18 @@ struct ScopedListPanelContent: View {
         .focusable()
         .focusEffectDisabled()
         .onMoveCommand { direction in
-            // Left/right belong to the caret while the filter field has focus.
-            guard !filterFocused else { return }
+            // Arrow keys belong to the caret while any field in the panel has focus.
+            guard !filterFocused, !isTypingInPanel else { return }
             move(direction)
         }
         .onKeyPress(.space) {
             // Never steal the space bar from someone typing a filter.
-            guard !filterFocused, let path = selectedPath else { return .ignored }
+            guard !filterFocused, !isTypingInPanel, let path = selectedPath else { return .ignored }
             FileQuickLookPanel.shared.toggle(path: path, siblings: allFilePaths)
             return .handled
         }
         .onKeyPress(.return) {
-            guard !filterFocused,
+            guard !filterFocused, !isTypingInPanel,
                   let row = displayedRows.first(where: { $0.id == selectedID }) else { return .ignored }
             CustomListProviderService.shared.runAction(command, row: row, query: query)
             return .handled
@@ -440,6 +440,17 @@ struct ScopedListPanelContent: View {
             preZoomFrame = window.frame
             window.setFrame(target, display: true, animate: true)
         }
+    }
+
+    /// Is a text field in this window taking keystrokes? Tracking one @FocusState per
+    /// field missed the assistant's composer, so Space there fired Quick Look instead
+    /// of typing a space. Asking the window who the first responder is covers every
+    /// field the panel has now or gains later.
+    private var isTypingInPanel: Bool {
+        guard let responder = hostWindow?.firstResponder else { return false }
+        if responder is NSTextView { return true }
+        if let view = responder as? NSView, view is NSTextField { return true }
+        return false
     }
 
     /// Every file in the panel, so Quick Look can arrow through the set.
