@@ -198,20 +198,36 @@ extension LauncherView {
     func offerScopedNativeAppAction(
         query: String, bundleId: String, appName: String, requestID: UUID
     ) async -> Bool {
-        guard !bundleId.isEmpty, GeneralAIActionResolver.shared.looksExecutable(query) else {
-            return false
-        }
+        guard !bundleId.isEmpty else { return false }
+        // Read-style verbs such as "summarize" are conversation-shaped globally, but in a
+        // Notes scope they name an enabled tool. Resolve the scoped catalog before applying
+        // the generic executable-intent gate so the provider cannot guess "I can't read it".
+        let scopedRegistered = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: appName, bundleID: bundleId, query: query)
+        guard !scopedRegistered.isEmpty
+            || GeneralAIActionResolver.shared.looksExecutable(query)
+        else { return false }
         await MainActor.run {
             l2.routerTrace = []
             dockTraceStep("Scanning \(appName) App Adapter…")
         }
-        let resolution = await GeneralAIActionResolver.shared.resolve(
-            query: query,
-            chatAllowedBundleIds: [bundleId],
-            scopedApp: (appName, bundleId),
-            onStep: { [self] step in
-                MainActor.assumeIsolated { dockTraceStep(step) }
-            })
+        let resolution: GeneralAIActionResolution
+        if !scopedRegistered.isEmpty {
+            await MainActor.run {
+                dockTraceStep(
+                    "Registered tools: \(scopedRegistered.count) matched, selected "
+                        + (scopedRegistered[0].capabilityID ?? scopedRegistered[0].title))
+            }
+            resolution = .candidates(scopedRegistered)
+        } else {
+            resolution = await GeneralAIActionResolver.shared.resolve(
+                query: query,
+                chatAllowedBundleIds: [bundleId],
+                scopedApp: (appName, bundleId),
+                onStep: { [self] step in
+                    MainActor.assumeIsolated { dockTraceStep(step) }
+                })
+        }
         guard case .candidates(let candidates) = resolution,
             let candidate = candidates.first(where: {
                 $0.route == .verifiedMenu || $0.route == .keyboardShortcut

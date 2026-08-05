@@ -3680,6 +3680,7 @@ extension LauncherView {
         l2.currentTask = Task {
             do {
                 let response: String
+                var noteMatches: [NoteMetadata] = []
                 if wantsCount && !wantsSearch {
                     // Single Apple Event — no full metadata refresh for a count question.
                     let count = try await AppleNotesMCPServer.shared.noteCount()
@@ -3687,16 +3688,25 @@ extension LauncherView {
                 } else {
                     let notes = try await AppleNotesMCPServer.shared.allMetadata()
                     let searchTerm = notesSearchTerm(from: normalized)
-                    let matches = searchTerm.isEmpty
+                    noteMatches = searchTerm.isEmpty
                         ? notes
                         : try await AppleNotesMCPServer.shared.search(
                             query: searchTerm, maxResults: 8)
-                    response = formatNotesSearchResponse(matches, query: searchTerm)
+                    response = formatNotesSearchResponse(noteMatches, query: searchTerm)
                 }
                 await MainActor.run {
                     l2.isLoading = false
+                    let rows = noteMatches.map {
+                        NoteSearchAction(
+                            id: $0.id, title: redactNotePreview($0.title),
+                            folder: $0.folder, snippet: redactNotePreview($0.snippet),
+                            modifiedDate: $0.modifiedDate)
+                    }
                     l2.chatMessages.append(
-                        AIChatMessage(role: .assistant, content: response, mcpToolsRan: ["DoraX Notes MCP"])
+                        AIChatMessage(
+                            role: .assistant, content: response,
+                            noteResults: rows,
+                            mcpToolsRan: ["DoraX Notes MCP · notes.search"])
                     )
                     finishL2AIRequest(requestID)
                 }
@@ -3745,11 +3755,25 @@ extension LauncherView {
                 ? "No notes found."
                 : "No notes found for \(query)."
         }
-        let rows = matches.prefix(5).map { note in
-            "• \(note.title) — \(note.folder)"
-        }.joined(separator: "\n")
-        let suffix = matches.count > 5 ? "\n+\(matches.count - 5) more" : ""
-        return "Found \(matches.count) note\(matches.count == 1 ? "" : "s")\(query.isEmpty ? "" : " for \(query)"):\n\(rows)\(suffix)"
+        return "Found \(matches.count) note\(matches.count == 1 ? "" : "s")"
+            + (query.isEmpty ? "." : " matching “\(query)”.")
+    }
+
+    /// Search metadata is useful UI context but may contain credentials. Redact common
+    /// token shapes before a title/snippet reaches the transcript or screenshot surface.
+    private func redactNotePreview(_ text: String) -> String {
+        let patterns = [
+            #"\b(?:sk|ghp|github_pat|xox[baprs]|AIza)[-_A-Za-z0-9]{12,}\b"#,
+            #"\b(?:api[_ -]?key|token|secret|password)\s*[:=]\s*\S+"#,
+        ]
+        return patterns.reduce(text) { value, pattern in
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern, options: [.caseInsensitive])
+            else { return value }
+            return regex.stringByReplacingMatches(
+                in: value, range: NSRange(value.startIndex..., in: value),
+                withTemplate: "[redacted]")
+        }
     }
 
     func handleL2Query(_ query: String, skipMenuRouter: Bool) {

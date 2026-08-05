@@ -11,9 +11,17 @@ enum AppAdapterCapabilityCatalog {
         let queryTokens = significantTokens(query)
         guard !queryTokens.isEmpty else { return [] }
 
-        return CapabilityRegistry.shared.capabilities(for: bundleID)
+        let capabilities = CapabilityRegistry.shared.capabilities(for: bundleID)
             .filter { $0.appBundleID == bundleID }
-            .compactMap { capability in
+        if bundleID == "com.apple.Notes",
+            let routed = notesCandidate(
+                appName: appName, bundleID: bundleID, query: query,
+                capabilities: capabilities)
+        {
+            return [routed]
+        }
+
+        return capabilities.compactMap { capability in
                 let searchable = "\(capability.id) \(capability.title) "
                     + capability.inputSchema.fields
                         .map { "\($0.name) \($0.description)" }.joined(separator: " ")
@@ -35,6 +43,111 @@ enum AppAdapterCapabilityCatalog {
                 }
                 return candidate
             }
+    }
+
+    /// Deterministic Notes routing. An operation phrase selects one tool before generic
+    /// token scoring, so `notes.create`, `notes.search`, and `notes.export` never compete
+    /// merely because all of them mention Apple Notes.
+    private static func notesCandidate(
+        appName: String, bundleID: String, query: String,
+        capabilities: [AICapability]
+    ) -> DoraXActionCandidate? {
+        let lower = query.lowercased()
+        let capabilityID: String?
+        if lower.contains("export") && (lower.contains("markdown") || lower.contains(".md")) {
+            capabilityID = "notes.export"
+        } else if lower.contains("extract") && (lower.contains("task") || lower.contains("todo")) {
+            capabilityID = "notes.extract_tasks"
+        } else if lower.contains("related") || lower.contains("similar note") {
+            capabilityID = "notes.link_related"
+        } else if lower.contains("summarize") || lower.contains("summary") {
+            capabilityID = "notes.summarize"
+        } else if lower.contains("search") || lower.contains("find note") || lower.contains("find my note") {
+            capabilityID = "notes.search"
+        } else if lower.contains("read") || lower.contains("show note") || lower.contains("show this note") {
+            capabilityID = "notes.read"
+        } else if lower.contains("append") || lower.contains("add to this note") {
+            capabilityID = "notes.append"
+        } else if lower.contains("delete") || lower.contains("remove this note") {
+            capabilityID = "notes.delete"
+        } else if lower.contains("update") || lower.contains("rename this note") {
+            capabilityID = "notes.update"
+        } else if lower.contains("create") || lower.contains("new note") {
+            capabilityID = "notes.create"
+        } else {
+            capabilityID = nil
+        }
+        guard let capabilityID,
+            let capability = capabilities.first(where: { $0.id == capabilityID })
+        else { return nil }
+
+        var candidate = makeCandidate(
+            capability, appName: appName, bundleID: bundleID,
+            confidence: 0.96, reason: "Notes intent router selected \(capabilityID)")
+        switch capabilityID {
+        case "notes.export":
+            candidate.inputValues["savePath"] = defaultMarkdownExportPath()
+        case "notes.search":
+            let searchText = extractSearchText(query)
+            guard !searchText.isEmpty else { return nil }
+            candidate.inputValues["query"] = searchText
+            candidate.inputValues["maxResults"] = "10"
+        case "notes.append":
+            guard let text = textAfterMarker(query, markers: ["append ", "add "]), !text.isEmpty
+            else { return nil }
+            candidate.inputValues["text"] = text
+        case "notes.create":
+            guard let content = textAfterMarker(query, markers: ["titled ", "called ", "named "]),
+                !content.isEmpty
+            else { return nil }
+            candidate.inputValues["title"] = content
+            candidate.inputValues["body"] = ""
+        case "notes.update":
+            guard let title = textAfterMarker(query, markers: ["rename this note to ", "title to "]),
+                !title.isEmpty
+            else { return nil }
+            candidate.inputValues["title"] = title
+        default:
+            break
+        }
+        return candidate
+    }
+
+    private static func makeCandidate(
+        _ capability: AICapability, appName: String, bundleID: String,
+        confidence: Double, reason: String
+    ) -> DoraXActionCandidate {
+        DoraXActionCandidate(
+            id: "capability.\(capability.id)", title: capability.title,
+            appName: appName, bundleID: bundleID, source: .mcp, route: .adapter,
+            capabilityID: capability.id,
+            requiredInputs: capability.inputSchema.fields.filter(\.required).map(\.name),
+            riskLevel: capability.riskLevel, confidence: confidence,
+            permissionKey: "generalAI.execute.\(bundleID).capability.\(capability.id)",
+            debugReason: reason)
+    }
+
+    private static func extractSearchText(_ query: String) -> String {
+        var text = query.lowercased()
+        let prefixes = ["search apple notes", "search notes", "find my notes", "find notes", "find note"]
+        for prefix in prefixes where text.hasPrefix(prefix) {
+            text.removeFirst(prefix.count)
+            break
+        }
+        for prefix in [" for ", " about ", " containing ", " matching "] where text.hasPrefix(prefix) {
+            text.removeFirst(prefix.count)
+            break
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+
+    private static func textAfterMarker(_ query: String, markers: [String]) -> String? {
+        for marker in markers {
+            guard let range = query.range(of: marker, options: [.caseInsensitive]) else { continue }
+            return String(query[range.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        }
+        return nil
     }
 
     private static func significantTokens(_ text: String) -> Set<String> {

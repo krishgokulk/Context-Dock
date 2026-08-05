@@ -307,6 +307,16 @@ struct RecentFileAction: Equatable {
     var folder: String { url.deletingLastPathComponent().path }
 }
 
+/// One grounded Apple Notes search hit. Structured rows keep metadata readable and
+/// actionable instead of flattening the entire result set into one chat paragraph.
+struct NoteSearchAction: Equatable {
+    let id: String
+    let title: String
+    let folder: String
+    let snippet: String
+    let modifiedDate: Date
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -318,6 +328,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var attachments: [URL]  // Files the user attached to this message (shown as chips)
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
     var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
+    var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
@@ -335,6 +346,7 @@ struct AIChatMessage: Identifiable, Equatable {
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        noteResults: [NoteSearchAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -349,6 +361,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.appLaunches = appLaunches
         self.recentFiles = recentFiles
+        self.noteResults = noteResults
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -361,6 +374,7 @@ struct AIChatMessage: Identifiable, Equatable {
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        noteResults: [NoteSearchAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -375,6 +389,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.appLaunches = appLaunches
         self.recentFiles = recentFiles
+        self.noteResults = noteResults
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -551,6 +566,54 @@ struct AIChatMessageView: View {
                 .padding(.horizontal, 9)
                 .padding(.vertical, 7)
                 .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noteResultRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Matching notes")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ForEach(message.noteResults, id: \.id) { note in
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.yellow)
+                        .frame(width: 20, height: 20)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(note.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(note.folder.isEmpty ? "Notes" : note.folder)
+                            Text("·")
+                            Text(note.modifiedDate, style: .date)
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        if !note.snippet.isEmpty {
+                            Text(note.snippet)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    Button("Open") {
+                        var components = URLComponents()
+                        components.scheme = "notes"
+                        components.host = "showNote"
+                        components.queryItems = [URLQueryItem(name: "identifier", value: note.id)]
+                        if let url = components.url { NSWorkspace.shared.open(url) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+                .padding(9)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
             }
         }
     }
@@ -885,6 +948,10 @@ struct AIChatMessageView: View {
 
                 if !message.recentFiles.isEmpty {
                     recentFileRows
+                }
+
+                if !message.noteResults.isEmpty {
+                    noteResultRows
                 }
 
                 if message.enableAppRequest != nil {
