@@ -715,7 +715,39 @@ final class GeneralAIActionResolver {
         let available = candidates.filter {
             $0.operation == .read && CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
         }
-        return rankedWithPreferences(available, intentKey: intentKey)
+        let ranked = rankedWithPreferences(available, intentKey: intentKey)
+        // Final relevance gate. Keyword routing can only ever match on the words it knows;
+        // when the query's subject is a word no candidate accounts for, the honest answer
+        // is that this router does not handle the question — so return nothing and let the
+        // model answer instead of reading a plausible-looking wrong source.
+        guard Self.candidatesExplain(ranked, query: lowered) else { return [] }
+        return ranked
+    }
+
+    /// True when every subject word in the query is accounted for by at least one candidate
+    /// (its title, app name, semantic, or capability id) — or is a generic read noun that
+    /// the semantics cover by construction.
+    private static func candidatesExplain(
+        _ candidates: [DoraXActionCandidate],
+        query: String
+    ) -> Bool {
+        guard !candidates.isEmpty else { return false }
+        let content = contentWords(of: query)
+        guard !content.isEmpty else { return true }
+        let vocabulary = candidates.reduce(into: Set<String>()) { set, candidate in
+            let text = [
+                candidate.title,
+                candidate.appName ?? "",
+                candidate.capabilityID ?? "",
+                candidate.semanticType?.displayName ?? "",
+            ].joined(separator: " ").lowercased()
+            set.formUnion(
+                text.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 1 }
+            )
+        }
+        return content.allSatisfy { word in
+            vocabulary.contains(word) || genericReadNouns.contains(word)
+        }
     }
 
     private func isLikelyReadOnly(_ query: String) -> Bool {
@@ -1428,13 +1460,64 @@ final class GeneralAIActionResolver {
         }
     }
 
+    /// Words that only *modify* a noun. On their own they say nothing about WHAT to read:
+    /// "recent commit", "last email" and "latest build" all contain one, and none of them
+    /// mean the app's Open Recent menu. Under plain substring matching they were
+    /// indistinguishable from "recent files", which is how "what is recent commit i did?"
+    /// ended up offering to read Recent in Code, Notes and Finder.
+    static let temporalModifiers: Set<String> = [
+        "recent", "recently", "last", "latest", "current", "previous", "newest",
+    ]
+
+    /// Nouns the generic recent/opened semantics actually cover. A temporal modifier may
+    /// only select a semantic when the query also names one of these.
+    private static let genericReadNouns: Set<String> = [
+        "file", "files", "document", "documents", "doc", "docs",
+        "project", "projects", "folder", "folders", "item", "items",
+    ]
+
+    private static let readStopwords: Set<String> = [
+        "what", "whats", "is", "was", "were", "are", "the", "a", "an", "my", "me", "i",
+        "did", "do", "does", "show", "tell", "list", "of", "in", "on", "for", "to", "from",
+        "with", "and", "or", "any", "there", "how", "many", "much", "when", "who", "which",
+        "where", "you", "your", "it", "this", "that", "can", "please", "give", "get", "see",
+        "find", "look", "up", "about", "some", "all", "have", "has", "had", "been", "be",
+    ]
+
+    /// The words in a query that carry its subject — everything that is not a stopword and
+    /// not a temporal modifier. For "what is recent commit i did?" this is ["commit"].
+    static func contentWords(of query: String) -> Set<String> {
+        Set(
+            query.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter {
+                    $0.count > 1
+                        && !readStopwords.contains($0)
+                        && !temporalModifiers.contains($0)
+                }
+        )
+    }
+
     private func readSemanticTypes(for query: String) -> [DoraXActionCandidate.SemanticType] {
         let q = query.lowercased()
+        let content = Self.contentWords(of: q)
+        // Does the query name a noun the generic recent/opened semantics actually cover?
+        let namesGenericNoun = !content.isDisjoint(with: Self.genericReadNouns)
+
         var out: [DoraXActionCandidate.SemanticType] = []
-        for spec in menuReadSemantics where spec.queryWords.contains(where: q.contains) {
+        for spec in menuReadSemantics {
+            let matched = spec.queryWords.filter(q.contains)
+            guard !matched.isEmpty else { continue }
+            // A spec that matched only on a bare modifier has not identified a subject.
+            // Let it through only when the query also names a noun the spec covers.
+            let matchedSomethingSubstantive = matched.contains {
+                !Self.temporalModifiers.contains($0)
+            }
+            guard matchedSomethingSubstantive || namesGenericNoun else { continue }
             out.append(spec.type)
         }
-        if q.contains("last") || q.contains("latest") || q.contains("recent") {
+        if namesGenericNoun, q.contains("last") || q.contains("latest") || q.contains("recent") {
             out.append(.recent)
         }
         if q.contains("video") || q.contains("watched") || q.contains("played") {
