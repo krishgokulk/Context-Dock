@@ -3,187 +3,6 @@ import Foundation
 extension AIProviderService {
     // MARK: - Tool Definitions
 
-    private enum ToolDefinitions {
-
-        // run_command — blocking, returns output
-        // spawn_worker — non-blocking, starts in background, returns worker_id immediately
-
-        static let openAI: [[String: Any]] = [
-            [
-                "type": "function",
-                "function": [
-                    "name": "run_command",
-                    "description": "Execute a terminal command on the user's Mac and return its output. Use for quick commands that complete fast (ls, git status, find, etc.). For long-running tools like music players or downloads, use spawn_worker instead.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command":           ["type": "string",  "description": "The exact shell command to run"],
-                            "purpose":           ["type": "string",  "description": "One-line explanation of what this command does"],
-                            "requires_approval": ["type": "boolean", "description": "True when the command modifies files, installs software, or has irreversible effects"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running command in the background without waiting for it to finish. Use for music players (ymc, ncspot), downloaders, timers, and any process that should keep running while you do other things. Returns a worker_id you can reference later.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to start in background"],
-                            "purpose": ["type": "string", "description": "What this background process is doing"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes directly into the active TUI app running in the live terminal panel. Use this AFTER spawn_worker has launched a TUI app to navigate its menus, press buttons, or send input. Supports: plain text, \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), \\u{1B}[A/B/C/D (arrow keys).",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "The keystroke sequence to inject. Use \\r for Enter, \\u{1B}[A for up-arrow, etc."],
-                            "purpose": ["type": "string", "description": "What action this keystroke performs in the TUI"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "get_messages_conversations",
-                    "description": "Read recent Messages conversations. Use in Messages scope for questions like unread/recent messages, latest chats, or conversation summaries.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "contact_filter": ["type": "string", "description": "Optional contact name, phone, email, or empty string."],
-                            "limit": ["type": "integer", "description": "Maximum conversations to return, 1-30."]
-                        ],
-                        "required": []
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "search_messages",
-                    "description": "Open Messages and search for a contact, keyword, or phrase using the Messages search UI.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "query": ["type": "string", "description": "Contact name, phone, email, keyword, or phrase to search."]
-                        ],
-                        "required": ["query"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "compose_message",
-                    "description": "Open a Messages compose window for a recipient with optional draft body. Does not send automatically; user reviews and sends.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "recipient": ["type": "string", "description": "Recipient phone, email, or contact name."],
-                            "body": ["type": "string", "description": "Optional draft message body."]
-                        ],
-                        "required": ["recipient"]
-                    ]
-                ]
-            ]
-        ]
-
-        static let anthropic: [[String: Any]] = [
-            [
-                "name": "run_command",
-                "description": "Execute a terminal command and return its output. For quick commands. For music players or long downloads, use spawn_worker.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command":           ["type": "string",  "description": "The shell command to run"],
-                        "purpose":           ["type": "string",  "description": "Why this command is being run"],
-                        "requires_approval": ["type": "boolean", "description": "True for destructive or write operations"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "spawn_worker",
-                "description": "Start a long-running command in the background. Returns immediately with a worker_id. Use for music players, downloads, timers.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command": ["type": "string", "description": "The command to run in background"],
-                        "purpose": ["type": "string", "description": "What this process is doing"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "send_keys",
-                "description": "Inject keystrokes into the active TUI app in the live terminal panel. Use after spawn_worker to navigate menus, select options, or send input. Supports \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), arrow keys.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "keys":    ["type": "string", "description": "Keystroke sequence to inject into the TUI"],
-                        "purpose": ["type": "string", "description": "What this keystroke does"]
-                    ],
-                    "required": ["keys", "purpose"]
-                ]
-            ]
-        ]
-
-        static let gemini: [String: Any] = [
-            "function_declarations": [
-                [
-                    "name": "run_command",
-                    "description": "Execute a terminal command and return its output.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to run"],
-                            "purpose": ["type": "string", "description": "Why this command is being run"],
-                            "requires_approval": ["type": "boolean"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running background command. Returns a worker_id immediately.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "Command to run in background"],
-                            "purpose": ["type": "string", "description": "What the process does"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes into the active TUI app in the live terminal. Use after spawn_worker.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "Keystroke sequence to inject"],
-                            "purpose": ["type": "string", "description": "What this keystroke does"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ]
-        ]
-    }
-
     /// Dispatch a custom L2 extension tool call. Returns (success, output).
     private func dispatchCustomTool(name: String, arguments: [String: Any]) async -> (Bool, String) {
         let (success, output) = await L2ExtensionManager.shared.execute(toolName: name, arguments: arguments)
@@ -235,7 +54,7 @@ extension AIProviderService {
             messages.append(["role": "user", "content": content])
         }
 
-        let allTools = ToolDefinitions.openAI + customTools
+        let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
 
         for _ in 0..<maxIterations {
             var body: [String: Any] = [
@@ -340,6 +159,8 @@ extension AIProviderService {
 
         let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
 
+        let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
+
         for _ in 0..<maxIterations {
             // Prompt caching. Every iteration re-sends the same system prompt and tool set
             // plus the whole conversation so far; the breakpoint on the last system block
@@ -351,7 +172,7 @@ extension AIProviderService {
                 "model": model,
                 "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
                 "messages": AnthropicPromptCache.markingLastBlock(messages),
-                "tools": ToolDefinitions.anthropic + customTools,
+                "tools": registryTools + customTools,
                 // 1024 was far too small for an agentic loop: on models that think by default
                 // it caps thinking AND the reply together, so answers were cut mid-sentence
                 // and a truncated tool_use block ended the loop with no error.
@@ -473,10 +294,13 @@ extension AIProviderService {
         }
         contents.append(["role": "user", "parts": userParts])
 
+        let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
+
         for _ in 0..<maxIterations {
             let body: [String: Any] = [
                 "contents": contents,
-                "tools": [ToolDefinitions.gemini] + customTools.map { ["function_declarations": [$0]] },
+                "tools": [["function_declarations": registryTools]]
+                    + customTools.map { ["function_declarations": [$0]] },
                 "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000]
             ]
             let decoded = try await GeminiToolProviderAdapter().send(apiKey: apiKey, body: body)
