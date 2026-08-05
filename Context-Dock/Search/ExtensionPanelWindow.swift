@@ -378,32 +378,47 @@ struct ExtensionPanelAIComposer: View {
             }
 
             HStack(spacing: 8) {
-                Menu {
-                    Section("Attach app context") {
-                        ForEach(runningApps, id: \.self) { app in
-                            Button(app) {
-                                if !attachedApps.contains(app) { attachedApps.append(app) }
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Attach file…") { pickFiles() }
-                } label: {
+                Button { pickFiles() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 22)
+                .buttonStyle(.plain)
+                .help("Attach a file")
 
                 TextField("Ask AI…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .lineLimit(1...5)
                     .onSubmit { send() }
+
+                // App context lives next to Send, not under "+": it is what the
+                // question is about, whereas "+" adds material to it.
+                Menu {
+                    if runningApps.isEmpty {
+                        Text("No running apps")
+                    }
+                    ForEach(runningApps, id: \.self) { app in
+                        Button {
+                            if !attachedApps.contains(app) { attachedApps.append(app) }
+                        } label: {
+                            Label(app, systemImage: AppAdapterManager.shared.adapters
+                                .first { $0.appName == app }?.icon ?? "app")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "macwindow.on.rectangle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(attachedApps.isEmpty ? .secondary : Color.accentColor)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 22)
+                .help("Use an app's context and actions")
 
                 if isSending {
                     ProgressView().controlSize(.small).frame(width: 22, height: 22)
@@ -488,9 +503,33 @@ struct ExtensionPanelAIComposer: View {
         let priorHistory = history
         let attachmentNote: String = {
             var parts: [String] = []
-            if !attachedApps.isEmpty {
-                parts.append("The user attached these apps for context: "
-                             + attachedApps.joined(separator: ", ") + ".")
+            for app in attachedApps {
+                var lines = ["App attached for context: \(app)."]
+                // The adapter is what the app actually knows how to do, so the model
+                // can answer in terms of real actions instead of guessing at features.
+                if let adapter = AppAdapterManager.shared.adapters.first(where: {
+                    $0.appName == app && $0.isEnabled
+                }) {
+                    let actions = adapter.actions.prefix(25).map(\.name)
+                    if !actions.isEmpty {
+                        lines.append("Actions Context Dock can run in it: "
+                                     + actions.joined(separator: ", ") + ".")
+                    }
+                }
+                let ctx = AXContextReader.shared.current
+                if ctx.appName == app {
+                    if let title = ctx.windowTitle, !title.isEmpty {
+                        lines.append("Its front window: \(title)")
+                    }
+                    if let url = ctx.currentURL, !url.isEmpty {
+                        lines.append("Its current URL: \(url)")
+                    }
+                    if let sel = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !sel.isEmpty {
+                        lines.append("Selected text there:\n\(sel.prefix(1500))")
+                    }
+                }
+                parts.append(lines.joined(separator: "\n"))
             }
             if !attachedFiles.isEmpty {
                 parts.append("The user attached these files: "
