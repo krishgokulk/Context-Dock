@@ -203,6 +203,27 @@ extension LauncherView {
         }
     }
 
+    /// Turns an action on a grounded reminder row into the same explicit approval flow used
+    /// by typed requests. The row never mutates optimistic UI or bypasses capability policy.
+    func offerReminderRowAction(_ reminder: ReminderResultAction, operation: String) {
+        let query = "\(operation) \(reminder.title)"
+        let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Reminders", bundleID: "com.apple.reminders", query: query)
+        guard let candidate = candidates.first else { return }
+        pendingActionCandidates = candidates
+        pendingActionQuery = query
+        let choice = ActionChoice(
+            id: candidate.id,
+            title: operation == "delete" ? "Delete" : "Mark Complete",
+            routeLabel: "Reminders · \(candidate.capabilityID ?? operation)",
+            appName: "Reminders")
+        l2.chatMessages.append(
+            AIChatMessage(
+                role: .assistant,
+                content: scopedActionPrompt(candidate, appName: "Reminders"),
+                actionChoices: [choice]))
+    }
+
     /// Converts the stable local Reminders capability output into native rows without
     /// another provider call. This keeps task titles grounded and saves tokens.
     private func structuredReminderResults(

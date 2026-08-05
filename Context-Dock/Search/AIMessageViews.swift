@@ -515,6 +515,7 @@ struct AIChatMessageView: View {
     /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
     var onEnableApp: ((EnableAppRequest) -> Void)? = nil
     var onPickAction: ((ActionChoice) -> Void)? = nil
+    var onReminderAction: ((ReminderResultAction, String) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
@@ -715,6 +716,20 @@ struct AIChatMessageView: View {
     @ViewBuilder
     private var reminderResultRows: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if message.reminderResults.count > 1 {
+                HStack {
+                    Text(reminderSectionTitle)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(message.reminderResults.count)")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+            }
             ForEach(message.reminderResults) { reminder in
                 HStack(spacing: 11) {
                     ZStack {
@@ -742,19 +757,39 @@ struct AIChatMessageView: View {
                         .lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    Button {
-                        if let url = NSWorkspace.shared.urlForApplication(
-                            withBundleIdentifier: "com.apple.reminders")
-                        {
-                            NSWorkspace.shared.openApplication(
-                                at: url, configuration: NSWorkspace.OpenConfiguration())
+                    if reminder.state == .active || reminder.state == .overdue {
+                        Button {
+                            onReminderAction?(reminder, "complete")
+                        } label: {
+                            Label("Complete", systemImage: "checkmark")
                         }
-                    } label: {
-                        Image(systemName: "arrow.up.forward.app")
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+
+                        Menu {
+                            Button("Open Reminders", systemImage: "arrow.up.forward.app") {
+                                openReminders()
+                            }
+                            Divider()
+                            Button("Delete Reminder", systemImage: "trash", role: .destructive) {
+                                onReminderAction?(reminder, "delete")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    } else {
+                        Button {
+                            openReminders()
+                        } label: {
+                            Image(systemName: "arrow.up.forward.app")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .help("Open Reminders")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .help("Open Reminders")
                 }
                 .padding(.horizontal, 11)
                 .padding(.vertical, 9)
@@ -765,11 +800,33 @@ struct AIChatMessageView: View {
                 }
             }
 
-            Label("Updated in Reminders", systemImage: "checkmark.icloud")
+            Label(
+                hasReminderReceipt ? "Updated in Reminders" : "Live from Reminders",
+                systemImage: hasReminderReceipt ? "checkmark.icloud" : "arrow.triangle.2.circlepath"
+            )
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 3)
         }
+    }
+
+    private var hasReminderReceipt: Bool {
+        message.reminderResults.contains {
+            $0.state == .created || $0.state == .completed || $0.state == .deleted
+        }
+    }
+
+    private var reminderSectionTitle: String {
+        if message.reminderResults.allSatisfy({ $0.state == .overdue }) { return "Overdue" }
+        return "Reminders"
+    }
+
+    private func openReminders() {
+        guard let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.reminders")
+        else { return }
+        NSWorkspace.shared.openApplication(
+            at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func reminderColor(_ state: ReminderResultAction.State) -> Color {

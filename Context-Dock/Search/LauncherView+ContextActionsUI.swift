@@ -650,6 +650,9 @@ extension LauncherView {
                                 onRunOnceProposal: { json in runOnceFromProposal(json) },
                                 onPickAction: { choice in
                                     runPickedActionChoice(choice, inDock: true)
+                                },
+                                onReminderAction: { reminder, operation in
+                                    offerReminderRowAction(reminder, operation: operation)
                                 }
                             )
                         } else {
@@ -657,6 +660,9 @@ extension LauncherView {
                                 message: message,
                                 onPickAction: { choice in
                                     runPickedActionChoice(choice, inDock: true)
+                                },
+                                onReminderAction: { reminder, operation in
+                                    offerReminderRowAction(reminder, operation: operation)
                                 }
                             )
                         }
