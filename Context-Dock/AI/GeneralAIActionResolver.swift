@@ -1871,10 +1871,14 @@ final class GeneralAIActionResolver {
 
     private func bestMenuMatch(_ items: [AXMenuItem], actionPhrase: String) -> AXMenuItem? {
         guard !items.isEmpty else { return nil }
+        let conversationalNoise: Set<String> = [
+            "a", "an", "as", "current", "currently", "in", "into", "my", "of", "on",
+            "please", "selected", "that", "the", "this", "to", "using",
+        ]
         let tokens = actionPhrase
             .split { !$0.isLetter && !$0.isNumber }
             .map { String($0).lowercased() }
-            .filter { $0.count > 1 }
+            .filter { $0.count > 1 && !conversationalNoise.contains($0) }
         guard !tokens.isEmpty else { return nil }
         // Require every meaningful token to appear somewhere in the title or path —
         // "new private window" must not settle for plain "New Window".

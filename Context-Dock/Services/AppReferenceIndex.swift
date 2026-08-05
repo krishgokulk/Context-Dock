@@ -47,6 +47,16 @@ actor AppReferenceIndex {
     private struct PageEntry: Codable {
         let text: String
         let fetchedAt: Date
+        var etag: String?
+        var lastModified: String?
+        var converter: String?
+    }
+
+    struct PageSnapshot: Sendable {
+        let text: String
+        let syncedAt: Date
+        let converter: String
+        let sourceURL: String
     }
 
     /// Where an app points is stable; how long before we look again.
@@ -75,7 +85,16 @@ actor AppReferenceIndex {
         if let entry = index[bundleId],
             Date().timeIntervalSince(entry.discoveredAt) < discoveryLifetime
         {
-            return entry.references
+            let curated = Self.curatedOfficialReferences[bundleId] ?? []
+            let merged = entry.references + curated.filter { official in
+                !entry.references.contains(where: { $0.url == official.url })
+            }
+            if merged != entry.references {
+                index[bundleId] = IndexEntry(references: merged, discoveredAt: entry.discoveredAt)
+                persistIndex()
+                persistMarkdownIndex(bundleId: bundleId)
+            }
+            return merged
         }
         let discovered = await discover(bundleId: bundleId, appName: appName)
         index[bundleId] = IndexEntry(references: discovered, discoveredAt: Date())
@@ -85,15 +104,53 @@ actor AppReferenceIndex {
 
     /// Readable text of a reference page, cached. `nil` when it could not be fetched.
     func pageText(for reference: AppReference, limit: Int = 6_000) async -> String? {
+        await pageSnapshot(for: reference, bundleId: "shared", limit: limit)?.text
+    }
+
+    /// Query-compacted Markdown plus freshness/provenance. The full Markdown remains on disk;
+    /// only the relevant bounded excerpt enters an AI prompt.
+    func pageSnapshot(
+        for reference: AppReference,
+        bundleId: String,
+        query: String? = nil,
+        limit: Int = 6_000,
+        forceRefresh: Bool = false
+    ) async -> PageSnapshot? {
         if let cached = pages[reference.url],
+            !forceRefresh,
             Date().timeIntervalSince(cached.fetchedAt) < pageLifetime
         {
-            return String(cached.text.prefix(limit))
+            return PageSnapshot(
+                text: MarkItDownService.compact(cached.text, for: query, limit: limit),
+                syncedAt: cached.fetchedAt,
+                converter: cached.converter ?? "HTML fallback",
+                sourceURL: reference.url)
         }
-        guard let text = await fetchReadableText(reference.url) else { return nil }
-        pages[reference.url] = PageEntry(text: text, fetchedAt: Date())
+        let previous = pages[reference.url]
+        guard let fetched = await fetchReadableContent(reference.url, previous: previous) else {
+            guard let previous else { return nil }
+            return PageSnapshot(
+                text: MarkItDownService.compact(previous.text, for: query, limit: limit),
+                syncedAt: previous.fetchedAt,
+                converter: previous.converter ?? "HTML fallback",
+                sourceURL: reference.url)
+        }
+        let syncedAt = Date()
+        let entry = PageEntry(
+            text: fetched.text,
+            fetchedAt: syncedAt,
+            etag: fetched.etag ?? previous?.etag,
+            lastModified: fetched.lastModified ?? previous?.lastModified,
+            converter: fetched.converter)
+        pages[reference.url] = entry
         persistPages()
-        return String(text.prefix(limit))
+        persistMarkdown(entry, reference: reference, bundleId: bundleId)
+        persistMarkdownIndex(bundleId: bundleId)
+        return PageSnapshot(
+            text: MarkItDownService.compact(entry.text, for: query, limit: limit),
+            syncedAt: syncedAt,
+            converter: fetched.converter,
+            sourceURL: reference.url)
     }
 
     /// The reference a question is about, if any — matched on the question's own words so a
@@ -137,6 +194,12 @@ actor AppReferenceIndex {
             guard normalized.hasPrefix("http"), seen.insert(normalized.lowercased()).inserted
             else { return }
             found.append(AppReference(kind: kind, title: title, url: normalized))
+        }
+
+        // Built-in Apple apps do not carry Sparkle/Homebrew metadata. These are stable,
+        // vendor-owned guide entry points verified against Apple Support.
+        for reference in Self.curatedOfficialReferences[bundleId] ?? [] {
+            add(reference.kind, reference.title, reference.url)
         }
 
         // 1. The adapter's own links — seeded starter actions already point at the vendor's
@@ -209,16 +272,55 @@ actor AppReferenceIndex {
 
     // MARK: - Fetch
 
-    private func fetchReadableText(_ urlString: String) async -> String? {
+    private struct FetchedContent {
+        let text: String
+        let etag: String?
+        let lastModified: String?
+        let converter: String
+    }
+
+    private func fetchReadableContent(
+        _ urlString: String, previous: PageEntry?
+    ) async -> FetchedContent? {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = fetchTimeout
         request.setValue("Context-Dock/1.0", forHTTPHeaderField: "User-Agent")
+        if let etag = previous?.etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        if let modified = previous?.lastModified {
+            request.setValue(modified, forHTTPHeaderField: "If-Modified-Since")
+        }
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-            (response as? HTTPURLResponse)?.statusCode ?? 500 < 400,
+            let http = response as? HTTPURLResponse
+        else { return nil }
+        if http.statusCode == 304, let previous {
+            return FetchedContent(
+                text: previous.text, etag: previous.etag,
+                lastModified: previous.lastModified,
+                converter: previous.converter ?? "HTML fallback")
+        }
+        guard http.statusCode < 400,
             let html = String(data: data, encoding: .utf8)
         else { return nil }
-        return Self.readableText(fromHTML: html)
+
+        var text: String?
+        var converter = "HTML fallback"
+        if MarkItDownService.isAvailable {
+            let temporary = FileManager.default.temporaryDirectory
+                .appendingPathComponent("context-dock-reference-\(UUID().uuidString).html")
+            if (try? data.write(to: temporary, options: .atomic)) != nil {
+                text = MarkItDownService.convert(temporary, characterBudget: 120_000)?.markdown
+                try? FileManager.default.removeItem(at: temporary)
+                if text != nil { converter = "MarkItDown" }
+            }
+        }
+        let resolved = text ?? Self.readableText(fromHTML: html)
+        guard !resolved.isEmpty else { return nil }
+        return FetchedContent(
+            text: resolved,
+            etag: http.value(forHTTPHeaderField: "ETag"),
+            lastModified: http.value(forHTTPHeaderField: "Last-Modified"),
+            converter: converter)
     }
 
     /// Strips markup to plain text. Deliberately simple: the point is to hand a model the
@@ -279,10 +381,85 @@ actor AppReferenceIndex {
         write(pages, to: directory.appendingPathComponent("pages.json"))
     }
 
+    private func persistMarkdown(
+        _ entry: PageEntry, reference: AppReference, bundleId: String
+    ) {
+        let appDirectory = markdownDirectory(bundleId: bundleId)
+        try? FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let fileName = markdownFileName(reference)
+        let formatter = ISO8601DateFormatter()
+        let header = """
+            ---
+            source_url: \(reference.url)
+            source_title: \(reference.title)
+            source_kind: \(reference.kind.rawValue)
+            last_sync: \(formatter.string(from: entry.fetchedAt))
+            freshness_hours: 24
+            converter: \(entry.converter ?? "HTML fallback")
+            etag: \(entry.etag ?? "")
+            last_modified: \(entry.lastModified ?? "")
+            ---
+
+            """
+        try? (header + entry.text).write(
+            to: appDirectory.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
+    }
+
+    private func persistMarkdownIndex(bundleId: String) {
+        guard let references = index[bundleId]?.references else { return }
+        let appDirectory = markdownDirectory(bundleId: bundleId)
+        try? FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let rows = references.map { reference in
+            "- [\(reference.title)](\(markdownFileName(reference))) — \(reference.kind.label) — \(reference.url)"
+        }
+        let markdown = (["# Official reference index", "", "App: `\(bundleId)`", ""] + rows)
+            .joined(separator: "\n") + "\n"
+        try? markdown.write(
+            to: appDirectory.appendingPathComponent("INDEX.md"), atomically: true, encoding: .utf8)
+    }
+
+    private func markdownDirectory(bundleId: String) -> URL {
+        let safe = bundleId
+            .components(separatedBy: CharacterSet.alphanumerics.union(
+                CharacterSet(charactersIn: "-._")).inverted)
+            .joined(separator: "_")
+        return directory.appendingPathComponent("apps/\(safe)", isDirectory: true)
+    }
+
+    private func markdownFileName(_ reference: AppReference) -> String {
+        let base = reference.title.lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        return (base.isEmpty ? reference.kind.rawValue : base) + ".md"
+    }
+
     private func write<T: Encodable>(_ value: T, to url: URL) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
     }
+
+    private static let curatedOfficialReferences: [String: [AppReference]] = [
+        "com.apple.Notes": [
+            AppReference(
+                kind: .documentation, title: "Notes User Guide",
+                url: "https://support.apple.com/en-gb/guide/notes/welcome/mac")
+        ],
+        "com.apple.reminders": [
+            AppReference(
+                kind: .documentation, title: "Reminders User Guide",
+                url: "https://support.apple.com/guide/reminders/welcome/mac")
+        ],
+        "com.apple.mail": [
+            AppReference(
+                kind: .documentation, title: "Mail User Guide",
+                url: "https://support.apple.com/guide/mail/welcome-mlhlb072c8be/mac")
+        ],
+        "com.apple.Safari": [
+            AppReference(
+                kind: .documentation, title: "Safari User Guide",
+                url: "https://support.apple.com/guide/safari/welcome/mac")
+        ],
+    ]
 }

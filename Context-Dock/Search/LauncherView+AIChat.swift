@@ -502,12 +502,13 @@ extension LauncherView {
         lines.append("")
         if compact {
             lines.append(
-                "Tool choice order: adapter/native action → MCP tool → API/Shortcut → live app "
-                + "menu → linked CLI. Never propose a tool that is not listed above.")
+                "Tool choice order: exact saved adapter action → exact live app menu for visible "
+                + "UI commands → MCP/API for app data → Shortcut → linked CLI. Never propose a "
+                + "tool that is not listed above.")
             return lines.joined(separator: "\n")
         }
         lines.append(
-            "Tool choice order: adapter/native action → MCP tool → API/Shortcut → verified live app menu → linked CLI fallback → answer from "
+            "Tool choice order: exact saved adapter action → verified live app menu for visible UI commands → MCP/API for app data → Shortcut → linked CLI fallback → answer from "
             + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, say what "
             + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
             + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI).")
@@ -2881,14 +2882,18 @@ extension LauncherView {
         if AppReferenceIndex.looksLikeReferenceQuestion(query),
             let best = AppReferenceIndex.bestReference(for: query, in: references)
                 ?? references.first(where: { $0.kind == .documentation }),
-            let text = await AppReferenceIndex.shared.pageText(for: best, limit: 4_000)
+            let snapshot = await AppReferenceIndex.shared.pageSnapshot(
+                for: best, bundleId: bundleId, query: query, limit: 4_000)
         {
             lines.append("")
             lines.append("### Current content of \(best.title) (\(best.url))")
-            lines.append(text)
+            lines.append(snapshot.text)
             lines.append("")
+            let age = RelativeDateTimeFormatter().localizedString(
+                for: snapshot.syncedAt, relativeTo: Date())
+            lines.append("Reference freshness: synced \(age) via \(snapshot.converter).")
             lines.append(
-                "That text was fetched just now — prefer it over recalled knowledge, and cite "
+                "Prefer this cached official text over recalled knowledge, and cite "
                 + "the link when the answer comes from it.")
         }
         return lines.joined(separator: "\n")
@@ -4554,6 +4559,20 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                // App UI work is proposed as a visible Computer Use action. Resolution is
+                // deterministic and local; the user's click is Allow Once. Only after that
+                // click may DoraX launch/restore the app and live-verify the cached menu path.
+                if !self.isGlobalQueryModeActive,
+                    await self.offerScopedNativeAppAction(
+                        query: query,
+                        bundleId: scopedBundleId,
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        requestID: l2RequestID)
+                {
+                    return
+                }
+
                 let historyBundle = scopedBundleId.isEmpty
                     ? frontmost.bundleID : scopedBundleId
                 if self.isContextDockBrowserBundle(historyBundle),
@@ -4661,7 +4680,18 @@ extension LauncherView {
                     : ""
                 var memoryToolChips: [String] = []
                 if sourceDecision.requiresFreshRead, !workspaceBlock.isEmpty {
-                    memoryToolChips.append("Live workspace · just now")
+                    let lowerQuery = query.lowercased()
+                    if lowerQuery.contains("commit") {
+                        memoryToolChips.append("Git CLI · log -1 · just now")
+                    }
+                    if ["branch", "uncommitted", "working tree", "git status", "changed"]
+                        .contains(where: lowerQuery.contains)
+                    {
+                        memoryToolChips.append("Git CLI · status · just now")
+                    }
+                    if memoryToolChips.isEmpty {
+                        memoryToolChips.append("Live workspace reader · just now")
+                    }
                 }
                 if sourceDecision.requiresFreshRead, !appleData.isEmpty {
                     memoryToolChips.append("Live app data · just now")
@@ -4669,7 +4699,9 @@ extension LauncherView {
                 if sourceDecision.primary == .officialReference,
                     referenceBlock.contains("Current content of")
                 {
-                    memoryToolChips.append("Official app reference · fetched now")
+                    let converter = referenceBlock.contains("via MarkItDown")
+                        ? "MarkItDown" : "HTML fallback"
+                    memoryToolChips.append("Official app reference · \(converter) · fresh")
                 }
                 if sourceDecision.allowsMemoryEvidence {
                     memoryToolChips += MarkdownMemoryStore.shared.relevantSourceChips(
@@ -6807,19 +6839,6 @@ extension LauncherView {
             }.map(String.init))
             return !queryTokens.isDisjoint(with: toolTokens)
         }
-        // Tools always win: MCP, CLI, and adapter actions take priority. Menus are
-        // GUIDANCE ONLY — never executed from chat. So if any tool matches, bail and
-        // let the capability planner handle it; only fall to menu guidance when no
-        // tool matches at all.
-        // Built-in Apple MCP caps (Messages/Notes/Calendar/…) also count as tools and
-        // must win — the capability planner runs after this, so defer to it.
-        let mcpFamilies = ["notes.", "calendar.", "contacts.", "reminders.", "messages.", "github."]
-        let hasBuiltInMCP = CapabilityRegistry.shared
-            .capabilities(for: bundleId)
-            .contains { cap in mcpFamilies.contains(where: cap.id.hasPrefix) }
-        guard matchingActions.isEmpty, matchingCLI.isEmpty, !matchingMCP, !hasBuiltInMCP
-        else { return nil }
-
         if let requestID = l2.activeRequestID {
             setL2LoadingStatus("Reading \(appName) live menus…", requestID: requestID)
             await Task.yield()
@@ -6832,14 +6851,16 @@ extension LauncherView {
             AppMenuCapabilityCache.shared.store(items: liveItems, for: app)
         }
 
-        // Menus are guidance only — return the path (and shortcut) as instructions,
-        // never click them.
         guard let match = bestMenuMatch(
             intent: query,
             bundleId: bundleId,
             appName: appName,
             processIdentifier: app.processIdentifier
         ) else {
+            // A configured integration remains preferable to weak menu suggestions. A CLI
+            // never suppresses an exact native menu, but it may handle requests for which the
+            // app exposes no matching menu at all.
+            if !matchingActions.isEmpty || matchingMCP || !matchingCLI.isEmpty { return nil }
             let closest = menuSuggestions(
                 intent: query,
                 bundleId: bundleId,
@@ -6857,7 +6878,20 @@ extension LauncherView {
         if !match.isEnabled {
             return "You can do this in \(appName) via **\(path)**\(shortcutHint) — it’s currently greyed out, so it may need a selection or different state first."
         }
-        return "You can do this in \(appName): **\(path)**\(shortcutHint)."
+
+        // A saved adapter action is a user-authored workflow and wins over a menu with a
+        // coincidental text match. Otherwise the live, enabled native command is the most
+        // faithful implementation of an app-UI request. In particular, Notes' built-in MCP
+        // exports Markdown data, while File → Export To → PDF is the correct visible PDF flow.
+        if !matchingActions.isEmpty { return nil }
+        let result = await AppAdapterManager.shared.runMenuPath(
+            match.path, targetBundleId: bundleId, appName: appName)
+        if result.0 {
+            return "Done — used **\(path)**\(shortcutHint)."
+        }
+        return result.1.isEmpty
+            ? "I found **\(path)**, but \(appName) did not confirm the command. Nothing was reported as completed."
+            : result.1
     }
 
     func sendToAIProviderWithContext(query: String, messageHistory: [AIChatMessage])
@@ -6927,7 +6961,7 @@ extension LauncherView {
                 This chat is temporarily scoped to the frontmost app \(scoped.appName) (\(scoped.bundleId)).
                 Its live menu may be inspected and executed even when no App Adapter exists, because the user explicitly opened this frontmost-app scope.
                 App Adapter integrations (actions, readers, MCP, API, CLI, skills, and saved capabilities) remain available only when configured for this app.
-                Prefer, in order: adapter action, MCP/API, linked CLI, macOS Shortcut, then a verified app menu.
+                Prefer, in order: exact saved adapter action; verified app menu for visible UI commands; MCP/API for app data; macOS Shortcut; linked CLI fallback.
                 When no linked action/tool matches an app UI command, use the scoped app's known menu catalog.
                 Prefer the live-verified menu item's keyboard shortcut; if it has none or sending it fails, click the live-verified menu item.
                 Never claim an action ran from prose alone. Report only the executor's returned result.

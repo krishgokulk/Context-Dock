@@ -116,8 +116,12 @@ actor AppWorkspaceService {
     // MARK: - Snapshot
 
     /// Live state block for the scope's prompt. Cached per app+project.
-    func contextBlock(for identity: AppWorkspaceIdentity, linkedCLIs: Set<String>) async -> String {
-        if let cached = cache[identity.cacheKey],
+    func contextBlock(
+        for identity: AppWorkspaceIdentity,
+        linkedCLIs: Set<String>,
+        forceRefresh: Bool = false
+    ) async -> String {
+        if !forceRefresh, let cached = cache[identity.cacheKey],
             Date().timeIntervalSince(cached.readAt) < freshness
         {
             return cached.block

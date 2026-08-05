@@ -889,6 +889,8 @@ struct AIChatMessageView: View {
 
                 if message.enableAppRequest != nil {
                     enableAppButton
+                }
+                if !message.actionChoices.isEmpty {
                     actionChoiceButtons
                 }
 

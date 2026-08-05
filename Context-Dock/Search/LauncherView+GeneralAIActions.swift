@@ -114,6 +114,13 @@ extension LauncherView {
         let query = pendingActionQuery
         pendingActionCandidates = []
         aiMode.pendingActionChoices = []
+        if inDock {
+            for index in l2.chatMessages.indices {
+                l2.chatMessages[index].actionChoices.removeAll { $0.id == choice.id }
+            }
+            runPickedDockNativeAction(candidate, query: query)
+            return
+        }
         Task {
             let result = await runGeneralAIAction(
                 candidate, alternatives: alternatives, query: query)
@@ -128,6 +135,92 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    /// A scoped chat action button is explicit Allow Once. Keep its progress and receipt in
+    /// Context Dock rather than borrowing General Chat state, while reusing the same executor.
+    func runPickedDockNativeAction(_ candidate: DoraXActionCandidate, query: String) {
+        let appName = candidate.appName ?? "app"
+        l2.isLoading = true
+        l2.routerTrace = []
+        dockTraceStep("Approved Computer Use for \(appName)")
+        l2.currentTask = Task {
+            await MainActor.run { dockTraceStep("Launching or restoring \(appName)…") }
+            if let bundleID = candidate.bundleID,
+                let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundleID)
+            {
+                await MenuExecutionCoordinator.restoreWindowIfAllMinimized(running)
+            }
+            await MainActor.run {
+                let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+                dockTraceStep("Live-verifying \(path)…")
+            }
+            let result = await GeneralAIActionExecutor.shared.execute(candidate)
+            await MainActor.run {
+                dockTraceStep(result.success ? "Ran \(candidate.title)" : "\(candidate.title) failed")
+                let route = candidate.menuPath?.joined(separator: " → ")
+                    ?? candidate.routeLabel
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: result.message,
+                        isError: !result.success,
+                        mcpToolsRan: ["Computer Use · \(route)"],
+                        trace: l2.routerTrace))
+                l2.isLoading = false
+                l2.loadingStatus = nil
+                l2.currentTask = nil
+            }
+        }
+    }
+
+    /// Resolve the scoped request against the complete App Adapter inventory. Menu and
+    /// keyboard routes are offered as a Computer Use button; data routes continue into the
+    /// MCP/API/provider pipeline. The trace remains attached either way.
+    func offerScopedNativeAppAction(
+        query: String, bundleId: String, appName: String, requestID: UUID
+    ) async -> Bool {
+        guard !bundleId.isEmpty, GeneralAIActionResolver.shared.looksExecutable(query) else {
+            return false
+        }
+        await MainActor.run {
+            l2.routerTrace = []
+            dockTraceStep("Scanning \(appName) App Adapter…")
+        }
+        let resolution = await GeneralAIActionResolver.shared.resolve(
+            query: query,
+            chatAllowedBundleIds: [bundleId],
+            scopedApp: (appName, bundleId),
+            onStep: { [self] step in
+                MainActor.assumeIsolated { dockTraceStep(step) }
+            })
+        guard case .candidates(let candidates) = resolution,
+            let candidate = candidates.first(where: {
+                $0.route == .verifiedMenu || $0.route == .keyboardShortcut
+            })
+        else {
+            await MainActor.run { dockTraceStep("No exact native menu action selected") }
+            return false
+        }
+        await MainActor.run {
+            let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+            dockTraceStep("Ready: \(path)")
+            pendingActionCandidates = candidates
+            pendingActionQuery = query
+            let choice = ActionChoice(
+                id: candidate.id,
+                title: "Use \(appName)",
+                routeLabel: "Computer Use · \(path)",
+                appName: appName)
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "I found a native \(appName) command for this task. Run it?",
+                    trace: l2.routerTrace,
+                    actionChoices: [choice]))
+            finishL2AIRequest(requestID)
+        }
+        return true
     }
 
     /// Executable-action interception for General AI Chat. Returns the final chat
