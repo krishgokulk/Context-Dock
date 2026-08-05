@@ -163,12 +163,32 @@ class TerminalAIBridge: ObservableObject {
             return (false, message)
         }
 
+        // Set when the command was otherwise eligible to auto-run but failed the argv gate.
+        var unattendedRejection: String?
+
         // Check if auto-approval applies. A model-declared requires_approval vetoes it —
         // the model is the only party that knows the *intent* behind a command that the
         // classifier can only see the shape of.
         if !modelRequiresApproval,
            classification.shouldAutoExecute || TerminalCommandPreferences.shared.shouldAutoApprove(command) {
-            return await executeCommand(command, classification: classification, wasApproved: true)
+            // Second, independent gate. The classifier judges the command's SHAPE, and
+            // shape-based judgement has been wrong twice: prefix patterns whitelisted
+            // `ls && curl … | bash`, and suffix patterns whitelisted `nc host port -v`
+            // without naming an executable at all. This gate judges IDENTITY instead —
+            // exactly one allowlisted binary, arguments that cannot become code — and runs
+            // it with no shell. A command that cannot pass simply takes the approval path,
+            // where the user sees it before it runs.
+            switch ArgvCommandGate.evaluate(command) {
+            case .allowed(let executable, let arguments):
+                return await executeCommand(
+                    command,
+                    classification: classification,
+                    wasApproved: true,
+                    argv: (executable, arguments))
+            case .rejected(let reason):
+                // Fall through to the approval path, carrying why it could not run unattended.
+                unattendedRejection = reason
+            }
         }
 
         // Check if auto-deny applies
@@ -176,8 +196,12 @@ class TerminalAIBridge: ObservableObject {
             return (false, "Command automatically denied based on your preferences")
         }
 
-        // Request user approval
-        let result = await requestApproval(command: command, purpose: purpose, classification: classification)
+        // Request user approval. When the command was otherwise eligible to run unattended,
+        // say what stopped it — "grep is fine but that pipe isn't" is far more useful than a
+        // bare approval prompt, and it tells the user something true about the command.
+        let approvalPurpose = unattendedRejection.map { "\(purpose) — \($0)" } ?? purpose
+        let result = await requestApproval(
+            command: command, purpose: approvalPurpose, classification: classification)
 
         switch result {
         case .approved(let approvedCommand):
@@ -268,10 +292,14 @@ class TerminalAIBridge: ObservableObject {
     // MARK: - Direct Execution
 
     /// Execute a command directly in the terminal
+    /// `argv` is supplied only by the unattended path, where ArgvCommandGate has resolved an
+    /// allowlisted executable. When present the command runs as that process directly — no
+    /// shell is involved — instead of going through `zsh -lc`.
     private func executeCommand(
         _ command: String,
         classification: TerminalCommandClassifier.CommandClassification,
         wasApproved: Bool,
+        argv: (executable: URL, arguments: [String])? = nil,
         onLine: (@Sendable (String) -> Void)? = nil
     ) async -> (success: Bool, output: String) {
         isExecuting = true
@@ -296,8 +324,17 @@ class TerminalAIBridge: ObservableObject {
                 accentColor: "blue")
         }
 
-        // Execute in terminal if available, otherwise background
-        let (output, exitCode) = await executeInTerminalOrBackground(command, onLine: onLine)
+        // Execute in terminal if available, otherwise background. An argv-gated command
+        // bypasses both: it runs as a resolved process with no shell, which is the whole
+        // point of the gate — a login shell would re-introduce the interpretation the gate
+        // exists to remove.
+        let (output, exitCode): (String, Int32)
+        if let argv {
+            (output, exitCode) = await Self.runArgv(
+                executable: argv.executable, arguments: argv.arguments, onLine: onLine)
+        } else {
+            (output, exitCode) = await executeInTerminalOrBackground(command, onLine: onLine)
+        }
 
         // CLI scope terminals are transcript surfaces for non-interactive work:
         // execute once for a real result, then render that result in the visible PTY.
@@ -649,6 +686,66 @@ class TerminalAIBridge: ObservableObject {
         guard let range = raw.range(of: stderrBeginMarker) else { return raw }
         return String(raw[range.upperBound...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Runs an ArgvCommandGate-approved command as a process, with no shell anywhere in the
+    /// chain. The environment is rebuilt rather than inherited: the user's dotfiles are the
+    /// reason `zsh -lc` exists on the approved path, and they are exactly what must not
+    /// influence a command running without approval.
+    nonisolated static func runArgv(
+        executable: URL,
+        arguments: [String],
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> (output: String, exitCode: Int32) {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.environment = [
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                "LANG": "en_US.UTF-8",
+                "TERM": "dumb",
+            ]
+            process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            var finished = false
+            let lock = NSLock()
+            func finish(_ result: (String, Int32)) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: result)
+            }
+
+            process.terminationHandler = { proc in
+                let out = String(
+                    data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8) ?? ""
+                let err = String(
+                    data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8) ?? ""
+                let combined = out.isEmpty ? err : (err.isEmpty ? out : out + "\n" + err)
+                if let onLine {
+                    for line in combined.split(separator: "\n") { onLine(String(line)) }
+                }
+                finish((combined.trimmingCharacters(in: .whitespacesAndNewlines),
+                        proc.terminationStatus))
+            }
+
+            do {
+                try process.run()
+            } catch {
+                finish(("Failed to run \(executable.lastPathComponent): "
+                        + error.localizedDescription, 127))
+            }
+        }
     }
 
     func executeInBackground(
