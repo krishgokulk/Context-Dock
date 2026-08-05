@@ -189,12 +189,25 @@ final class GeneralChatCapabilityHub {
             ("messages.", "Messages", "messagesMCPEnabled"),
             ("github.", "GitHub (gh CLI)", "githubMCPEnabled"),
         ]
-        let prefixes = families.map(\.prefix)
+        // Advertise every registered capability, not a hand-maintained subset.
+        //
+        // This used to filter to the six `families` prefixes above, which meant a capability
+        // could be registered, executable through this very hub, and still invisible to the
+        // model. git.status / git.log / git.diff / git.branches were the clearest case:
+        // fully wired, dispatchable by id, and never mentioned — so "what is the recent
+        // commit I did?" was answered with "no information available" by a model that had
+        // the tool all along and no way to know it.
+        //
+        // `families` is kept, but only for the DISABLED-integrations notice below, which is
+        // genuinely about user-facing toggles. What the model is allowed to know about is
+        // now derived from the registry, so registering a capability is all it takes to make
+        // it callable.
+        //
+        // The app-bundle check stays: a capability belonging to an app with no installed
+        // adapter cannot run, and advertising it would invite a call that must fail.
         let caps = CapabilityRegistry.shared.all.filter { cap in
-            prefixes.contains(where: cap.id.hasPrefix)
-                && cap.appBundleID.map {
-                    AppAdapterManager.shared.adapter(for: $0) != nil
-                } == true
+            guard let bundleID = cap.appBundleID else { return true }
+            return AppAdapterManager.shared.adapter(for: bundleID) != nil
         }
         let disabledNames = families
             .filter { family in !caps.contains { $0.id.hasPrefix(family.prefix) } }
