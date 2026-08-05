@@ -166,6 +166,36 @@ final class AgentToolRegistry {
         }
     }
 
+    // MARK: - Search aliases
+
+    /// Extra words that should match a capability whose id and title do not contain them.
+    ///
+    /// This is search vocabulary, not routing: it only widens what `find_capability` will
+    /// surface, and the model still decides whether any result fits. Without it, "paste what
+    /// I copied" matched nothing, because no word in the phrase appears in "clipboard.read /
+    /// Read Clipboard" — the model would have had to guess the word DoraX happens to use.
+    private static func searchAliases(for capabilityID: String) -> String {
+        switch capabilityID.split(separator: ".").first.map(String.init) ?? "" {
+        case "clipboard": return "copied copy paste pasteboard cut"
+        case "notifications": return "alerts unread banners"
+        case "skills": return "workflows playbooks instructions prompts"
+        case "system": return "apps applications open running processes frontmost"
+        case "window": return "windows resize move fullscreen split tile screen layout"
+        case "git": return "commit commits branch repository repo diff staged version control"
+        case "notes": return "note memo jot"
+        case "calendar": return "event events meeting schedule agenda"
+        case "reminders": return "todo task tasks"
+        case "contacts": return "person people address phone email"
+        case "finder": return "file files folder folders trash disk"
+        case "music": return "song songs track play playback"
+        case "messages": return "imessage text texts chat"
+        case "mail": return "email emails inbox"
+        case "photos": return "image images picture pictures"
+        case "xcode": return "build compile project scheme"
+        default: return ""
+        }
+    }
+
     // MARK: - Built-in tools
 
     private func registerBuiltInsIfNeeded() {
@@ -279,16 +309,20 @@ final class AgentToolRegistry {
             required: ["query"]
         ) { arguments, _ in
             let query = (arguments["query"] as? String ?? "").lowercased()
+            // Three characters minimum. Two-letter words are almost never the subject and
+            // they substring-match inside real words — "in" hits "Window" and
+            // "instructions", so "what repo am i in" ranked window.arrange above git.log.
             let terms = query
                 .split { !$0.isLetter && !$0.isNumber }
                 .map(String.init)
-                .filter { $0.count > 1 }
+                .filter { $0.count > 2 }
             let matches = await MainActor.run { () -> [AICapability] in
                 let all = CapabilityRegistry.shared.all
                 guard !terms.isEmpty else { return [] }
                 return all
                     .map { capability -> (score: Int, capability: AICapability) in
-                        let haystack = (capability.id + " " + capability.title).lowercased()
+                        let haystack = (capability.id + " " + capability.title
+                            + " " + Self.searchAliases(for: capability.id)).lowercased()
                         let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
                         return (score, capability)
                     }

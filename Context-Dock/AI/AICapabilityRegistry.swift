@@ -157,6 +157,7 @@ final class CapabilityRegistry {
     }
 
     private func registerBuiltIns() {
+        DoraXSurfaceCapabilities.register(in: self)
         GitCapabilities.register(in: self)
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
