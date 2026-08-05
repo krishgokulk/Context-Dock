@@ -2279,8 +2279,22 @@ extension LauncherView {
             )
         }
 
-        let completionTitle = selectedResult?.title
-            ?? topContextMatchDockTitleForInputPreview()
+        // The ghost the user is looking at wins. It is computed by
+        // topContextMatchDockTitleForInputPreview from preparedResults, while selectedResult
+        // above comes from visibleGlobalGroupedListNavigationState — two snapshots that
+        // disagree about which row is first. Completing from the other one is what filled
+        // "iPhone Mirroring" while the input plainly ghosted "screenshot".
+        //
+        // Only accept it as the completion when it actually continues what was typed;
+        // otherwise fall back to the selected row, since a ghost that does not extend the
+        // query is not what Tab is completing.
+        let displayedGhost = topContextMatchDockTitleForInputPreview()
+        let ghostContinuesQuery =
+            displayedGhost?.lowercased().hasPrefix(normalizedQuery) == true
+        let completionTitle =
+            (ghostContinuesQuery ? displayedGhost : nil)
+            ?? selectedResult?.title
+            ?? displayedGhost
             ?? focusedOrTopGlobalAppResult()?.title
 
         guard !typed.isEmpty,
