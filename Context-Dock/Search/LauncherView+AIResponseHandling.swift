@@ -280,6 +280,9 @@ extension LauncherView {
               state at run time (for example `git log -1`) instead of hardcoding today's content.
               A fixed destination such as a person/email may stay fixed when that is the workflow's
               purpose; changing content, files, branch, selection, and URL must stay dynamic.
+            - For reusable email actions, extract an email address from $CD_QUERY when one is
+              present and use the address from the original request only as the fallback. This
+              lets one saved action draft to different people without generating another script.
             - For tasks needing user input, use `osascript -e 'display dialog...'` or `choose from list`.
             - The script must be 100% complete and run as-is — no stubs, no comments asking to fill in.
             - If you cannot write a fully working script, omit the proposal block entirely.

@@ -373,7 +373,7 @@ extension LauncherView {
                 return nil
             }
 
-            // Frontmost-app chat open + empty field: backspace clears the chat and
+            // Frontmost-app chat open + empty field: backspace saves and hides the chat, then
             // returns to that app's menu search. This MUST run before the inline-scope
             // pops below, which would otherwise dump the user into Global Context.
             if event.keyCode == 51,
@@ -381,11 +381,12 @@ extension LauncherView {
                 self.shouldShowContextDockChatSheet || self.l2.showChatPopover || self.l2.chatArmed
             {
                 withAnimation(.dockStandard) {
-                    self.l2.chatMessages = []
                     if let key = self.l2.activeDockSessionKey {
-                        AppPanelChatStore.shared.clear(for: key)
+                        AppPanelChatStore.shared.save(self.l2.chatMessages, for: key)
                     }
                     self.l2.isLoading = false
+                    self.l2.loadingStatus = nil
+                    self.l2.activeRequestID = nil
                     self.l2.currentTask?.cancel()
                     self.l2.currentTask = nil
                     self.exitContextDockChatBackToContext()

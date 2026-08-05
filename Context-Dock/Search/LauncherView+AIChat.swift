@@ -954,13 +954,13 @@ extension LauncherView {
         }
     }
 
-    /// Shared exit used by the header button and empty-field Backspace. Clear the current
-    /// app chat, cancel any in-flight work, then return the unified shell to Context Dock.
+    /// Shared non-destructive exit used by the header button and empty-field Backspace.
+    /// Persist the app chat, cancel in-flight work, then hide the sheet. Conversation deletion
+    /// belongs exclusively to the visible Clear/trash control.
     func clearAndExitContextDockChatBackToContext() {
         withAnimation(.dockStandard) {
-            l2.chatMessages = []
             if let key = l2.activeDockSessionKey {
-                AppPanelChatStore.shared.clear(for: key)
+                AppPanelChatStore.shared.save(l2.chatMessages, for: key)
             }
             l2.isLoading = false
             l2.loadingStatus = nil
