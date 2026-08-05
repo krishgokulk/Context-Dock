@@ -68,7 +68,14 @@ enum GitCapabilities {
     private static func workingDirectory(from request: AICapabilityExecutionRequest) -> String {
         if let path = request.input["path"], !path.isEmpty { return path }
         if case .filesSelected(let urls) = request.context, let first = urls.first {
-            return first.hasDirectoryPath ? first.path : first.deletingLastPathComponent().path
+            let base = first.hasDirectoryPath ? first.path : first.deletingLastPathComponent().path
+            return ProjectContextResolver.repositoryRoot(containing: base) ?? base
+        }
+        // The frontmost app's project comes before the Finder folder: asking about commits
+        // with an editor in front means that editor's repository, not whatever window
+        // Finder happens to have open behind it.
+        if let projectRoot = ProjectContextResolver.shared.frontmostProjectRoot() {
+            return projectRoot
         }
         let finderFolder = AppleAppsAPI.shared.getCurrentFolder()
         return finderFolder.isEmpty ? FileManager.default.homeDirectoryForCurrentUser.path : finderFolder

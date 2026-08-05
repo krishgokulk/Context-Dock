@@ -220,14 +220,26 @@ class AIProviderService: ObservableObject {
 
         // Capture current Finder folder only when Finder is the active context.
         // A pinned app scope in the dock should not inherit frontmost Finder folder context.
-        let currentFolder: String? = {
-            if case .appFocused(_, let bundleID) = context,
-               bundleID != "com.apple.finder" {
+        let currentFolder: String? = await { () async -> String? in
+            // A scoped app dock panel resolves the folder for THAT app, so a pinned scope
+            // still gets its own project instead of inheriting whatever is frontmost.
+            if case .appFocused(_, let bundleID) = context {
+                if bundleID == "com.apple.finder" {
+                    return AppleAppsAPI.shared.getCurrentFolder()
+                }
+                if let scoped = NSWorkspace.shared.runningApplications.first(
+                    where: { $0.bundleIdentifier == bundleID }) {
+                    return await ProjectContextResolver.shared.projectRoot(for: scoped)
+                }
                 return nil
             }
-            if let frontmost = NSWorkspace.shared.frontmostApplication,
-               frontmost.bundleIdentifier == "com.apple.finder" {
-                return AppleAppsAPI.shared.getCurrentFolder()
+            if let frontmost = NSWorkspace.shared.frontmostApplication {
+                if frontmost.bundleIdentifier == "com.apple.finder" {
+                    return AppleAppsAPI.shared.getCurrentFolder()
+                }
+                // An editor in front means its workspace is the working directory. Without
+                // this, folder-relative work silently ran in the Finder folder or ~.
+                return await ProjectContextResolver.shared.projectRoot(for: frontmost)
             }
             return nil
         }()
