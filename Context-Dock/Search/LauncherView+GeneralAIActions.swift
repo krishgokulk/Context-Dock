@@ -141,31 +141,49 @@ extension LauncherView {
     /// Context Dock rather than borrowing General Chat state, while reusing the same executor.
     func runPickedDockNativeAction(_ candidate: DoraXActionCandidate, query: String) {
         let appName = candidate.appName ?? "app"
+        let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
         l2.isLoading = true
         l2.routerTrace = []
-        dockTraceStep("Approved Computer Use for \(appName)")
+        dockTraceStep(isComputerUse
+            ? "Approved Computer Use for \(appName)"
+            : "Approved \(candidate.routeLabel): \(candidate.title)")
         l2.currentTask = Task {
-            await MainActor.run { dockTraceStep("Launching or restoring \(appName)…") }
-            if let bundleID = candidate.bundleID,
-                let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundleID)
-            {
-                await MenuExecutionCoordinator.restoreWindowIfAllMinimized(running)
-            }
-            await MainActor.run {
-                let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
-                dockTraceStep("Live-verifying \(path)…")
+            if isComputerUse {
+                await MainActor.run { dockTraceStep("Launching or restoring \(appName)…") }
+                if let bundleID = candidate.bundleID,
+                    let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundleID)
+                {
+                    await MenuExecutionCoordinator.restoreWindowIfAllMinimized(running)
+                }
+                await MainActor.run {
+                    let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+                    dockTraceStep("Live-verifying \(path)…")
+                }
+            } else {
+                await MainActor.run { dockTraceStep("Running \(candidate.title)…") }
             }
             let result = await GeneralAIActionExecutor.shared.execute(candidate)
             await MainActor.run {
                 dockTraceStep(result.success ? "Ran \(candidate.title)" : "\(candidate.title) failed")
                 let route = candidate.menuPath?.joined(separator: " → ")
                     ?? candidate.routeLabel
+                let outputFiles: [RecentFileAction] = {
+                    guard result.success,
+                        let rawPath = candidate.inputValues["savePath"], !rawPath.isEmpty
+                    else { return [] }
+                    let expanded = (rawPath as NSString).expandingTildeInPath
+                    guard FileManager.default.fileExists(atPath: expanded) else { return [] }
+                    return [RecentFileAction(url: URL(fileURLWithPath: expanded))]
+                }()
                 l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
                         content: result.message,
                         isError: !result.success,
-                        mcpToolsRan: ["Computer Use · \(route)"],
+                        recentFiles: outputFiles,
+                        mcpToolsRan: [isComputerUse
+                            ? "Computer Use · \(route)"
+                            : "\(candidate.source == .mcp ? "MCP" : candidate.routeLabel) · \(candidate.capabilityID ?? candidate.title)"],
                         trace: l2.routerTrace))
                 l2.isLoading = false
                 l2.loadingStatus = nil
@@ -197,25 +215,29 @@ extension LauncherView {
         guard case .candidates(let candidates) = resolution,
             let candidate = candidates.first(where: {
                 $0.route == .verifiedMenu || $0.route == .keyboardShortcut
+                    || ($0.route == .adapter && $0.capabilityID != nil)
             })
         else {
             await MainActor.run { dockTraceStep("No exact native menu action selected") }
             return false
         }
         await MainActor.run {
+            let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
             let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
-            dockTraceStep("Ready: \(path)")
+            dockTraceStep("Ready: \(candidate.routeLabel) · \(path)")
             pendingActionCandidates = candidates
             pendingActionQuery = query
             let choice = ActionChoice(
                 id: candidate.id,
-                title: "Use \(appName)",
-                routeLabel: "Computer Use · \(path)",
+                title: isComputerUse ? "Use \(appName)" : "Run \(candidate.title)",
+                routeLabel: isComputerUse ? "Computer Use · \(path)" : "\(candidate.routeLabel) · \(candidate.capabilityID ?? path)",
                 appName: appName)
             l2.chatMessages.append(
                 AIChatMessage(
                     role: .assistant,
-                    content: "I found a native \(appName) command for this task. Run it?",
+                    content: isComputerUse
+                        ? "I found a native \(appName) command for this task. Run it?"
+                        : "I found an enabled \(appName) tool for this task. Run it?",
                     trace: l2.routerTrace,
                     actionChoices: [choice]))
             finishL2AIRequest(requestID)

@@ -247,9 +247,22 @@ final class GeneralAIActionExecutor {
             guard CapabilityRegistry.shared.capability(id: capabilityID) != nil else {
                 return .init(success: false, message: "Capability \(capabilityID) is not registered.")
             }
+            var capabilityInput = candidate.inputValues
+            if capabilityID.hasPrefix("notes."),
+                candidate.requiredInputs.contains("noteID"),
+                capabilityInput["noteID", default: ""].isEmpty
+            {
+                do {
+                    capabilityInput["noteID"] = try await AppleNotesMCPServer.shared.selectedNoteID()
+                } catch {
+                    return .init(
+                        success: false,
+                        message: "I couldn't identify the current note. Select a note in Notes and try again. \(error.localizedDescription)")
+                }
+            }
             let plan = AIActionPlan(
                 capability: capabilityID,
-                input: candidate.inputValues,
+                input: capabilityInput,
                 explanation: "DoraX Action Chat: \(candidate.title)")
             do {
                 let result = try await AIExecutionEngine.shared.execute(

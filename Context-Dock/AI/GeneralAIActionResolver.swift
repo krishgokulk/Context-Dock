@@ -952,6 +952,15 @@ final class GeneralAIActionResolver {
                 confidence: strong ? 0.88 : 0.62))
         }
 
+        // Built-in/imported tools shown under App Adapters → Tools. Previously Settings
+        // exposed these while scoped chat never searched them.
+        let registered = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: appName, bundleID: bundleID, query: actionPhrase)
+        step(registered.isEmpty
+            ? "Registered tools: no capability matched"
+            : "Registered tools: \(registered.count) matched, selected \(registered[0].capabilityID ?? registered[0].title)")
+        candidates.append(contentsOf: registered)
+
         // 2. Cached menu commands — product fallback when no app adapter/MCP/API route fits.
         // Execution still launches the app and live-verifies the menu item before clicking.
         let menuMatches = AppMenuCapabilityCache.shared.menuItems(

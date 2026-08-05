@@ -174,6 +174,16 @@ final class CapabilityGapService {
             .contains { $0.score >= AppAdapterManager.adapterActionStrongMatchScore }
         if strongAdapterMatch { return true }
 
+        // Built-in/imported tools are first-class App Adapter capabilities too. The gap
+        // service used to inspect only custom actions and menus, so "export … Downloads"
+        // matched yt-dlp's broad "download" keyword before scoped chat could select
+        // notes.export. Never advertise a CLI when an enabled registered capability fits.
+        if !AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: appName, bundleID: bundleID, query: query
+        ).isEmpty {
+            return true
+        }
+
         let menus = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID, appName: appName, query: query, maxResults: 8)
         return menus.contains { item in
