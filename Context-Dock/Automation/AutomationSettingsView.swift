@@ -3094,6 +3094,18 @@ struct GlobalCLIToolPickerSheet: View {
 struct GlobalCLIScopeDetailView: View {
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     let package: TerminalPackage
+
+    /// Writes through the manager so the cached interactive-command set stays in step with
+    /// what is persisted; reads the live package so the switch reflects saved state.
+    private var interactiveBinding: Binding<Bool> {
+        Binding(
+            get: {
+                TerminalPackageManager.shared.packages
+                    .first(where: { $0.id == package.id })?.isInteractive ?? package.isInteractive
+            },
+            set: { TerminalPackageManager.shared.setInteractive($0, for: package.id) }
+        )
+    }
     let onRemove: () -> Void
     @State private var scanning = false
 
@@ -3137,6 +3149,26 @@ struct GlobalCLIScopeDetailView: View {
                     if !package.description.isEmpty {
                         AutomationDetailRow(label: "Description", value: package.description)
                     }
+                }
+
+                AutomationDetailSection(title: "HOW IT RUNS") {
+                    Toggle(isOn: interactiveBinding) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Needs a terminal")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(
+                                "Turn on for full-screen tools — a browser, editor, pager or "
+                                + "dashboard. They open in the terminal panel instead of being "
+                                + "run with their output captured, which such a tool cannot "
+                                + "survive: with no tty it either hangs or prints escape codes."
+                            )
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
                 }
 
                 AutomationDetailSection(title: "HELP SCAN") {

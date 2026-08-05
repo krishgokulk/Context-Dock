@@ -50,10 +50,35 @@ class TerminalPackageManager: ObservableObject {
         return package.contextAppBundleIds.contains { scopeIds.contains($0) }
     }
 
+    /// Commands the user marked as needing a real terminal, lowercased.
+    ///
+    /// Cached rather than scanned: isTUICommand runs on every command execution, and
+    /// `packages` holds ~950 discovered binaries. Rebuilt whenever packages change, which is
+    /// rare — a pin, a scan, a new binary appearing.
+    @Published private(set) var interactiveCommands: Set<String> = []
+
+    func refreshInteractiveCommands() {
+        interactiveCommands = Set(
+            packages
+                .filter(\.isInteractive)
+                .map { $0.command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    /// Marks a tool as needing a terminal, and persists it.
+    func setInteractive(_ isInteractive: Bool, for packageID: UUID) {
+        guard let index = packages.firstIndex(where: { $0.id == packageID }) else { return }
+        packages[index].isInteractive = isInteractive
+        savePackages()
+        refreshInteractiveCommands()
+    }
+
     private let packagesKey = "L2TerminalPackages"
 
     init() {
         loadPackages()
+        refreshInteractiveCommands()
         registerBuiltInMarkItDownIfAvailable()
         // Auto-add any binary that BinaryWatcherService discovers (installed via brew, curl, etc.)
         NotificationCenter.default.addObserver(
@@ -949,6 +974,11 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
 
     // --- Learned examples (built up over time) ---
     var contextualExamples: [ContextualExample]
+    /// Needs a real terminal. Full-screen tools (a pager, an editor, a TUI browser) cannot
+    /// run with their output piped: with no tty they either hang waiting for one or emit
+    /// escape sequences into what should be an answer. The built-in allowlist cannot know
+    /// every such tool, so this lets the user mark one without a code change.
+    var isInteractive: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -1022,6 +1052,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         case contextApps = "context_apps"
         case contextApp = "context_app"
         case contextualExamples
+        case isInteractive
     }
 
     init(from decoder: Decoder) throws {
@@ -1052,6 +1083,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         contextualExamples =
             try container.decodeIfPresent([ContextualExample].self, forKey: .contextualExamples)
             ?? []
+        isInteractive = try container.decodeIfPresent(Bool.self, forKey: .isInteractive) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1073,6 +1105,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         try container.encode(contextAppBundleIds, forKey: .contextApps)
         try container.encodeIfPresent(contextAppBundleIds.first, forKey: .contextApp)
         try container.encode(contextualExamples, forKey: .contextualExamples)
+        try container.encode(isInteractive, forKey: .isInteractive)
     }
 }
 

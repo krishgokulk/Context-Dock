@@ -548,6 +548,12 @@ class TerminalAIBridge: ObservableObject {
         let executable = (parts.first ?? "").components(separatedBy: "/").last ?? ""
         let execLower = executable.lowercased()
 
+        // The user's own mark comes first. The allowlist below cannot know every TUI tool —
+        // terminal-browser, for one — and running a full-screen app with its output piped
+        // either hangs it waiting for a tty or turns an answer into escape sequences. This is
+        // a Set lookup kept by TerminalPackageManager, not a scan of ~950 packages.
+        if TerminalPackageManager.shared.interactiveCommands.contains(execLower) { return true }
+
         // Primary: explicit allowlist of known interactive TUI apps
         if Self.knownTUIApps.contains(execLower) { return true }
 
