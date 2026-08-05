@@ -1122,6 +1122,18 @@ extension LauncherView {
     /// wrong-command-then-right-command recovery without letting a failing tool loop.
     static let maxScopedCommandAttempts = 3
 
+    /// The model asks to read documentation by putting `HELP: <subcommand>` on its own line.
+    static func parseLoopHelpRequest(_ reply: String) -> String? {
+        for raw in reply.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.uppercased().hasPrefix("HELP:") else { continue }
+            return line.dropFirst(5)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+        }
+        return nil
+    }
+
     /// The model asks for another command by putting `RUN: <command>` on its own line.
     static func parseLoopCommand(_ reply: String) -> String? {
         for raw in reply.split(separator: "\n") {
@@ -1160,10 +1172,19 @@ extension LauncherView {
         }
         if canRunAnother {
             lines.append(
-                "If the output answers the request, answer it concisely and say nothing else. "
-                + "If it does not — wrong command, missing argument, empty or error output — "
-                + "reply with exactly one line `RUN: <command>` giving the single next command "
-                + "to try, using only subcommands documented for this tool. Do not invent flags.")
+                "If the output answers the request, answer it concisely and say nothing else.")
+            lines.append(
+                "If you need to know a subcommand's exact flags before using it, reply with "
+                + "exactly one line `HELP: <subcommand>` and its documented help will be given "
+                + "to you. Do this instead of guessing a flag.")
+            lines.append(
+                "If the output does not answer the request — wrong command, missing argument, "
+                + "empty or error output — reply with exactly one line `RUN: <command>` giving "
+                + "the single next command to try, using only documented subcommands and flags.")
+            lines.append(
+                "Never repeat a command already listed above, and never re-run one that failed "
+                + "for a reason a different flag cannot fix — a missing dependency, a tool that "
+                + "cannot run in this terminal, a permission error. Say what is wrong instead.")
         } else {
             lines.append(
                 "Answer the request from the output above. No more commands can be run, so "
@@ -1258,6 +1279,30 @@ extension LauncherView {
                     return
                 }
 
+                // Documentation first. Serving a HELP: request costs no attempt and runs
+                // nothing — it hands back the block the tool itself printed, which is the
+                // difference between using a flag and inventing one. `--json` in the loop
+                // that prompted this had never appeared in any help output.
+                if let wanted = Self.parseLoopHelpRequest(decision),
+                    Self.parseLoopCommand(decision) == nil
+                {
+                    // In a CLI scope every command starts with the tool itself.
+                    let tool = ranCommand.components(separatedBy: " ").first ?? ""
+                    let section = TerminalPackageManager.shared.helpSection(
+                        command: tool, subcommand: wanted)
+                    await MainActor.run {
+                        dockTraceStep(
+                            section == nil
+                                ? "No documented help for \(tool) \(wanted)"
+                                : "Read help for \(tool) \(wanted)")
+                    }
+                    transcript.append((
+                        "\(tool) \(wanted) --help",
+                        section ?? "(no documented help for this subcommand)"
+                    ))
+                    continue
+                }
+
                 // A next step is a command on its own line after RUN:. Anything else is the
                 // answer, which is also what an exhausted attempt budget produces.
                 guard let next = Self.parseLoopCommand(decision),
@@ -1268,6 +1313,28 @@ extension LauncherView {
                             AIChatMessage(
                                 role: .assistant,
                                 content: Self.strippingLoopDirective(decision),
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+
+                // Never run the same thing twice. The loop that prompted this ran `ls`, then
+                // `ls --all`, then `ls --all --json`, then `ls --all` again — the tool was
+                // reporting it could not control this terminal, which no flag fixes, and each
+                // retry burned an attempt and raised the risk prompt.
+                let alreadyTried = transcript.contains {
+                    $0.command.caseInsensitiveCompare(next) == .orderedSame
+                }
+                if alreadyTried {
+                    await MainActor.run {
+                        dockTraceStep("Stopped: \(next) was already tried")
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content:
+                                    "I already ran `\(next)` and it did not answer the request, "
+                                    + "so repeating it would not help. Here is what it returned:",
                                 trace: l2.routerTrace,
                                 runOutput: output.isEmpty ? nil : output))
                     }

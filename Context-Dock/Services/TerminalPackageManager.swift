@@ -66,6 +66,38 @@ class TerminalPackageManager: ObservableObject {
         )
     }
 
+    /// The stored `--help` for one subcommand, or the top-level help when `subcommand` is
+    /// empty. Nil when the tool has never been scanned or that path is not in the tree.
+    ///
+    /// scanDeepHelp records the tree as sections delimited by `--- <cmd path> --help ---`,
+    /// so a section can be handed back whole. That matters: a subcommand's flags are only
+    /// trustworthy as the block the tool printed, not as a relevance-ranked excerpt of a 30k
+    /// document, which is how invented flags get through.
+    func helpSection(command: String, subcommand: String) -> String? {
+        guard
+            let package = packages.first(where: {
+                $0.command.caseInsensitiveCompare(command) == .orderedSame
+            }),
+            let help = package.helpText, !help.isEmpty
+        else { return nil }
+
+        let wanted = subcommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else {
+            // Top-level: everything before the first subcommand section.
+            return help.components(separatedBy: "\n--- ").first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let marker = "\(command) \(wanted) --help ---"
+        for part in help.components(separatedBy: "\n--- ") {
+            guard part.lowercased().hasPrefix(marker.lowercased()) else { continue }
+            let body = part.dropFirst(marker.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return body.isEmpty ? nil : body
+        }
+        return nil
+    }
+
     /// Marks a tool as needing a terminal, and persists it.
     func setInteractive(_ isInteractive: Bool, for packageID: UUID) {
         guard let index = packages.firstIndex(where: { $0.id == packageID }) else { return }
