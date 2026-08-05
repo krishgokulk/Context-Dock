@@ -554,40 +554,6 @@ extension LauncherView {
         return false
     }
 
-    func scopedAppHasPreferredNonTerminalRoute(
-        bundleId: String,
-        appName: String,
-        query: String
-    ) -> Bool {
-        let trimmedBundle = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBundle.isEmpty else { return false }
-
-        if let adapter = AppAdapterManager.shared.adapter(for: trimmedBundle) {
-            if !adapter.contextReaders.isEmpty { return true }
-            if adapter.actions.contains(where: { action in
-                switch action.type {
-                case .cliTool, .shell:
-                    return false
-                default:
-                    return true
-                }
-            }) {
-                return true
-            }
-        }
-
-        if !MCPServerManager.shared.servers(forBundleId: trimmedBundle).isEmpty { return true }
-        if !APIConnectionStore.shared.connections(for: trimmedBundle).isEmpty { return true }
-
-        let menuMatches = AppMenuCapabilityCache.shared.menuItems(
-            bundleIdentifier: trimmedBundle,
-            appName: appName,
-            query: query,
-            maxResults: 1
-        )
-        return !menuMatches.isEmpty
-    }
-
     @MainActor
     func scopedChatMissingInternalDataAnswer(
         query: String,
@@ -4846,17 +4812,26 @@ extension LauncherView {
                                 "This chat is scoped to \(cliTool). Commands for other executables are not allowed in this scope."
                             )
                         }
-                        if self.scopedAppHasPreferredNonTerminalRoute(
-                            bundleId: scopedBundleId,
-                            appName: scopedAppName.isEmpty
-                                ? (frontmostName ?? frontmost.name) : scopedAppName,
-                            query: query)
-                        {
-                            return (
-                                false,
-                                "A linked app/native/MCP/API/Shortcut/menu capability exists for this app. Use that route instead of terminal_call; terminal is fallback-only."
-                            )
-                        }
+                        // NOTE: a blanket veto used to live here. It refused run_command
+                        // whenever the scoped app had ANY non-shell adapter action, and
+                        // returned "use that route instead" without naming one — because it
+                        // did not know one. It only knew that *something* existed.
+                        //
+                        // With VS Code scoped that meant ~40 auto-scraped menu items vetoed
+                        // every terminal command, so "what is the recent commit I did?" was
+                        // refused even though no menu item can show a git log and
+                        // run_command was the only tool that could answer.
+                        //
+                        // Preferring native routes is good guidance and it stays in the
+                        // system prompt, where the model can weigh it against the actual
+                        // question. It is not a rule the executor can enforce, because the
+                        // executor sees a command string and cannot know whether some other
+                        // capability would have answered. Offering a tool and then refusing
+                        // the model's use of it is not a safety boundary — it is a guess,
+                        // and this one was wrong more often than it was right.
+                        //
+                        // Real boundaries remain: the CLI-scope check above, the argv gate,
+                        // the classifier, and the approval sheet.
                         return await TerminalCommandExecutor.shared.run(
                             command, purpose: purpose,
                             modelRequiresApproval: modelRequiresApproval)
