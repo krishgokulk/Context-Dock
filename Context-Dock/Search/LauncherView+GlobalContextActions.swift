@@ -1980,6 +1980,19 @@ extension LauncherView {
         {
             state = preparedState
         }
+        // Neither snapshot has rows while the dock is compact: the grouped state is not
+        // committed until expansion, and preparedResults carries a nil navigationState at
+        // this point. The ghost and the leading icon come from
+        // currentOrImmediateGlobalAppMatches — verified by logging the real keystroke, which
+        // showed preparedQ matching the query with a nil state behind it. Enter runs that
+        // same row, so it acts on exactly what is on screen.
+        if state.totalCount == 0 {
+            guard let immediate = currentOrImmediateGlobalAppMatches(for: q).first else {
+                return false
+            }
+            executeGlobalAppSearchResult(immediate)
+            return true
+        }
         guard state.totalCount > 0 else { return false }
 
         let index =
