@@ -20,6 +20,13 @@ enum AppAdapterCapabilityCatalog {
         {
             return [routed]
         }
+        if bundleID == "com.apple.reminders",
+            let routed = remindersCandidate(
+                appName: appName, bundleID: bundleID, query: query,
+                capabilities: capabilities)
+        {
+            return [routed]
+        }
 
         return capabilities.compactMap { capability in
                 let searchable = "\(capability.id) \(capability.title) "
@@ -115,6 +122,64 @@ enum AppAdapterCapabilityCatalog {
             break
         }
         return candidate
+    }
+
+    private static func remindersCandidate(
+        appName: String, bundleID: String, query: String,
+        capabilities: [AICapability]
+    ) -> DoraXActionCandidate? {
+        let lower = query.lowercased()
+        let capabilityID: String?
+        if lower.contains("overdue") {
+            capabilityID = "reminders.overdue"
+        } else if lower.contains("today") || lower.contains("due today") {
+            capabilityID = "reminders.today"
+        } else if lower.contains("complete") || lower.contains("mark done")
+            || lower.contains("finish reminder") {
+            capabilityID = "reminders.complete"
+        } else if lower.contains("delete") || lower.contains("remove reminder") {
+            capabilityID = "reminders.delete"
+        } else if lower.contains("create") || lower.contains("add reminder")
+            || lower.hasPrefix("remind me") || lower.contains("new reminder") {
+            capabilityID = "reminders.create"
+        } else if lower.contains("list") || lower.contains("show")
+            || lower.contains("what reminders") || lower.contains("my reminders") {
+            capabilityID = "reminders.list"
+        } else {
+            capabilityID = nil
+        }
+        guard let capabilityID,
+            let capability = capabilities.first(where: { $0.id == capabilityID })
+        else { return nil }
+
+        var candidate = makeCandidate(
+            capability, appName: appName, bundleID: bundleID,
+            confidence: 0.97, reason: "Reminders intent router selected \(capabilityID)")
+        switch capabilityID {
+        case "reminders.list":
+            candidate.inputValues["limit"] = "30"
+        case "reminders.complete", "reminders.delete":
+            guard let title = reminderObject(
+                query, markers: ["complete ", "mark done ", "finish reminder ",
+                                 "delete ", "remove reminder "]), !title.isEmpty
+            else { return nil }
+            candidate.inputValues["matchTitle"] = title
+        case "reminders.create":
+            guard let title = reminderObject(
+                query, markers: ["remind me to ", "add reminder to ", "add reminder ",
+                                 "create reminder to ", "create reminder ", "new reminder "]),
+                !title.isEmpty
+            else { return nil }
+            candidate.inputValues["title"] = title
+        default:
+            break
+        }
+        return candidate
+    }
+
+    private static func reminderObject(_ query: String, markers: [String]) -> String? {
+        textAfterMarker(query, markers: markers)?.trimmingCharacters(
+            in: .whitespacesAndNewlines.union(.punctuationCharacters))
     }
 
     private static func makeCandidate(

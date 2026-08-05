@@ -180,14 +180,18 @@ extension LauncherView {
                     ? structuredNoteTasks(from: result.message) : []
                 let relatedNotes = capabilityID == "notes.link_related"
                     ? structuredRelatedNotes(from: result.message) : []
+                let reminderResults = capabilityID.hasPrefix("reminders.")
+                    ? structuredReminderResults(from: result.message, capabilityID: capabilityID)
+                    : []
                 l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
-                        content: result.message,
+                        content: reminderResults.isEmpty ? result.message : "",
                         isError: !result.success,
                         recentFiles: outputFiles,
                         noteResults: relatedNotes,
                         noteTasks: noteTasks,
+                        reminderResults: reminderResults,
                         mcpToolsRan: [isComputerUse
                             ? "Computer Use · \(route)"
                             : "\(candidate.source == .mcp ? "MCP" : candidate.routeLabel) · \(candidate.capabilityID ?? candidate.title)"],
@@ -196,6 +200,48 @@ extension LauncherView {
                 l2.loadingStatus = nil
                 l2.currentTask = nil
             }
+        }
+    }
+
+    /// Converts the stable local Reminders capability output into native rows without
+    /// another provider call. This keeps task titles grounded and saves tokens.
+    private func structuredReminderResults(
+        from output: String, capabilityID: String
+    ) -> [ReminderResultAction] {
+        func quotedTitle(_ text: String) -> String? {
+            guard let first = text.firstIndex(of: "'"),
+                let last = text.lastIndex(of: "'"), first < last
+            else { return nil }
+            return String(text[text.index(after: first)..<last])
+        }
+
+        switch capabilityID {
+        case "reminders.create":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .created)] } ?? []
+        case "reminders.complete":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .completed)] } ?? []
+        case "reminders.delete":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .deleted)] } ?? []
+        case "reminders.list", "reminders.today", "reminders.overdue":
+            return output.components(separatedBy: .newlines).compactMap { rawLine in
+                var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.hasPrefix("•") else { return nil }
+                line.removeFirst()
+                line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = line.components(separatedBy: " — ")
+                let title = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !title.isEmpty else { return nil }
+                let detail = parts.dropFirst().joined(separator: " — ")
+                    .replacingOccurrences(of: "⚠️ overdue", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let overdue = capabilityID == "reminders.overdue" || rawLine.contains("overdue")
+                return ReminderResultAction(
+                    title: title,
+                    detail: detail.isEmpty ? nil : detail,
+                    state: overdue ? .overdue : .active)
+            }
+        default:
+            return []
         }
     }
 
@@ -295,14 +341,30 @@ extension LauncherView {
             l2.chatMessages.append(
                 AIChatMessage(
                     role: .assistant,
-                    content: isComputerUse
-                        ? "I found a native \(appName) command for this task. Run it?"
-                        : "I found an enabled \(appName) tool for this task. Run it?",
+                    content: scopedActionPrompt(candidate, appName: appName),
                     trace: l2.routerTrace,
                     actionChoices: [choice]))
             finishL2AIRequest(requestID)
         }
         return true
+    }
+
+    private func scopedActionPrompt(_ candidate: DoraXActionCandidate, appName: String) -> String {
+        let capabilityID = candidate.capabilityID ?? ""
+        let title = candidate.inputValues["title"] ?? candidate.inputValues["matchTitle"]
+        if capabilityID == "reminders.create", let title {
+            return "Create “\(title)” in Reminders?"
+        }
+        if capabilityID == "reminders.complete", let title {
+            return "Mark “\(title)” as complete?"
+        }
+        if capabilityID == "reminders.delete", let title {
+            return "Delete “\(title)” from Reminders?"
+        }
+        let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
+        return isComputerUse
+            ? "I found a native \(appName) command for this task. Run it?"
+            : "I found an enabled \(appName) tool for this task. Run it?"
     }
 
     /// Executable-action interception for General AI Chat. Returns the final chat

@@ -329,6 +329,30 @@ struct NoteTaskAction: Equatable, Identifiable {
     }
 }
 
+/// A grounded Reminders result. Action receipts and list rows stay structured so the
+/// conversation reads like a task manager instead of an MCP debug console.
+struct ReminderResultAction: Equatable, Identifiable {
+    enum State: Equatable {
+        case active
+        case overdue
+        case created
+        case completed
+        case deleted
+    }
+
+    let id: UUID
+    let title: String
+    let detail: String?
+    let state: State
+
+    init(title: String, detail: String? = nil, state: State) {
+        self.id = UUID()
+        self.title = title
+        self.detail = detail
+        self.state = state
+    }
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -342,6 +366,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
     var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
     var noteTasks: [NoteTaskAction]  // Grounded tasks extracted from one Apple Note
+    var reminderResults: [ReminderResultAction]  // Structured Reminders rows and receipts
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
@@ -361,6 +386,7 @@ struct AIChatMessage: Identifiable, Equatable {
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
+        reminderResults: [ReminderResultAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -377,6 +403,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.recentFiles = recentFiles
         self.noteResults = noteResults
         self.noteTasks = noteTasks
+        self.reminderResults = reminderResults
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -391,6 +418,7 @@ struct AIChatMessage: Identifiable, Equatable {
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
+        reminderResults: [ReminderResultAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -407,6 +435,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.recentFiles = recentFiles
         self.noteResults = noteResults
         self.noteTasks = noteTasks
+        self.reminderResults = reminderResults
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -683,6 +712,96 @@ struct AIChatMessageView: View {
         }
     }
 
+    @ViewBuilder
+    private var reminderResultRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(message.reminderResults) { reminder in
+                HStack(spacing: 11) {
+                    ZStack {
+                        Circle()
+                            .fill(reminderColor(reminder.state).opacity(0.14))
+                        Image(systemName: reminderIcon(reminder.state))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(reminderColor(reminder.state))
+                    }
+                    .frame(width: 30, height: 30)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(reminder.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(2)
+                        HStack(spacing: 5) {
+                            Text(reminderLabel(reminder.state))
+                            if let detail = reminder.detail, !detail.isEmpty {
+                                Text("·")
+                                Text(detail)
+                            }
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        if let url = NSWorkspace.shared.urlForApplication(
+                            withBundleIdentifier: "com.apple.reminders")
+                        {
+                            NSWorkspace.shared.openApplication(
+                                at: url, configuration: NSWorkspace.OpenConfiguration())
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Open Reminders")
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(reminderColor(reminder.state).opacity(0.22), lineWidth: 0.7)
+                }
+            }
+
+            Label("Updated in Reminders", systemImage: "checkmark.icloud")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
+    private func reminderColor(_ state: ReminderResultAction.State) -> Color {
+        switch state {
+        case .overdue: return .red
+        case .deleted: return .orange
+        case .completed: return .green
+        case .created: return .blue
+        case .active: return .orange
+        }
+    }
+
+    private func reminderIcon(_ state: ReminderResultAction.State) -> String {
+        switch state {
+        case .overdue: return "exclamationmark"
+        case .deleted: return "trash"
+        case .completed: return "checkmark"
+        case .created: return "plus"
+        case .active: return "circle"
+        }
+    }
+
+    private func reminderLabel(_ state: ReminderResultAction.State) -> String {
+        switch state {
+        case .overdue: return "Overdue"
+        case .deleted: return "Deleted"
+        case .completed: return "Completed"
+        case .created: return "Created"
+        case .active: return "Reminder"
+        }
+    }
+
     /// Pick-one routes as buttons. The same information the bullet list carried, except a
     /// click runs the route instead of asking the user to retype what they wanted.
     @ViewBuilder
@@ -953,7 +1072,7 @@ struct AIChatMessageView: View {
                     runOutputView(runOutput)
                 }
                 // MCP tool-run chips ("ran <tool> via <server>")
-                if !message.mcpToolsRan.isEmpty {
+                if !message.mcpToolsRan.isEmpty && message.reminderResults.isEmpty {
                     mcpToolChips
                 }
                 // Detect extension proposal in structuredData
@@ -979,7 +1098,7 @@ struct AIChatMessageView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background { pillBubble(bright: false) }
-                } else {
+                } else if !message.content.isEmpty || isStreaming {
                     HStack(alignment: .bottom, spacing: 4) {
                         MarkdownMessageView(
                             content: message.content.isEmpty && isStreaming ? "" : message.content,
@@ -1021,6 +1140,10 @@ struct AIChatMessageView: View {
 
                 if !message.noteTasks.isEmpty {
                     noteTaskRows
+                }
+
+                if !message.reminderResults.isEmpty {
+                    reminderResultRows
                 }
 
                 if message.enableAppRequest != nil {
