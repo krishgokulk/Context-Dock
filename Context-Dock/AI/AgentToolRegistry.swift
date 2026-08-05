@@ -20,6 +20,18 @@ struct AgentToolContext {
     /// Runs a shell command through the classifier / argv gate / approval path.
     /// The Bool is the model's own `requires_approval` answer.
     let commandExecutor: (String, String, Bool) async -> (Bool, String)
+
+    /// What the user had selected or focused when they asked. Capabilities read it to
+    /// resolve implicit targets ("this file", "the current folder").
+    var userContext: UserContext = .none
+
+    init(
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        userContext: UserContext = .none
+    ) {
+        self.commandExecutor = commandExecutor
+        self.userContext = userContext
+    }
 }
 
 /// What a tool returns.
@@ -240,6 +252,132 @@ final class AgentToolRegistry {
             try? await Task.sleep(nanoseconds: 300_000_000)
             return AgentToolResult(
                 success: true, output: output, displayCommand: "send_keys(\(keys))")
+        })
+
+        // MARK: Capability access
+        //
+        // The registry holds ~50 capabilities across git, finder, notes, calendar, music,
+        // reminders, xcode and more. Emitting all of them as tool schemas would cost roughly
+        // 35k tokens per message, so they are reached through two tools instead: search,
+        // then call. The model discovers what exists at the moment it needs it, and pays for
+        // only what it looked up.
+
+        register(AgentTool(
+            name: "find_capability",
+            description: "Search the user's Mac for a capability that can do something, and "
+                + "get the exact id and input fields needed to run it. Use this FIRST whenever "
+                + "a request involves the user's apps or data — git history, files, notes, "
+                + "calendar, reminders, music, contacts, Xcode — rather than assuming you have "
+                + "no access. Returns matching capability ids to pass to run_capability.",
+            properties: [
+                "query": [
+                    "type": "string",
+                    "description": "What you want to do, e.g. \"recent git commits\", "
+                        + "\"search notes\", \"today's calendar events\".",
+                ],
+            ],
+            required: ["query"]
+        ) { arguments, _ in
+            let query = (arguments["query"] as? String ?? "").lowercased()
+            let terms = query
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { $0.count > 1 }
+            let matches = await MainActor.run { () -> [AICapability] in
+                let all = CapabilityRegistry.shared.all
+                guard !terms.isEmpty else { return [] }
+                return all
+                    .map { capability -> (score: Int, capability: AICapability) in
+                        let haystack = (capability.id + " " + capability.title).lowercased()
+                        let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
+                        return (score, capability)
+                    }
+                    .filter { $0.score > 0 }
+                    .sorted { $0.score > $1.score }
+                    .prefix(12)
+                    .map(\.capability)
+            }
+            guard !matches.isEmpty else {
+                return AgentToolResult(
+                    success: true,
+                    output: "No capability matched \"\(query)\". Registered capability families: "
+                        + (await MainActor.run {
+                            Set(CapabilityRegistry.shared.all.compactMap {
+                                $0.id.split(separator: ".").first.map(String.init)
+                            }).sorted().joined(separator: ", ")
+                        })
+                        + ". Try one of those words, or use run_command for anything shell-based.",
+                    displayCommand: "find_capability(\(query))")
+            }
+            let lines = matches.map { capability -> String in
+                let fields = capability.inputSchema.fields
+                    .map { "\($0.name)\($0.required ? "" : "?")" }
+                    .joined(separator: ", ")
+                return "- \(capability.id): \(capability.title) | input: [\(fields)]"
+                    + " | risk: \(capability.riskLevel.rawValue)"
+            }
+            return AgentToolResult(
+                success: true,
+                output: "Matching capabilities — call one with run_capability:\n"
+                    + lines.joined(separator: "\n"),
+                displayCommand: "find_capability(\(query))")
+        })
+
+        register(AgentTool(
+            name: "run_capability",
+            description: "Run a capability found with find_capability. High-risk capabilities "
+                + "show the user an approval sheet before anything happens; you do not need to "
+                + "ask for permission yourself.",
+            properties: [
+                "capability_id": [
+                    "type": "string",
+                    "description": "Exact id from find_capability, e.g. \"git.log\".",
+                ],
+                "input": [
+                    "type": "object",
+                    "description": "Input fields for this capability. Use the field names "
+                        + "find_capability reported. Pass {} when it takes none.",
+                ],
+                "explanation": [
+                    "type": "string",
+                    "description": "One line on why you are running it, shown in the approval sheet.",
+                ],
+            ],
+            required: ["capability_id"]
+        ) { arguments, context in
+            guard let capabilityID = arguments["capability_id"] as? String, !capabilityID.isEmpty
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "run_capability requires 'capability_id'.",
+                    displayCommand: "run_capability(invalid)")
+            }
+            // Input values are stringified: AIActionPlan carries [String: String], and a
+            // model will happily send a number or bool for a field declared as text.
+            var input: [String: String] = [:]
+            if let raw = arguments["input"] as? [String: Any] {
+                for (key, value) in raw {
+                    input[key] = (value as? String) ?? String(describing: value)
+                }
+            }
+            let explanation = arguments["explanation"] as? String ?? "Requested from AI chat"
+            let plan = AIActionPlan(
+                capability: capabilityID, input: input, explanation: explanation)
+            do {
+                let result = try await AIExecutionEngine.shared.executeWithApproval(
+                    plan, context: context.userContext)
+                return AgentToolResult(
+                    success: result.success,
+                    output: result.output.isEmpty
+                        ? (result.success ? "(completed, no output)" : "(failed, no output)")
+                        : result.output,
+                    displayCommand: "run_capability(\(capabilityID))")
+            } catch {
+                return AgentToolResult(
+                    success: false,
+                    output: "\(capabilityID) failed: \(error.localizedDescription)",
+                    displayCommand: "run_capability(\(capabilityID))")
+            }
         })
 
         register(AgentTool(
