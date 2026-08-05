@@ -375,74 +375,19 @@ struct ExtensionPanelAIComposer: View {
                     }
                 }
                 .frame(height: 22)
+                .padding(.horizontal, 4)
             }
 
-            HStack(spacing: 8) {
-                Button { pickFiles() } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Attach a file")
-
-                TextField("Ask AI…", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .lineLimit(1...5)
-                    .onSubmit { send() }
-
-                // App context lives next to Send, not under "+": it is what the
-                // question is about, whereas "+" adds material to it.
-                Menu {
-                    if runningApps.isEmpty {
-                        Text("No running apps")
-                    }
-                    ForEach(runningApps, id: \.self) { app in
-                        Button {
-                            if !attachedApps.contains(app) { attachedApps.append(app) }
-                        } label: {
-                            Label(app, systemImage: AppAdapterManager.shared.adapters
-                                .first { $0.appName == app }?.icon ?? "app")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "macwindow.on.rectangle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(attachedApps.isEmpty ? .secondary : Color.accentColor)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 22)
-                .help("Use an app's context and actions")
-
-                if isSending {
-                    ProgressView().controlSize(.small).frame(width: 22, height: 22)
-                } else {
-                    Button { send() } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(canSend ? Color.white : Color.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(canSend ? Color.accentColor : Color.primary.opacity(0.10),
-                                        in: Circle())
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.06),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            AIComposerBar(
+                text: $draft,
+                isSending: isSending,
+                attachedAppCount: attachedApps.count,
+                runningApps: runningApps,
+                onAttachFile: pickFiles,
+                onAttachApp: { app in
+                    if !attachedApps.contains(app) { attachedApps.append(app) }
+                },
+                onSubmit: send
             )
         }
         .padding(.horizontal, 10)
@@ -566,5 +511,102 @@ struct ExtensionPanelAIComposer: View {
                 errorText = error.localizedDescription
             }
         }
+    }
+}
+
+
+// MARK: - Shared composer bar
+
+/// The one AI input in the app: a glass capsule with the provider on the left and
+/// the context controls on the right. Quick Note, pinned extension panels and the
+/// folder panels all use it, so the assistant looks like one feature rather than
+/// three that grew separately.
+struct AIComposerBar: View {
+    @Binding var text: String
+    var isSending: Bool
+    var attachedAppCount: Int
+    var runningApps: [String]
+    var onAttachFile: () -> Void
+    var onAttachApp: (String) -> Void
+    var onSubmit: () -> Void
+
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Provider chip: switching model is part of asking, so it lives in the bar.
+            Menu {
+                ForEach(AIProvider.allCases) { provider in
+                    Button {
+                        settings.selectedAIProvider = provider
+                    } label: {
+                        if provider == settings.selectedAIProvider {
+                            Label(provider.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(provider.displayName)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(settings.selectedAIProvider.shortName)
+                        .font(.system(size: 12, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                }
+                .foregroundStyle(.primary)
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .lineLimit(1...5)
+                .onSubmit(onSubmit)
+
+            Button(action: onAttachFile) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Attach a file")
+
+            Menu {
+                if runningApps.isEmpty { Text("No running apps") }
+                ForEach(runningApps, id: \.self) { app in
+                    Button {
+                        onAttachApp(app)
+                    } label: {
+                        Label(app, systemImage: AppAdapterManager.shared.adapters
+                            .first { $0.appName == app }?.icon ?? "app")
+                    }
+                }
+            } label: {
+                Image(systemName: "macwindow.on.rectangle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(attachedAppCount > 0 ? Color.accentColor : .secondary)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Use an app's context and actions")
+
+            if isSending {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
     }
 }
