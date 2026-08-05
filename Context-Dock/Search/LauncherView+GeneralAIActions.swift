@@ -175,12 +175,19 @@ extension LauncherView {
                     guard FileManager.default.fileExists(atPath: expanded) else { return [] }
                     return [RecentFileAction(url: URL(fileURLWithPath: expanded))]
                 }()
+                let capabilityID = candidate.capabilityID ?? ""
+                let noteTasks = capabilityID == "notes.extract_tasks"
+                    ? structuredNoteTasks(from: result.message) : []
+                let relatedNotes = capabilityID == "notes.link_related"
+                    ? structuredRelatedNotes(from: result.message) : []
                 l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
                         content: result.message,
                         isError: !result.success,
                         recentFiles: outputFiles,
+                        noteResults: relatedNotes,
+                        noteTasks: noteTasks,
                         mcpToolsRan: [isComputerUse
                             ? "Computer Use · \(route)"
                             : "\(candidate.source == .mcp ? "MCP" : candidate.routeLabel) · \(candidate.capabilityID ?? candidate.title)"],
@@ -189,6 +196,43 @@ extension LauncherView {
                 l2.loadingStatus = nil
                 l2.currentTask = nil
             }
+        }
+    }
+
+    /// Convert the stable local MCP receipt into task rows. This is deliberately
+    /// deterministic: presentation never spends another model request or invents data.
+    private func structuredNoteTasks(from output: String) -> [NoteTaskAction] {
+        output.components(separatedBy: .newlines).compactMap { rawLine in
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty,
+                !line.hasPrefix("Tasks from"),
+                !line.hasPrefix("(Read-only")
+            else { return nil }
+            line = line.replacingOccurrences(
+                of: #"^\s*(?:[-*•]|\d+[.)]|\[[ xX]\])\s*"#,
+                with: "", options: .regularExpression)
+            guard !line.isEmpty else { return nil }
+            return NoteTaskAction(text: line)
+        }
+    }
+
+    /// `notes.link_related` returns ID/title/folder blocks. Parse those blocks into
+    /// the same native note cards used by Notes search, including direct Open actions.
+    private func structuredRelatedNotes(from output: String) -> [NoteSearchAction] {
+        output.components(separatedBy: "\n---\n").compactMap { block in
+            var id = ""
+            var title = ""
+            var folder = ""
+            for rawLine in block.components(separatedBy: .newlines) {
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                if line.hasPrefix("ID: ") { id = String(line.dropFirst(4)) }
+                if line.hasPrefix("Title: ") { title = String(line.dropFirst(7)) }
+                if line.hasPrefix("Folder: ") { folder = String(line.dropFirst(8)) }
+            }
+            guard !id.isEmpty, !title.isEmpty else { return nil }
+            return NoteSearchAction(
+                id: id, title: title, folder: folder,
+                snippet: "Related to the selected note", modifiedDate: nil)
         }
     }
 

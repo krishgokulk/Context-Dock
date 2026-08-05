@@ -314,7 +314,19 @@ struct NoteSearchAction: Equatable {
     let title: String
     let folder: String
     let snippet: String
-    let modifiedDate: Date
+    let modifiedDate: Date?
+}
+
+/// A task extracted from a grounded Apple Note. Keeping tasks structured lets the
+/// result surface offer direct copy actions without asking an AI provider again.
+struct NoteTaskAction: Equatable, Identifiable {
+    let id: UUID
+    let text: String
+
+    init(text: String) {
+        self.id = UUID()
+        self.text = text
+    }
 }
 
 struct AIChatMessage: Identifiable, Equatable {
@@ -329,6 +341,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
     var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
     var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
+    var noteTasks: [NoteTaskAction]  // Grounded tasks extracted from one Apple Note
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
@@ -347,6 +360,7 @@ struct AIChatMessage: Identifiable, Equatable {
         hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         noteResults: [NoteSearchAction] = [],
+        noteTasks: [NoteTaskAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -362,6 +376,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.appLaunches = appLaunches
         self.recentFiles = recentFiles
         self.noteResults = noteResults
+        self.noteTasks = noteTasks
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -375,6 +390,7 @@ struct AIChatMessage: Identifiable, Equatable {
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
         appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
         noteResults: [NoteSearchAction] = [],
+        noteTasks: [NoteTaskAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -390,6 +406,7 @@ struct AIChatMessage: Identifiable, Equatable {
         self.appLaunches = appLaunches
         self.recentFiles = recentFiles
         self.noteResults = noteResults
+        self.noteTasks = noteTasks
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -588,8 +605,10 @@ struct AIChatMessageView: View {
                             .lineLimit(1)
                         HStack(spacing: 5) {
                             Text(note.folder.isEmpty ? "Notes" : note.folder)
-                            Text("·")
-                            Text(note.modifiedDate, style: .date)
+                            if let modifiedDate = note.modifiedDate {
+                                Text("·")
+                                Text(modifiedDate, style: .date)
+                            }
                         }
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -614,6 +633,52 @@ struct AIChatMessageView: View {
                 }
                 .padding(9)
                 .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noteTaskRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Tasks from this note")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Copy all") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        message.noteTasks.map { "• \($0.text)" }.joined(separator: "\n"),
+                        forType: .string)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+            ForEach(message.noteTasks) { task in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                    Text(task.text)
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(task.text, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Copy task")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.055),
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
         }
     }
@@ -952,6 +1017,10 @@ struct AIChatMessageView: View {
 
                 if !message.noteResults.isEmpty {
                     noteResultRows
+                }
+
+                if !message.noteTasks.isEmpty {
+                    noteTaskRows
                 }
 
                 if message.enableAppRequest != nil {

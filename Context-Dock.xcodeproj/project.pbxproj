@@ -52,6 +52,7 @@
 		CAFE0000000000000000000E /* Exceptions for "Context-DockExtension" folder in "Context-DockExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				AppIcon.icon,
 				Info.plist,
 			);
 			target = CAFE00000000000000000002 /* Context-DockExtension */;

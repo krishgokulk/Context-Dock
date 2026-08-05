@@ -56,7 +56,9 @@ enum AppAdapterCapabilityCatalog {
         let capabilityID: String?
         if lower.contains("export") && (lower.contains("markdown") || lower.contains(".md")) {
             capabilityID = "notes.export"
-        } else if lower.contains("extract") && (lower.contains("task") || lower.contains("todo")) {
+        } else if (lower.contains("task") || lower.contains("todo"))
+            && (lower.contains("extract") || lower.contains("this note")
+                || lower.contains("current note") || lower.contains("action item")) {
             capabilityID = "notes.extract_tasks"
         } else if lower.contains("related") || lower.contains("similar note") {
             capabilityID = "notes.link_related"
@@ -64,7 +66,9 @@ enum AppAdapterCapabilityCatalog {
             capabilityID = "notes.summarize"
         } else if lower.contains("search") || lower.contains("find note") || lower.contains("find my note") {
             capabilityID = "notes.search"
-        } else if lower.contains("read") || lower.contains("show note") || lower.contains("show this note") {
+        } else if lower.contains("read") || lower.contains("show note")
+            || lower.contains("show this note") || lower.contains("what does this note say")
+            || lower.contains("note contents") {
             capabilityID = "notes.read"
         } else if lower.contains("append") || lower.contains("add to this note") {
             capabilityID = "notes.append"
