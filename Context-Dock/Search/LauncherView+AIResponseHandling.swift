@@ -276,6 +276,10 @@ extension LauncherView {
             - Prefer AppleScript for macOS app automation (\(appName), Finder, System Events, Notes).
             - Prefer bash for file ops, network calls, or multi-step shell workflows.
             - Use $CD_URL for the current page URL; $CD_TEXT for selected text; $CD_FILE for selected file path.
+            - Design recurring actions for reuse. Use $CD_QUERY for the new request and read live
+              state at run time (for example `git log -1`) instead of hardcoding today's content.
+              A fixed destination such as a person/email may stay fixed when that is the workflow's
+              purpose; changing content, files, branch, selection, and URL must stay dynamic.
             - For tasks needing user input, use `osascript -e 'display dialog...'` or `choose from list`.
             - The script must be 100% complete and run as-is — no stubs, no comments asking to fill in.
             - If you cannot write a fully working script, omit the proposal block entirely.
@@ -483,12 +487,9 @@ extension LauncherView {
             // was swallowed. Capture the error and tell the user what actually happened.
             let outcome = runProposalAppleScript(script)
             if outcome.ok {
-                AppToast.show(
-                    "\(proposal.name) ran", icon: "checkmark.circle.fill",
-                    tint: .green, duration: 2.0, centered: true)
                 let detail = outcome.message.isEmpty ? "" : " \(outcome.message)"
                 l2.chatMessages.append(
-                    AIChatMessage(role: .tool, content: "✅ \(proposal.name) ran.\(detail)"))
+                    AIChatMessage(role: .assistant, content: "✅ \(proposal.name) ran.\(detail)"))
             } else {
                 AppToast.show(
                     "\(proposal.name) failed", icon: "exclamationmark.triangle.fill",
@@ -499,6 +500,8 @@ extension LauncherView {
                         content: "⚠️ \(proposal.name) didn't run:\n\n\(outcome.message)",
                         isError: true))
             }
+            persistActiveL2DockSession()
+            requestWindowSizeUpdate(reason: .chatChanged)
         default:
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("proposal_\(UUID().uuidString).sh")
@@ -604,8 +607,9 @@ extension LauncherView {
         return (true, result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 
-    /// Save a proposal — as a Selection Scope extension when it was proposed for that layer,
-    /// otherwise as a persistent Context Trigger rule.
+    /// Save a proposal to the product layer that owns it. Selection proposals belong to
+    /// Selection Scope; frontmost-app chat proposals become actions on that app's adapter so
+    /// the resolver can match and reuse them before spending another AI request.
     func installFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
@@ -616,6 +620,10 @@ extension LauncherView {
         // "Save as Extension" and it appeared in neither place.
         if proposal.layer.lowercased() == "selection" {
             installSelectionScopeExtension(proposal)
+            return
+        }
+        if proposal.layer.lowercased() == "contextdock" {
+            installContextDockAdapterAction(proposal)
             return
         }
         let lang: AppScriptLanguage = {
@@ -669,6 +677,67 @@ extension LauncherView {
             aiMode.messages.append(confirmation)
         } else {
             l2.chatMessages.append(confirmation)
+        }
+    }
+
+    private func installContextDockAdapterAction(_ proposal: ExtensionProposalData) {
+        let bundleId = [
+            l2.chatDraftBundleId,
+            l2.targetApp?.bundleId ?? "",
+            frontmost.bundleID,
+        ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
+        let appName = [
+            l2.chatDraftAppName,
+            l2.targetApp?.name ?? "",
+            frontmost.name,
+        ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? "This App"
+        guard !bundleId.isEmpty else {
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "I couldn't save this action because the scoped app is no longer available.",
+                    isError: true))
+            return
+        }
+
+        let actionType: AdapterActionType = {
+            switch proposal.scriptType.lowercased() {
+            case "applescript": return .applescript
+            case "jxa": return .jxa
+            default: return .shell
+            }
+        }()
+        let triggerWords = proposal.triggers.map(\.value)
+            + proposal.name.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let stableId = "ai." + proposal.name.lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let action = AdapterAction(
+            id: stableId,
+            name: proposal.name,
+            icon: proposal.icon ?? "sparkles",
+            description: proposal.description,
+            triggers: Array(Set(triggerWords.map { $0.lowercased() })).sorted(),
+            category: "AI Workflows",
+            type: actionType,
+            script: proposal.script,
+            requiresApproval: true
+        )
+
+        Task { @MainActor in
+            if AppAdapterManager.shared.adapter(for: bundleId) == nil {
+                await AppAdapterManager.shared.createAdapter(
+                    appName: appName, bundleId: bundleId, icon: "app.fill")
+            }
+            await AppAdapterManager.shared.appendAction(action, to: bundleId)
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "**\(proposal.name)** saved to **\(appName)**. Next time, Context Dock will match this app action before asking AI to create another workflow."))
+            persistActiveL2DockSession()
+            requestWindowSizeUpdate(reason: .chatChanged)
         }
     }
 

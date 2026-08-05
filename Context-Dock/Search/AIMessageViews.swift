@@ -941,7 +941,10 @@ struct AIChatMessageView: View {
                     .padding(.top, 5)
                     .padding(.leading, 7)
             }
-            if message.role == .assistant { Spacer(minLength: 52) }
+            // Tool/run confirmations belong to the assistant side too. Previously only
+            // `.assistant` received this spacer, so `.tool` expanded across the row and its
+            // compact success bubble appeared centred.
+            if message.role != .user { Spacer(minLength: 52) }
         }
     }
 

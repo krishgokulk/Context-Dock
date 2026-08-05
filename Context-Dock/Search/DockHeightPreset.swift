@@ -193,7 +193,11 @@ struct DockHeightResolver {
             120,
             maxSheetContent - bars - header - 18 - metrics.cliTerminalReservedHeight
         )
-        let scroll = min(max(metrics.measuredChatContentHeight, 60), min(400, availableScroll))
+        // Once a scoped conversation starts, keep one stable transcript viewport. Measuring
+        // every streamed token/card and feeding that height back into the NSWindow made the
+        // entire result sheet breathe while the user typed or the model responded. Short
+        // conversations simply occupy the top of this viewport; longer ones scroll inside it.
+        let scroll = min(400, availableScroll)
         return bars + header + scroll + 18 + metrics.cliTerminalReservedHeight
     }
 

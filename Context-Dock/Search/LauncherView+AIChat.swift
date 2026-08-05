@@ -1482,7 +1482,9 @@ extension LauncherView {
                         }
                         // When the scoped terminal opens, chat yields viewport height to it
                         // and stays bottom-anchored, like coding-agent transcript panes.
-                        .frame(height: min(max(measuredChatContentHeight, 1), contextDockChatScrollHeight))
+                        // Scoped chat owns a stable viewport. Intrinsic measurement is still
+                        // useful for scrolling, but must not resize the outer dock per token.
+                        .frame(height: contextDockChatScrollHeight)
                         .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
                                 if let last = l2.chatMessages.last {
