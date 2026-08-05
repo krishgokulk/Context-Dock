@@ -2897,7 +2897,9 @@ extension LauncherView {
     /// Live state of the workspace this scope is working in — the project, its branch and
     /// changes, the agents running in it. Replaces a keyword-gated `code --status` dump:
     /// a co-worker knows the state of the work before being asked about it.
-    func appWorkspaceContextPrompt(bundleId: String, appName: String) async -> String {
+    func appWorkspaceContextPrompt(
+        bundleId: String, appName: String, forceRefresh: Bool = false
+    ) async -> String {
         guard !bundleId.isEmpty else { return "" }
         let windowTitle = await MainActor.run {
             self.axContext.bundleId == bundleId ? self.axContext.windowTitle : nil
@@ -2912,7 +2914,7 @@ extension LauncherView {
         )
         let linkedCLIs = await MainActor.run { self.scopeRunnableCommandBinaries() }
         return await AppWorkspaceService.shared.contextBlock(
-            for: identity, linkedCLIs: linkedCLIs)
+            for: identity, linkedCLIs: linkedCLIs, forceRefresh: forceRefresh)
     }
 
     /// Decodes typed `terminal_call` JSON lines, strips them from the displayed message,
@@ -4621,12 +4623,14 @@ extension LauncherView {
                 // timeout. A frontmost-app question is exactly what on-device should answer,
                 // so the scope is described compactly instead of dropping to the cloud.
                 let usesOnDeviceModel = provider == .onDevice
+                let sourceDecision = AgentSourceAuthority.decide(query: query)
                 // What the app is DOING right now — project, branch, changes, running
                 // agents. Without this a scope could only describe its own tool inventory.
                 let workspaceBlock = await self.appWorkspaceContextPrompt(
                     bundleId: scopedBundleId,
                     appName: scopedAppName.isEmpty
-                        ? (frontmostName ?? frontmost.name) : scopedAppName)
+                        ? (frontmostName ?? frontmost.name) : scopedAppName,
+                    forceRefresh: sourceDecision.requiresFreshRead)
                 // What the vendor documents about this app, fetched fresh when the question
                 // is about the product rather than the machine.
                 let referenceBlock = await self.appReferenceContextPrompt(
@@ -4650,14 +4654,28 @@ extension LauncherView {
                     files: submittedContextDockFiles,
                     capturedText: submittedContextDockText
                 )
-                let memoryBlock = MarkdownMemoryStore.shared.contextBlock(
-                    query: query,
-                    appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
-                )
-                let memoryToolChips = MarkdownMemoryStore.shared.relevantSourceChips(
-                    query: query,
-                    appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
-                )
+                let memoryBlock = sourceDecision.allowsMemoryEvidence
+                    ? MarkdownMemoryStore.shared.contextBlock(
+                        query: query,
+                        appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId)
+                    : ""
+                var memoryToolChips: [String] = []
+                if sourceDecision.requiresFreshRead, !workspaceBlock.isEmpty {
+                    memoryToolChips.append("Live workspace · just now")
+                }
+                if sourceDecision.requiresFreshRead, !appleData.isEmpty {
+                    memoryToolChips.append("Live app data · just now")
+                }
+                if sourceDecision.primary == .officialReference,
+                    referenceBlock.contains("Current content of")
+                {
+                    memoryToolChips.append("Official app reference · fetched now")
+                }
+                if sourceDecision.allowsMemoryEvidence {
+                    memoryToolChips += MarkdownMemoryStore.shared.relevantSourceChips(
+                        query: query,
+                        appBundleID: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId)
+                }
                 // Image captures/uploads go to the model as REAL vision (not just OCR) for
                 // vision-capable cloud providers via sendWithTools(imageAttachments:).
                 let scopedImageExts: Set<String> = [
@@ -4668,7 +4686,8 @@ extension LauncherView {
                 }
                 let activeContextPrompt: String = {
                     let parts = [
-                        identityBlock, workspaceBlock, referenceBlock, finalContextPrompt,
+                        sourceDecision.promptRule, identityBlock, workspaceBlock, referenceBlock,
+                        finalContextPrompt,
                         runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
                         skillsBlock, attachmentBlock, memoryBlock,
                     ]
@@ -4680,7 +4699,8 @@ extension LauncherView {
                     // Ordered by what the answer actually needs: who the scope is, then the
                     // live data, then reference material. Reference is cut first.
                     let prioritised = [
-                        identityBlock, workspaceBlock, referenceBlock, browserPageBlock,
+                        sourceDecision.promptRule, identityBlock, workspaceBlock, referenceBlock,
+                        browserPageBlock,
                         attachmentBlock, finalContextPrompt, appleData, mcpBlock, skillsBlock,
                         memoryBlock, runtimeCLIContextPrompt,
                     ]
@@ -6084,9 +6104,12 @@ extension LauncherView {
             use a bullet per item with its key details — for mail: sender · subject · date;
             for notes/files: title · short snippet. Keep it a tight, scannable summary, not a
             rambling paragraph. If nothing was found, say so plainly in one line.
-            NEVER print tool-call syntax in your reply — no <function>/<invoke> XML, no raw
-            {"mcp_call":…}/{"menu_call":…} JSON. Emit a tool call only through the tool channel;
-            your visible text is prose for the user, never call scaffolding.
+            A tool call and an answer are separate replies — never mix them in one message.
+            To call a tool, reply with ONLY the tool-call JSON described below and nothing
+            else: no greeting, no explanation, no code fence around it. To answer the user,
+            reply with prose only, containing no tool-call JSON and no <function>/<invoke>
+            XML. Scaffolding leaking into a prose answer is the thing to avoid; emitting a
+            lone tool call is how you use the tools at all.
             \(currentDateTimeContextBlock())
             """
         let memoryBlock = MarkdownMemoryStore.shared.contextBlock(query: query)
