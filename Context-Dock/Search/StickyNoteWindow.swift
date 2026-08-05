@@ -291,6 +291,7 @@ private struct StickyNoteContent: View {
     @AppStorage("quickNoteAIChatWidth") private var aiChatWidth = 330.0
     @State private var prompt: String = ""
     @State private var isGenerating = false
+    @State private var attachedContextApps: [String] = []
 
     var body: some View {
         Group {
@@ -472,54 +473,63 @@ private struct StickyNoteContent: View {
     }
 
     /// Composer stays inside the sidecar, so typing to AI never changes the note.
+    /// Uses the shared AIComposerBar so the note and the extension panels present one
+    /// assistant; the note-specific attachments hang off its "+" menu.
     private var chatComposer: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Button(action: attachFrontmostWindow) {
-                    Label("Attach Frontmost Window", systemImage: "macwindow")
+        VStack(alignment: .leading, spacing: 6) {
+            if !attachedContextApps.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(attachedContextApps, id: \.self) { app in
+                            HStack(spacing: 3) {
+                                Text(app).font(.system(size: 10, weight: .medium))
+                                Button {
+                                    attachedContextApps.removeAll { $0 == app }
+                                } label: {
+                                    Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                        }
+                    }
                 }
-                Divider()
-                Button { attachFile(imagesOnly: true) } label: {
-                    Label("Upload Photo", systemImage: "photo")
-                }
-                Button { attachFile(imagesOnly: false) } label: {
-                    Label("Attach Files…", systemImage: "paperclip")
-                }
-                Button { captureScreen(interactive: false) } label: {
-                    Label("Take Screenshot", systemImage: "camera.viewfinder")
-                }
-                Button { captureScreen(interactive: true) } label: {
-                    Label("Capture Area", systemImage: "crop")
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                .frame(height: 20)
+                .padding(.horizontal, 4)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Attach to note")
 
-            TextField("Ask AI…", text: $prompt)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .onSubmit { send() }
-                .disabled(isGenerating)
-
-            Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 17))
-                    .foregroundStyle(
-                        prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
-            }
-            .buttonStyle(.plain)
-            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
+            AIComposerBar(
+                text: $prompt,
+                isSending: isGenerating,
+                attachedAppNames: attachedContextApps,
+                onAttachFile: { attachFile(imagesOnly: false) },
+                onAttachApp: { app in
+                    if !attachedContextApps.contains(app) { attachedContextApps.append(app) }
+                },
+                onSubmit: send,
+                extraAttachMenu: {
+                    AnyView(
+                        Group {
+                            Button(action: attachFrontmostWindow) {
+                                Label("Attach Frontmost Window", systemImage: "macwindow")
+                            }
+                            Button { attachFile(imagesOnly: true) } label: {
+                                Label("Upload Photo", systemImage: "photo")
+                            }
+                            Button { captureScreen(interactive: false) } label: {
+                                Label("Take Screenshot", systemImage: "camera.viewfinder")
+                            }
+                            Button { captureScreen(interactive: true) } label: {
+                                Label("Capture Area", systemImage: "crop")
+                            }
+                        }
+                    )
+                }
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .padding(10)
     }
 

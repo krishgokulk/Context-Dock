@@ -381,8 +381,7 @@ struct ExtensionPanelAIComposer: View {
             AIComposerBar(
                 text: $draft,
                 isSending: isSending,
-                attachedAppCount: attachedApps.count,
-                runningApps: runningApps,
+                attachedAppNames: attachedApps,
                 onAttachFile: pickFiles,
                 onAttachApp: { app in
                     if !attachedApps.contains(app) { attachedApps.append(app) }
@@ -524,13 +523,25 @@ struct ExtensionPanelAIComposer: View {
 struct AIComposerBar: View {
     @Binding var text: String
     var isSending: Bool
-    var attachedAppCount: Int
-    var runningApps: [String]
+    var attachedAppNames: [String]
     var onAttachFile: () -> Void
     var onAttachApp: (String) -> Void
     var onSubmit: () -> Void
+    /// Surface-specific attach items (Quick Note's screenshot / window capture).
+    /// When nil, "+" is a plain file picker.
+    var extraAttachMenu: (() -> AnyView)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
+    @State private var showAppPicker = false
+
+    /// Icons of attached apps, resolved once for the bar's button.
+    private var attachedAppIcons: [NSImage] {
+        attachedAppNames.compactMap { name in
+            NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == name }?.icon
+                ?? AppContextPicker.icon(forAppNamed: name)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -548,16 +559,13 @@ struct AIComposerBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(settings.selectedAIProvider.shortName)
-                        .font(.system(size: 12, weight: .semibold))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
-                }
-                .foregroundStyle(.primary)
-                .contentShape(Rectangle())
+                // Icon only: the placeholder already says which model this is, and the
+                // name repeated beside it ate half the bar on a narrow panel.
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -569,35 +577,55 @@ struct AIComposerBar: View {
                 .lineLimit(1...5)
                 .onSubmit(onSubmit)
 
-            Button(action: onAttachFile) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
+            if let extraAttachMenu {
+                Menu {
+                    Button { onAttachFile() } label: {
+                        Label("Attach Files…", systemImage: "paperclip")
+                    }
+                    Divider()
+                    extraAttachMenu()
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            } else {
+                Button(action: onAttachFile) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Attach a file")
+            }
+
+            Button { showAppPicker = true } label: {
+                // Show the attached app's own icon, so the bar says which app is in
+                // play rather than a generic window glyph.
+                if let first = attachedAppIcons.first {
+                    Image(nsImage: first)
+                        .resizable()
+                        .frame(width: 17, height: 17)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } else {
+                    Image(systemName: "app.dashed")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
             }
             .buttonStyle(.plain)
-            .help("Attach a file")
-
-            Menu {
-                if runningApps.isEmpty { Text("No running apps") }
-                ForEach(runningApps, id: \.self) { app in
-                    Button {
-                        onAttachApp(app)
-                    } label: {
-                        Label(app, systemImage: AppAdapterManager.shared.adapters
-                            .first { $0.appName == app }?.icon ?? "app")
-                    }
+            .help("Work with an app")
+            .popover(isPresented: $showAppPicker, arrowEdge: .bottom) {
+                AppContextPicker { app in
+                    onAttachApp(app)
+                    showAppPicker = false
                 }
-            } label: {
-                Image(systemName: "macwindow.on.rectangle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(attachedAppCount > 0 ? Color.accentColor : .secondary)
-                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Use an app's context and actions")
 
             if isSending {
                 ProgressView().controlSize(.small)
@@ -608,5 +636,96 @@ struct AIComposerBar: View {
         .background(Color.primary.opacity(0.06), in: Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+    }
+}
+
+
+// MARK: - App picker
+
+/// Every installed app, searchable, running ones first — the same set the launcher
+/// searches. A menu of running apps only was too narrow: "work with Notes" is a
+/// reasonable thing to ask before Notes is open.
+struct AppContextPicker: View {
+    let onPick: (String) -> Void
+
+    @State private var query = ""
+    @State private var apps: [(name: String, icon: NSImage?, running: Bool)] = []
+
+    private var filtered: [(name: String, icon: NSImage?, running: Bool)] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return apps }
+        return apps.filter { $0.name.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                TextField("Search apps", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(filtered, id: \.name) { app in
+                        Button { onPick(app.name) } label: {
+                            HStack(spacing: 8) {
+                                if let icon = app.icon {
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .frame(width: 18, height: 18)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                } else {
+                                    Image(systemName: "app")
+                                        .font(.system(size: 12))
+                                        .frame(width: 18)
+                                }
+                                Text(app.name).font(.system(size: 12, weight: .medium))
+                                if !app.running {
+                                    Text("Not running")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Spacer(minLength: 6)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .frame(width: 280, height: 320)
+        .task { load() }
+    }
+
+    private func load() {
+        let running = Set(NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap(\.localizedName))
+        let catalog = AppCatalogService.shared.appsNow()
+        var seen = Set<String>()
+        var out: [(String, NSImage?, Bool)] = []
+        for result in catalog where !seen.contains(result.title) {
+            seen.insert(result.title)
+            out.append((result.title, result.icon, running.contains(result.title)))
+        }
+        // Running first, then alphabetical: what is open is what you usually mean.
+        apps = out
+            .sorted { ($0.2 ? 0 : 1, $0.0.lowercased()) < ($1.2 ? 0 : 1, $1.0.lowercased()) }
+            .map { (name: $0.0, icon: $0.1, running: $0.2) }
+    }
+
+    static func icon(forAppNamed name: String) -> NSImage? {
+        AppCatalogService.shared.appsNow().first { $0.title == name }?.icon
     }
 }
