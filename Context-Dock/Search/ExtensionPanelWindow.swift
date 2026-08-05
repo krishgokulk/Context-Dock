@@ -709,9 +709,18 @@ struct AppContextPicker: View {
     }
 
     private func load() {
-        let running = Set(NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular }
-            .compactMap(\.localizedName))
+        // Match on the bundle's filename as well as its localized name. The catalog
+        // lists "Visual Studio Code" (the .app on disk) while the running process
+        // reports "Code", so name-only matching marked open apps as not running and
+        // sank them to the bottom of the list.
+        var running = Set<String>()
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular {
+            if let name = app.localizedName { running.insert(name) }
+            if let url = app.bundleURL {
+                running.insert(url.deletingPathExtension().lastPathComponent)
+            }
+        }
         let catalog = AppCatalogService.shared.appsNow()
         var seen = Set<String>()
         var out: [(String, NSImage?, Bool)] = []

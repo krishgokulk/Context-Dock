@@ -345,23 +345,6 @@ private struct StickyNoteContent: View {
 
     private func chatPane(width: CGFloat) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text("Ask AI")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text(settings.selectedAIProvider.displayName)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
-            Divider().opacity(0.35)
-
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 10) {
