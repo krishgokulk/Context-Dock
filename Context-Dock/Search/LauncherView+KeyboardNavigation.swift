@@ -1800,6 +1800,19 @@ extension LauncherView {
                         if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
                         return .handled
                     }
+                    // Enter runs the row the user is looking at. The highlighted row is what
+                    // the leading icon and the ghost are both drawn from, and
+                    // executeFocusedGlobalGroupedListRow is the accessor that reads it —
+                    // three NSEvent monitors already use it.
+                    //
+                    // This handler reached launchTypedAppMatchIfNeeded first, which resolves
+                    // an app from the *typed text* through L2AppActionRouter: a fourth
+                    // resolver, independent of the icon, the ghost and Tab. So "remi" could
+                    // show Reminders and launch something else, and which happened depended
+                    // on whether this handler or a monitor saw the key first.
+                    if isGlobalContextActive, executeFocusedGlobalGroupedListRow() {
+                        return .handled
+                    }
                     if launchTypedAppMatchIfNeeded() {
                         return .handled
                     }
