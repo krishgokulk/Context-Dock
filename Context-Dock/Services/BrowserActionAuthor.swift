@@ -53,6 +53,24 @@ final class BrowserActionAuthor {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard q.count >= 3, !q.hasSuffix("?") else { return false }
 
+        // Browser chrome belongs to the app, not the rendered document. These requests must
+        // continue into the shared app-capability resolver where cached/live menus, adapter
+        // actions and shortcuts can compete. A page script can never reach this state.
+        let browserChromeObjects = [
+            "closed tab", "closed window", "recently closed", "last session", "history",
+            "bookmark", "private window", "incognito", "new tab", "new window",
+            "downloads window", "sidebar", "tab group",
+        ]
+        let browserChromeVerbs = [
+            "reopen", "restore", "open", "close", "new", "show", "hide", "clear",
+            "bookmark", "move tab", "pin tab", "duplicate tab",
+        ]
+        if browserChromeObjects.contains(where: q.contains),
+            browserChromeVerbs.contains(where: q.contains)
+        {
+            return false
+        }
+
         let questionOpeners = [
             "what", "why", "how ", "who", "when", "where", "explain", "summar",
             "describe", "translate", "tell me", "is ", "does ", "do ", "can you tell",

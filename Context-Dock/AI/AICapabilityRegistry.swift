@@ -400,18 +400,24 @@ final class CapabilityRegistry {
                 riskLevel: .low
             ) { _ in
                 let live = AXContextReader.shared.current
-                guard let snapshot = AXWebReader.shared.cachedSnapshot(for: live.pid),
-                      !snapshot.text.isEmpty
-                else {
+                let extensionContext = SafariBrowserBridge.shared.isFresh
+                    ? SafariBrowserBridge.shared.currentContext() : nil
+                let snapshot = AXWebReader.shared.cachedSnapshot(for: live.pid)
+                let pageText = extensionContext?.pageTextForAI ?? snapshot?.text ?? ""
+                let pageURL = extensionContext?.url ?? snapshot?.url ?? ""
+                let pageTitle = extensionContext?.title ?? snapshot?.title ?? ""
+                guard !pageText.isEmpty else {
                     return .init(
                         success: false,
-                        output: "Page text is not ready. Refresh browser context and try again."
+                        output: "Page text is not ready. Reload the page and allow the Context Dock Safari Extension for this website."
                     )
                 }
+                let compacted = MarkItDownService.compact(
+                    pageText, for: "summarize this page", limit: 5_000)
                 let response = try await AIProviderRouter.shared.send(
                     AIRequest(
                         text: "Summarize this page concisely.",
-                        context: .url(snapshot.url),
+                        context: .url(pageURL),
                         source: .contextDock,
                         liveContext: ContextSnapshot(
                             frontmostApp: live.appName,
@@ -423,15 +429,15 @@ final class CapabilityRegistry {
                             selectedFiles: live.selectedFilePaths,
                             currentDirectory: nil,
                             browserContext: BrowserContextSnapshot(
-                                url: snapshot.url,
-                                title: snapshot.title
+                                url: pageURL,
+                                title: pageTitle
                             ),
                             menuCapabilities: live.menuItems.filter(\.enabled).map(\.fullPath),
                             registeredCapabilities: CapabilityRegistry.shared
                                 .capabilities(for: live.bundleId)
                                 .map(\.id)
                         ),
-                        additionalContextPrompt: "Page content:\n\(snapshot.text)"
+                        additionalContextPrompt: "Page content:\n\(compacted)"
                     )
                 )
                 return .init(success: true, output: response)

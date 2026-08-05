@@ -278,7 +278,7 @@ extension LauncherView {
     /// 8 000-char page text, no automation prompt), then the AX snapshot when the
     /// extension is not enabled. Returns "" when not a browser or no data.
     @MainActor
-    func browserScopeContextBlock(scopedBundleId: String) -> String {
+    func browserScopeContextBlock(scopedBundleId: String, query: String? = nil) -> String {
         let bundle = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
         guard isContextDockBrowserBundle(bundle) else { return "" }
 
@@ -313,6 +313,13 @@ extension LauncherView {
         }
 
         guard !pageText.isEmpty || !pageURL.isEmpty else { return "" }
+        // The extension already removes browser chrome and sends readable page text. Run the
+        // same query-aware Markdown compactor used for documents before this enters a model
+        // context. Re-fetching the URL through MarkItDown would be slower, could see a
+        // different signed-out page, and would discard the user's live selection/state.
+        if !pageText.isEmpty {
+            pageText = MarkItDownService.compact(pageText, for: query, limit: 5_000)
+        }
         let selectedSection = selected.isEmpty
             ? "" : "\nSELECTED TEXT:\n\(String(selected.prefix(1500)))"
         // Where the page can take the user. Page text drops every href, so a download or
@@ -3785,6 +3792,10 @@ extension LauncherView {
     func handleL2Query(_ query: String, skipMenuRouter: Bool) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
+        // The launcher becomes key while the user types, so NSWorkspace/frontmost can now be
+        // Context Dock itself. Capture the already-visible chat scope before changing any state;
+        // that scope owns the entire turn until the user explicitly exits it.
+        let lockedChatScope = currentContextDockChatScope
         let trimmedSubmittedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedSubmittedQuery {
             searchState.query = ""
@@ -3803,12 +3814,19 @@ extension LauncherView {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let dockScope = resolveDockScope(for: query)
         let rawScopedSearchQuery = rawScopedActionQuery(for: query, scope: dockScope)
-        let scopedBundleId = dockScope.scopedBundleId.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        let scopedAppName = dockScope.scopedAppName.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
+        let resolvedBundleId = dockScope.scopedBundleId.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let resolvedAppName = dockScope.scopedAppName.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let lockedBundleId = lockedChatScope.bundleId.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let lockedAppName = lockedChatScope.appName.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let shouldKeepLockedChatScope = wasContextDockChatActive
+            && !lockedBundleId.isEmpty
+            && lockedBundleId != Bundle.main.bundleIdentifier
+        let scopedBundleId = shouldKeepLockedChatScope ? lockedBundleId : resolvedBundleId
+        let scopedAppName = shouldKeepLockedChatScope ? lockedAppName : resolvedAppName
         let isExplicitScopedApp =
             dockScope.isExplicitAppScope
             && !scopedBundleId.isEmpty
@@ -4534,7 +4552,9 @@ extension LauncherView {
         // exists. A page request ("dark mode for this page", "hide the sidebar") has no
         // menu item or adapter action anywhere — the capability belongs to the page — so
         // in a browser scope write the userscript instead of explaining how to do it.
-        if tryAuthorBrowserPageAction(
+        if !isSafariPageUnderstandingReadQuery(query, bundleID: scopedBundleId),
+            !isSafariPageLinkOpenQuery(query, bundleID: scopedBundleId),
+            tryAuthorBrowserPageAction(
             query: query, scopedBundleId: scopedBundleId, scopedAppName: scopedAppName)
         {
             finishL2AIRequest(l2RequestID)
@@ -4589,10 +4609,131 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                // Browser-library reads must win before page scripts and menu actions. A
+                // page-world adapter can inspect one document, but it can never enumerate
+                // Safari's browser chrome or other tabs.
+                let historyBundle = scopedBundleId.isEmpty
+                    ? frontmost.bundleID : scopedBundleId
+                if self.isContextDockBrowserBundle(historyBundle),
+                    self.isBrowserHistoryReadQuery(query)
+                {
+                    await self.setL2LoadingStatus(
+                        "Reading live browser data…", requestID: l2RequestID)
+                    if let historyAnswer = await self.localBrowserHistoryAnswer(
+                        query: query,
+                        scopedBundleId: historyBundle,
+                        requireAppAdapter: false)
+                    {
+                        await MainActor.run {
+                            let browserTabs = self.structuredSafariTabs(
+                                for: query, bundleID: historyBundle)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: browserTabs.isEmpty ? historyAnswer : "",
+                                    browserTabs: browserTabs,
+                                    mcpToolsRan: browserTabs.isEmpty
+                                        ? ["Local browser history"] : []))
+                            finishL2AIRequest(l2RequestID)
+                        }
+                        return
+                    }
+                }
+
+                // Explicit navigation must be grounded in the current document. Never turn
+                // "open the GitHub guide" into a generated web search when the page already
+                // contains the destination URL.
+                if self.isSafariPageLinkOpenQuery(query, bundleID: historyBundle) {
+                    var pageLinks = await MainActor.run(body: {
+                        self.structuredSafariPageLinks() ?? []
+                    })
+                    var source = "Context Dock Safari Extension"
+                    if pageLinks.isEmpty {
+                        pageLinks = await self.readCurrentSafariPageLinksDirectly()
+                        if !pageLinks.isEmpty { source = "Safari current page" }
+                    }
+                    let matches = self.rankedSafariPageLinks(pageLinks, for: query)
+                    await MainActor.run {
+                        if let best = matches.first {
+                            SafariTabManager.shared.openURL(best.url)
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: "Opened \(best.title) from the current page.",
+                                    pageLinks: [best],
+                                    trace: [
+                                        "Read current page links from \(source)",
+                                        "Matched the request to \(best.domain)",
+                                        "Opened the exact page link",
+                                    ]))
+                        } else {
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: pageLinks.isEmpty
+                                        ? "Safari did not return current-page links through either the direct reader or the enabled extension bridge. Click Context Dock’s Safari toolbar button once on this page to restart the extension worker, then retry."
+                                        : "I couldn’t identify that destination confidently. Here are the links from this page—choose the one you meant.",
+                                    pageLinks: Array(pageLinks.prefix(20)),
+                                    trace: ["Read current page links", "No confident destination match"]))
+                        }
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
+
+                if self.isSafariPageLinkReadQuery(query, bundleID: historyBundle) {
+                    var pageLinks = await MainActor.run(body: {
+                        self.structuredSafariPageLinks() ?? []
+                    })
+                    var source = "Context Dock Safari Extension"
+                    if pageLinks.isEmpty {
+                        pageLinks = await self.readCurrentSafariPageLinksDirectly()
+                        if !pageLinks.isEmpty { source = "Safari current page" }
+                    }
+                    let didReadPageLinks = !pageLinks.isEmpty
+                    pageLinks = self.safariPageLinks(pageLinks, relevantTo: query)
+                    await MainActor.run {
+                        if pageLinks.isEmpty {
+                            let bridge = SafariBrowserBridge.shared
+                            let message: String
+                            if didReadPageLinks {
+                                message = "I read the current page, but it doesn’t contain links matching that request."
+                            } else if bridge.isExtensionActive {
+                                message = "Context Dock’s Safari Extension is enabled, but Safari did not deliver a current-page snapshot and both live recovery readers returned no links. Click the Context Dock toolbar button once on this page to restart Safari’s extension worker, then try again."
+                            } else {
+                                message = "Safari has not delivered any Context Dock page snapshot yet. Open the Context Dock toolbar button on this page once; that establishes the local page bridge and retries the read without sending page data anywhere by itself."
+                            }
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: message,
+                                    isError: false,
+                                    trace: ["Checked Context Dock Safari Extension", "No fresh page-link payload"]
+                                ))
+                        } else {
+                            let lower = query.lowercased()
+                            let asksExistence = lower.contains("any link")
+                                || lower.contains("contain") || lower.contains("has link")
+                                || lower.contains("have link") || lower.contains("are there")
+                            l2.chatMessages.append(
+                                AIChatMessage(
+                                    role: .assistant,
+                                    content: asksExistence
+                                        ? "Yes — this page contains \(pageLinks.count) readable link\(pageLinks.count == 1 ? "" : "s")."
+                                        : "",
+                                    pageLinks: pageLinks,
+                                    trace: ["Read current page links from \(source)"]))
+                        }
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
+
                 // App UI work is proposed as a visible Computer Use action. Resolution is
                 // deterministic and local; the user's click is Allow Once. Only after that
                 // click may DoraX launch/restore the app and live-verify the cached menu path.
                 if !self.isGlobalQueryModeActive,
+                    !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle),
                     await self.offerScopedNativeAppAction(
                         query: query,
                         bundleId: scopedBundleId,
@@ -4601,30 +4742,6 @@ extension LauncherView {
                         requestID: l2RequestID)
                 {
                     return
-                }
-
-                let historyBundle = scopedBundleId.isEmpty
-                    ? frontmost.bundleID : scopedBundleId
-                if self.isContextDockBrowserBundle(historyBundle),
-                    self.isBrowserHistoryReadQuery(query)
-                {
-                    await self.setL2LoadingStatus(
-                        "Reading local browser-history URLs…", requestID: l2RequestID)
-                    if let historyAnswer = await self.localBrowserHistoryAnswer(
-                        query: query,
-                        scopedBundleId: historyBundle,
-                        requireAppAdapter: false)
-                    {
-                        await MainActor.run {
-                            l2.chatMessages.append(
-                                AIChatMessage(
-                                    role: .assistant,
-                                    content: historyAnswer,
-                                    mcpToolsRan: ["Local browser history"]))
-                            finishL2AIRequest(l2RequestID)
-                        }
-                        return
-                    }
                 }
 
                 await self.setL2LoadingStatus(
@@ -4655,8 +4772,17 @@ extension LauncherView {
                 // Live browser page (URL + text + selection) from the Safari Web
                 // Extension, so every provider can answer "summarize this page",
                 // pass the video URL to yt-dlp, etc. — without a page-reading tool.
-                let browserPageBlock = await MainActor.run {
-                    self.browserScopeContextBlock(scopedBundleId: scopedBundleId)
+                var browserPageBlock = await MainActor.run {
+                    self.browserScopeContextBlock(scopedBundleId: scopedBundleId, query: query)
+                }
+                // A stale native-message bridge must not leave Safari chat reasoning over an
+                // old page. Read the active DOM directly as a recovery path and give the model
+                // one Markdown-shaped snapshot containing both visible text and exact hrefs.
+                if self.isContextDockBrowserBundle(historyBundle),
+                    !SafariBrowserBridge.shared.isFresh,
+                    let directBlock = await self.readCurrentSafariPagePromptDirectly(query: query)
+                {
+                    browserPageBlock = directBlock
                 }
                 // Adapter Skills — reusable instruction bundles for this app, fed
                 // as extra AI context (never executable).
@@ -5729,6 +5855,237 @@ extension LauncherView {
             "all ", "any ", "recent", "did i", "have i", "tell me",
         ]
         return readShapes.contains(where: normalized.contains)
+    }
+
+    @MainActor
+    private func structuredSafariTabs(for query: String, bundleID: String) -> [BrowserTabAction] {
+        let lower = query.lowercased()
+        guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp"),
+            lower.contains("tab")
+        else { return [] }
+        return ContextDetector.shared.getAllSafariTabs().prefix(40).map {
+            BrowserTabAction(
+                title: $0.title, url: $0.url,
+                windowIndex: $0.windowIndex, tabIndex: $0.tabIndex)
+        }
+    }
+
+    private func isSafariPageLinkReadQuery(_ query: String, bundleID: String) -> Bool {
+        guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp")
+        else { return false }
+        let lower = query.lowercased()
+        let asksForLinks = lower.contains("link") || lower.contains("urls on")
+        let reads = [
+            "show", "list", "find", "extract", "what", "which", "contain", "contains",
+            "has", "have", "any", "are there", "is there", "does", "tell me"
+        ].contains {
+            lower.contains($0)
+        }
+        return asksForLinks && reads
+    }
+
+    private func isSafariPageLinkOpenQuery(_ query: String, bundleID: String) -> Bool {
+        guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp")
+        else { return false }
+        let lower = query.lowercased()
+        guard lower.contains("open") || lower.contains("go to") || lower.contains("visit")
+        else { return false }
+        // A page-relative phrase is ideal, but named destinations such as GitHub, Twitter,
+        // documentation, guide, pricing, etc. are also resolved against the live link set.
+        return lower.contains("link") || lower.contains("this page") || lower.contains("from page")
+            || lower.contains("guide") || lower.contains("github") || lower.contains("twitter")
+            || lower.contains("documentation") || lower.contains("docs")
+    }
+
+    private func rankedSafariPageLinks(
+        _ links: [PageLinkAction], for query: String
+    ) -> [PageLinkAction] {
+        let ignored: Set<String> = [
+            "open", "visit", "this", "that", "page", "link", "links", "from", "the", "please",
+            "guide", "site", "website", "want", "think",
+        ]
+        let tokens = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 2 && !ignored.contains($0) }
+        guard !tokens.isEmpty else { return [] }
+
+        return links.compactMap { link -> (PageLinkAction, Int)? in
+            let title = link.title.lowercased()
+            let domain = link.domain.lowercased()
+            let url = link.url.lowercased()
+            let score = tokens.reduce(0) { total, token in
+                total
+                    + (title.contains(token) ? 4 : 0)
+                    + (domain.contains(token) ? 5 : 0)
+                    + (url.contains(token) ? 2 : 0)
+            }
+            return score > 0 ? (link, score) : nil
+        }
+        .sorted {
+            if $0.1 != $1.1 { return $0.1 > $1.1 }
+            return $0.0.title.count < $1.0.title.count
+        }
+        .map(\.0)
+    }
+
+    private func safariPageLinks(
+        _ links: [PageLinkAction], relevantTo query: String
+    ) -> [PageLinkAction] {
+        let lower = query.lowercased()
+        if lower.contains("social") {
+            let socialHosts = [
+                "github.", "twitter.", "x.com", "mastodon.", "patreon.", "facebook.",
+                "instagram.", "linkedin.", "youtube.", "discord.", "reddit.", "threads.",
+            ]
+            return links.filter { link in
+                let haystack = "\(link.title) \(link.url)".lowercased()
+                return socialHosts.contains(where: haystack.contains)
+            }
+        }
+        let namedHosts = ["github", "twitter", "mastodon", "patreon", "instagram", "linkedin"]
+            .filter(lower.contains)
+        guard !namedHosts.isEmpty else { return links }
+        return links.filter { link in
+            let haystack = "\(link.title) \(link.url)".lowercased()
+            return namedHosts.contains(where: haystack.contains)
+        }
+    }
+
+    private func isSafariPageUnderstandingReadQuery(_ query: String, bundleID: String) -> Bool {
+        guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp")
+        else { return false }
+        if isSafariPageLinkReadQuery(query, bundleID: bundleID) { return true }
+        let lower = query.lowercased()
+        let pageReference = lower.contains("this page") || lower.contains("current page")
+            || lower.contains("article") || lower.contains("website")
+        let readIntent = [
+            "summarize", "summarise", "explain", "what is", "what does", "tell me",
+            "key points", "main points", "read", "analyse", "analyze", "compare"
+        ].contains { lower.contains($0) }
+        return pageReference && readIntent
+    }
+
+    @MainActor
+    private func structuredSafariPageLinks() -> [PageLinkAction]? {
+        guard SafariBrowserBridge.shared.isFresh,
+            let context = SafariBrowserBridge.shared.currentContext()
+        else { return nil }
+        var seen = Set<String>()
+        return context.links.compactMap { link in
+            guard !link.url.isEmpty, seen.insert(link.url).inserted else { return nil }
+            return PageLinkAction(
+                title: link.text.isEmpty ? link.url : link.text,
+                url: link.url,
+                pageTitle: context.title)
+        }
+    }
+
+    /// Read-only recovery path when Safari's passive native-message payload is stale. This
+    /// executes Context Dock-owned JavaScript directly in the current Safari tab; it does not
+    /// open an Extension Actions menu, run a user adapter, or mutate the page.
+    private func readCurrentSafariPageLinksDirectly() async -> [PageLinkAction] {
+        let script = #"""
+        (function() { return JSON.stringify(Array.from(document.querySelectorAll('a[href]')).map(function(a) {
+          var text = (a.innerText || a.getAttribute('aria-label') || a.title || '').replace(/\s+/g, ' ').trim();
+          var url = '';
+          try { url = new URL(a.getAttribute('href'), location.href).href; } catch (_) { return null; }
+          if (!text) {
+            var image = a.querySelector('img');
+            text = image ? (image.getAttribute('alt') || '') : '';
+          }
+          if (!text) {
+            try { text = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (_) {}
+          }
+          if (!text || !/^https?:/i.test(url)) return null;
+          return { title: text.slice(0, 100), url: url, pageTitle: document.title || '' };
+        }).filter(Boolean).filter(function(item, index, rows) {
+          return rows.findIndex(function(other) { return other.url === item.url; }) === index;
+        }).slice(0, 60)); })()
+        """#
+        guard let raw = await executeCurrentSafariReadJavaScript(expression: script),
+            !raw.hasPrefix("JS error:"),
+            let data = raw.data(using: .utf8),
+            let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
+        else { return [] }
+        return rows.compactMap { row in
+            guard let url = row["url"], !url.isEmpty else { return nil }
+            return PageLinkAction(
+                title: row["title"]?.isEmpty == false ? row["title"]! : url,
+                url: url,
+                pageTitle: row["pageTitle"] ?? "")
+        }
+    }
+
+    /// Full live-page recovery used for model context when the Safari extension payload is
+    /// stale. It preserves exact anchors in Markdown form; MarkItDown's query-aware compactor
+    /// then keeps the most relevant sections inside the provider's token budget.
+    private func readCurrentSafariPagePromptDirectly(query: String) async -> String? {
+        let script = #"""
+        (function() {
+          var root = document.querySelector('article') || document.querySelector('main') || document.body;
+          var rows = Array.from(document.querySelectorAll('a[href]')).map(function(a) {
+            var url = '';
+            try { url = new URL(a.getAttribute('href'), location.href).href; } catch (_) { return null; }
+            if (!/^https?:/i.test(url)) return null;
+            var text = (a.innerText || a.getAttribute('aria-label') || a.title || '').replace(/\s+/g, ' ').trim();
+            if (!text) { var image = a.querySelector('img'); text = image ? (image.getAttribute('alt') || '') : ''; }
+            if (!text) { try { text = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (_) {} }
+            return text ? { text: text.slice(0, 100), url: url } : null;
+          }).filter(Boolean).filter(function(item, index, all) {
+            return all.findIndex(function(other) { return other.url === item.url; }) === index;
+          }).slice(0, 60);
+          return JSON.stringify({
+            title: document.title || '', url: location.href,
+            text: (root ? root.innerText : '').trim().slice(0, 12000), links: rows
+          });
+        })()
+        """#
+        guard let raw = await executeCurrentSafariReadJavaScript(expression: script),
+            !raw.hasPrefix("JS error:"), let data = raw.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        let title = payload["title"] as? String ?? ""
+        let url = payload["url"] as? String ?? ""
+        let text = payload["text"] as? String ?? ""
+        let compacted = MarkItDownService.compact(text, for: query, limit: 5_000)
+        let links = (payload["links"] as? [[String: Any]] ?? []).compactMap { row -> String? in
+            guard let target = row["url"] as? String, !target.isEmpty else { return nil }
+            let label = (row["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return "- [\((label?.isEmpty == false ? label : target) ?? target)](\(target))"
+        }.joined(separator: "\n")
+        guard !compacted.isEmpty || !url.isEmpty || !links.isEmpty else { return nil }
+        return """
+            CURRENT PAGE TITLE: \(title.isEmpty ? "(unknown)" : title)
+            CURRENT PAGE URL: \(url.isEmpty ? "(unknown)" : url)
+            PAGE MARKDOWN EXCERPT:
+            \(compacted.isEmpty ? "(visible text unavailable)" : compacted)
+
+            PAGE LINKS:
+            \(links.isEmpty ? "(no readable links)" : links)
+            Use only these exact URLs for page-relative answers and navigation.
+            """
+    }
+
+    /// Read-only DOM execution with honest fallback semantics. The Safari extension can be
+    /// enabled while its passive native payload is stale (Safari may keep an older service
+    /// worker alive). First use Safari's direct read path; if that is unavailable, wake the
+    /// already-enabled extension and run the same expression in its isolated world.
+    private func executeCurrentSafariReadJavaScript(expression: String) async -> String? {
+        if let direct = await SafariTabManager.shared.executeJS(expression),
+            !direct.hasPrefix("JS error:"), !direct.isEmpty
+        {
+            return direct
+        }
+        guard let safari = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.Safari" && !$0.isTerminated
+        }) else { return nil }
+        let extensionCode = "return " + expression
+        guard let bridged = try? await SafariExtensionCommandBridge.shared.runJavaScript(
+            extensionCode, in: safari),
+            !bridged.hasPrefix("JS error:"), !bridged.isEmpty
+        else { return nil }
+        return bridged
     }
 
     @MainActor

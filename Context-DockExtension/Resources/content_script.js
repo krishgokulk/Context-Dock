@@ -51,10 +51,19 @@
       if (seen.has(href)) continue;
       seen.add(href);
 
-      const text = (a.innerText || a.getAttribute("aria-label") || a.title || "")
+      // Social/header links are often icon-only. Preserve them by consulting nested image
+      // accessibility text, then derive a readable label from the destination host.
+      const imageText = a.querySelector("img")?.getAttribute("alt") || "";
+      let text = (a.innerText || a.getAttribute("aria-label") || a.title || imageText || "")
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 80);
+      if (!text) {
+        try {
+          const host = new URL(href).hostname.replace(/^www\./, "");
+          text = host.split(".")[0] || host;
+        } catch (_) {}
+      }
       if (!text) continue;
       const entry = { url: href, text: text };
       if (ACTION_LINK_PATTERN.test(text) || ACTION_LINK_PATTERN.test(href)) {

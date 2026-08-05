@@ -309,7 +309,7 @@ final class SafariTabManager {
         defer { try? FileManager.default.removeItem(at: tmpURL) }
         let path = tmpURL.path
         let script = """
-        set jsCode to (do shell script "cat " & quoted form of "\(path)")
+        set jsCode to (do shell script ("cat " & quoted form of "\(path)"))
         tell application "Safari"
             return execute JavaScript jsCode in current tab of front window
         end tell
@@ -323,7 +323,7 @@ final class SafariTabManager {
         defer { try? FileManager.default.removeItem(at: tmpURL) }
         let path = tmpURL.path
         let script = """
-        set jsCode to (do shell script "cat " & quoted form of "\(path)")
+        set jsCode to (do shell script ("cat " & quoted form of "\(path)"))
         tell application "Safari"
             return execute JavaScript jsCode in tab \(tabIndex) of window \(windowIndex)
         end tell

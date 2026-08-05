@@ -322,23 +322,17 @@ extension LauncherView {
             l2.routerTrace = []
             dockTraceStep("Scanning \(appName) App Adapter…")
         }
-        let resolution: GeneralAIActionResolution
-        if !scopedRegistered.isEmpty {
-            await MainActor.run {
-                dockTraceStep(
-                    "Registered tools: \(scopedRegistered.count) matched, selected "
-                        + (scopedRegistered[0].capabilityID ?? scopedRegistered[0].title))
-            }
-            resolution = .candidates(scopedRegistered)
-        } else {
-            resolution = await GeneralAIActionResolver.shared.resolve(
-                query: query,
-                chatAllowedBundleIds: [bundleId],
-                scopedApp: (appName, bundleId),
-                onStep: { [self] step in
-                    MainActor.assumeIsolated { dockTraceStep(step) }
-                })
-        }
+        // Always use the complete resolver. It already includes registered adapter tools,
+        // saved actions, cached menus, known shortcuts, MCP/API/CLI and accessibility routes.
+        // Short-circuiting when one registered tool matched hid better native commands and
+        // made user-added adapters behave differently from apps without adapters.
+        let resolution = await GeneralAIActionResolver.shared.resolve(
+            query: query,
+            chatAllowedBundleIds: [bundleId],
+            scopedApp: (appName, bundleId),
+            onStep: { [self] step in
+                MainActor.assumeIsolated { dockTraceStep(step) }
+            })
         guard case .candidates(let candidates) = resolution,
             let candidate = candidates.first(where: {
                 $0.route == .verifiedMenu || $0.route == .keyboardShortcut

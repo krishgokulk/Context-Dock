@@ -3667,6 +3667,89 @@ struct AutomationAdapterDetailView: View {
         .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    @ViewBuilder
+    private var safariExtensionIntegrationCard: some View {
+        let isLive = safariBridge.isFresh
+        let status: String = {
+            switch safariBridge.connection {
+            case .live(let seen): return "Live · page received \(Self.relativeTime(seen))"
+            case .idle(let seen): return "Installed · last page \(Self.relativeTime(seen))"
+            case .neverConnected: return "Setup required"
+            }
+        }()
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.blue.opacity(0.14))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "safari.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.blue)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Context Dock Safari Extension")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("built-in")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.16), in: Capsule())
+                            .foregroundStyle(.blue)
+                    }
+                    Text("Page context bridge · v1.2")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(status, systemImage: isLive ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isLive ? Color.green : Color.orange)
+            }
+
+            Text("Provides current-page text, selected text, links, metadata, scroll position, and safe page actions directly to Safari-scoped AI. Data stays local until the selected AI provider is used.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 7) {
+                ForEach(["Page text", "Selection", "Links", "Metadata"], id: \.self) { item in
+                    Text(item)
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.blue.opacity(0.10), in: Capsule())
+                        .foregroundStyle(.blue)
+                }
+                Spacer()
+                Button("Open Safari Settings") { openSafariExtensionSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+
+            if !isLive {
+                safariBridgeStatusRow
+            }
+        }
+        .padding(14)
+        .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blue.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func openSafariExtensionSettings() {
+        let script = """
+        tell application "Safari" to activate
+        delay 0.2
+        tell application "System Events" to keystroke "," using command down
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+    }
+
     private static func relativeTime(_ date: Date) -> String {
         let fmt = RelativeDateTimeFormatter()
         fmt.unitsStyle = .short
@@ -4436,6 +4519,12 @@ struct AutomationAdapterDetailView: View {
 
                 if detailTab == .tools {
                 toolGroupOverview
+
+                if currentAdapter.bundleId == "com.apple.Safari" {
+                    safariExtensionIntegrationCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                }
 
                 // MARK: API Connections section
                 VStack(alignment: .leading, spacing: 12) {

@@ -353,6 +353,32 @@ struct ReminderResultAction: Equatable, Identifiable {
     }
 }
 
+/// One live Safari tab with enough identity to activate the existing tab rather than
+/// opening a duplicate URL.
+struct BrowserTabAction: Equatable, Identifiable {
+    let title: String
+    let url: String
+    let windowIndex: Int
+    let tabIndex: Int
+
+    var id: String { "\(windowIndex):\(tabIndex):\(url)" }
+    var domain: String {
+        guard let host = URL(string: url)?.host else { return url }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
+struct PageLinkAction: Equatable, Identifiable {
+    let title: String
+    let url: String
+    let pageTitle: String
+
+    var id: String { url }
+    var domain: String {
+        URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? url
+    }
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -367,6 +393,8 @@ struct AIChatMessage: Identifiable, Equatable {
     var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
     var noteTasks: [NoteTaskAction]  // Grounded tasks extracted from one Apple Note
     var reminderResults: [ReminderResultAction]  // Structured Reminders rows and receipts
+    var browserTabs: [BrowserTabAction]  // Live browser tabs with direct activation
+    var pageLinks: [PageLinkAction]  // Grounded links from the active Safari page
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
@@ -387,6 +415,8 @@ struct AIChatMessage: Identifiable, Equatable {
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
         reminderResults: [ReminderResultAction] = [],
+        browserTabs: [BrowserTabAction] = [],
+        pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -404,6 +434,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.noteResults = noteResults
         self.noteTasks = noteTasks
         self.reminderResults = reminderResults
+        self.browserTabs = browserTabs
+        self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -419,6 +451,8 @@ struct AIChatMessage: Identifiable, Equatable {
         noteResults: [NoteSearchAction] = [],
         noteTasks: [NoteTaskAction] = [],
         reminderResults: [ReminderResultAction] = [],
+        browserTabs: [BrowserTabAction] = [],
+        pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -436,6 +470,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.noteResults = noteResults
         self.noteTasks = noteTasks
         self.reminderResults = reminderResults
+        self.browserTabs = browserTabs
+        self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
         self.enableAppRequest = enableAppRequest
         self.trace = trace
@@ -859,6 +895,144 @@ struct AIChatMessageView: View {
         }
     }
 
+    @ViewBuilder
+    private var browserTabRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Open tabs")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(message.browserTabs.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+
+            ForEach(message.browserTabs) { tab in
+                Button {
+                    SafariTabManager.shared.switchTo(
+                        SafariTab(
+                            title: tab.title, url: tab.url,
+                            windowIndex: tab.windowIndex, tabIndex: tab.tabIndex))
+                } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.blue.opacity(0.13))
+                            Image(systemName: "safari")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.blue)
+                        }
+                        .frame(width: 30, height: 30)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tab.title.isEmpty ? tab.domain : tab.title)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(tab.domain)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Text("Window \(tab.windowIndex)")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        Image(systemName: "arrow.up.forward")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Copy Link", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(tab.url, forType: .string)
+                    }
+                    Button("Open in New Tab", systemImage: "plus.square.on.square") {
+                        SafariTabManager.shared.openURL(tab.url)
+                    }
+                }
+            }
+
+            Label("Live from Safari", systemImage: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
+    @ViewBuilder
+    private var pageLinkRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Links on this page")
+                        .font(.system(size: 11, weight: .semibold))
+                    if let page = message.pageLinks.first?.pageTitle, !page.isEmpty {
+                        Text(page)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Text("\(message.pageLinks.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+
+            ForEach(message.pageLinks.prefix(30)) { link in
+                HStack(spacing: 9) {
+                    Image(systemName: "link")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(link.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Text(link.domain)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(link.url, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).help("Copy link")
+                    Button {
+                        SafariTabManager.shared.openURL(link.url)
+                    } label: {
+                        Image(systemName: "arrow.up.forward")
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).help("Open in Safari")
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Label("Read locally from Safari Extension", systemImage: "lock.shield")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
     /// Pick-one routes as buttons. The same information the bullet list carried, except a
     /// click runs the route instead of asking the user to retype what they wanted.
     @ViewBuilder
@@ -1201,6 +1375,14 @@ struct AIChatMessageView: View {
 
                 if !message.reminderResults.isEmpty {
                     reminderResultRows
+                }
+
+                if !message.browserTabs.isEmpty {
+                    browserTabRows
+                }
+
+                if !message.pageLinks.isEmpty {
+                    pageLinkRows
                 }
 
                 if message.enableAppRequest != nil {
