@@ -3183,6 +3183,11 @@ struct GlobalCLIScopeDetailView: View {
                             scanning = true
                             Task {
                                 await pkgMgr.refreshHelpText(for: package.id)
+                                // The man page is fetched with the help scan: a tool with a
+                                // stub --help is exactly the one whose documentation lives in
+                                // man, and asking the user to run two scans to find that out
+                                // would be a worse answer than doing both.
+                                await pkgMgr.refreshManText(for: package.id)
                                 await MainActor.run { scanning = false }
                             }
                         } label: {

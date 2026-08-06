@@ -66,6 +66,44 @@ class TerminalPackageManager: ObservableObject {
         )
     }
 
+    /// Reads the tool's man page, once, and caches it.
+    ///
+    /// `col -b` strips the overstrike backspaces roff emits for bold and underline, which
+    /// would otherwise reach the model as "ffiinndd" and burn tokens on nothing. Tools with no
+    /// man page exit non-zero and are recorded as having none, so this is not retried on every
+    /// scope entry.
+    @discardableResult
+    func refreshManText(for packageID: UUID) async -> String? {
+        guard let index = packages.firstIndex(where: { $0.id == packageID }) else { return nil }
+        let command = packages[index].command
+        guard !command.isEmpty else { return nil }
+
+        let text = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            // MANWIDTH keeps lines from wrapping to the terminal width of whoever ran it.
+            process.arguments = ["-lc", "MANWIDTH=100 man \(command) 2>/dev/null | col -b"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+            }
+            do { try process.run() } catch { continuation.resume(returning: "") }
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        await MainActor.run {
+            guard let i = self.packages.firstIndex(where: { $0.id == packageID }) else { return }
+            // Empty string, not nil: "checked, there is none" must be distinguishable from
+            // "never checked", or every scope entry pays for the same failed lookup.
+            self.packages[i].manText = trimmed
+            self.savePackages()
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// The stored `--help` for one subcommand, or the top-level help when `subcommand` is
     /// empty. Nil when the tool has never been scanned or that path is not in the tree.
     ///
@@ -1011,6 +1049,10 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
     /// escape sequences into what should be an answer. The built-in allowlist cannot know
     /// every such tool, so this lets the user mark one without a code change.
     var isInteractive: Bool = false
+    /// `man` output, plain text. Separate from helpText because they fail in opposite
+    /// directions: a system tool like `find` prints a usage stub for --help and documents
+    /// itself in man, while a modern CLI often ships no man page at all.
+    var manText: String?
 
     init(
         id: UUID = UUID(),
@@ -1085,6 +1127,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         case contextApp = "context_app"
         case contextualExamples
         case isInteractive
+        case manText
     }
 
     init(from decoder: Decoder) throws {
@@ -1116,6 +1159,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
             try container.decodeIfPresent([ContextualExample].self, forKey: .contextualExamples)
             ?? []
         isInteractive = try container.decodeIfPresent(Bool.self, forKey: .isInteractive) ?? false
+        manText = try container.decodeIfPresent(String.self, forKey: .manText)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1138,6 +1182,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(contextAppBundleIds.first, forKey: .contextApp)
         try container.encode(contextualExamples, forKey: .contextualExamples)
         try container.encode(isInteractive, forKey: .isInteractive)
+        try container.encodeIfPresent(manText, forKey: .manText)
     }
 }
 

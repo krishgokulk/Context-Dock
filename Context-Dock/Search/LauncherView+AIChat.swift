@@ -2660,8 +2660,14 @@ extension LauncherView {
             doc += "\nSubcommands (always include a space between command and subcommand):\n"
             doc += subcommands.map { "  \(package.command) \($0)" }.joined(separator: "\n")
         }
-        if let helpText = package.helpText, !helpText.isEmpty {
-            doc += "\n" + AIContextBudget.fitHelpText(helpText, query: query, budget: 1_000)
+        // A short help block usually means the tool documents itself in man instead — `find`
+        // prints a usage stub and reserves everything real for its man page. Preferring the
+        // longer of the two picks whichever the author actually wrote.
+        let help = package.helpText ?? ""
+        let man = package.manText ?? ""
+        let reference = man.count > help.count * 2 ? man : help
+        if !reference.isEmpty {
+            doc += "\n" + AIContextBudget.fitHelpText(reference, query: query, budget: 1_000)
         } else if !subcommands.isEmpty {
             if !package.description.isEmpty { doc += "\n" + package.description }
         } else if !package.description.isEmpty {
