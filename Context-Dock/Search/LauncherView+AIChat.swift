@@ -1153,16 +1153,22 @@ extension LauncherView {
     /// closes, and the thread stays available afterwards whether or not the app is running.
     @ViewBuilder
     var frontmostAppWindowControl: some View {
+        // Frontmost-app chat has no explicit scope — l2.targetApp is set only when the user
+        // scoped deliberately, which is why keying off it alone showed no control in the one
+        // place this was asked for. The app being talked to is the frontmost one.
+        let bundleId = l2.targetApp?.bundleId ?? frontmost.bundleID
+        let appName = l2.targetApp?.name ?? frontmost.name
         if activeCLIScopePackage == nil,
-            let target = l2.targetApp,
-            !target.bundleId.isEmpty,
-            !target.bundleId.hasPrefix("cli://"),
-            !target.bundleId.hasPrefix("scope://")
+            !bundleId.isEmpty,
+            !appName.isEmpty,
+            !bundleId.hasPrefix("cli://"),
+            !bundleId.hasPrefix("scope://"),
+            bundleId != Bundle.main.bundleIdentifier
         {
-            let scope = GeneralChatScope.app(bundleId: target.bundleId)
+            let scope = GeneralChatScope.app(bundleId: bundleId)
             Button {
                 GeneralChatWindowModel.shared.openSession(
-                    scope, title: target.name, seed: l2.chatMessages)
+                    scope, title: appName, seed: l2.chatMessages)
                 GeneralChatWindowController.shared.show()
                 hideLauncherAfterResultExecution()
             } label: {
@@ -1173,7 +1179,7 @@ extension LauncherView {
                     .background(Color.white.opacity(0.07), in: Circle())
             }
             .buttonStyle(.plain)
-            .help("Open \(target.name) as a thread in the chat window")
+            .help("Open \(appName) as a thread in the chat window")
         }
     }
 
