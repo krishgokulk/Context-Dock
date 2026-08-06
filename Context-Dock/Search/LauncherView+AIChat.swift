@@ -39,7 +39,21 @@ enum GeneralAIChatConversationStore {
         let mcpToolsRan: [String]
     }
 
+    /// Keyed variants, so per-scope sessions can reuse this exact serialisation instead of
+    /// inventing a second message format that would drift from it.
+    static func load(key storageKey: String) -> [AIChatMessage] {
+        loadMessages(forKey: storageKey)
+    }
+
+    static func save(_ messages: [AIChatMessage], key storageKey: String) {
+        saveMessages(messages, forKey: storageKey)
+    }
+
     static func load() -> [AIChatMessage] {
+        loadMessages(forKey: key)
+    }
+
+    private static func loadMessages(forKey key: String) -> [AIChatMessage] {
         guard let data = UserDefaults.standard.data(forKey: key),
             let stored = try? JSONDecoder().decode([StoredMessage].self, from: data)
         else { return [] }
@@ -68,6 +82,10 @@ enum GeneralAIChatConversationStore {
     }
 
     static func save(_ messages: [AIChatMessage]) {
+        saveMessages(messages, forKey: key)
+    }
+
+    private static func saveMessages(_ messages: [AIChatMessage], forKey key: String) {
         let stored = messages.map { message in
             StoredMessage(
                 role: roleString(message.role),
@@ -1137,9 +1155,14 @@ extension LauncherView {
     @ViewBuilder
     var cliScopeWindowPinControl: some View {
         if let package = activeCLIScopePackage {
-            let isOpen = CLIScopePanelManager.shared.isPinned(package.command)
+            let scope = GeneralChatScope.cli(command: package.command)
+            let isOpen = GeneralChatWindowModel.shared.sessions.contains { $0.scope == scope }
             Button {
-                CLIScopePanelManager.shared.toggle(package)
+                // The general chat window is the hub: a tool opens as a thread in its
+                // sidebar rather than as another floating panel, so every app and tool the
+                // user talks to lives in one place and stays there when the dock moves on.
+                GeneralChatWindowModel.shared.openSession(scope, title: package.command)
+                GeneralChatWindowController.shared.show()
             } label: {
                 Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
                     .font(.system(size: 10, weight: .bold))
@@ -1153,9 +1176,7 @@ extension LauncherView {
                         in: Circle())
             }
             .buttonStyle(.plain)
-            .help(isOpen
-                ? "Close \(package.command)'s window"
-                : "Open \(package.command) in its own window, like Quick Note")
+            .help("Open \(package.command) as a thread in the chat window")
         }
     }
 

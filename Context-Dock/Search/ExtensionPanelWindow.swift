@@ -524,9 +524,14 @@ struct AIComposerBar: View {
     var showsProviderName: Bool = false
     /// Clear the conversation. Nil on surfaces that have no transcript to clear.
     var onClear: (() -> Void)? = nil
+    /// Detach an app. Nil leaves the attached icons read-only.
+    var onRemoveApp: ((String) -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
+    /// Which attached app the cursor is over — hovering swaps its icon for an "×",
+    /// the same affordance the dock's chips use.
+    @State private var hoveredAppName: String?
 
     /// Text after a leading "/", or nil when this isn't an app filter. A space ends
     /// it — "/rem" filters, "/rem what is due" is a sentence the user kept typing.
@@ -578,15 +583,6 @@ struct AIComposerBar: View {
     private func pickSlashApp(_ name: String) {
         onAttachApp(name)
         text = ""
-    }
-
-    /// Icons of attached apps, resolved once for the bar's button.
-    private var attachedAppIcons: [NSImage] {
-        attachedAppNames.compactMap { name in
-            NSWorkspace.shared.runningApplications
-                .first { $0.localizedName == name }?.icon
-                ?? AppContextPicker.icon(forAppNamed: name)
-        }
     }
 
     var body: some View {
@@ -709,19 +705,60 @@ struct AIComposerBar: View {
                 .help("Attach a file")
             }
 
-            Button { showAppPicker = true } label: {
-                // Show the attached app's own icon, so the bar says which app is in
-                // play rather than a generic window glyph.
-                if let first = attachedAppIcons.first {
-                    Image(nsImage: first)
-                        .resizable()
-                        .frame(width: 17, height: 17)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } else {
-                    Image(systemName: "app.dashed")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
+            // Every attached app, not just the first: a chat can be scoped to
+            // Reminders AND Safari, and a bar showing one of them reads as though the
+            // other was dropped.
+            if !attachedAppNames.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(attachedAppNames.prefix(5), id: \.self) { name in
+                        Button {
+                            onRemoveApp?(name)
+                        } label: {
+                            ZStack {
+                                Group {
+                                    if let icon = AppContextPicker.icon(forAppNamed: name) {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                    } else {
+                                        Image(systemName: "app.dashed")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(width: 17, height: 17)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .opacity(hoveredAppName == name ? 0.22 : 1)
+
+                                if hoveredAppName == name {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.primary)
+                                }
+                            }
+                            .frame(width: 17, height: 17)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(onRemoveApp == nil)
+                        .help(onRemoveApp == nil ? name : "Remove \(name)")
+                        .onHover { hovering in
+                            guard onRemoveApp != nil else { return }
+                            withAnimation(.easeOut(duration: 0.1)) {
+                                hoveredAppName = hovering ? name : nil
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.16), in: Capsule())
+            }
+
+            Button { showAppPicker = true } label: {
+                Image(systemName: "app.dashed")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
             .help("Work with an app")

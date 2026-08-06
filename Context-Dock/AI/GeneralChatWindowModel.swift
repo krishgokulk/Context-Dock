@@ -23,8 +23,22 @@ final class GeneralChatWindowModel: ObservableObject {
     @Published var isSending: Bool = false
     /// Files on the next message, shown as chips once it is sent.
     @Published var attachments: [URL] = []
-    /// Apps the answer should be about — the composer's app picker.
+    /// Apps the answer should be about — the composer's app picker. Several at once
+    /// is the point: a chat can be scoped to Reminders and Safari together.
     @Published var attachedAppNames: [String] = []
+    /// Which apps were attached when each message was sent, so the transcript keeps
+    /// showing what a question was asked *about* after the scope changes. In memory
+    /// only — the stored conversation format has no field for it, and a reopened
+    /// window showing today's scope on last week's question would be a lie.
+    @Published var messageApps: [UUID: [String]] = [:]
+
+    /// The conversation currently shown. The window is a hub: one thread per app or CLI tool,
+    /// each kept whether or not that app is running, plus the unscoped one the result sheet
+    /// shares. Combined chat is unchanged — it is what attachedAppNames does *within* a
+    /// session, so a thread can still span Reminders and Safari.
+    @Published private(set) var activeScope: GeneralChatScope = .general
+    /// Sidebar contents, most recently used first.
+    @Published private(set) var sessions: [GeneralChatSession] = GeneralChatSessionStore.index()
 
     private var sendTask: Task<Void, Never>?
 
@@ -33,18 +47,77 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Pull in whatever the result sheet has said since this window was last open.
     func reloadFromStore() {
         guard !isSending else { return }
-        messages = GeneralAIChatConversationStore.load()
+        messages = GeneralChatSessionStore.load(scope: activeScope)
+        sessions = GeneralChatSessionStore.index()
+    }
+
+    /// Shows the conversation for a scope, creating it on first use.
+    ///
+    /// Switching persists what is on screen first, so moving between threads cannot lose the
+    /// one being left. A send in flight is left alone: cancelling someone's answer because
+    /// they clicked another row would be its own bug.
+    func openSession(_ scope: GeneralChatScope, title: String) {
+        guard !isSending else { return }
+        guard scope != activeScope else {
+            sessions = GeneralChatSessionStore.index()
+            return
+        }
+        persist()
+        sendTask?.cancel()
+        sendTask = nil
+        activeScope = scope
+        messages = GeneralChatSessionStore.load(scope: scope)
+        messageApps = [:]
+        input = ""
+        attachments = []
+        // A scoped session is about its own app; the picker starts empty rather than
+        // inheriting whatever the previous thread was attached to.
+        attachedAppNames = []
+        GeneralChatSessionStore.upsert(
+            scope: scope, title: title, messageCount: messages.count)
+        sessions = GeneralChatSessionStore.index()
+    }
+
+    func closeSession(_ scope: GeneralChatScope) {
+        GeneralChatSessionStore.remove(scope: scope)
+        if scope == activeScope { openGeneralSession() }
+        sessions = GeneralChatSessionStore.index()
+    }
+
+    func openGeneralSession() {
+        activeScope = .general
+        messages = GeneralChatSessionStore.load(scope: .general)
+        messageApps = [:]
+        sessions = GeneralChatSessionStore.index()
+    }
+
+    /// Title for the active thread, used when persisting.
+    var activeTitle: String {
+        switch activeScope {
+        case .general: return "General"
+        case .cli(let command): return command
+        case .app(let bundleId):
+            return sessions.first { $0.scope == activeScope }?.title ?? bundleId
+        }
     }
 
     func newChat() {
         sendTask?.cancel()
         sendTask = nil
         messages = []
+        messageApps = [:]
         input = ""
         attachments = []
         attachedAppNames = []
         isSending = false
-        GeneralAIChatConversationStore.clear()
+        // Clears the thread being shown, not every thread: with sessions, "New chat" on the
+        // Reminders session must not wipe the CLI ones beside it.
+        if activeScope == .general {
+            GeneralAIChatConversationStore.clear()
+        } else {
+            GeneralChatSessionStore.save([], scope: activeScope, title: activeTitle)
+        }
+        sessions = GeneralChatSessionStore.index()
     }
 
     func cancel() {
@@ -53,18 +126,39 @@ final class GeneralChatWindowModel: ObservableObject {
         isSending = false
     }
 
-    func attachFiles() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        guard panel.runModal() == .OK else { return }
-        attachments.append(contentsOf: panel.urls)
+    /// Same five ways to attach the dock offers — one implementation, in
+    /// ChatAttachmentCapture, so the "+" means the same thing on both surfaces.
+    func attachFiles(imagesOnly: Bool = false) {
+        let picked = ChatAttachmentCapture.pickFiles(imagesOnly: imagesOnly)
+        attachments.append(contentsOf: picked.filter { !attachments.contains($0) })
+    }
+
+    func captureScreenshot(interactive: Bool, windowFirst: Bool = false) {
+        ChatAttachmentCapture.captureScreenshot(
+            interactive: interactive, windowFirst: windowFirst
+        ) { [weak self] url in
+            guard let self, !self.attachments.contains(url) else { return }
+            self.attachments.append(url)
+        }
+    }
+
+    /// OCR'd screen text lands in the composer, where the user can see what was read
+    /// before sending it — a capture that silently became context would be worse.
+    func captureScreenText() {
+        ChatAttachmentCapture.captureScreenText { [weak self] text in
+            guard let self else { return }
+            let existing = self.input.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.input = existing.isEmpty ? text : existing + "\n\n" + text
+        }
     }
 
     func attachApp(_ name: String) {
         guard !attachedAppNames.contains(name) else { return }
         attachedAppNames.append(name)
+    }
+
+    func removeApp(_ name: String) {
+        attachedAppNames.removeAll { $0 == name }
     }
 
     func send() {
@@ -83,8 +177,12 @@ final class GeneralChatWindowModel: ObservableObject {
         }
 
         let sentAttachments = attachments
-        messages.append(
-            AIChatMessage(role: .user, content: query, attachments: sentAttachments))
+        let userMessage = AIChatMessage(
+            role: .user, content: query, attachments: sentAttachments)
+        if !attachedAppNames.isEmpty {
+            messageApps[userMessage.id] = attachedAppNames
+        }
+        messages.append(userMessage)
         input = ""
         attachments = []
         persist()
@@ -151,6 +249,7 @@ final class GeneralChatWindowModel: ObservableObject {
     }
 
     private func persist() {
-        GeneralAIChatConversationStore.save(messages)
+        GeneralChatSessionStore.save(messages, scope: activeScope, title: activeTitle)
+        sessions = GeneralChatSessionStore.index()
     }
 }

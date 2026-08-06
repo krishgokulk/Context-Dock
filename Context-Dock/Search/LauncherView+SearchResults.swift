@@ -685,9 +685,11 @@ extension LauncherView {
         // a floating window, so `tailscale` keeps working while the dock moves on. Checked
         // first because a cli:// scope is never a custom-list scope.
         if let package = activeCLIScopePackage {
-            let pinned = CLIScopePanelManager.shared.isPinned(package.command)
+            let scope = GeneralChatScope.cli(command: package.command)
+            let pinned = GeneralChatWindowModel.shared.sessions.contains { $0.scope == scope }
             Button {
-                CLIScopePanelManager.shared.toggle(package)
+                GeneralChatWindowModel.shared.openSession(scope, title: package.command)
+                GeneralChatWindowController.shared.show()
             } label: {
                 Image(systemName: pinned ? "pin.fill" : "pin")
                     .font(.system(size: 11, weight: .semibold))
@@ -697,9 +699,7 @@ extension LauncherView {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(pinned
-                  ? "Unpin — closes \(package.command)'s window"
-                  : "Pin \(package.command) as a floating window, like Quick Note")
+            .help("Open \(package.command) as a thread in the chat window")
         } else if let command = activeCustomListScopeCommand {
             let pinned = ScopedListPanelManager.shared.isPinned(command.id)
             Button {

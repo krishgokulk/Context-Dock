@@ -19,6 +19,7 @@ struct GeneralChatWindowView: View {
     /// Sidebar width survives relaunches — a width the user dragged is a preference.
     @AppStorage("generalChatSidebarWidth") private var sidebarWidth: Double = 200
     @State private var dragStartWidth: Double?
+    @State private var showsSidebarAppPicker = false
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -101,9 +102,148 @@ struct GeneralChatWindowView: View {
             .padding(.horizontal, 8)
             .padding(.top, 4)
 
+            if !model.attachedAppNames.isEmpty {
+                combinedChatEntry
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+            }
+
+            sessionList
+
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One row per app or CLI tool the user has opened a thread with.
+    ///
+    /// These persist independently of whether the app is running — the window is a hub, so
+    /// "what did I ask tailscale yesterday" has to be answerable with tailscale closed.
+    @ViewBuilder
+    private var sessionList: some View {
+        let rows = model.sessions.filter { $0.scope != .general }
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Apps & tools")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 2)
+
+                ForEach(rows) { session in
+                    sessionRow(session)
+                }
+            }
+        }
+    }
+
+    private func sessionRow(_ session: GeneralChatSession) -> some View {
+        let isActive = session.scope == model.activeScope
+        return Button {
+            model.openSession(session.scope, title: session.title)
+        } label: {
+            HStack(spacing: 8) {
+                if let icon = GeneralChatSessionStore.icon(for: session.scope) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 16, height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                Text(session.title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if session.messageCount > 0 {
+                    Text("\(session.messageCount)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                isActive ? Color.primary.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .contextMenu {
+            Button("Close thread", role: .destructive) {
+                model.closeSession(session.scope)
+            }
+        }
+    }
+
+    /// The current chat, named by what it is scoped to. Two apps attached means one
+    /// combined chat across both, not two chats — so this is a single row carrying
+    /// both icons, and "+" adds another app to the same conversation.
+    private var combinedChatEntry: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Combined chat")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+
+            HStack(spacing: 6) {
+                ForEach(model.attachedAppNames, id: \.self) { name in
+                    Button {
+                        model.removeApp(name)
+                    } label: {
+                        appIcon(name)
+                            .frame(width: 20, height: 20)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove \(name) from this chat")
+                }
+
+                Button {
+                    showsSidebarAppPicker = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Theme.surfaceElevated(dark))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Add another app to this chat")
+                .popover(isPresented: $showsSidebarAppPicker, arrowEdge: .trailing) {
+                    AppContextPicker { app in
+                        model.attachApp(app)
+                        showsSidebarAppPicker = false
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Theme.surfaceElevated(dark))
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func appIcon(_ name: String) -> some View {
+        if let icon = AppContextPicker.icon(forAppNamed: name) {
+            Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+        } else {
+            Image(systemName: "app.dashed")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Content column
@@ -177,8 +317,26 @@ struct GeneralChatWindowView: View {
                     // Same row view the result sheet renders, so an answer looks
                     // identical in both places.
                     ForEach(model.messages) { message in
-                        AIChatMessageView(message: message)
-                            .id(message.id)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            // The apps this question was asked about, beside the
+                            // question itself — the scope at the time, not now.
+                            if let apps = model.messageApps[message.id], !apps.isEmpty {
+                                HStack(spacing: 4) {
+                                    Spacer(minLength: 0)
+                                    ForEach(apps, id: \.self) { name in
+                                        appIcon(name)
+                                            .frame(width: 15, height: 15)
+                                            .clipShape(
+                                                RoundedRectangle(
+                                                    cornerRadius: 4, style: .continuous)
+                                            )
+                                            .help(name)
+                                    }
+                                }
+                            }
+                            AIChatMessageView(message: message)
+                        }
+                        .id(message.id)
                     }
                     if model.isSending {
                         HStack(spacing: 8) {
@@ -229,8 +387,30 @@ struct GeneralChatWindowView: View {
                 onAttachFile: { model.attachFiles() },
                 onAttachApp: { model.attachApp($0) },
                 onSubmit: { model.send() },
+                extraAttachMenu: {
+                    AnyView(
+                        Group {
+                            Button {
+                                model.attachFiles(imagesOnly: true)
+                            } label: { Label("Upload Photo", systemImage: "photo") }
+                            Divider()
+                            Button {
+                                model.captureScreenshot(interactive: false)
+                            } label: {
+                                Label("Take Screenshot", systemImage: "camera.viewfinder")
+                            }
+                            Button {
+                                model.captureScreenshot(interactive: true, windowFirst: true)
+                            } label: { Label("Capture Area", systemImage: "crop") }
+                            Button {
+                                model.captureScreenText()
+                            } label: { Label("Capture Text", systemImage: "text.viewfinder") }
+                        }
+                    )
+                },
                 showsProviderName: true,
-                onClear: model.isEmpty ? nil : { model.newChat() }
+                onClear: model.isEmpty ? nil : { model.newChat() },
+                onRemoveApp: { model.removeApp($0) }
             )
         }
         .frame(maxWidth: 760)
