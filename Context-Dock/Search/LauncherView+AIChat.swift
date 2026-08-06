@@ -2622,6 +2622,15 @@ extension LauncherView {
         if !package.usageExamples.isEmpty {
             doc += "\nExamples: " + package.usageExamples.prefix(4).joined(separator: " | ")
         }
+        // Invocations that actually ran here and exited zero. Documentation describes what a
+        // tool can do; these are known to work against the installed version, so they settle
+        // the flag spellings and argument order help text leaves ambiguous.
+        if !package.provenInvocations.isEmpty {
+            doc += "\nKnown-good invocations on this Mac (prefer these spellings):\n"
+            doc += package.provenInvocations.prefix(5)
+                .map { "  \($0)" }
+                .joined(separator: "\n")
+        }
         return doc
     }
 
@@ -2677,6 +2686,15 @@ extension LauncherView {
         }
         if !package.usageExamples.isEmpty {
             doc += "\nExamples: " + package.usageExamples.prefix(4).joined(separator: " | ")
+        }
+        // Invocations that ran here and exited zero. These settle the flag spellings and
+        // argument order that documentation leaves ambiguous, against the version installed
+        // rather than the one the docs were written for.
+        if !package.provenInvocations.isEmpty {
+            doc += "\nKnown-good invocations on this Mac (prefer these spellings):\n"
+            doc += package.provenInvocations.prefix(5)
+                .map { "  \($0)" }
+                .joined(separator: "\n")
         }
         return doc
     }

@@ -1255,6 +1255,11 @@ extension LauncherView {
                         }
                     }
                 }
+                if result.success {
+                    // Worked here, on this version, with these flags — worth more next time
+                    // than the documentation it was derived from.
+                    TerminalPackageManager.shared.recordSuccessfulInvocation(ranCommand)
+                }
                 transcript.append((
                     ranCommand, output,
                     result.success ? "" : "  [exited \(result.exitCode)]"

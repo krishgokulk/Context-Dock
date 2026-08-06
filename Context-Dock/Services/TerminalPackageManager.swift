@@ -66,6 +66,31 @@ class TerminalPackageManager: ObservableObject {
         )
     }
 
+    /// Records an invocation that exited zero, so the next task can start from something
+    /// known to work rather than from a guess at the documentation.
+    ///
+    /// Only for tools the user pinned — a scope's memory is worth keeping; a passing
+    /// reference to some discovered binary is not. Kept to the most recent few: this text
+    /// goes into a prompt, and an unbounded list would crowd out the documentation it sits
+    /// beside.
+    func recordSuccessfulInvocation(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let tool = trimmed.components(separatedBy: " ").first ?? ""
+        guard !tool.isEmpty,
+            let index = packages.firstIndex(where: {
+                $0.command.caseInsensitiveCompare(tool) == .orderedSame
+            }),
+            isUserAddedGlobalScope(packages[index])
+        else { return }
+
+        var proven = packages[index].provenInvocations
+        proven.removeAll { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+        proven.insert(trimmed, at: 0)
+        packages[index].provenInvocations = Array(proven.prefix(8))
+        savePackages()
+    }
+
     /// Current modification date of the tool's binary, following the symlinks Homebrew and
     /// pipx install.
     nonisolated static func binaryModificationDate(_ path: String?) -> Date? {
@@ -1093,6 +1118,12 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
     /// the file, so a mismatch means the cached help may describe a version that is gone —
     /// flags removed, subcommands renamed. Nil for tools scanned before this was recorded.
     var scannedBinaryModified: Date?
+    /// Invocations of this tool that ran and exited zero, most recent first.
+    ///
+    /// Help says what a tool *can* do; this says what worked on this Mac — the flag spelling
+    /// that exists in the installed version, the argument order it accepts. Capped, because
+    /// this goes into a prompt.
+    var provenInvocations: [String] = []
 
     init(
         id: UUID = UUID(),
@@ -1169,6 +1200,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         case isInteractive
         case manText
         case scannedBinaryModified
+        case provenInvocations
     }
 
     init(from decoder: Decoder) throws {
@@ -1203,6 +1235,8 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         manText = try container.decodeIfPresent(String.self, forKey: .manText)
         scannedBinaryModified = try container.decodeIfPresent(
             Date.self, forKey: .scannedBinaryModified)
+        provenInvocations =
+            try container.decodeIfPresent([String].self, forKey: .provenInvocations) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1227,6 +1261,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         try container.encode(isInteractive, forKey: .isInteractive)
         try container.encodeIfPresent(manText, forKey: .manText)
         try container.encodeIfPresent(scannedBinaryModified, forKey: .scannedBinaryModified)
+        try container.encode(provenInvocations, forKey: .provenInvocations)
     }
 }
 
