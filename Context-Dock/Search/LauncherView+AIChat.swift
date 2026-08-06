@@ -1158,28 +1158,44 @@ extension LauncherView {
         // place this was asked for. The app being talked to is the frontmost one.
         let bundleId = l2.targetApp?.bundleId ?? frontmost.bundleID
         let appName = l2.targetApp?.name ?? frontmost.name
-        if activeCLIScopePackage == nil,
-            !bundleId.isEmpty,
+        if activeCLIScopePackage == nil {
+            chatWindowHandoffControl(bundleId: bundleId, appName: appName)
+        }
+    }
+
+    /// The window glyph itself, so every app-scoped chat surface can carry it rather
+    /// than only the toolbar one. A conversation the user can hand off in one header
+    /// and not in another reads as the feature being broken, not as two surfaces.
+    @ViewBuilder
+    func chatWindowHandoffControl(bundleId: String, appName: String) -> some View {
+        if !bundleId.isEmpty,
             !appName.isEmpty,
             !bundleId.hasPrefix("cli://"),
             !bundleId.hasPrefix("scope://"),
             bundleId != Bundle.main.bundleIdentifier
         {
             let scope = GeneralChatScope.app(bundleId: bundleId)
+            let isOpen = GeneralChatWindowModel.shared.sessions.contains { $0.scope == scope }
             Button {
                 GeneralChatWindowModel.shared.openSession(
                     scope, title: appName, seed: l2.chatMessages)
                 GeneralChatWindowController.shared.show()
                 hideLauncherAfterResultExecution()
             } label: {
-                Image(systemName: "macwindow")
+                Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary.opacity(0.70))
+                    .foregroundStyle(
+                        isOpen
+                            ? AnyShapeStyle(Color.green.opacity(0.9))
+                            : AnyShapeStyle(.secondary.opacity(0.70)))
                     .frame(width: 22, height: 22)
                     .background(Color.white.opacity(0.07), in: Circle())
             }
             .buttonStyle(.plain)
-            .help("Open \(appName) as a thread in the chat window")
+            .help(
+                isOpen
+                    ? "Update the \(appName) thread in the chat window"
+                    : "Open \(appName) as a thread in the chat window")
         }
     }
 
@@ -1474,6 +1490,10 @@ extension LauncherView {
                                 .truncationMode(.tail)
                         }
                         Spacer()
+                        if let scopedTarget {
+                            chatWindowHandoffControl(
+                                bundleId: scopedTarget.bundleId, appName: scopedTarget.name)
+                        }
                         Button {
                             clearContextDockChatConversation(keepScope: true)
                         } label: {
