@@ -367,7 +367,10 @@ actor AppWorkspaceService {
             of: (success: Bool, output: String)?.self
         ) { group in
             group.addTask {
-                await TerminalCommandExecutor.shared.runPreApproved(command)
+                await {
+                    let run = await TerminalCommandExecutor.shared.runPreApproved(command)
+                    return (run.success, run.output)
+                }()
             }
             group.addTask { [perReaderTimeout] in
                 try? await Task.sleep(nanoseconds: UInt64(perReaderTimeout * 1_000_000_000))

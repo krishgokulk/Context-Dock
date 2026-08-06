@@ -1160,12 +1160,12 @@ extension LauncherView {
     /// Prompt for one turn of the loop: everything run so far, and the two allowed replies.
     func scopedLoopPrompt(
         originalQuestion: String,
-        transcript: [(command: String, output: String)],
+        transcript: [(command: String, output: String, status: String)],
         canRunAnother: Bool
     ) -> String {
         var lines = ["User asked:", originalQuestion, ""]
         for (index, step) in transcript.enumerated() {
-            lines.append("Command \(index + 1): \(step.command)")
+            lines.append("Command \(index + 1): \(step.command)\(step.status)")
             lines.append("Output \(index + 1):")
             lines.append(step.output.isEmpty ? "(no output)" : step.output)
             lines.append("")
@@ -1211,7 +1211,7 @@ extension LauncherView {
             // Agentic loop: run, judge the result against what was asked, and either answer
             // or take one more step. Bounded — an unbounded loop on a tool that keeps
             // erroring would run commands forever.
-            var transcript: [(command: String, output: String)] = []
+            var transcript: [(command: String, output: String, status: String)] = []
             var current = command
 
             for attempt in 1...Self.maxScopedCommandAttempts {
@@ -1240,7 +1240,10 @@ extension LauncherView {
                 let ranCommand = current
                 await MainActor.run {
                     l2.isLoading = false
-                    dockTraceStep(result.success ? "Ran \(ranCommand)" : "\(ranCommand) failed")
+                    dockTraceStep(
+                        result.success
+                            ? "Ran \(ranCommand)"
+                            : "\(ranCommand) failed (exit \(result.exitCode))")
                     // Running is the proof a linked tool belongs to this scope: it promotes a
                     // provisional link so the sweep stops treating it as a wrong guess.
                     if result.success {
@@ -1252,7 +1255,10 @@ extension LauncherView {
                         }
                     }
                 }
-                transcript.append((ranCommand, output))
+                transcript.append((
+                    ranCommand, output,
+                    result.success ? "" : "  [exited \(result.exitCode)]"
+                ))
 
                 // Ask what to do next. A failed or empty run is still worth judging: knowing
                 // the command was wrong is exactly what lets the next step be right, which is
@@ -1298,7 +1304,8 @@ extension LauncherView {
                     }
                     transcript.append((
                         "\(tool) \(wanted) --help",
-                        section ?? "(no documented help for this subcommand)"
+                        section ?? "(no documented help for this subcommand)",
+                        ""
                     ))
                     continue
                 }

@@ -1221,6 +1221,38 @@ extension LauncherView {
         isSearchFieldFocused = true
     }
 
+    /// The app capsule is an identity/entry control, never a mode toggle. Clicking it always
+    /// restores that app's scoped conversation; closing remains exclusive to the capsule's
+    /// minus button or the transcript's Exit Scope button.
+    func openAppChatFromScopeCapsule(
+        appName: String,
+        bundleId: String,
+        preserveGlobalContext: Bool
+    ) {
+        guard !appName.isEmpty, !bundleId.isEmpty else { return }
+
+        _ = activateInlineDockAppScope(
+            bundleIdentifier: bundleId,
+            appName: appName,
+            queryOverride: searchState.query,
+            expand: true,
+            preserveGlobalContext: preserveGlobalContext
+        )
+
+        l2.chatDraftAppName = appName
+        l2.chatDraftBundleId = bundleId
+        armContextDockChat()
+        l2.showChatPopover = true
+        l2.chatDismissed = false
+        livePanelVisible = false
+        showFolderPreview = false
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        syncScopeChatSpaceHold()
+        requestWindowSizeUpdate(reason: .panelChanged, animated: true)
+        isSearchFieldFocused = true
+    }
+
     // MARK: - Inline Dock Terminal
     @ViewBuilder
     func inlineDockTerminalView(term: TerminalHostController) -> some View {

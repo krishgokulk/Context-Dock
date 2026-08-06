@@ -90,7 +90,12 @@ enum GitHubInstallRouter {
         let result: (success: Bool, output: String)? = await withTaskGroup(
             of: (success: Bool, output: String)?.self
         ) { group in
-            group.addTask { await TerminalCommandExecutor.shared.runPreApproved(probe) }
+            group.addTask {
+                // This probe only cares whether brew knows the formula; the exit code is
+                // carried by `success` already.
+                let run = await TerminalCommandExecutor.shared.runPreApproved(probe)
+                return (run.success, run.output)
+            }
             group.addTask {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 return nil

@@ -1349,17 +1349,29 @@ extension LauncherView {
                                 ? SwiftUI.Color.white.opacity(0.94)
                                 : SwiftUI.Color.black.opacity(0.82)
                             HStack(spacing: 6) {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 18, height: 18)
-                                    .clipShape(
-                                        RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                Text(frontmostChipName)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(chipTextColor)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
+                                Button {
+                                    openAppChatFromScopeCapsule(
+                                        appName: frontmostChipName,
+                                        bundleId: frontmostChipChatBundleID,
+                                        preserveGlobalContext: isGlobalContextActive
+                                    )
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(nsImage: icon)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 18, height: 18)
+                                            .clipShape(
+                                                RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                        Text(frontmostChipName)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(chipTextColor)
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
                                 if isFrontmostChatPinned {
                                     Button {
                                         withAnimation(
@@ -1418,18 +1430,6 @@ extension LauncherView {
                             .help(isFrontmostChatPinned
                                 ? "Pinned \(frontmostChipName) chat"
                                 : "Frontmost app context")
-                            .onTapGesture {
-                                if isFrontmostChatPinned { return }
-                                if !frontmost.bundleID.isEmpty {
-                                    _ = activateInlineDockAppScope(
-                                        bundleIdentifier: frontmost.bundleID,
-                                        appName: frontmost.name,
-                                        queryOverride: searchState.query,
-                                        expand: true,
-                                        preserveGlobalContext: isGlobalContextActive
-                                    )
-                                }
-                            }
                             .onHover { hovering in
                                 withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
                                     isHoveringFrontmostContextChip = hovering
@@ -1454,25 +1454,37 @@ extension LauncherView {
                                 ? SwiftUI.Color.white.opacity(0.94)
                                 : SwiftUI.Color.black.opacity(0.82)
                             HStack(spacing: 6) {
-                                if target.bundleId == "scope://clipboard" {
-                                    Image(systemName: "doc.on.clipboard")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(Color.accentColor)
-                                        .frame(width: 18, height: 18)
-                                } else {
-                                    Image(nsImage: scopeIcon)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(width: 18, height: 18)
-                                        .clipShape(
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                Button {
+                                    openAppChatFromScopeCapsule(
+                                        appName: target.name,
+                                        bundleId: target.bundleId,
+                                        preserveGlobalContext: isGlobalContextActive
+                                    )
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        if target.bundleId == "scope://clipboard" {
+                                            Image(systemName: "doc.on.clipboard")
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundStyle(Color.accentColor)
+                                                .frame(width: 18, height: 18)
+                                        } else {
+                                            Image(nsImage: scopeIcon)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 18, height: 18)
+                                                .clipShape(
+                                                    RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                        }
+                                        Text(target.name)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(chipTextColor)
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                            .layoutPriority(2)
+                                    }
+                                    .contentShape(Rectangle())
                                 }
-                                Text(target.name)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(chipTextColor)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                                    .layoutPriority(2)
+                                .buttonStyle(.plain)
                                 Button {
                                     exitL2DockScope()
                                 } label: {

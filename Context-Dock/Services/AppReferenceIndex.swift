@@ -347,7 +347,10 @@ actor AppReferenceIndex {
         let result: (success: Bool, output: String)? = await withTaskGroup(
             of: (success: Bool, output: String)?.self
         ) { group in
-            group.addTask { await TerminalCommandExecutor.shared.runPreApproved(command) }
+            group.addTask {
+                let run = await TerminalCommandExecutor.shared.runPreApproved(command)
+                return (run.success, run.output)
+            }
             group.addTask {
                 try? await Task.sleep(nanoseconds: 6_000_000_000)
                 return nil

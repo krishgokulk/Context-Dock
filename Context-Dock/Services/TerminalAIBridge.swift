@@ -180,11 +180,13 @@ class TerminalAIBridge: ObservableObject {
             // where the user sees it before it runs.
             switch ArgvCommandGate.evaluate(command) {
             case .allowed(let executable, let arguments):
-                return await executeCommand(
+                let detailed = await executeCommand(
                     command,
                     classification: classification,
                     wasApproved: true,
-                    argv: (executable, arguments))
+                    argv: (executable, arguments)
+                )
+                return (detailed.success, detailed.output)
             case .rejected(let reason):
                 // Fall through to the approval path, carrying why it could not run unattended.
                 unattendedRejection = reason
@@ -205,7 +207,9 @@ class TerminalAIBridge: ObservableObject {
 
         switch result {
         case .approved(let approvedCommand):
-            return await executeCommand(approvedCommand, classification: classification, wasApproved: true)
+            let detailed = await executeCommand(
+                approvedCommand, classification: classification, wasApproved: true)
+            return (detailed.success, detailed.output)
         case .denied:
             return (false, "Command denied by user")
         case .blocked(let reason):
@@ -263,7 +267,7 @@ class TerminalAIBridge: ObservableObject {
     func runPreApprovedCommand(
         _ command: String,
         onLine: (@Sendable (String) -> Void)? = nil
-    ) async -> (success: Bool, output: String) {
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         var command = command
         switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
         case .clean:
@@ -274,16 +278,17 @@ class TerminalAIBridge: ObservableObject {
             return (
                 false,
                 "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
-                + "the current page. Open the exact page and ask again."
+                + "the current page. Open the exact page and ask again.",
+                -1
             )
         }
         let classification = TerminalCommandClassifier.shared.classify(command)
         if classification.riskLevel == .critical {
             let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
             if let alternative = classification.suggestedAlternative {
-                return (false, "\(message)\n\nAlternative: \(alternative)")
+                return (false, "\(message)\n\nAlternative: \(alternative)", -1)
             }
-            return (false, message)
+            return (false, message, -1)
         }
         return await executeCommand(
             command, classification: classification, wasApproved: true, onLine: onLine)
@@ -301,7 +306,7 @@ class TerminalAIBridge: ObservableObject {
         wasApproved: Bool,
         argv: (executable: URL, arguments: [String])? = nil,
         onLine: (@Sendable (String) -> Void)? = nil
-    ) async -> (success: Bool, output: String) {
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         isExecuting = true
         currentCommand = command
         let startTime = Date()
@@ -382,7 +387,7 @@ class TerminalAIBridge: ObservableObject {
                 name: produced.lastPathComponent, url: produced)
         }
 
-        return (exitCode == 0, output)
+        return (exitCode == 0, output, exitCode)
     }
 
     // MARK: - Placeholder resolution
