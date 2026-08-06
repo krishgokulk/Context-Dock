@@ -688,8 +688,10 @@ extension LauncherView {
             let scope = GeneralChatScope.cli(command: package.command)
             let pinned = GeneralChatWindowModel.shared.sessions.contains { $0.scope == scope }
             Button {
-                GeneralChatWindowModel.shared.openSession(scope, title: package.command)
+                GeneralChatWindowModel.shared.openSession(
+                    scope, title: package.command, seed: l2.chatMessages)
                 GeneralChatWindowController.shared.show()
+                hideLauncherAfterResultExecution()
             } label: {
                 Image(systemName: pinned ? "pin.fill" : "pin")
                     .font(.system(size: 11, weight: .semibold))

@@ -102,7 +102,10 @@ struct GeneralChatWindowView: View {
             .padding(.horizontal, 8)
             .padding(.top, 4)
 
-            if !model.attachedAppNames.isEmpty {
+            // One app is not a combination — it belongs with the other single-scope
+            // threads under Apps & tools. "Combined chat" only earns its heading once
+            // there is more than one app to combine.
+            if model.attachedAppNames.count > 1 {
                 combinedChatEntry
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
@@ -122,7 +125,12 @@ struct GeneralChatWindowView: View {
     @ViewBuilder
     private var sessionList: some View {
         let rows = model.sessions.filter { $0.scope != .general }
-        if !rows.isEmpty {
+        // A lone attached app has no session of its own — it is a scope on the current
+        // conversation — but from the sidebar it reads as the same thing: one app this
+        // chat is about. Listing it here is what stops it disappearing from the sidebar
+        // when Combined chat stops applying.
+        let loneApp = model.attachedAppNames.count == 1 ? model.attachedAppNames.first : nil
+        if !rows.isEmpty || loneApp != nil {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apps & tools")
                     .font(.system(size: 10, weight: .semibold))
@@ -131,11 +139,62 @@ struct GeneralChatWindowView: View {
                     .padding(.top, 10)
                     .padding(.bottom, 2)
 
+                if let loneApp {
+                    attachedAppRow(loneApp)
+                }
+
                 ForEach(rows) { session in
                     sessionRow(session)
                 }
             }
         }
+    }
+
+    /// The single app this conversation is scoped to. Same shape as a session row, with
+    /// an "×" instead of a message count — it is a scope you can drop, not a thread you
+    /// switch to.
+    private func attachedAppRow(_ name: String) -> some View {
+        HStack(spacing: 8) {
+            appIcon(name)
+                .frame(width: 16, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(name)
+                .font(.system(size: 12))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Button {
+                showsSidebarAppPicker = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Add another app — makes this a combined chat")
+            .popover(isPresented: $showsSidebarAppPicker, arrowEdge: .trailing) {
+                AppContextPicker { app in
+                    model.attachApp(app)
+                    showsSidebarAppPicker = false
+                }
+            }
+            Button {
+                model.removeApp(name)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove \(name) from this chat")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Color.primary.opacity(0.10),
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .padding(.horizontal, 8)
     }
 
     private func sessionRow(_ session: GeneralChatSession) -> some View {

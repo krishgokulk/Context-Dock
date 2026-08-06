@@ -56,9 +56,15 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Switching persists what is on screen first, so moving between threads cannot lose the
     /// one being left. A send in flight is left alone: cancelling someone's answer because
     /// they clicked another row would be its own bug.
-    func openSession(_ scope: GeneralChatScope, title: String) {
+    /// - Parameter seed: the conversation being handed over from the dock. A thread opened
+    ///   from a scope must show what the user was already reading — arriving at an empty
+    ///   window while the dock still held the transcript is not a handover, it is a second
+    ///   conversation. Applied only when the thread is empty, so reopening never overwrites
+    ///   history with whatever the dock happens to be showing.
+    func openSession(_ scope: GeneralChatScope, title: String, seed: [AIChatMessage] = []) {
         guard !isSending else { return }
         guard scope != activeScope else {
+            adoptSeedIfEmpty(seed, scope: scope, title: title)
             sessions = GeneralChatSessionStore.index()
             return
         }
@@ -73,9 +79,18 @@ final class GeneralChatWindowModel: ObservableObject {
         // A scoped session is about its own app; the picker starts empty rather than
         // inheriting whatever the previous thread was attached to.
         attachedAppNames = []
+        adoptSeedIfEmpty(seed, scope: scope, title: title)
         GeneralChatSessionStore.upsert(
             scope: scope, title: title, messageCount: messages.count)
         sessions = GeneralChatSessionStore.index()
+    }
+
+    private func adoptSeedIfEmpty(
+        _ seed: [AIChatMessage], scope: GeneralChatScope, title: String
+    ) {
+        guard messages.isEmpty, !seed.isEmpty else { return }
+        messages = seed
+        GeneralChatSessionStore.save(seed, scope: scope, title: title)
     }
 
     func closeSession(_ scope: GeneralChatScope) {

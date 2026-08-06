@@ -1142,7 +1142,38 @@ extension LauncherView {
             contextDockChatAttachmentChips
             contextDockChatAttachMenu
             cliScopeWindowPinControl
+            frontmostAppWindowControl
             contextDockChatCloseButton
+        }
+    }
+
+    /// Moves the frontmost-app conversation into the chat window as its own thread.
+    ///
+    /// Same handover as the CLI control beside it: the transcript goes with it, the sheet
+    /// closes, and the thread stays available afterwards whether or not the app is running.
+    @ViewBuilder
+    var frontmostAppWindowControl: some View {
+        if activeCLIScopePackage == nil,
+            let target = l2.targetApp,
+            !target.bundleId.isEmpty,
+            !target.bundleId.hasPrefix("cli://"),
+            !target.bundleId.hasPrefix("scope://")
+        {
+            let scope = GeneralChatScope.app(bundleId: target.bundleId)
+            Button {
+                GeneralChatWindowModel.shared.openSession(
+                    scope, title: target.name, seed: l2.chatMessages)
+                GeneralChatWindowController.shared.show()
+                hideLauncherAfterResultExecution()
+            } label: {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Color.white.opacity(0.07), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(target.name) as a thread in the chat window")
         }
     }
 
@@ -1161,8 +1192,12 @@ extension LauncherView {
                 // The general chat window is the hub: a tool opens as a thread in its
                 // sidebar rather than as another floating panel, so every app and tool the
                 // user talks to lives in one place and stays there when the dock moves on.
-                GeneralChatWindowModel.shared.openSession(scope, title: package.command)
+                GeneralChatWindowModel.shared.openSession(
+                    scope, title: package.command, seed: l2.chatMessages)
                 GeneralChatWindowController.shared.show()
+                // The conversation moved; leaving the sheet showing the same thread would
+                // give the user two copies of it, one of which is now stale.
+                hideLauncherAfterResultExecution()
             } label: {
                 Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
                     .font(.system(size: 10, weight: .bold))
