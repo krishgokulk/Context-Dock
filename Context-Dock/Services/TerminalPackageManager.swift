@@ -66,6 +66,38 @@ class TerminalPackageManager: ObservableObject {
         )
     }
 
+    /// Current modification date of the tool's binary, following the symlinks Homebrew and
+    /// pipx install.
+    nonisolated static func binaryModificationDate(_ path: String?) -> Date? {
+        guard let path, !path.isEmpty else { return nil }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return (try? FileManager.default.attributesOfItem(atPath: resolved))?[.modificationDate]
+            as? Date
+    }
+
+    /// True when the binary has changed since its help was scanned, so what is cached may
+    /// describe a version the user no longer has.
+    func helpIsStale(_ package: TerminalPackage) -> Bool {
+        guard package.helpText?.isEmpty == false else { return false }
+        guard let scanned = package.scannedBinaryModified,
+            let current = Self.binaryModificationDate(package.installedPath)
+        else { return false }
+        return abs(current.timeIntervalSince(scanned)) > 1
+    }
+
+    /// Re-scans any pinned tool whose binary has changed since its last scan.
+    ///
+    /// Only pinned tools: those are the ones whose help reaches a prompt, and rescanning
+    /// hundreds of discovered binaries would spawn hundreds of processes for documentation
+    /// nobody is reading. Runs at most one tool at a time, off the typing path.
+    func refreshStaleHelpForPinnedTools() async {
+        let stale = packages.filter { isUserAddedGlobalScope($0) && helpIsStale($0) }
+        for package in stale {
+            await refreshHelpText(for: package.id)
+            await refreshManText(for: package.id)
+        }
+    }
+
     /// Reads the tool's man page, once, and caches it.
     ///
     /// `col -b` strips the overstrike backspaces roff emits for bold and underline, which
@@ -720,6 +752,10 @@ class TerminalPackageManager: ObservableObject {
         packages[index].helpText       = deepHelp
         packages[index].subcommands    = parseSubcommands(from: topHelp, binary: pkg.command)
         packages[index].usagePattern   = parseUsagePattern(from: topHelp)
+        // Stamp what was scanned, so a later upgrade is detectable rather than silently
+        // leaving the model describing flags the installed version no longer has.
+        packages[index].scannedBinaryModified = Self.binaryModificationDate(
+            packages[index].installedPath)
         savePackages()
     }
 
@@ -1053,6 +1089,10 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
     /// directions: a system tool like `find` prints a usage stub for --help and documents
     /// itself in man, while a modern CLI often ships no man page at all.
     var manText: String?
+    /// Modification date of the binary when its help was last scanned. An upgrade rewrites
+    /// the file, so a mismatch means the cached help may describe a version that is gone —
+    /// flags removed, subcommands renamed. Nil for tools scanned before this was recorded.
+    var scannedBinaryModified: Date?
 
     init(
         id: UUID = UUID(),
@@ -1128,6 +1168,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         case contextualExamples
         case isInteractive
         case manText
+        case scannedBinaryModified
     }
 
     init(from decoder: Decoder) throws {
@@ -1160,6 +1201,8 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
             ?? []
         isInteractive = try container.decodeIfPresent(Bool.self, forKey: .isInteractive) ?? false
         manText = try container.decodeIfPresent(String.self, forKey: .manText)
+        scannedBinaryModified = try container.decodeIfPresent(
+            Date.self, forKey: .scannedBinaryModified)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1183,6 +1226,7 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         try container.encode(contextualExamples, forKey: .contextualExamples)
         try container.encode(isInteractive, forKey: .isInteractive)
         try container.encodeIfPresent(manText, forKey: .manText)
+        try container.encodeIfPresent(scannedBinaryModified, forKey: .scannedBinaryModified)
     }
 }
 

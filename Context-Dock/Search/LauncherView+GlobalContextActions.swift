@@ -2344,6 +2344,14 @@ extension LauncherView {
 
     @discardableResult
     func activateGlobalInlineScope(result: SearchResult, bundleID: String) -> Bool {
+        if bundleID.hasPrefix("cli://") {
+            // Entering a CLI scope is the moment its documentation is about to be used, so
+            // it is the right moment to notice the binary was upgraded since it was scanned.
+            // Detached and pinned-only: this must never delay the scope opening.
+            Task.detached(priority: .utility) {
+                await TerminalPackageManager.shared.refreshStaleHelpForPinnedTools()
+            }
+        }
         guard shouldUsePureGlobalAppSearch,
             isGlobalContextActive,
             !hasSelectionScopeSurface,
