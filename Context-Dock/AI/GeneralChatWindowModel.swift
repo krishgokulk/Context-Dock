@@ -191,6 +191,27 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
+    /// The trash in the composer clears the thread you are reading, and only that one —
+    /// a Reminders thread cleared must not touch Calendar's, and must not be confused with
+    /// "New chat", which moves you somewhere else.
+    func clearActiveThread() {
+        cancel()
+        messages = []
+        messageApps = [:]
+        attachments = []
+        if activeScope == .general {
+            GeneralAIChatConversationStore.clear()
+        } else {
+            GeneralChatSessionStore.save([], scope: activeScope, title: activeTitle)
+            // The dock's next visit starts clean too, rather than replaying what was
+            // just deleted.
+            if let panelKey = GeneralChatSessionStore.dockPanelKey(activeScope) {
+                AppPanelChatStore.shared.beginSession(for: panelKey)
+            }
+        }
+        sessions = GeneralChatSessionStore.index()
+    }
+
     /// "New chat" from a scoped thread means "back to the unscoped one" — without this
     /// there is no way back to General once an app thread is open, and the button would
     /// instead wipe the app thread the user is reading.
@@ -384,32 +405,20 @@ final class GeneralChatWindowModel: ObservableObject {
             }
             defer { watchdog.cancel() }
             do {
-                let answer: AppScopedChatService.Answer
-                if sendScope == .general {
-                    // Unscoped chat keeps its existing path.
-                    let text = try await AIProviderService.shared.sendMessage(
-                        query,
-                        context: context,
-                        provider: provider,
-                        apiKey: apiKey,
-                        conversationHistory: history,
-                        additionalContextPrompt: AppScopedChatService.dateTimeBlock(),
-                        attachments: providerAttachments
-                    )
-                    answer = AppScopedChatService.Answer(text: text, toolChips: [])
-                } else {
-                    // App and CLI threads go through the shared scoped path, so the window
-                    // grounds and executes the way the dock's chat does instead of asking
-                    // the model to answer from memory.
-                    answer = try await AppScopedChatService.send(
-                        scope: sendScope,
-                        appName: scopeAppName,
-                        query: query,
-                        history: history,
-                        attachments: sentAttachments,
-                        extraAppNames: extraApps)
+                // Every thread — scoped or not — goes through the one path, so the window
+                // grounds, executes and sanitises the way the dock's chat does instead of
+                // asking the model to answer from memory.
+                let answer = try await AppScopedChatService.send(
+                    scope: sendScope,
+                    appName: scopeAppName,
+                    query: query,
+                    history: history,
+                    attachments: sentAttachments,
+                    extraAppNames: extraApps)
+                guard !Task.isCancelled else {
+                    await MainActor.run { self?.finishSending(sendKey) }
+                    return
                 }
-                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self?.deliver(
                         AIChatMessage(
@@ -418,7 +427,10 @@ final class GeneralChatWindowModel: ObservableObject {
                         to: sendScope, title: sendTitle)
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    await MainActor.run { self?.finishSending(sendKey) }
+                    return
+                }
                 await MainActor.run {
                     self?.deliver(
                         AIChatMessage(
@@ -435,6 +447,15 @@ final class GeneralChatWindowModel: ObservableObject {
     /// visible transcript grows; when it is not, the answer is written straight to that
     /// thread's stored conversation, so switching away mid-answer loses nothing and
     /// contaminates nothing.
+    /// Ends a thread's turn without adding a message. A cancelled task used to return
+    /// straight out of both branches, leaving the thread marked as sending forever: the
+    /// spinner never stopped and every later message was swallowed by the isSending guard,
+    /// which is what "it just says Thinking… and ignores me" actually was.
+    private func finishSending(_ key: String) {
+        sendingScopeKeys.remove(key)
+        sendTasks[key] = nil
+    }
+
     private func deliver(
         _ message: AIChatMessage, to scope: GeneralChatScope, title: String
     ) {

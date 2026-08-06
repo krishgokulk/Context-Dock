@@ -723,7 +723,9 @@ extension LauncherView {
             l2.chatMessages = []
             updateL2Results([])
             if let key = l2.activeDockSessionKey {
-                AppPanelChatStore.shared.clear(for: key)
+                // This session only. The history before it belongs to the chat window's
+                // thread and is not the dock's to delete.
+                AppPanelChatStore.shared.clearSession(for: key)
             }
             if keepScope {
                 l2.chatArmed = true
@@ -737,7 +739,7 @@ extension LauncherView {
 
     func exitContextDockChatSheet() {
         if let key = l2.activeDockSessionKey {
-            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
         }
         l2.showChatPopover = false
         l2.chatArmed = false
@@ -801,7 +803,7 @@ extension LauncherView {
     func clearAndExitContextDockChatBackToContext() {
         withAnimation(.dockStandard) {
             if let key = l2.activeDockSessionKey {
-                AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+                AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
             }
             l2.isLoading = false
             l2.loadingStatus = nil
@@ -827,7 +829,9 @@ extension LauncherView {
             // its first command.
             l2.chatMessages = []
             if let key = l2.activeDockSessionKey {
-                AppPanelChatStore.shared.clear(for: key)
+                // A CLI run ends with its scope, so this session goes; anything the window
+                // holds for that tool stays.
+                AppPanelChatStore.shared.clearSession(for: key)
             }
             l2.isLoading = false
             l2.loadingStatus = nil
@@ -999,14 +1003,34 @@ extension LauncherView {
     /// closes, and the thread stays available afterwards whether or not the app is running.
     @ViewBuilder
     var frontmostAppWindowControl: some View {
-        // Frontmost-app chat has no explicit scope — l2.targetApp is set only when the user
-        // scoped deliberately, which is why keying off it alone showed no control in the one
-        // place this was asked for. The app being talked to is the frontmost one.
-        let bundleId = l2.targetApp?.bundleId ?? frontmost.bundleID
-        let appName = l2.targetApp?.name ?? frontmost.name
+        // The app this chat is with, not whatever happens to be frontmost. Those differ
+        // constantly — the dock floats over VS Code while Finder is frontmost — and using
+        // the frontmost one filed a Code conversation under Finder.
+        let chatScope = currentContextDockChatScope
+        let bundleId = chatScope.bundleId
+        let appName = chatScope.appName
         if activeCLIScopePackage == nil {
             chatWindowHandoffControl(bundleId: bundleId, appName: appName)
         }
+    }
+
+    /// Closes the dock behind a handover. `hideLauncherAfterResultExecution` deliberately
+    /// keeps the dock up in always-float and taskbar modes, which is right for running an
+    /// action and wrong here: the conversation has moved, and leaving the sheet showing the
+    /// same thread gives the user two copies of it, one of which is already stale.
+    func handOffChatToWindow() {
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
+        }
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.loadingStatus = nil
+        l2.activeRequestID = nil
+        exitContextDockChatBackToContext()
+        searchState.query = ""
+        isSearchFieldFocused = false
+        AppDelegate.shared?.hideLauncher(force: true)
     }
 
     /// The window glyph itself, so every app-scoped chat surface can carry it rather
@@ -1026,7 +1050,7 @@ extension LauncherView {
                 GeneralChatWindowModel.shared.openSession(
                     scope, title: appName, seed: l2.chatMessages)
                 GeneralChatWindowController.shared.show()
-                hideLauncherAfterResultExecution()
+                handOffChatToWindow()
             } label: {
                 Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
                     .font(.system(size: 10, weight: .bold))
@@ -1065,7 +1089,7 @@ extension LauncherView {
                 GeneralChatWindowController.shared.show()
                 // The conversation moved; leaving the sheet showing the same thread would
                 // give the user two copies of it, one of which is now stale.
-                hideLauncherAfterResultExecution()
+                handOffChatToWindow()
             } label: {
                 Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
                     .font(.system(size: 10, weight: .bold))
@@ -2144,24 +2168,7 @@ extension LauncherView {
     /// `{"mcp_call":…}` / TERMINAL_COMMAND blob — instead of it being executed silently.
     /// Remove those fragments so the user sees only the prose, never raw call syntax.
     func sanitizeGeneralChatAssistantText(_ text: String) -> String {
-        var out = text
-        let patterns = [
-            "(?s)<function>.*?</function>",
-            "(?s)<invoke\\b.*?</invoke>",
-            "(?s)<invoke\\b.*?</invoke>",
-            "(?m)^\\s*</?(?:antml:)?(?:function|invoke|parameter)\\b[^>]*>\\s*$",
-            "(?s)<parameter\\b.*?</parameter>",
-            "(?s)\\[?TERMINAL_COMMAND\\].*?\\[/TERMINAL_COMMAND\\]",
-            "(?m)^\\s*\\{\\s*\"(?:mcp_call|menu_call|adapter_call|terminal_call|capability_call)\"\\s*:[\\s\\S]*?\\}\\s*$",
-        ]
-        for pattern in patterns {
-            out = out.replacingOccurrences(
-                of: pattern, with: "", options: [.regularExpression])
-        }
-        // Collapse the blank gaps left behind.
-        out = out.replacingOccurrences(
-            of: "(?m)\\n{3,}", with: "\n\n", options: [.regularExpression])
-        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+        ChatAnswerSanitizer.clean(text)
     }
 
     func restoreGeneralAIConversationIfNeeded() {

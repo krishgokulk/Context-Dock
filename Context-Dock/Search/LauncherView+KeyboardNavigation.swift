@@ -395,7 +395,7 @@ extension LauncherView {
             {
                 withAnimation(.dockStandard) {
                     if let key = self.l2.activeDockSessionKey {
-                        AppPanelChatStore.shared.save(self.l2.chatMessages, for: key)
+                        AppPanelChatStore.shared.saveSession(self.l2.chatMessages, for: key)
                     }
                     self.l2.isLoading = false
                     self.l2.loadingStatus = nil

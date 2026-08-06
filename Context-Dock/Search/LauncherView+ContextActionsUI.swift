@@ -182,70 +182,22 @@ extension LauncherView {
 
     @ViewBuilder
     var chatFocusAppPicker: some View {
-        let apps = chatFocusAppRows()
-        ScrollView(.vertical, showsIndicators: apps.count > 4) {
-            LazyVStack(spacing: 2) {
-                ForEach(apps, id: \.bundleId) { app in
-                    Button {
-                        if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
-                            chatFocusApps.removeAll { $0.bundleId == app.bundleId }
-                        } else {
-                            chatFocusApps.append(.init(name: app.name, bundleId: app.bundleId))
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(nsImage: app.icon)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 18, height: 18)
-                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            Text(app.name)
-                                .font(.system(size: 13, weight: .medium))
-                                .lineLimit(1)
-                            // Green = running; grey = configured adapter, not launched yet.
-                            Circle()
-                                .fill(
-                                    app.isRunning
-                                        ? Color.green
-                                        : Color.secondary.opacity(0.35)
-                                )
-                                .frame(width: 6, height: 6)
-                                .help(app.isRunning ? "Running" : "Adapter configured — not running")
-                            Spacer(minLength: 8)
-                            if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .padding(.horizontal, 9)
-                        .frame(height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(
-                                    hoveredChatFocusBundleId == app.bundleId
-                                        ? Color.accentColor.opacity(0.22)
-                                        : Color.clear
-                                )
-                                .shadow(
-                                    color: hoveredChatFocusBundleId == app.bundleId
-                                        ? Color.accentColor.opacity(0.38) : .clear,
-                                    radius: 7
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            hoveredChatFocusBundleId = hovering ? app.bundleId : nil
-                        }
-                    }
-                }
+        // Shared with the composer bar's picker: one list, one set of states, so choosing
+        // an app is the same interaction wherever the chat is.
+        ScopedAppPickerList(
+            rows: chatFocusAppRows().map {
+                ScopedAppPickerRow(
+                    name: $0.name, bundleId: $0.bundleId, icon: $0.icon,
+                    isRunning: $0.isRunning)
+            },
+            selectedIDs: Set(chatFocusApps.map { $0.bundleId.lowercased() })
+        ) { row in
+            if chatFocusApps.contains(where: { $0.bundleId == row.bundleId }) {
+                chatFocusApps.removeAll { $0.bundleId == row.bundleId }
+            } else {
+                chatFocusApps.append(.init(name: row.name, bundleId: row.bundleId))
             }
-            .padding(4)
         }
-        .frame(width: 176, height: CGFloat(min(max(apps.count, 1), 4)) * 34 + 8)
     }
 
     /// Regular (user-visible) running apps for the chat focus picker, excluding

@@ -1471,7 +1471,7 @@ extension LauncherView {
 
     func persistActiveL2DockSession() {
         if let key = l2.activeDockSessionKey {
-            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
         }
     }
     // MARK: - Context Dock Filter (type to find actions)

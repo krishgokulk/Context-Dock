@@ -326,7 +326,7 @@ struct GeneralChatWindowView: View {
                 .buttonStyle(.plain)
                 .help("Add another app to this chat")
                 .popover(isPresented: $showsSidebarAppPicker, arrowEdge: .trailing) {
-                    AppContextPicker { app in
+                    AppContextPicker(selectedNames: Set(model.scopeAppNames)) { app in
                         model.attachApp(app)
                         showsSidebarAppPicker = false
                     }
@@ -537,7 +537,7 @@ struct GeneralChatWindowView: View {
                     )
                 },
                 showsProviderName: true,
-                onClear: model.isEmpty ? nil : { model.newChat() },
+                onClear: model.isEmpty ? nil : { model.clearActiveThread() },
                 // The thread's own app is not detachable — closing that thread is what
                 // removing it would mean, and the sidebar already does that.
                 onRemoveApp: { name in

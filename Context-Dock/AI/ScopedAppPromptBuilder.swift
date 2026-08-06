@@ -272,6 +272,20 @@ struct ScopeInventory {
                     items: skills.map(\.name)))
         }
 
+        // Built-in Apple MCP: registered capabilities scoped to this app (calendar.today,
+        // reminders.list, …). Settings shows these under "Linked MCP · built-in", and the
+        // panel was missing them because they are not MCPServerManager configs — they live
+        // in the capability registry.
+        let builtIns = CapabilityRegistry.shared.all
+            .filter { $0.appBundleID == bundleId }
+            .map(\.title)
+        if !builtIns.isEmpty {
+            groups.append(
+                Group(
+                    title: "Built-in tools", symbol: "sparkles",
+                    items: Array(builtIns.prefix(12))))
+        }
+
         let servers = MCPServerManager.shared.servers(forBundleId: bundleId)
         if !servers.isEmpty {
             // Names only, read from the config. Listing each server's tools would mean

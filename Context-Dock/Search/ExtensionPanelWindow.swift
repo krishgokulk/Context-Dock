@@ -763,7 +763,7 @@ struct AIComposerBar: View {
             .buttonStyle(.plain)
             .help("Work with an app")
             .popover(isPresented: $showAppPicker, arrowEdge: .bottom) {
-                AppContextPicker { app in
+                AppContextPicker(selectedNames: Set(attachedAppNames)) { app in
                     onAttachApp(app)
                     showAppPicker = false
                 }
@@ -800,91 +800,19 @@ struct AIComposerBar: View {
 /// reasonable thing to ask before Notes is open.
 struct AppContextPicker: View {
     let onPick: (String) -> Void
+    /// Apps already attached, so the list can show what is on rather than only offering.
+    var selectedNames: Set<String> = []
 
-    @State private var query = ""
-    @State private var apps: [(name: String, icon: NSImage?, running: Bool)] = []
-
-    private var filtered: [(name: String, icon: NSImage?, running: Bool)] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return apps }
-        return apps.filter { $0.name.lowercased().contains(q) }
-    }
+    @State private var rows: [ScopedAppPickerRow] = []
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                TextField("Search apps", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            Divider().opacity(0.4)
-
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(filtered, id: \.name) { app in
-                        Button { onPick(app.name) } label: {
-                            HStack(spacing: 8) {
-                                if let icon = app.icon {
-                                    Image(nsImage: icon)
-                                        .resizable()
-                                        .frame(width: 18, height: 18)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                } else {
-                                    Image(systemName: "app")
-                                        .font(.system(size: 12))
-                                        .frame(width: 18)
-                                }
-                                Text(app.name).font(.system(size: 12, weight: .medium))
-                                if !app.running {
-                                    Text("Not running")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                Spacer(minLength: 6)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
+        ScopedAppPickerList(
+            rows: rows,
+            selectedIDs: Set(selectedNames.map { $0.lowercased() })
+        ) { row in
+            onPick(row.name)
         }
-        .frame(width: 280, height: 320)
-        .task { load() }
-    }
-
-    private func load() {
-        // Match on the bundle's filename as well as its localized name. The catalog
-        // lists "Visual Studio Code" (the .app on disk) while the running process
-        // reports "Code", so name-only matching marked open apps as not running and
-        // sank them to the bottom of the list.
-        var running = Set<String>()
-        for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular {
-            if let name = app.localizedName { running.insert(name) }
-            if let url = app.bundleURL {
-                running.insert(url.deletingPathExtension().lastPathComponent)
-            }
-        }
-        let catalog = AppCatalogService.shared.appsNow()
-        var seen = Set<String>()
-        var out: [(String, NSImage?, Bool)] = []
-        for result in catalog where !seen.contains(result.title) {
-            seen.insert(result.title)
-            out.append((result.title, result.icon, running.contains(result.title)))
-        }
-        // Running first, then alphabetical: what is open is what you usually mean.
-        apps = out
-            .sorted { ($0.2 ? 0 : 1, $0.0.lowercased()) < ($1.2 ? 0 : 1, $1.0.lowercased()) }
-            .map { (name: $0.0, icon: $0.1, running: $0.2) }
+        .task { rows = ScopedAppPickerRow.allApps() }
     }
 
     static func icon(forAppNamed name: String) -> NSImage? {

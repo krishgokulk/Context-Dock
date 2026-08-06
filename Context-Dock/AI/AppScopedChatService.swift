@@ -12,9 +12,16 @@
 
 import AppKit
 import Foundation
+import OSLog
 
 @MainActor
 enum AppScopedChatService {
+
+    /// Stage markers for a scoped send. A stall in this path is invisible from the UI —
+    /// the thread just says "Thinking…" — so each stage is logged and readable with
+    /// `log show --predicate 'subsystem == "com.krishgokul.ContextDock"'`.
+    private static let log = Logger(
+        subsystem: "com.krishgokul.ContextDock", category: "AppScopedChat")
 
     struct Answer {
         let text: String
@@ -138,6 +145,7 @@ enum AppScopedChatService {
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
+        log.info("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
         var sections: [String] = [dateTimeBlock()]
         var context: UserContext = .none
 
@@ -164,6 +172,7 @@ enum AppScopedChatService {
             if !skills.isEmpty { sections.append(skills) }
             // The app's live MCP tools, in the prose protocol the loop understands, so a
             // Reminders thread can read reminders instead of describing how to.
+            log.info("stage: mcp block")
             let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
@@ -175,7 +184,16 @@ enum AppScopedChatService {
             if !tool.isEmpty { sections.append(tool) }
 
         case .general:
-            break
+            // Unscoped chat is not ungrounded chat: it still answers about the user's
+            // machine, so it gets the same capability catalogue the dock's General Chat
+            // builds. Without it the model was handed a CLI protocol by the provider's
+            // package matcher and nothing that could run it.
+            sections.append(
+                """
+                You are DoraX's assistant on the user's Mac. Use the capabilities listed \
+                below to answer from real data rather than from memory. Never print a tool \
+                call as text — call it, then answer in plain language.
+                """)
         }
 
         // A combined chat is scoped to several apps; each one is grounded the same way.
@@ -196,12 +214,14 @@ enum AppScopedChatService {
         // them — the dock's "Live app data" read. Without it the model has the app's
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
+        log.info("stage: live apple data")
         let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
         }
         if !liveAppleData.isEmpty { sections.append(liveAppleData) }
 
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
+        log.info("stage: capability hub")
         let hubBlock = await withTimeout(seconds: 8, fallback: "") {
             await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: provider == .onDevice,
@@ -212,18 +232,24 @@ enum AppScopedChatService {
         if !hubBlock.isEmpty { sections.append(hubBlock) }
 
         let systemPrompt = sections.joined(separator: "\n\n")
+        log.info("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, so it takes the plain path.
         guard provider.supportsNativeTools else {
-            let text = try await AIProviderService.shared.sendMessage(
+            let raw = try await AIProviderService.shared.sendMessage(
                 query,
                 context: context,
                 provider: provider,
                 apiKey: apiKey,
                 conversationHistory: history,
                 additionalContextPrompt: systemPrompt,
-                attachments: attachments.map(AIAttachment.inferred(from:))
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                // This surface supplies its own capability catalogue; letting the provider
+                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                // nothing here executes, and the directive ends up printed at the user.
+                surfaceScoped: true
             )
+            let text = ChatAnswerSanitizer.clean(raw)
             return Answer(
                 text: text,
                 toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
@@ -235,7 +261,8 @@ enum AppScopedChatService {
                 command, purpose: purpose, modelRequiresApproval: needsApproval)
         }
 
-        let (text, executed) = try await AIProviderService.shared.sendWithTools(
+        log.info("stage: provider sendWithTools")
+        var (text, executed) = try await AIProviderService.shared.sendWithTools(
             query,
             context: context,
             provider: provider,
@@ -245,6 +272,33 @@ enum AppScopedChatService {
             additionalSystemPrompt: systemPrompt,
             imageAttachments: attachments
         )
+        log.info("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
+
+        // The model sometimes writes its tool call out as text instead of calling it. The
+        // dock recovers by running it; the window used to render the JSON. One recovery
+        // round only — a model that keeps narrating tool calls is not going to stop.
+        if let call = ChatAnswerSanitizer.terminalCall(in: text) {
+            log.info("stage: recovering prose terminal_call")
+            let result = await TerminalCommandExecutor.shared.run(
+                call.command, purpose: call.purpose, modelRequiresApproval: false)
+            if result.success {
+                let followUp = try await AIProviderService.shared.sendMessage(
+                    "Command output:\n\n\(result.output.prefix(6_000))\n\nAnswer the original "
+                        + "question from this output: \(query)",
+                    context: context,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: history,
+                    surfaceScoped: true
+                )
+                text = followUp
+                executed.append(
+                    AIProviderService.ExecutedCommand(
+                        command: call.command, output: result.output, success: true))
+            }
+        }
+        text = ChatAnswerSanitizer.clean(text)
+
         var chips = executed.map(\.command)
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
         return Answer(text: text, toolChips: chips)

@@ -3683,7 +3683,7 @@ extension LauncherView {
         }
 
         if let previousKey = l2.activeDockSessionKey {
-            AppPanelChatStore.shared.save(l2.chatMessages, for: previousKey)
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: previousKey)
         }
 
         l2.activeDockSessionKey = newKey
@@ -3694,7 +3694,13 @@ extension LauncherView {
         l2.handledApprovalIds = []
         l2.contextExtensions = []
         l2.lastAutoRunExtensionID = nil
-        l2.chatMessages = newKey.map { AppPanelChatStore.shared.load(for: $0) } ?? []
+        // Entering a scope starts a session: the sheet shows this visit, the chat window
+        // keeps the whole conversation. Exiting a scope without clearing therefore loses
+        // nothing — it just ends the span the dock is showing.
+        if let newKey {
+            AppPanelChatStore.shared.beginSession(for: newKey)
+        }
+        l2.chatMessages = newKey.map { AppPanelChatStore.shared.loadSession(for: $0) } ?? []
         updateL2Results([])
     }
 
