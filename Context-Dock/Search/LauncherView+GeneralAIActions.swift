@@ -1696,6 +1696,15 @@ extension LauncherView {
             if !summary.isEmpty { details.append("Accessibility context:\n\(summary)") }
         }
 
+        // The AX snapshot above only exists when the SELECTED app is also the app the
+        // snapshot was taken from. In General Chat the launcher is usually frontmost, so
+        // that branch is skipped and "what am I looking at in Preview?" had no document
+        // to answer from — the frontmost chat looked smarter only because its app happened
+        // to be the one AX had. Read the chosen app's own windows directly instead.
+        if let liveWindows = liveAppWindowFacts(bundleID: bundleID) {
+            details.append(liveWindows)
+        }
+
         if running != nil, AppAdapterManager.shared.adapter(for: bundleID) != nil {
             let readerData = await AppAdapterManager.shared.runContextReaders(
                 for: bundleID, axContext: ax)
@@ -1719,6 +1728,66 @@ extension LauncherView {
             If the requested detail is absent, say it was not readable; never request permission in chat.
             """
         return (block, false)
+    }
+
+    /// What the chosen app currently has open, read from its own AX element rather than
+    /// from whichever app the last AX snapshot belongs to. Returns the focused window's
+    /// title and document path plus the other open window titles — the facts behind
+    /// "which file am I viewing?".
+    ///
+    /// Messaging timeout is set low: an app that is beachballing must slow a chat answer
+    /// by a second, not hang it.
+    nonisolated func liveAppWindowFacts(bundleID: String) -> String? {
+        guard let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID).first,
+            running.processIdentifier > 0
+        else { return nil }
+
+        let appElement = AXUIElementCreateApplication(running.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 1.0)
+
+        func string(_ element: AXUIElement, _ attribute: String) -> String? {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+            else { return nil }
+            if let text = value as? String {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            return nil
+        }
+
+        var lines: [String] = []
+
+        var focused: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            appElement, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+            let window = focused as! AXUIElement?
+        {
+            if let title = string(window, kAXTitleAttribute as String) {
+                lines.append("Front window title: \(title)")
+            }
+            // AXDocument is a file:// URL string on document-based apps — the actual open
+            // file, not a title that may have been renamed for display.
+            if let document = string(window, kAXDocumentAttribute as String) {
+                let path = URL(string: document)?.path ?? document
+                lines.append("Open document: \(path)")
+            }
+        }
+
+        var windowsValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            appElement, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+            let windows = windowsValue as? [AXUIElement], !windows.isEmpty
+        {
+            let titles = windows.prefix(8).compactMap { string($0, kAXTitleAttribute as String) }
+            if titles.count > 1 {
+                lines.append("Open windows (\(windows.count)): " + titles.joined(separator: ", "))
+            }
+        }
+
+        guard !lines.isEmpty else { return nil }
+        return "Live window state (read just now, factual):\n" + lines.joined(separator: "\n")
     }
 
     @MainActor

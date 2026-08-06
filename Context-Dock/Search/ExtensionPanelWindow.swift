@@ -528,6 +528,58 @@ struct AIComposerBar: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
 
+    /// Text after a leading "/", or nil when this isn't an app filter. A space ends
+    /// it — "/rem" filters, "/rem what is due" is a sentence the user kept typing.
+    private var slashFilter: String? {
+        guard text.hasPrefix("/") else { return nil }
+        let rest = String(text.dropFirst())
+        guard !rest.contains(" ") else { return nil }
+        return rest.lowercased()
+    }
+
+    /// Apps matching the "/" filter — running first, prefix matches before
+    /// substring ones, so the leftmost icon is what Return will take.
+    private var slashApps: [(name: String, icon: NSImage?, running: Bool)] {
+        guard let filter = slashFilter else { return [] }
+        var running = Set<String>()
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular {
+            if let name = app.localizedName { running.insert(name) }
+        }
+        var ranked: [(rank: Int, row: (name: String, icon: NSImage?, running: Bool))] = []
+        for result in AppCatalogService.shared.appsNow() {
+            let lowered = result.title.lowercased()
+            let matchRank: Int
+            if filter.isEmpty {
+                matchRank = 1
+            } else if lowered.hasPrefix(filter) {
+                matchRank = 0
+            } else if lowered.contains(filter) {
+                matchRank = 1
+            } else {
+                continue
+            }
+            let isRunning = running.contains(result.title)
+            ranked.append(
+                (rank: matchRank * 10 + (isRunning ? 0 : 1),
+                 row: (name: result.title, icon: result.icon, running: isRunning)))
+        }
+        return
+            ranked
+            .sorted {
+                if $0.rank != $1.rank { return $0.rank < $1.rank }
+                return $0.row.name.localizedCaseInsensitiveCompare($1.row.name)
+                    == .orderedAscending
+            }
+            .prefix(8)
+            .map(\.row)
+    }
+
+    private func pickSlashApp(_ name: String) {
+        onAttachApp(name)
+        text = ""
+    }
+
     /// Icons of attached apps, resolved once for the bar's button.
     private var attachedAppIcons: [NSImage] {
         attachedAppNames.compactMap { name in
@@ -579,7 +631,56 @@ struct AIComposerBar: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .lineLimit(1...5)
-                .onSubmit(onSubmit)
+                .onSubmit {
+                    // "/rem" + Return means "work with that app", not "ask about the
+                    // string /rem".
+                    if let first = slashApps.first {
+                        pickSlashApp(first.name)
+                        return
+                    }
+                    onSubmit()
+                }
+
+            // The "/" matches live in the bar itself, narrowing as you type, rather
+            // than in a popover the typing cannot reach.
+            if !slashApps.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(slashApps, id: \.name) { app in
+                        Button { pickSlashApp(app.name) } label: {
+                            Group {
+                                if let icon = app.icon {
+                                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+                                } else {
+                                    Image(systemName: "app.dashed")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(width: 17, height: 17)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(
+                                        app.name == slashApps.first?.name
+                                            ? Color.accentColor.opacity(0.28) : Color.clear
+                                    )
+                            )
+                            .overlay(alignment: .bottomTrailing) {
+                                if app.running {
+                                    Circle().fill(Color.green).frame(width: 5, height: 5)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(app.running ? "\(app.name) — running" : app.name)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+            }
 
             if let extraAttachMenu {
                 Menu {

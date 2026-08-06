@@ -2275,6 +2275,12 @@ extension LauncherView {
                                         }
                                     }
                                     .onSubmit {
+                                        // A "/" filter owns Return before any surface
+                                        // route does — the field holds a filter, not a
+                                        // question.
+                                        if handleGeneralChatSlashPickIfNeeded() {
+                                            return
+                                        }
                                         if isL2ContextActive {
                                             if isCompactSmartScope {
                                                 guard searchState.selectedIndex != nil else {
@@ -2386,6 +2392,11 @@ extension LauncherView {
                                                 handleL2QuerySkippingMenuRouter(trimmed)
                                             }
                                         } else if currentDockSurfaceMode == .generalChat {
+                                            // "/rem" + Return means "focus that app", not
+                                            // "ask the model about the string /rem".
+                                            if handleGeneralChatSlashPickIfNeeded() {
+                                                return
+                                            }
                                             if launchTypedAppMatchIfNeeded() {
                                                 return
                                             }

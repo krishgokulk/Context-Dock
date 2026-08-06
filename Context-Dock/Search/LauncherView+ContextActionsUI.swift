@@ -107,7 +107,11 @@ extension LauncherView {
                 chatFocusAppPicker
             }
 
-            if !chatFocusApps.isEmpty {
+            // "/" filter: the matches replace the focus chips while it is active, so the
+            // capsule shows one thing at a time — what you have, or what you are choosing.
+            if generalChatSlashFilter != nil {
+                generalChatSlashAppCapsule
+            } else if !chatFocusApps.isEmpty {
                 HStack(spacing: 5) {
                     ForEach(chatFocusApps) { focusedApp in
                         Button {

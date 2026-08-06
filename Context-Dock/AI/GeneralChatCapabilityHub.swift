@@ -28,6 +28,26 @@ final class GeneralChatCapabilityHub {
         cachedAllowlistFingerprint = ""
     }
 
+    /// Runs `operation`, giving up on it after `seconds` and returning `fallback`.
+    /// The losing task is cancelled, so a stalled server does not keep running behind
+    /// the answer it failed to contribute to.
+    private static func withTimeout<T: Sendable>(
+        seconds: Double,
+        fallback: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withTaskGroup(of: T.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return fallback
+            }
+            let first = await group.next() ?? fallback
+            group.cancelAll()
+            return first
+        }
+    }
+
     // MARK: - Prompt block
 
     /// System-prompt section listing all app tools General Chat may call.
@@ -88,7 +108,16 @@ final class GeneralChatCapabilityHub {
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
                 continue
             }
-            let tools = await MCPRuntime.shared.tools(forBundleId: adapter.bundleId)
+            // Bounded: `tools(forBundleId:)` may spawn a server process and wait on its
+            // handshake. One server that never answers used to hold the whole chat at
+            // "Looking for MCP and app tools…" with no way out. A server that is too slow
+            // to answer is treated as a server with no tools.
+            let tools = await Self.withTimeout(
+                seconds: 6,
+                fallback: [(server: String, serverId: UUID, tool: MCPTool)]()
+            ) {
+                await MCPRuntime.shared.tools(forBundleId: adapter.bundleId)
+            }
             guard !tools.isEmpty else { continue }
             mcpLines.append("### \(adapter.appName) (\(adapter.bundleId))")
             for entry in tools.prefix(16) {

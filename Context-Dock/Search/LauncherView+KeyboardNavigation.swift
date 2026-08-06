@@ -218,6 +218,15 @@ extension LauncherView {
                 return nil
             }
 
+            // "/rem" + Return picks the filtered app, wherever Return reaches us from.
+            // This sits ahead of every other Return route because the field is not
+            // holding a question at that moment — it is holding a filter, and sending
+            // it to the model is never what the user meant.
+            if event.keyCode == 36, self.handleGeneralChatSlashPickIfNeeded() {
+                self.ensureSearchInputFocusReady()
+                return nil
+            }
+
             let routingMode = self.keyRoutingMode
             // General Chat's provider picker is an AppKit menu.  After that menu closes,
             // AppKit can leave the panel (rather than the NSTextView) as first responder, so
@@ -231,6 +240,10 @@ extension LauncherView {
                 let generalChatQuery = self.searchState.query
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if !generalChatQuery.isEmpty {
+                    if self.handleGeneralChatSlashPickIfNeeded() {
+                        self.ensureSearchInputFocusReady()
+                        return nil
+                    }
                     if !self.launchTypedAppMatchIfNeeded() {
                         self.submitAIQuery()
                     }
@@ -650,6 +663,9 @@ extension LauncherView {
             }
 
             if event.keyCode == 36, self.aiMode.isActive {
+                if self.handleGeneralChatSlashPickIfNeeded() {
+                    return nil
+                }
                 self.submitAIQuery()
                 return nil
             }
