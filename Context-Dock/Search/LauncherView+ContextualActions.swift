@@ -4054,23 +4054,7 @@ extension LauncherView {
     }
 
     func currentDateTimeContextBlock() -> String {
-        let now = Date()
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        formatter.timeStyle = .medium
-        let localDateTime = formatter.string(from: now)
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.timeZone = .current
-        let isoDateTime = isoFormatter.string(from: now)
-        let timeZoneName = TimeZone.current.identifier
-
-        return """
-            CURRENT DATE & TIME:
-            - Local: \(localDateTime)
-            - ISO 8601: \(isoDateTime)
-            - Time Zone: \(timeZoneName)
-            Use this exact date/time for relative time references like today, yesterday, tomorrow, recent, and this week.
-            """
+        AppScopedChatService.dateTimeBlock()
     }
 
     func executeCachedMenuAction(

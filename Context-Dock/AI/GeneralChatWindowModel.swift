@@ -50,6 +50,15 @@ final class GeneralChatWindowModel: ObservableObject {
 
     var isEmpty: Bool { messages.isEmpty }
 
+    /// True when this message is the first of its calendar day, so the transcript can
+    /// date it.
+    func startsNewDay(at index: Int) -> Bool {
+        guard messages.indices.contains(index) else { return false }
+        guard index > 0 else { return true }
+        return !Calendar.current.isDate(
+            messages[index].timestamp, inSameDayAs: messages[index - 1].timestamp)
+    }
+
     /// True when the thread on screen is waiting for an answer. Another thread's pending
     /// answer must not spin this one.
     var isSending: Bool { sendingScopeKeys.contains(activeScope.storageKey) }
@@ -59,6 +68,7 @@ final class GeneralChatWindowModel: ObservableObject {
         guard !isSending else { return }
         // Reloading is only unsafe for a thread mid-answer; every other thread is on disk.
         messages = GeneralChatSessionStore.load(scope: activeScope)
+        attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: activeScope)
         sessions = GeneralChatSessionStore.index()
     }
 
@@ -86,9 +96,9 @@ final class GeneralChatWindowModel: ObservableObject {
         messages = GeneralChatSessionStore.load(scope: scope)
         input = ""
         attachments = []
-        // A scoped session is about its own app; the picker starts empty rather than
-        // inheriting whatever the previous thread was attached to.
-        attachedAppNames = []
+        // Each thread carries its own extra apps; they are reloaded rather than inherited
+        // from the thread being left.
+        attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: scope)
         adoptSeedIfEmpty(seed, scope: scope, title: title)
         GeneralChatSessionStore.upsert(
             scope: scope, title: title, messageCount: messages.count)
@@ -112,6 +122,7 @@ final class GeneralChatWindowModel: ObservableObject {
     func openGeneralSession() {
         activeScope = .general
         messages = GeneralChatSessionStore.load(scope: .general)
+        attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: .general)
         sessions = GeneralChatSessionStore.index()
     }
 
@@ -142,6 +153,7 @@ final class GeneralChatWindowModel: ObservableObject {
         input = ""
         attachments = []
         attachedAppNames = []
+        GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
         // Clears the thread being shown, not every thread: with sessions, "New chat" on the
         // Reminders session must not wipe the CLI ones beside it.
         if activeScope == .general {
@@ -187,11 +199,48 @@ final class GeneralChatWindowModel: ObservableObject {
 
     func attachApp(_ name: String) {
         guard !attachedAppNames.contains(name) else { return }
+        // Picking an app on a fresh General chat means "talk to this app" — so it becomes
+        // that app's own thread, listed and persisted like the ones handed over from the
+        // dock. Held only in attachedAppNames it was a scope on an unsaved conversation,
+        // which is why "/calendar" vanished on the next New chat.
+        if activeScope == .general, messages.isEmpty,
+            let bundleId = Self.bundleId(forAppNamed: name)
+        {
+            openSession(.app(bundleId: bundleId), title: name)
+            return
+        }
         attachedAppNames.append(name)
+        GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
     }
 
     func removeApp(_ name: String) {
         attachedAppNames.removeAll { $0 == name }
+        GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
+    }
+
+    /// Bundle id for an app the user picked by name, running or merely installed.
+    private static func bundleId(forAppNamed name: String) -> String? {
+        if let running = NSWorkspace.shared.runningApplications
+            .first(where: { $0.localizedName == name })?.bundleIdentifier
+        {
+            return running
+        }
+        return InstalledApplicationsCatalog.cachedInstalledApps()
+            .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+    }
+
+    /// The app this thread is about, when it is an app thread. Shown in the composer
+    /// beside any extra attached apps so the scope is visible while typing.
+    var activeScopeAppName: String? {
+        guard case .app = activeScope else { return nil }
+        return sessions.first { $0.scope == activeScope }?.title
+    }
+
+    /// Every app in play for the visible thread: the thread's own app first, then the
+    /// extra ones that make it a combined chat.
+    var scopeAppNames: [String] {
+        guard let scopeApp = activeScopeAppName else { return attachedAppNames }
+        return [scopeApp] + attachedAppNames.filter { $0 != scopeApp }
     }
 
     func send() {
@@ -237,10 +286,12 @@ final class GeneralChatWindowModel: ObservableObject {
         // An attached app makes this an app question, so the provider gets the same
         // app-focused context the sheet builds for one.
         let context: UserContext = {
+            // An app thread is about that app whether or not anything extra is attached.
+            if case .app(let bundleId) = activeScope {
+                return .appFocused(name: activeScopeAppName ?? bundleId, bundleID: bundleId)
+            }
             guard let name = attachedAppNames.first else { return .none }
-            let bundleID =
-                NSWorkspace.shared.runningApplications
-                .first { $0.localizedName == name }?.bundleIdentifier ?? ""
+            let bundleID = Self.bundleId(forAppNamed: name) ?? ""
             return .appFocused(name: name, bundleID: bundleID)
         }()
         let providerAttachments = sentAttachments.map(AIAttachment.inferred(from:))
@@ -253,21 +304,43 @@ final class GeneralChatWindowModel: ObservableObject {
         let sendTitle = activeTitle
         let sendKey = sendScope.storageKey
 
+        let scopeAppName = activeScopeAppName ?? sendTitle
+        let extraApps = attachedAppNames
+
         sendingScopeKeys.insert(sendKey)
         sendTasks[sendKey] = Task { [weak self] in
             do {
-                let response = try await AIProviderService.shared.sendMessage(
-                    query,
-                    context: context,
-                    provider: provider,
-                    apiKey: apiKey,
-                    conversationHistory: history,
-                    attachments: providerAttachments
-                )
+                let answer: AppScopedChatService.Answer
+                if sendScope == .general {
+                    // Unscoped chat keeps its existing path.
+                    let text = try await AIProviderService.shared.sendMessage(
+                        query,
+                        context: context,
+                        provider: provider,
+                        apiKey: apiKey,
+                        conversationHistory: history,
+                        additionalContextPrompt: AppScopedChatService.dateTimeBlock(),
+                        attachments: providerAttachments
+                    )
+                    answer = AppScopedChatService.Answer(text: text, toolChips: [])
+                } else {
+                    // App and CLI threads go through the shared scoped path, so the window
+                    // grounds and executes the way the dock's chat does instead of asking
+                    // the model to answer from memory.
+                    answer = try await AppScopedChatService.send(
+                        scope: sendScope,
+                        appName: scopeAppName,
+                        query: query,
+                        history: history,
+                        attachments: sentAttachments,
+                        extraAppNames: extraApps)
+                }
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self?.deliver(
-                        AIChatMessage(role: .assistant, content: response),
+                        AIChatMessage(
+                            role: .assistant, content: answer.text,
+                            mcpToolsRan: answer.toolChips),
                         to: sendScope, title: sendTitle)
                 }
             } catch {

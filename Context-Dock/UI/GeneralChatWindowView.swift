@@ -105,7 +105,7 @@ struct GeneralChatWindowView: View {
             // One app is not a combination — it belongs with the other single-scope
             // threads under Apps & tools. "Combined chat" only earns its heading once
             // there is more than one app to combine.
-            if model.attachedAppNames.count > 1 {
+            if model.scopeAppNames.count > 1 {
                 combinedChatEntry
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
@@ -129,7 +129,9 @@ struct GeneralChatWindowView: View {
         // conversation — but from the sidebar it reads as the same thing: one app this
         // chat is about. Listing it here is what stops it disappearing from the sidebar
         // when Combined chat stops applying.
-        let loneApp = model.attachedAppNames.count == 1 ? model.attachedAppNames.first : nil
+        let loneApp =
+            model.activeScopeAppName == nil && model.attachedAppNames.count == 1
+            ? model.attachedAppNames.first : nil
         if !rows.isEmpty || loneApp != nil {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apps & tools")
@@ -248,8 +250,9 @@ struct GeneralChatWindowView: View {
                 .padding(.horizontal, 4)
 
             HStack(spacing: 6) {
-                ForEach(model.attachedAppNames, id: \.self) { name in
+                ForEach(model.scopeAppNames, id: \.self) { name in
                     Button {
+                        guard name != model.activeScopeAppName else { return }
                         model.removeApp(name)
                     } label: {
                         appIcon(name)
@@ -292,6 +295,17 @@ struct GeneralChatWindowView: View {
                     .fill(Theme.surfaceElevated(dark))
             )
         }
+    }
+
+    /// "Today" / "Yesterday" / a written date — the same wording a chat app uses.
+    private static func dayLabel(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 
     @ViewBuilder
@@ -375,8 +389,17 @@ struct GeneralChatWindowView: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     // Same row view the result sheet renders, so an answer looks
                     // identical in both places.
-                    ForEach(model.messages) { message in
+                    ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
                         VStack(alignment: .trailing, spacing: 4) {
+                            // Day separator, the way chat apps date a conversation — a
+                            // thread reopened next week should not read as one long today.
+                            if model.startsNewDay(at: index) {
+                                Text(Self.dayLabel(message.timestamp))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4)
+                            }
                             // The apps this question was asked about, beside the
                             // question itself — the scope at the time, not now.
                             if let apps = model.messageApps[message.id], !apps.isEmpty {
@@ -442,7 +465,7 @@ struct GeneralChatWindowView: View {
             AIComposerBar(
                 text: $model.input,
                 isSending: model.isSending,
-                attachedAppNames: model.attachedAppNames,
+                attachedAppNames: model.scopeAppNames,
                 onAttachFile: { model.attachFiles() },
                 onAttachApp: { model.attachApp($0) },
                 onSubmit: { model.send() },
@@ -469,7 +492,12 @@ struct GeneralChatWindowView: View {
                 },
                 showsProviderName: true,
                 onClear: model.isEmpty ? nil : { model.newChat() },
-                onRemoveApp: { model.removeApp($0) }
+                // The thread's own app is not detachable — closing that thread is what
+                // removing it would mean, and the sidebar already does that.
+                onRemoveApp: { name in
+                    guard name != model.activeScopeAppName else { return }
+                    model.removeApp(name)
+                }
             )
         }
         .frame(maxWidth: 760)
