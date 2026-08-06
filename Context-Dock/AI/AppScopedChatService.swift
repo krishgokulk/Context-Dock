@@ -23,6 +23,27 @@ enum AppScopedChatService {
         let toolChips: [String]
     }
 
+    /// Every context read below can block: an MCP server spawns and handshakes, EventKit
+    /// waits on a database, a capability discovery walks the disk. One of them stalling
+    /// must cost a section of the prompt, never the answer — a spinner with no end is the
+    /// worst outcome of the three.
+    static func withTimeout<T: Sendable>(
+        seconds: Double,
+        fallback: T,
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await withTaskGroup(of: T.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return fallback
+            }
+            let first = await group.next() ?? fallback
+            group.cancelAll()
+            return first
+        }
+    }
+
     // MARK: - Shared context blocks
 
     /// Today's date and time, in the model's prompt. A chat that cannot resolve "today"
@@ -136,6 +157,17 @@ enum AppScopedChatService {
             let capabilities = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: bundleId, appName: appName, query: query)
             if !capabilities.isEmpty { sections.append(capabilities) }
+            // The app's enabled skills, in full. The identity block only counts them, and
+            // a Calendar chat that is told "2 skills active" without their instructions
+            // behaves differently from the dock's, which reads them.
+            let skills = SkillStore.shared.instructionsBlock(for: bundleId)
+            if !skills.isEmpty { sections.append(skills) }
+            // The app's live MCP tools, in the prose protocol the loop understands, so a
+            // Reminders thread can read reminders instead of describing how to.
+            let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
+                await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
+            }
+            if !mcpBlock.isEmpty { sections.append(mcpBlock) }
 
         case .cli(let command):
             let tool = ScopedAppPromptBuilder.appIdentityBlock(
@@ -160,12 +192,23 @@ enum AppScopedChatService {
             if let facts = liveWindowFacts(bundleID: bundleId) { sections.append(facts) }
         }
 
+        // Real Calendar / Reminders / Notes / Contacts data when the question is about
+        // them — the dock's "Live app data" read. Without it the model has the app's
+        // capability list and none of its contents, which is why the window could only
+        // explain how to look rather than answer.
+        let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
+            await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
+        }
+        if !liveAppleData.isEmpty { sections.append(liveAppleData) }
+
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
-        let hubBlock = await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
-            compact: provider == .onDevice,
-            query: query,
-            scope: .general,
-            characterBudget: AIContextBudget.characterBudget(for: provider))
+        let hubBlock = await withTimeout(seconds: 8, fallback: "") {
+            await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
+                compact: provider == .onDevice,
+                query: query,
+                scope: .general,
+                characterBudget: AIContextBudget.characterBudget(for: provider))
+        }
         if !hubBlock.isEmpty { sections.append(hubBlock) }
 
         let systemPrompt = sections.joined(separator: "\n\n")
@@ -181,7 +224,9 @@ enum AppScopedChatService {
                 additionalContextPrompt: systemPrompt,
                 attachments: attachments.map(AIAttachment.inferred(from:))
             )
-            return Answer(text: text, toolChips: [])
+            return Answer(
+                text: text,
+                toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
         }
 
         let executor: (String, String, Bool) async -> (Bool, String) = {
@@ -200,6 +245,8 @@ enum AppScopedChatService {
             additionalSystemPrompt: systemPrompt,
             imageAttachments: attachments
         )
-        return Answer(text: text, toolChips: executed.map(\.command))
+        var chips = executed.map(\.command)
+        if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
+        return Answer(text: text, toolChips: chips)
     }
 }

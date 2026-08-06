@@ -249,6 +249,20 @@ struct AutomationSettingsView: View {
             await loadInstalledAppsCatalogIfNeeded()
             reloadMenuCacheSummaries()
         }
+        // Deep link from the chat window's side panel: open this app's adapter directly,
+        // so "add a tool for Reminders" lands on Reminders instead of a list to hunt in.
+        .onReceive(NotificationCenter.default.publisher(for: .openAppAdapter)) { note in
+            guard let bundleId = note.userInfo?["bundleId"] as? String, !bundleId.isEmpty
+            else { return }
+            selectedCategory = .appActions
+            selectedExtensionID = nil
+            selectedPackageID = nil
+            selectedSystemCommandID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
+            selectedAdapterActionID = nil
+            selectedAdapterID = bundleId
+        }
         .onChange(of: selectedExtensionID) { _, newValue in
             guard newValue != nil else { return }
             selectedPackageID = nil
@@ -8125,4 +8139,11 @@ struct AddMCPServerSheet: View {
                 .font(.system(size: 12, design: .monospaced))
         }
     }
+}
+
+
+extension Notification.Name {
+    /// Deep-link request to open Settings → App Adapters focused on one app.
+    /// userInfo["bundleId"] carries the app's bundle identifier.
+    static let openAppAdapter = Notification.Name("openAppAdapter")
 }

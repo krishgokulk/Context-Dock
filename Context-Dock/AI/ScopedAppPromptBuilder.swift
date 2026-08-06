@@ -229,3 +229,118 @@ enum ScopedAppPromptBuilder {
         return lines.joined(separator: "\n")
     }
 }
+
+// MARK: - Panel inventory
+
+/// The scope's linked tools, shaped for display. Built from the same sources as the
+/// prompt block above, so what the side panel lists is what the model was told about —
+/// a panel that disagreed with the prompt would be worse than no panel.
+struct ScopeInventory {
+    struct Group: Identifiable {
+        let id = UUID()
+        let title: String
+        let symbol: String
+        let items: [String]
+        var isMonospaced: Bool = false
+    }
+
+    var subtitle: String?
+    var groups: [Group]
+
+    @MainActor
+    static func app(bundleId: String, appName: String) -> ScopeInventory {
+        var groups: [Group] = []
+        let adapter = AppAdapterManager.shared.adapters.first { $0.bundleId == bundleId }
+        let actions = adapter?.actions ?? []
+
+        if !actions.isEmpty {
+            groups.append(
+                Group(
+                    title: "Actions", symbol: "bolt.fill",
+                    items: actions.prefix(20).map { action in
+                        action.requiresApproval || action.isDestructive
+                            ? "\(action.name) — asks first"
+                            : action.name
+                    }))
+        }
+
+        let skills = SkillStore.shared.skills(for: bundleId).filter(\.isEnabled)
+        if !skills.isEmpty {
+            groups.append(
+                Group(
+                    title: "Skills", symbol: "brain.head.profile",
+                    items: skills.map(\.name)))
+        }
+
+        let servers = MCPServerManager.shared.servers(forBundleId: bundleId)
+        if !servers.isEmpty {
+            // Names only, read from the config. Listing each server's tools would mean
+            // connecting to it, and opening a panel must never spawn a process.
+            groups.append(
+                Group(title: "Linked MCP", symbol: "server.rack", items: servers.map(\.name)))
+        }
+
+        let apis = APIConnectionStore.shared.connections(for: bundleId)
+        if !apis.isEmpty {
+            groups.append(
+                Group(title: "API connections", symbol: "link", items: apis.map(\.name)))
+        }
+
+        let shortcuts = actions.filter { $0.type == .shortcut }.compactMap(\.shortcutName)
+        if !shortcuts.isEmpty {
+            groups.append(Group(title: "Shortcuts", symbol: "command", items: shortcuts))
+        }
+
+        let clis = TerminalPackageManager.shared.packages.filter {
+            $0.isEnabled && $0.contextAppBundleIds.contains(bundleId)
+        }
+        if !clis.isEmpty {
+            groups.append(
+                Group(
+                    title: "CLI tools", symbol: "terminal",
+                    items: clis.map { $0.isInstalled ? $0.command : "\($0.command) (not installed)" },
+                    isMonospaced: true))
+        }
+
+        let menuItems = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: bundleId, appName: appName, query: "", maxResults: 60)
+        let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
+        if !leaves.isEmpty {
+            var seen = Set<String>()
+            var paths: [String] = []
+            for item in leaves {
+                let path = item.path.joined(separator: " ▸ ")
+                guard seen.insert(path.lowercased()).inserted else { continue }
+                paths.append(path)
+                if paths.count >= 20 { break }
+            }
+            groups.append(
+                Group(title: "Menu commands", symbol: "filemenu.and.selection", items: paths))
+        }
+
+        return ScopeInventory(subtitle: bundleId, groups: groups)
+    }
+
+    @MainActor
+    static func cli(command: String) -> ScopeInventory {
+        guard let package = TerminalPackageManager.shared.packages.first(where: {
+            $0.command.caseInsensitiveCompare(command) == .orderedSame
+        }) else {
+            return ScopeInventory(subtitle: "\(command) is not a pinned CLI tool.", groups: [])
+        }
+
+        var groups: [Group] = []
+        if !package.subcommands.isEmpty {
+            groups.append(
+                Group(
+                    title: "Scanned subcommands", symbol: "terminal",
+                    items: package.subcommands, isMonospaced: true))
+        }
+        if let path = package.installedPath, !path.isEmpty {
+            groups.append(
+                Group(title: "Path", symbol: "folder", items: [path], isMonospaced: true))
+        }
+        return ScopeInventory(
+            subtitle: package.description.isEmpty ? nil : package.description, groups: groups)
+    }
+}

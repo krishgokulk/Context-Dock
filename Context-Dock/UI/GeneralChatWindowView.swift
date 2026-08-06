@@ -20,6 +20,7 @@ struct GeneralChatWindowView: View {
     @AppStorage("generalChatSidebarWidth") private var sidebarWidth: Double = 200
     @State private var dragStartWidth: Double?
     @State private var showsSidebarAppPicker = false
+    @State private var hoveredSidebarRow: String?
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -86,21 +87,35 @@ struct GeneralChatWindowView: View {
             Button {
                 model.newChat()
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: 9) {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(width: 18)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .frame(width: 16)
                     Text("New chat")
-                        .font(.system(size: 13))
-                    Spacer()
+                        .font(.system(size: 12.5, weight: .medium))
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .foregroundStyle(model.activeScope == .general ? Color.primary : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(
+                            model.activeScope == .general
+                                ? Color.primary.opacity(0.10)
+                                : (hoveredSidebarRow == "new" ? Color.primary.opacity(0.06) : .clear)
+                        )
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 8)
-            .padding(.top, 4)
+            .padding(.top, 6)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    hoveredSidebarRow = hovering ? "new" : nil
+                }
+            }
 
             // One app is not a combination — it belongs with the other single-scope
             // threads under Apps & tools. "Combined chat" only earns its heading once
@@ -136,10 +151,11 @@ struct GeneralChatWindowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apps & tools")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.6)
                     .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 2)
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
 
                 if let loneApp {
                     attachedAppRow(loneApp)
@@ -201,10 +217,12 @@ struct GeneralChatWindowView: View {
 
     private func sessionRow(_ session: GeneralChatSession) -> some View {
         let isActive = session.scope == model.activeScope
+        let isHovered = hoveredSidebarRow == session.id
+        let isSending = model.sendingScopeKeys.contains(session.scope.storageKey)
         return Button {
             model.openSession(session.scope, title: session.title)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
                 if let icon = GeneralChatSessionStore.icon(for: session.scope) {
                     Image(nsImage: icon)
                         .resizable()
@@ -212,26 +230,54 @@ struct GeneralChatWindowView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 16, height: 16)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .opacity(model.isScopeLive(session.scope) ? 1 : 0.55)
                 }
                 Text(session.title)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5, weight: isActive ? .medium : .regular))
+                    .foregroundStyle(isActive ? Color.primary : .secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if session.messageCount > 0 {
+                // A thread still working shows it here, so a pending answer is visible
+                // from the sidebar rather than only inside the thread you left.
+                if isSending {
+                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14)
+                } else if session.messageCount > 0 {
                     Text("\(session.messageCount)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.primary.opacity(isHovered ? 0.08 : 0)))
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
-                isActive ? Color.primary.opacity(0.10) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Color.primary.opacity(0.10)
+                            : (isHovered ? Color.primary.opacity(0.06) : .clear))
+            )
+            .overlay(alignment: .leading) {
+                // Active thread carries a rail rather than only a fill, so the current
+                // scope is readable at a glance on a translucent sidebar.
+                if isActive {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(Color.accentColor)
+                        .frame(width: 2.5, height: 16)
+                        .offset(x: -4)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                hoveredSidebarRow = hovering ? session.id : nil
+            }
+        }
         .contextMenu {
             Button("Close thread", role: .destructive) {
                 model.closeSession(session.scope)
@@ -541,21 +587,167 @@ struct GeneralChatWindowView: View {
         .background(Theme.surface(dark))
     }
 
+    /// What this thread can actually reach: the scoped app's adapter tools, or a CLI
+    /// scope's scanned subcommands. The same inventory the prompt is built from, so the
+    /// panel answers "why did it say it can't?" without opening Settings — and links
+    /// straight to where a missing tool is added.
     private var sidePanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            panelHeader("Details") { chrome.toggleSidePanel() }
-            Divider().opacity(0.4)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Provider")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(AppSettings.shared.selectedAIProvider.displayName)
-                    .font(.system(size: 12.5))
-                Spacer()
+        let inventory = model.activeScopeInventory
+        return VStack(alignment: .leading, spacing: 0) {
+            // Scope pill, not a title: the panel belongs to a thread, and the thread is
+            // named by its app.
+            HStack(spacing: 8) {
+                scopePill
+                Spacer(minLength: 0)
+                Button { chrome.toggleSidePanel() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let subtitle = inventory.subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                    }
+
+                    ForEach(inventory.groups) { group in
+                        inventoryGroup(group)
+                    }
+
+                    if inventory.groups.isEmpty {
+                        Text(
+                            "Nothing is linked to this scope yet. Actions, skills, MCP servers "
+                            + "and CLI tools you add show up here and in what the model can do."
+                        )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let bundleId = model.activeScopeBundleId {
+                        Button {
+                            AppDelegate.shared?.showSettings()
+                            // The settings window has to exist before it can be navigated.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                NotificationCenter.default.post(
+                                    name: .openSettingsPage, object: nil,
+                                    userInfo: ["page": SettingsPage.frontmostAppAdapters.rawValue])
+                                NotificationCenter.default.post(
+                                    name: .openAppAdapter, object: nil,
+                                    userInfo: ["bundleId": bundleId])
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Add tools for \(model.activeScopeTitle)")
+                                    .font(.system(size: 11.5, weight: .medium))
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.12))
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open Settings → App Adapters for this app")
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        sectionLabel("Provider", symbol: "brain.head.profile", count: nil)
+                        Text(AppSettings.shared.selectedAIProvider.displayName)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.primary.opacity(0.85))
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .background(Theme.surface(dark))
+    }
+
+    private var scopePill: some View {
+        HStack(spacing: 6) {
+            if let bundleId = model.activeScopeBundleId {
+                AppBundleIconView(
+                    bundleId: bundleId, fallbackSymbol: "app.dashed", size: 15, cornerRadius: 4)
+            } else {
+                Image(systemName: model.activeScopeSymbol)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Text(model.activeScopeTitle)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(Theme.surfaceElevated(dark))
+        )
+        .overlay(Capsule().strokeBorder(Theme.border(dark), lineWidth: 0.5))
+    }
+
+    private func inventoryGroup(_ group: ScopeInventory.Group) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            sectionLabel(group.title, symbol: group.symbol, count: group.items.count)
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 6) {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.45))
+                            .frame(width: 3, height: 3)
+                            .padding(.top, 6)
+                        Text(item)
+                            .font(
+                                .system(
+                                    size: 11.5,
+                                    design: group.isMonospaced ? .monospaced : .default)
+                            )
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionLabel(_ title: String, symbol: String, count: Int?) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            Text(title.uppercased())
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     private func panelHeader(_ title: String, close: @escaping () -> Void) -> some View {

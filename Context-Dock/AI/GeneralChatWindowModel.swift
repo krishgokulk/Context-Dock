@@ -126,6 +126,61 @@ final class GeneralChatWindowModel: ObservableObject {
         sessions = GeneralChatSessionStore.index()
     }
 
+    /// True when the scope's app is running (or its CLI binary is installed) — the
+    /// sidebar dims what is not currently there without hiding it.
+    func isScopeLive(_ scope: GeneralChatScope) -> Bool {
+        switch scope {
+        case .general:
+            return true
+        case .app(let bundleId):
+            return !NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleId).isEmpty
+        case .cli(let command):
+            return TerminalPackageManager.shared.packages.contains {
+                $0.command.caseInsensitiveCompare(command) == .orderedSame && $0.isInstalled
+            }
+        }
+    }
+
+    /// Heading for the side panel: the thread's own name, not a generic "Details".
+    var activeScopeTitle: String {
+        switch activeScope {
+        case .general: return "Details"
+        case .cli(let command): return command
+        case .app: return activeScopeAppName ?? "Details"
+        }
+    }
+
+    /// Bundle id of the thread's app, when it has one — the side panel's "add tools"
+    /// deep link needs it, and a CLI thread has no adapter to open.
+    var activeScopeBundleId: String? {
+        if case .app(let bundleId) = activeScope { return bundleId }
+        return nil
+    }
+
+    var activeScopeSymbol: String {
+        switch activeScope {
+        case .general: return "bubble.left.and.bubble.right"
+        case .cli: return "terminal"
+        case .app: return "app.dashed"
+        }
+    }
+
+    /// What the visible thread can reach — the same inventory its prompt is built from.
+    var activeScopeInventory: ScopeInventory {
+        switch activeScope {
+        case .general:
+            return ScopeInventory(
+                subtitle: "Unscoped chat. Attach an app to give it that app's tools.",
+                groups: [])
+        case .cli(let command):
+            return ScopeInventory.cli(command: command)
+        case .app(let bundleId):
+            return ScopeInventory.app(
+                bundleId: bundleId, appName: activeScopeAppName ?? bundleId)
+        }
+    }
+
     /// Title for the active thread, used when persisting.
     var activeTitle: String {
         switch activeScope {
@@ -309,6 +364,25 @@ final class GeneralChatWindowModel: ObservableObject {
 
         sendingScopeKeys.insert(sendKey)
         sendTasks[sendKey] = Task { [weak self] in
+            // A provider or tool loop that never returns must still end the turn. Without
+            // this the thread sat on "Thinking…" with no way back except relaunching.
+            let watchdog = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000_000)  // 150s
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.sendingScopeKeys.contains(sendKey) else { return }
+                    self.deliver(
+                        AIChatMessage(
+                            role: .assistant,
+                            content:
+                                "That took too long and was stopped. It usually means a linked "
+                                + "MCP server or CLI tool never answered — try again, or check "
+                                + "the tool in Settings → App Adapters.",
+                            isError: true),
+                        to: sendScope, title: sendTitle)
+                }
+            }
+            defer { watchdog.cancel() }
             do {
                 let answer: AppScopedChatService.Answer
                 if sendScope == .general {
@@ -364,6 +438,9 @@ final class GeneralChatWindowModel: ObservableObject {
     private func deliver(
         _ message: AIChatMessage, to scope: GeneralChatScope, title: String
     ) {
+        // The watchdog and the real answer can both arrive; whichever is first ends the
+        // turn, and the loser is dropped rather than appended twice.
+        guard sendingScopeKeys.contains(scope.storageKey) else { return }
         sendingScopeKeys.remove(scope.storageKey)
         sendTasks[scope.storageKey] = nil
 
