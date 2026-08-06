@@ -331,7 +331,28 @@ final class AgentToolRegistry {
                     .prefix(12)
                     .map(\.capability)
             }
-            guard !matches.isEmpty else {
+            // App adapter actions are DoraX routes too, and the scope prompt lists them —
+            // but they were invisible to the tool the model is told to search with, so it
+            // guessed ids from the prompt and got a failure back.
+            let adapterMatches = await MainActor.run { () -> [(String, String, String)] in
+                guard !terms.isEmpty else { return [] }
+                var out: [(score: Int, line: (String, String, String))] = []
+                for adapter in AppAdapterManager.shared.adapters where adapter.isEnabled {
+                    for action in adapter.actions where action.type != .aiPrompt {
+                        let haystack = "\(action.id) \(action.name) \(adapter.appName)".lowercased()
+                        let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
+                        guard score > 0 else { continue }
+                        out.append(
+                            (score, (action.id, action.name, adapter.appName)))
+                    }
+                }
+                return out.sorted { $0.score > $1.score }.prefix(8).map(\.line)
+            }
+            let adapterLines = adapterMatches.map { id, name, app in
+                "- \(id): \(name) (\(app) app action) | input: [] | risk: low"
+            }
+
+            guard !matches.isEmpty || !adapterLines.isEmpty else {
                 return AgentToolResult(
                     success: true,
                     output: "No capability matched \"\(query)\". Registered capability families: "
@@ -353,7 +374,7 @@ final class AgentToolRegistry {
             return AgentToolResult(
                 success: true,
                 output: "Matching capabilities — call one with run_capability:\n"
-                    + lines.joined(separator: "\n"),
+                    + (lines + adapterLines).joined(separator: "\n"),
                 displayCommand: "find_capability(\(query))")
         })
 
@@ -395,6 +416,30 @@ final class AgentToolRegistry {
                 }
             }
             let explanation = arguments["explanation"] as? String ?? "Requested from AI chat"
+            // An id that is not a registered capability is usually an app adapter's action
+            // id: the scope prompt lists those for `adapter_call`, and a model asked to
+            // "run this" reaches for the tool named run_capability. Both are DoraX routes
+            // to the same action, so run it rather than reporting a failure the user can
+            // do nothing about.
+            if CapabilityRegistry.shared.capability(id: capabilityID) == nil,
+                let adapter = AppAdapterManager.shared.adapters.first(where: { candidate in
+                    candidate.actions.contains { $0.id == capabilityID }
+                }),
+                let action = adapter.actions.first(where: { $0.id == capabilityID })
+            {
+                let (ok, output) = await AppAdapterManager.shared.execute(
+                    action,
+                    context: AXContextReader.shared.current,
+                    targetBundleId: adapter.bundleId,
+                    query: explanation)
+                return AgentToolResult(
+                    success: ok,
+                    output: output.isEmpty
+                        ? (ok ? "Done — \(action.name)." : "Couldn't run \(action.name).")
+                        : output,
+                    displayCommand: "run_capability(\(capabilityID))")
+            }
+
             let plan = AIActionPlan(
                 capability: capabilityID, input: input, explanation: explanation)
             do {
@@ -407,9 +452,16 @@ final class AgentToolRegistry {
                         : result.output,
                     displayCommand: "run_capability(\(capabilityID))")
             } catch {
+                // Name the failure precisely: "unknown id" and "the capability ran and
+                // failed" need different next moves from the model, and one vague message
+                // for both is what produced "it seems there was an issue".
+                let known = CapabilityRegistry.shared.capability(id: capabilityID) != nil
                 return AgentToolResult(
                     success: false,
-                    output: "\(capabilityID) failed: \(error.localizedDescription)",
+                    output: known
+                        ? "\(capabilityID) failed: \(error.localizedDescription)"
+                        : "No capability or app action with id \"\(capabilityID)\". Call "
+                            + "find_capability first and use an id it returns.",
                     displayCommand: "run_capability(\(capabilityID))")
             }
         })
