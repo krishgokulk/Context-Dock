@@ -5065,7 +5065,11 @@ extension LauncherView {
                         cliTool.map { "Working out the right \($0) command…" }
                             ?? "Choosing the best available capability…",
                         requestID: l2RequestID)
-                    var (finalResponse, _) = try await AIProviderService.shared.sendWithTools(
+                    // `executed` was discarded here. That is the record of what actually ran,
+                    // and without it the app had no way to notice the model reporting work it
+                    // never did — "minimize" answered "The window has been minimized" with no
+                    // tool call and no audit entry.
+                    var (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
                         toolQuery,
                         context: scopedConversationContext,
                         provider: provider,
@@ -5079,7 +5083,31 @@ extension LauncherView {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
+
+                    if AgentAnswerVerifier.claimsUnperformedWork(
+                        answer: finalResponse, executed: executed) {
+                        await self.setL2LoadingStatus(
+                            "Checking that actually happened…", requestID: l2RequestID)
+                        let correction = AgentAnswerVerifier.correctionPrompt(
+                            originalQuery: query, answer: finalResponse, executed: executed)
+                        if let (corrected, correctionExecuted) = try? await AIProviderService.shared
+                            .sendWithTools(
+                                correction,
+                                context: scopedConversationContext,
+                                provider: provider,
+                                apiKey: apiKey,
+                                conversationHistory: chatHistory,
+                                commandExecutor: commandExecutor,
+                                additionalSystemPrompt: activeContextPrompt.isEmpty
+                                    ? nil : activeContextPrompt
+                            ) {
+                            finalResponse = corrected
+                            executed += correctionExecuted
+                        }
+                    }
+
                     var toolsRan = memoryToolChips + (await mcpRan.tools)
+                        + executed.map(\.command)
                     await self.setL2LoadingStatus(
                         cliTool.map { "Reading the \($0) output…" } ?? "Checking the result…",
                         requestID: l2RequestID)
@@ -6606,7 +6634,7 @@ extension LauncherView {
                                 modelRequiresApproval: needsApproval)
                         }
                     await MainActor.run { aiMode.loadingStatus = "Working…" }
-                    let (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
+                    var (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
                         query,
                         context: .none,
                         provider: toolProvider,
@@ -6615,13 +6643,40 @@ extension LauncherView {
                         commandExecutor: generalCommandExecutor,
                         additionalSystemPrompt: toolSystemPrompt
                     )
+
+                    // Verification. The app knows which tools ran; the model does not get to
+                    // assert otherwise. An answer claiming completed work when nothing
+                    // executed is corrected against that record, once.
+                    if AgentAnswerVerifier.claimsUnperformedWork(
+                        answer: finalResponse, executed: executed) {
+                        await MainActor.run { aiMode.loadingStatus = "Checking that actually happened…" }
+                        let correction = AgentAnswerVerifier.correctionPrompt(
+                            originalQuery: query, answer: finalResponse, executed: executed)
+                        let (corrected, correctionExecuted) =
+                            try await AIProviderService.shared.sendWithTools(
+                                correction,
+                                context: .none,
+                                provider: toolProvider,
+                                apiKey: toolAPIKey,
+                                conversationHistory: history,
+                                commandExecutor: generalCommandExecutor,
+                                additionalSystemPrompt: toolSystemPrompt
+                            )
+                        finalResponse = corrected
+                        executed += correctionExecuted
+                    }
+
                     await MainActor.run {
                         aiMode.loadingStatus = nil
                         // Chips report what actually ran. They used to be derived from words
                         // in the query, which meant asking about "uncommitted changes" showed
                         // a `git log -1` chip because the string contained "commit" — the chip
                         // described the question, not the work.
+                        //
+                        // An empty row now says so explicitly: nothing reads as "no detail"
+                        // when it should read as "nothing happened".
                         aiMode.pendingToolChips = memoryToolChips + executed.map(\.command)
+                            + (AgentAnswerVerifier.noActionChip(executed: executed).map { [$0] } ?? [])
                     }
                     return finalResponse
                 }
