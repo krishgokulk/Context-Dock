@@ -664,12 +664,43 @@ extension LauncherView {
         .padding(.horizontal, 18)
     }
 
+    /// The CLI tool this dock is scoped to, if any. `cli://<command>` is the scope id.
+    var activeCLIScopePackage: TerminalPackage? {
+        guard let scoped = currentGlobalScopedBundleID ?? l2.targetApp?.bundleId,
+            scoped.hasPrefix("cli://")
+        else { return nil }
+        let command = String(scoped.dropFirst("cli://".count))
+        guard !command.isEmpty else { return nil }
+        return terminalPackageManager.packages.first {
+            $0.command.caseInsensitiveCompare(command) == .orderedSame
+        }
+    }
+
     /// Pin lives on the scope header, not in the row list: it acts on the whole
     /// extension, and as a row it both displaced real results and made an empty
     /// panel look like it had content.
     @ViewBuilder
     private var scopePinControl: some View {
-        if let command = activeCustomListScopeCommand {
+        // A pinned CLI tool becomes its own small app: transcript, composer and approvals in
+        // a floating window, so `tailscale` keeps working while the dock moves on. Checked
+        // first because a cli:// scope is never a custom-list scope.
+        if let package = activeCLIScopePackage {
+            let pinned = CLIScopePanelManager.shared.isPinned(package.command)
+            Button {
+                CLIScopePanelManager.shared.toggle(package)
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pinned ? AnyShapeStyle(Color.yellow)
+                                            : AnyShapeStyle(.secondary))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(pinned
+                  ? "Unpin — closes \(package.command)'s window"
+                  : "Pin \(package.command) as a floating window, like Quick Note")
+        } else if let command = activeCustomListScopeCommand {
             let pinned = ScopedListPanelManager.shared.isPinned(command.id)
             Button {
                 ScopedListPanelManager.shared.toggle(command)

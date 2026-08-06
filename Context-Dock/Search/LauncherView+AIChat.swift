@@ -1123,7 +1123,39 @@ extension LauncherView {
         HStack(spacing: 4) {
             contextDockChatAttachmentChips
             contextDockChatAttachMenu
+            cliScopeWindowPinControl
             contextDockChatCloseButton
+        }
+    }
+
+    /// Detaches a CLI tool scope into its own floating window, the way Quick Note works.
+    ///
+    /// Separate from the pin beside it, which floats the whole dock: this one gives the tool
+    /// a window that keeps its transcript after the dock moves on, so `tailscale` can stay
+    /// open and answerable while the launcher goes back to being a launcher. Shown only in a
+    /// cli:// scope, since that is the only place it means anything.
+    @ViewBuilder
+    var cliScopeWindowPinControl: some View {
+        if let package = activeCLIScopePackage {
+            let isOpen = CLIScopePanelManager.shared.isPinned(package.command)
+            Button {
+                CLIScopePanelManager.shared.toggle(package)
+            } label: {
+                Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(
+                        isOpen
+                            ? AnyShapeStyle(Color.green.opacity(0.9))
+                            : AnyShapeStyle(.secondary.opacity(0.70)))
+                    .frame(width: 22, height: 22)
+                    .background(
+                        isOpen ? Color.green.opacity(0.16) : Color.white.opacity(0.07),
+                        in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isOpen
+                ? "Close \(package.command)'s window"
+                : "Open \(package.command) in its own window, like Quick Note")
         }
     }
 
