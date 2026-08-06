@@ -67,6 +67,21 @@ struct HotkeysSettingsPage: View {
                             })
                         Divider()
                         captureHotkeyRow(
+                            icon: "bubble.left.and.text.bubble.right", color: .teal,
+                            title: "Chat Window",
+                            subtitle: "Open General Chat in its own window — the full-screen"
+                                + " version of the answer sheet",
+                            display: settings.chatWindowHotkeyDisplayString,
+                            clear: {
+                                settings.chatWindowHotkeyKeyCode = 0
+                                settings.chatWindowHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.chatWindowHotkeyKeyCode = $0
+                                settings.chatWindowHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "text.cursor", color: .green,
                             title: "Selection Scope",
                             subtitle: settings.selectionScopeHotkeyEnabled

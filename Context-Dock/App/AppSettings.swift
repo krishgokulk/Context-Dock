@@ -895,6 +895,8 @@ class AppSettings: ObservableObject {
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
     @AppStorage("quickNoteHotkeyKeyCode") private var _quickNoteHotkeyKeyCode: Int = 0
     @AppStorage("quickNoteHotkeyModifiers") private var _quickNoteHotkeyModifiers: Int = 0
+    @AppStorage("chatWindowHotkeyKeyCode") private var _chatWindowHotkeyKeyCode: Int = 0
+    @AppStorage("chatWindowHotkeyModifiers") private var _chatWindowHotkeyModifiers: Int = 0
     @AppStorage("captureTextHotkeyKeyCode") private var _captureTextHotkeyKeyCode: Int = 0
     @AppStorage("captureTextHotkeyModifiers") private var _captureTextHotkeyModifiers: Int = 0
     @AppStorage("captureAreaHotkeyKeyCode") private var _captureAreaHotkeyKeyCode: Int = 0
@@ -1749,6 +1751,27 @@ class AppSettings: ObservableObject {
     var quickNoteHotkeyEnabled: Bool { _quickNoteHotkeyKeyCode != 0 }
     var quickNoteHotkeyDisplayString: String {
         hotkeyDisplayString(keyCode: quickNoteHotkeyKeyCode, modifiers: quickNoteHotkeyModifiers)
+    }
+
+    /// Opens the full-window General Chat surface — the same assistant the result
+    /// sheet answers in, given a whole window instead of a sheet.
+    var chatWindowHotkeyKeyCode: UInt32 {
+        get { UInt32(_chatWindowHotkeyKeyCode) }
+        set {
+            objectWillChange.send()
+            _chatWindowHotkeyKeyCode = Int(newValue)
+        }
+    }
+    var chatWindowHotkeyModifiers: UInt32 {
+        get { UInt32(_chatWindowHotkeyModifiers) }
+        set {
+            objectWillChange.send()
+            _chatWindowHotkeyModifiers = Int(newValue)
+        }
+    }
+    var chatWindowHotkeyEnabled: Bool { _chatWindowHotkeyKeyCode != 0 }
+    var chatWindowHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: chatWindowHotkeyKeyCode, modifiers: chatWindowHotkeyModifiers)
     }
 
     var captureTextHotkeyKeyCode: UInt32 {

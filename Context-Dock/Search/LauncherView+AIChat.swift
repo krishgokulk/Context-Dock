@@ -10,7 +10,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
-private enum GeneralAIChatConversationStore {
+/// The General Chat conversation, on disk. Not private: the standalone chat window
+/// reads and writes the same key, so one conversation continues across the result
+/// sheet and the window instead of the two drifting apart.
+enum GeneralAIChatConversationStore {
     private static let key = "dorax.generalAI.currentConversation.v1"
 
     private struct StoredAppLaunch: Codable {

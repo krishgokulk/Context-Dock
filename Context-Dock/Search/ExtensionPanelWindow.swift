@@ -518,6 +518,12 @@ struct AIComposerBar: View {
     /// Surface-specific attach items (Quick Note's screenshot / window capture).
     /// When nil, "+" is a plain file picker.
     var extraAttachMenu: (() -> AnyView)? = nil
+    /// Spell the provider out beside its glyph ("Claude ⌄"). Off on the narrow
+    /// panels, where the name ate half the bar; on in the chat window, which has
+    /// the width for it.
+    var showsProviderName: Bool = false
+    /// Clear the conversation. Nil on surfaces that have no transcript to clear.
+    var onClear: (() -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -547,13 +553,23 @@ struct AIComposerBar: View {
                     }
                 }
             } label: {
-                // Icon only: the placeholder already says which model this is, and the
-                // name repeated beside it ate half the bar on a narrow panel.
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                // Icon only by default: the placeholder already says which model this
+                // is, and the name repeated beside it ate half the bar on a narrow panel.
+                HStack(spacing: 4) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    if showsProviderName {
+                        Text(settings.selectedAIProvider.shortName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 22)
+                .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -613,6 +629,17 @@ struct AIComposerBar: View {
                     onAttachApp(app)
                     showAppPicker = false
                 }
+            }
+
+            if let onClear {
+                Button(action: onClear) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Clear this conversation")
             }
 
             if isSending {

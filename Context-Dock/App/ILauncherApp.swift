@@ -317,6 +317,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var contextDockHotKeyRef: EventHotKeyRef?
     var contextDockEventHandlerRef: EventHandlerRef?   // stored so re-register removes old handler
     var clipboardScopeHotKeyRef: EventHotKeyRef?
+    var chatWindowHotKeyRef: EventHotKeyRef?
+    var chatWindowEventHandlerRef: EventHandlerRef?
     var clipboardScopeEventHandlerRef: EventHandlerRef? // stored so re-register removes old handler
     var quickNoteHotKeyRef: EventHotKeyRef?
     var quickNoteEventHandlerRef: EventHandlerRef?
@@ -515,6 +517,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
@@ -774,6 +777,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
     }
 
@@ -788,6 +792,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         appMenu.addItem(NSMenuItem(title: "About ILauncher", action: nil, keyEquivalent: ""))
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(
+            NSMenuItem(
+                title: "General Chat", action: #selector(showGeneralChatWindow),
+                keyEquivalent: "n"))
         appMenu.addItem(
             NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem.separator())
@@ -847,6 +855,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -869,6 +878,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSMenuItem(
                 title: "Show Launcher (⌥⌥)",
                 action: #selector(showLauncherFromMenu), keyEquivalent: ""))
+        menu.addItem(
+            NSMenuItem(
+                title: "General Chat",
+                action: #selector(showGeneralChatWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(
             NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
@@ -917,6 +930,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func showLauncherFromMenu() {
         showLauncher()
+    }
+
+    @objc func showGeneralChatWindow() {
+        GeneralChatWindowController.shared.show()
     }
 
     @objc func showSettings() {
@@ -1606,6 +1623,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RegisterEventHotKey(
             settings.quickNoteHotkeyKeyCode, settings.quickNoteHotkeyModifiers,
             hotKeyID, GetApplicationEventTarget(), 0, &quickNoteHotKeyRef)
+    }
+
+    /// Global hotkey → open the full-window General Chat surface.
+    func registerChatWindowHotkey() {
+        if let ref = chatWindowEventHandlerRef {
+            RemoveEventHandler(ref)
+            chatWindowEventHandlerRef = nil
+        }
+        if let ref = chatWindowHotKeyRef {
+            UnregisterEventHotKey(ref)
+            chatWindowHotKeyRef = nil
+        }
+        guard settings.chatWindowHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6377), id: 5)  // 'ILcw'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6377),
+                receivedID.id == 5
+            else { return OSStatus(eventNotHandledErr) }
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
+                return OSStatus(eventNotHandledErr)
+            }
+            delegate.showGeneralChatWindow()
+            return noErr
+        }
+        let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        chatWindowEventHandlerRef = handlerRef
+        RegisterEventHotKey(
+            settings.chatWindowHotkeyKeyCode, settings.chatWindowHotkeyModifiers,
+            hotKeyID, GetApplicationEventTarget(), 0, &chatWindowHotKeyRef)
     }
 
     /// Open a floating Quick Note sticky — the most recent note, or a fresh one.
