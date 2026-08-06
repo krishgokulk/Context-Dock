@@ -28,6 +28,32 @@ enum AppScopedChatService {
         /// What actually ran, for the receipt chips — derived from execution, never from
         /// words in the question.
         let toolChips: [String]
+        /// Set when the question is about an app this chat may not read. The surface shows
+        /// it as a one-tap "Enable <app> for this chat" button.
+        var enableApp: EnableAppRequest? = nil
+    }
+
+    /// The app named in a question that this chat has no access to, if any.
+    ///
+    /// Selection is the access boundary: General Chat reads only the apps the user chose,
+    /// so a question about an app outside that set is answered by asking, not by reaching
+    /// into it. The dock has always done this; the window went straight to the model, which
+    /// then tried tools it had no grant for and reported a failure the user could not act on.
+    static func appNeedingAccess(
+        query: String, scope: GeneralChatScope, attachedAppNames: [String]
+    ) -> EnableAppRequest? {
+        guard case .general = scope else { return nil }
+        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        else { return nil }
+        let attachedBundleIDs = Set(
+            attachedAppNames.compactMap { name -> String? in
+                NSWorkspace.shared.runningApplications
+                    .first { $0.localizedName == name }?.bundleIdentifier
+                    ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                    .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+            }.map { $0.lowercased() })
+        guard !attachedBundleIDs.contains(named.bundleId.lowercased()) else { return nil }
+        return EnableAppRequest(name: named.name, bundleId: named.bundleId, query: query)
     }
 
     /// Every context read below can block: an MCP server spawns and handshakes, EventKit
@@ -146,6 +172,22 @@ enum AppScopedChatService {
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
+
+        // Ask before reaching. This also runs before any tool or capability work, so a
+        // question about an app outside the chat's scope can never stall on a tool it was
+        // never allowed to use.
+        if let request = appNeedingAccess(
+            query: query, scope: scope, attachedAppNames: extraAppNames)
+        {
+            log.notice("stage: access gate — \(request.bundleId, privacy: .public)")
+            return Answer(
+                text:
+                    "**\(request.name)** isn't in this chat's scope yet. General Chat only reads "
+                    + "the apps you choose, so you stay in control — enable it below to let me "
+                    + "answer about \(request.name).",
+                toolChips: [],
+                enableApp: request)
+        }
         var sections: [String] = [dateTimeBlock()]
         var context: UserContext = .none
 

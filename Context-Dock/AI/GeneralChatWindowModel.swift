@@ -197,6 +197,20 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
+    /// "Enable <app> for this chat": attach the app, then ask the question again so the
+    /// user gets an answer rather than a granted permission and a dead end.
+    func enableApp(_ request: EnableAppRequest) {
+        attachApp(request.name)
+        // attachApp turns a first app on an empty General chat into that app's own thread;
+        // here the conversation already exists, so the app joins it as a scope.
+        if !attachedAppNames.contains(request.name), activeScope == .general {
+            attachedAppNames.append(request.name)
+            GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
+        }
+        input = request.query
+        send()
+    }
+
     /// The trash in the composer clears the thread you are reading, and only that one —
     /// a Reminders thread cleared must not touch Calendar's, and must not be confused with
     /// "New chat", which moves you somewhere else.
@@ -436,7 +450,8 @@ final class GeneralChatWindowModel: ObservableObject {
                     self?.deliver(
                         AIChatMessage(
                             role: .assistant, content: answer.text,
-                            mcpToolsRan: answer.toolChips),
+                            mcpToolsRan: answer.toolChips,
+                            enableAppRequest: answer.enableApp),
                         to: sendScope, title: sendTitle)
                 }
             } catch {

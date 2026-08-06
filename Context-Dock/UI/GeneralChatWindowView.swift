@@ -462,7 +462,9 @@ struct GeneralChatWindowView: View {
                                     }
                                 }
                             }
-                            AIChatMessageView(message: message)
+                            AIChatMessageView(
+                                message: message,
+                                onEnableApp: { model.enableApp($0) })
                         }
                         .id(message.id)
                     }

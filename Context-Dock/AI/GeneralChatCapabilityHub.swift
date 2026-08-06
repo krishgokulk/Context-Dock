@@ -9,6 +9,7 @@
 
 import AppKit
 import Foundation
+import OSLog
 
 @MainActor
 final class GeneralChatCapabilityHub {
@@ -21,6 +22,11 @@ final class GeneralChatCapabilityHub {
     private let chatPanelKeyPrefix = "dock_app_"
 
     private init() {}
+
+    /// Stage markers: the block is assembled from half a dozen sources, several of which
+    /// do synchronous work, and a stall inside it is invisible from outside.
+    private static let log = Logger(
+        subsystem: "com.krishgokul.ContextDock", category: "CapabilityHub")
 
     func invalidate() {
         cachedBlock = nil
@@ -62,6 +68,7 @@ final class GeneralChatCapabilityHub {
         // Discovery reaches into the MCP actor for cached tools. Bounded, because "cached"
         // only means it opens no connection — it still queues behind whatever that actor is
         // doing, and waiting on it is not worth an unanswerable chat.
+        Self.log.notice("hub: discovery")
         let discovery = await Self.withTimeout(
             seconds: 5,
             fallback: CapabilityDiscoveryResult(
@@ -72,6 +79,7 @@ final class GeneralChatCapabilityHub {
         let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
+        Self.log.notice("hub: builtins")
         let builtinLines = builtInCapabilityLines()
         let allowlistFingerprint = AppAdapterManager.shared.adapters
             .filter(\.isEnabled)
@@ -84,9 +92,11 @@ final class GeneralChatCapabilityHub {
         // and that grounding is what stops the model answering app questions from memory.
         // Ranked best-first, capped per source, and appended last so it sits closest to the
         // question in the prompt.
+        Self.log.notice("hub: evidence")
         let evidenceLines = await Self.withTimeout(seconds: 5, fallback: [String]()) {
             await GeneralChatLocalEvidence.promptLines(query: query)
         }
+        Self.log.notice("hub: inventory")
         let inventoryLines = appInventoryLines()
             + discoveryLines
             + targetedSkillLines(query: query, scope: scope)
@@ -103,6 +113,7 @@ final class GeneralChatCapabilityHub {
                 compact ? compacted(block) : block, budget: characterBudget)
         }
 
+        Self.log.notice("hub: mcp servers")
         var mcpLines: [String] = []
         // Apps exposing a query-style tool (search/find/list/get/query/read). These are the
         // fan-out / "which app?" targets for broad discovery questions that name no app.
@@ -148,6 +159,7 @@ final class GeneralChatCapabilityHub {
             }
         }
 
+        Self.log.notice("hub: saved chats")
         let historyApps = savedChatApps()
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 
