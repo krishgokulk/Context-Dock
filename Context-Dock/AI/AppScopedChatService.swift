@@ -145,7 +145,7 @@ enum AppScopedChatService {
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
-        log.info("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
+        log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
         var sections: [String] = [dateTimeBlock()]
         var context: UserContext = .none
 
@@ -172,7 +172,7 @@ enum AppScopedChatService {
             if !skills.isEmpty { sections.append(skills) }
             // The app's live MCP tools, in the prose protocol the loop understands, so a
             // Reminders thread can read reminders instead of describing how to.
-            log.info("stage: mcp block")
+            log.notice("stage: mcp block")
             let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
@@ -214,14 +214,14 @@ enum AppScopedChatService {
         // them — the dock's "Live app data" read. Without it the model has the app's
         // capability list and none of its contents, which is why the window could only
         // explain how to look rather than answer.
-        log.info("stage: live apple data")
+        log.notice("stage: live apple data")
         let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
         }
         if !liveAppleData.isEmpty { sections.append(liveAppleData) }
 
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
-        log.info("stage: capability hub")
+        log.notice("stage: capability hub")
         let hubBlock = await withTimeout(seconds: 8, fallback: "") {
             await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: provider == .onDevice,
@@ -232,7 +232,7 @@ enum AppScopedChatService {
         if !hubBlock.isEmpty { sections.append(hubBlock) }
 
         let systemPrompt = sections.joined(separator: "\n\n")
-        log.info("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
+        log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, so it takes the plain path.
         guard provider.supportsNativeTools else {
@@ -261,7 +261,7 @@ enum AppScopedChatService {
                 command, purpose: purpose, modelRequiresApproval: needsApproval)
         }
 
-        log.info("stage: provider sendWithTools")
+        log.notice("stage: provider sendWithTools")
         var (text, executed) = try await AIProviderService.shared.sendWithTools(
             query,
             context: context,
@@ -272,13 +272,13 @@ enum AppScopedChatService {
             additionalSystemPrompt: systemPrompt,
             imageAttachments: attachments
         )
-        log.info("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
+        log.notice("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
 
         // The model sometimes writes its tool call out as text instead of calling it. The
         // dock recovers by running it; the window used to render the JSON. One recovery
         // round only — a model that keeps narrating tool calls is not going to stop.
         if let call = ChatAnswerSanitizer.terminalCall(in: text) {
-            log.info("stage: recovering prose terminal_call")
+            log.notice("stage: recovering prose terminal_call")
             let result = await TerminalCommandExecutor.shared.run(
                 call.command, purpose: call.purpose, modelRequiresApproval: false)
             if result.success {

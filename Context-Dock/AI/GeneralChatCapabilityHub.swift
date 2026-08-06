@@ -59,7 +59,16 @@ final class GeneralChatCapabilityHub {
         scope: AIConversationScope = .general,
         characterBudget: Int = 12_000
     ) async -> String {
-        let discovery = await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        // Discovery reaches into the MCP actor for cached tools. Bounded, because "cached"
+        // only means it opens no connection — it still queues behind whatever that actor is
+        // doing, and waiting on it is not worth an unanswerable chat.
+        let discovery = await Self.withTimeout(
+            seconds: 5,
+            fallback: CapabilityDiscoveryResult(
+                scope: scope, query: query, candidates: [], generatedAt: Date())
+        ) {
+            await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        }
         let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
@@ -75,7 +84,9 @@ final class GeneralChatCapabilityHub {
         // and that grounding is what stops the model answering app questions from memory.
         // Ranked best-first, capped per source, and appended last so it sits closest to the
         // question in the prompt.
-        let evidenceLines = await GeneralChatLocalEvidence.promptLines(query: query)
+        let evidenceLines = await Self.withTimeout(seconds: 5, fallback: [String]()) {
+            await GeneralChatLocalEvidence.promptLines(query: query)
+        }
         let inventoryLines = appInventoryLines()
             + discoveryLines
             + targetedSkillLines(query: query, scope: scope)

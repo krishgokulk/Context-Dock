@@ -11,6 +11,7 @@
 
 import AppKit
 import Combine
+import OSLog
 import Foundation
 import SwiftUI
 
@@ -47,6 +48,11 @@ final class GeneralChatWindowModel: ObservableObject {
     /// In-flight answer per thread, so one thread's send is never cancelled by moving to
     /// another.
     private var sendTasks: [String: Task<Void, Never>] = [:]
+
+    /// Turn markers for the window. Paired with AppScopedChatService's stages, these say
+    /// whether a stall is in this model or in the request it made.
+    private static let log = Logger(
+        subsystem: "com.krishgokul.ContextDock", category: "ChatWindow")
 
     var isEmpty: Bool { messages.isEmpty }
 
@@ -321,7 +327,12 @@ final class GeneralChatWindowModel: ObservableObject {
 
     func send() {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, !isSending else { return }
+        guard !query.isEmpty else { return }
+        guard !isSending else {
+            Self.log.notice(
+                "send ignored: \(self.activeScope.storageKey, privacy: .public) already sending")
+            return
+        }
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -383,6 +394,8 @@ final class GeneralChatWindowModel: ObservableObject {
         let scopeAppName = activeScopeAppName ?? sendTitle
         let extraApps = attachedAppNames
 
+        Self.log.notice(
+            "turn start scope=\(sendKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
         sendingScopeKeys.insert(sendKey)
         sendTasks[sendKey] = Task { [weak self] in
             // A provider or tool loop that never returns must still end the turn. Without
@@ -459,6 +472,7 @@ final class GeneralChatWindowModel: ObservableObject {
     private func deliver(
         _ message: AIChatMessage, to scope: GeneralChatScope, title: String
     ) {
+        Self.log.notice("turn end scope=\(scope.storageKey, privacy: .public)")
         // The watchdog and the real answer can both arrive; whichever is first ends the
         // turn, and the loser is dropped rather than appended twice.
         guard sendingScopeKeys.contains(scope.storageKey) else { return }
