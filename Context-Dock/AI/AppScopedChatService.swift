@@ -33,6 +33,19 @@ enum AppScopedChatService {
         var enableApp: EnableAppRequest? = nil
     }
 
+    /// Adds a plural form of every word alongside the original, so a query written in the
+    /// singular still matches an app whose name is plural.
+    private static func pluralised(_ query: String) -> String {
+        query
+            .split(separator: " ")
+            .map { word -> String in
+                let text = String(word)
+                guard text.count > 3, !text.hasSuffix("s") else { return text }
+                return "\(text) \(text)s"
+            }
+            .joined(separator: " ")
+    }
+
     /// The app named in a question that this chat has no access to, if any.
     ///
     /// Selection is the access boundary: General Chat reads only the apps the user chose,
@@ -43,8 +56,13 @@ enum AppScopedChatService {
         query: String, scope: GeneralChatScope, attachedAppNames: [String]
     ) -> EnableAppRequest? {
         guard case .general = scope else { return nil }
-        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query)
-        else { return nil }
+        // "do i have any reminder today" names Reminders, but the resolver matches whole
+        // words against app names, so the singular missed and the question fell through to
+        // a model with no access and no explanation. Try the plural too.
+        let named =
+            GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+            ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
+        guard let named else { return nil }
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
                 NSWorkspace.shared.runningApplications

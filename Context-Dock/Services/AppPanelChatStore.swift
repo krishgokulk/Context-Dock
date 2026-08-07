@@ -161,12 +161,20 @@ final class AppPanelChatStore {
 
     // MARK: Helpers
 
-    private func chatFile(for appKey: String) -> URL {
-        // Sanitise key so it's safe as a filename
-        let safe = appKey
-            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_")).inverted)
+    /// The on-disk name for a key. Exposed because the file list cannot be reversed back
+    /// into keys — dots and slashes are all replaced by underscores — so a caller that
+    /// wants to know whether a conversation exists has to sanitise its candidate and look
+    /// for that instead.
+    nonisolated static func sanitizedKey(_ appKey: String) -> String {
+        appKey
+            .components(
+                separatedBy: CharacterSet.alphanumerics
+                    .union(CharacterSet(charactersIn: "-_")).inverted)
             .joined(separator: "_")
-        return baseDir.appendingPathComponent("\(safe).json")
+    }
+
+    private func chatFile(for appKey: String) -> URL {
+        baseDir.appendingPathComponent("\(Self.sanitizedKey(appKey)).json")
     }
 }
 

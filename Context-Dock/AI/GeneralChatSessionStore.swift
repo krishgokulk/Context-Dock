@@ -159,6 +159,50 @@ enum GeneralChatSessionStore {
         upsert(scope: scope, title: title, messageCount: messages.count)
     }
 
+    // MARK: - Discovery
+
+    /// Registers threads the dock created so they appear in the window's sidebar.
+    ///
+    /// A conversation held in the dock — frontmost-app chat, a scoped app, a CLI tool —
+    /// is written to AppPanelChatStore whether or not the window ever saw it. Without this
+    /// the window only listed threads it had opened itself, so a chat the user never
+    /// cleared simply did not exist as far as the window was concerned.
+    @MainActor
+    static func discoverDockThreads() {
+        let onDisk = Set(AppPanelChatStore.shared.allPanelKeys())
+        var known = Set(index().map(\.scope.storageKey))
+
+        func adopt(_ scope: GeneralChatScope, title: String) {
+            guard !known.contains(scope.storageKey) else { return }
+            guard let panelKey = dockPanelKey(scope),
+                onDisk.contains(AppPanelChatStore.sanitizedKey(panelKey))
+            else { return }
+            let messages = AppPanelChatStore.shared.load(for: panelKey)
+            // An empty file is a scope that was entered and never used; listing it would
+            // fill the sidebar with apps the user never actually talked to.
+            guard !messages.isEmpty else { return }
+            known.insert(scope.storageKey)
+            var sessions = index().filter { $0.scope != scope }
+            sessions.append(
+                GeneralChatSession(
+                    scope: scope, title: title,
+                    createdAt: messages.first?.timestamp ?? Date(),
+                    updatedAt: messages.last?.timestamp ?? Date(),
+                    messageCount: messages.count))
+            writeIndex(sessions)
+        }
+
+        for adapter in AppAdapterManager.shared.adapters where !adapter.bundleId.isEmpty {
+            adopt(.app(bundleId: adapter.bundleId), title: adapter.appName)
+        }
+        for entry in InstalledApplicationsCatalog.cachedInstalledApps() {
+            adopt(.app(bundleId: entry.bundleId), title: entry.name)
+        }
+        for package in TerminalPackageManager.shared.packages where package.isEnabled {
+            adopt(.cli(command: package.command), title: package.command)
+        }
+    }
+
     // MARK: - Attached apps
 
     private static func attachedAppsKey(_ scope: GeneralChatScope) -> String {

@@ -72,6 +72,9 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Pull in whatever the result sheet has said since this window was last open.
     func reloadFromStore() {
         guard !isSending else { return }
+        // Threads the dock created and the window has never seen. Done on every open so a
+        // conversation held in the dock this morning is in the sidebar this afternoon.
+        GeneralChatSessionStore.discoverDockThreads()
         // Reloading is only unsafe for a thread mid-answer; every other thread is on disk.
         messages = GeneralChatSessionStore.load(scope: activeScope)
         attachedAppNames = GeneralChatSessionStore.loadAttachedApps(scope: activeScope)

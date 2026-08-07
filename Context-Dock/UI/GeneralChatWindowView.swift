@@ -237,17 +237,16 @@ struct GeneralChatWindowView: View {
                     .foregroundStyle(isActive ? Color.primary : .secondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
+                // When it was last spoken to, the way a chat app lists a conversation.
+                if session.messageCount > 0, !isSending {
+                    Text(Self.threadTimestamp(session.updatedAt))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
                 // A thread still working shows it here, so a pending answer is visible
                 // from the sidebar rather than only inside the thread you left.
                 if isSending {
                     ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14)
-                } else if session.messageCount > 0 {
-                    Text("\(session.messageCount)")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.primary.opacity(isHovered ? 0.08 : 0)))
                 }
             }
             .padding(.horizontal, 10)
@@ -341,6 +340,23 @@ struct GeneralChatWindowView: View {
                     .fill(Theme.surfaceElevated(dark))
             )
         }
+    }
+
+    /// Time for today, "Yesterday", a weekday within the week, then a date — the ladder
+    /// a chat app uses for its conversation list.
+    private static func threadTimestamp(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        if calendar.isDateInToday(date) {
+            formatter.dateFormat = "h:mm a"
+        } else if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        } else if let week = calendar.date(byAdding: .day, value: -6, to: Date()), date > week {
+            formatter.dateFormat = "EEE"
+        } else {
+            formatter.dateFormat = "d MMM"
+        }
+        return formatter.string(from: date)
     }
 
     /// "Today" / "Yesterday" / a written date — the same wording a chat app uses.
