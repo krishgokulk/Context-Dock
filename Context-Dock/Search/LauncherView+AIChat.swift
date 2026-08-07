@@ -6065,6 +6065,23 @@ extension LauncherView {
             if BrowserURLLibraryService.shared.refreshInProgress {
                 return "Your local browser \(subjectLabel) is still refreshing. Please try again in a moment."
             }
+            // Empty because it could not be read is not empty because nothing is there.
+            // Safari keeps its history in a database DoraX can only open with Full Disk
+            // Access, and reporting "no visits" for a missing permission is a lie the user
+            // has no way to diagnose.
+            let safariDB = NSHomeDirectory() + "/Library/Safari/History.db"
+            if !FileManager.default.isReadableFile(atPath: safariDB) {
+                var reply =
+                    "I can't read Safari's history database — that needs Full Disk Access "
+                    + "for Context-Dock in System Settings → Privacy & Security."
+                if let menuFallback = AppScopedChatService.browserHistoryFacts(
+                    bundleID: "com.apple.Safari", appName: "Safari")
+                {
+                    reply += "\n\nFrom Safari's own History menu I can still see:\n\n"
+                        + menuFallback
+                }
+                return reply
+            }
             if dateWindow != nil {
                 return "I checked the local browser-\(subjectLabel) cache and found no visits in that time range."
             }

@@ -265,6 +265,55 @@ enum AppScopedChatService {
         return nil
     }
 
+    /// Recent history for a browser scope, and an honest account of where it came from.
+    ///
+    /// The library reads Safari's History.db directly, which needs Full Disk Access. Without
+    /// it the read returns nothing and the answer became "no visits in that time range" —
+    /// which is false, and unfixable by the user because nothing said what was wrong. The
+    /// app's own History menu is already cached, so it stands in when the database cannot
+    /// be read.
+    static func browserHistoryFacts(bundleID: String, appName: String) -> String? {
+        guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
+
+        let menuItems = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: bundleID, appName: appName, query: "History", maxResults: 40)
+        let historyEntries = menuItems
+            .filter { $0.isLeaf && $0.path.first == "History" }
+            .map { $0.path.last ?? "" }
+            .filter { title in
+                !title.isEmpty
+                    && !["Show Personal History", "Back", "Forward", "Home", "Clear History…",
+                         "Reopen Last Closed Window", "Reopen All Windows from Last Session",
+                         "Return to Search Results"].contains(title)
+            }
+
+        var lines: [String] = []
+        if !historyEntries.isEmpty {
+            let age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleID)
+            let readWhen = age.map { "read \(Int($0 / 60)) min ago" } ?? "from the menu cache"
+            lines.append("## \(appName) — History menu (\(readWhen), factual)")
+            lines.append(
+                "These are the entries in \(appName)'s own History menu. They are real visits, "
+                + "in most-recent-first order, though the menu carries no timestamps.")
+            lines += historyEntries.prefix(25).map { "- \($0)" }
+        }
+
+        // Say when the fuller source is unavailable, so an incomplete answer is not
+        // mistaken for an empty history.
+        if bundleID == "com.apple.Safari" {
+            let dbPath = NSHomeDirectory() + "/Library/Safari/History.db"
+            if !FileManager.default.isReadableFile(atPath: dbPath) {
+                lines.append(
+                    "Safari's full history database is not readable — DoraX needs Full Disk "
+                    + "Access in System Settings → Privacy & Security to read dated history. "
+                    + "Say that plainly if the user asks about a date range; do not report "
+                    + "an empty history.")
+            }
+        }
+
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     // MARK: - Request
 
     /// Asks the provider about an app or CLI scope with the grounding above, and lets it
@@ -360,6 +409,9 @@ enum AppScopedChatService {
                 """)
             if let facts = liveWindowFacts(bundleID: bundleId) { sections.append(facts) }
             if let page = browserPageFacts(bundleID: bundleId) { sections.append(page) }
+            if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
+                sections.append(history)
+            }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.
             let capabilities = ScopedAppPromptBuilder.appIdentityBlock(
