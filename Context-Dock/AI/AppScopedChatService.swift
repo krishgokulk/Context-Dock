@@ -92,6 +92,12 @@ enum AppScopedChatService {
                 .map(ChatAnswerSanitizer.clean)
                 ?? result.output
         }
+        ChatConsoleLog.shared.append(
+            .route,
+            title: route.title,
+            output: result.output,
+            success: result.success,
+            scope: .app(bundleId: route.bundleId))
         return Answer(
             text: phrased,
             toolChips: ["\(route.kind.rawValue) · \(route.title)"],
@@ -550,6 +556,19 @@ enum AppScopedChatService {
             }
         }
         text = ChatAnswerSanitizer.clean(text)
+
+        // Everything the model ran during this turn, on the record with its real output.
+        // The chips say a tool ran; the console says what it produced, which is the part
+        // a user can check.
+        for command in executed {
+            ChatConsoleLog.shared.append(
+                command.command.hasPrefix("run_") || command.command.contains("(")
+                    ? .tool : .command,
+                title: command.command,
+                output: command.output,
+                success: command.success,
+                scope: scope)
+        }
 
         var chips = executed.map(\.command)
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }

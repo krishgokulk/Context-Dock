@@ -12,6 +12,7 @@ import SwiftUI
 struct GeneralChatWindowView: View {
     @ObservedObject private var chrome = GeneralChatWindowChromeState.shared
     @ObservedObject private var model = GeneralChatWindowModel.shared
+    @ObservedObject private var console = ChatConsoleLog.shared
     /// The same approval queue the dock reads, so a command proposed in a window thread can
     /// be answered here rather than expiring unseen.
     @ObservedObject private var terminalBridge = TerminalAIBridge.shared
@@ -649,26 +650,122 @@ struct GeneralChatWindowView: View {
 
     // MARK: - Panels
 
+    /// The thread's work, in the order it happened: every command, tool call and route
+    /// with its real output. The transcript says what DoraX concluded; this says what it
+    /// did, which is the part that can be checked rather than trusted.
     private var bottomPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            panelHeader("Console") { chrome.toggleBottomPanel() }
+        let entries = console.entries(for: model.activeScope)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Console")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                if !entries.isEmpty {
+                    Text("\(entries.count)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if !entries.isEmpty {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            console.plainText(scope: model.activeScope), forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy the whole log")
+
+                    Button {
+                        console.clear(scope: model.activeScope)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear the log for this thread")
+                }
+                Button { chrome.toggleBottomPanel() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+
             Divider().opacity(0.4)
-            ScrollView {
-                Text(model.consoleOutput.isEmpty ? "No output yet." : model.consoleOutput)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(model.consoleOutput.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if entries.isEmpty {
+                            Text(
+                                "Nothing has run in this thread yet. Commands, tool calls and "
+                                + "routes appear here with their output as they happen."
+                            )
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        }
+                        ForEach(entries) { entry in
+                            consoleEntry(entry)
+                                .id(entry.id)
+                        }
+                    }
                     .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: entries.count) { _, _ in
+                    guard let last = entries.last else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
             }
         }
         .background(Theme.surface(dark))
     }
 
-    /// What this thread can actually reach: the scoped app's adapter tools, or a CLI
-    /// scope's scanned subcommands. The same inventory the prompt is built from, so the
-    /// panel answers "why did it say it can't?" without opening Settings — and links
-    /// straight to where a missing tool is added.
+    private func consoleEntry(_ entry: ChatConsoleEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: entry.source.symbol)
+                    .font(.system(size: 9))
+                    .foregroundStyle(entry.success ? Color.secondary : Color.red)
+                Text(entry.title)
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(entry.success ? Color.primary : Color.red)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Text(Self.consoleTime(entry.at))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            if !entry.output.isEmpty {
+                Text(entry.output)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+            }
+        }
+    }
+
+    private static func consoleTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
     private var sidePanel: some View {
         let inventory = model.activeScopeInventory
         return VStack(alignment: .leading, spacing: 0) {

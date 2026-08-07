@@ -31,9 +31,6 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Apps the answer should be about — the composer's app picker. Several at once
     /// is the point: a chat can be scoped to Reminders and Safari together.
     @Published var attachedAppNames: [String] = []
-    /// Verbatim output of the last route that ran, shown in the Console panel. A receipt
-    /// the user can read beats a summary they have to trust.
-    @Published var consoleOutput: String = ""
     /// Which apps were attached when each message was sent, so the transcript keeps
     /// showing what a question was asked *about* after the scope changes. In memory
     /// only — the stored conversation format has no field for it, and a reopened
@@ -208,8 +205,11 @@ final class GeneralChatWindowModel: ObservableObject {
     private func apply(
         _ answer: AppScopedChatService.Answer, to scope: GeneralChatScope, title: String
     ) {
-        if let output = answer.consoleOutput {
-            consoleOutput = output
+        // The log itself is written by whoever ran the work; the window only decides
+        // whether the panel showing it should be visible.
+        if answer.consoleOutput != nil
+            || !ChatConsoleLog.shared.entries(for: scope).isEmpty
+        {
             GeneralChatWindowChromeState.shared.showBottomPanel()
         }
         deliver(
