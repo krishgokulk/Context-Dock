@@ -94,10 +94,35 @@ enum ScopedAppPromptBuilder {
             {
                 lines.append("Description: \(description)")
             }
-            if let help = package?.helpTextForPrompt,
-                !help.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                lines.append("\n## \(command) help reference\n\(help)")
+            // The subcommand list goes in whole and first. It is the tool's table of
+            // contents and it is short, whereas the help below is clipped — asking pear to
+            // "clean cache" against a head-truncated 30k document dropped list-orphaned and
+            // remove-orphaned entirely, and the model correctly reported that the help it was
+            // given mentioned no such thing.
+            if let package {
+                let subcommands = package.subcommands.filter {
+                    !LauncherView.helpNoiseTokens.contains($0.lowercased())
+                }
+                if !subcommands.isEmpty {
+                    lines.append(
+                        "Subcommands (use a space between command and subcommand): "
+                        + subcommands.joined(separator: ", "))
+                }
+                if !package.provenInvocations.isEmpty {
+                    lines.append(
+                        "Known-good invocations on this Mac (prefer these spellings): "
+                        + package.provenInvocations.prefix(5).joined(separator: " | "))
+                }
+                // Ranked against the question rather than truncated from the top, and taken
+                // from the man page when --help is the shorter stub of the two.
+                let help = package.helpText ?? ""
+                let man = package.manText ?? ""
+                let reference = man.count > help.count * 2 ? man : help
+                if !reference.isEmpty {
+                    lines.append(
+                        "\n## \(command) help reference\n"
+                        + AIContextBudget.fitHelpText(reference, query: query, budget: 2_000))
+                }
             }
             lines.append(
                 "To run a command, emit exactly one JSON line: "
