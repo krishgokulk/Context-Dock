@@ -74,11 +74,13 @@ enum AppScopedChatService {
         return EnableAppRequest(name: named.name, bundleId: named.bundleId, query: query)
     }
 
-    /// Every context read below can block: an MCP server spawns and handshakes, EventKit
-    /// waits on a database, a capability discovery walks the disk. One of them stalling
-    /// must cost a section of the prompt, never the answer — a spinner with no end is the
-    /// worst outcome of the three.
-    static func withTimeout<T: Sendable>(
+    /// Runs `operation` on a detached task and gives up on it after `seconds`.
+    ///
+    /// Detached and nonisolated on purpose. When this helper was a method on a @MainActor
+    /// type, both the work and the timer inherited that isolation, so the timer could not
+    /// be scheduled while the work held the actor — the cap never fired, and a stalled MCP
+    /// handshake took the whole turn down with it.
+    nonisolated static func withTimeout<T: Sendable>(
         seconds: Double,
         fallback: T,
         operation: @escaping @Sendable () async -> T

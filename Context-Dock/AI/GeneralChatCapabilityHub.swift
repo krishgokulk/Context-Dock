@@ -34,10 +34,13 @@ final class GeneralChatCapabilityHub {
         cachedAllowlistFingerprint = ""
     }
 
-    /// Runs `operation`, giving up on it after `seconds` and returning `fallback`.
-    /// The losing task is cancelled, so a stalled server does not keep running behind
-    /// the answer it failed to contribute to.
-    private static func withTimeout<T: Sendable>(
+    /// Runs `operation` on a detached task and gives up on it after `seconds`.
+    ///
+    /// Detached and nonisolated on purpose. When this helper was a method on a @MainActor
+    /// type, both the work and the timer inherited that isolation, so the timer could not
+    /// be scheduled while the work held the actor — the cap never fired, and a stalled MCP
+    /// handshake took the whole turn down with it.
+    nonisolated static func withTimeout<T: Sendable>(
         seconds: Double,
         fallback: T,
         operation: @escaping @Sendable () async -> T
@@ -114,6 +117,9 @@ final class GeneralChatCapabilityHub {
         }
 
         Self.log.notice("hub: mcp servers")
+        // Per-server caps do not bound the loop: three unreachable servers cost three
+        // timeouts in series, which is how a turn spent two and a half minutes here.
+        let mcpDeadline = Date().addingTimeInterval(10)
         var mcpLines: [String] = []
         // Apps exposing a query-style tool (search/find/list/get/query/read). These are the
         // fan-out / "which app?" targets for broad discovery questions that name no app.
@@ -127,6 +133,10 @@ final class GeneralChatCapabilityHub {
         }
         let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
         for adapter in adapters {
+            guard Date() < mcpDeadline else {
+                Self.log.notice("hub: mcp budget spent, skipping the rest")
+                break
+            }
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
                 continue
             }
