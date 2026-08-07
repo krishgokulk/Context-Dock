@@ -21,6 +21,9 @@ struct GeneralChatWindowView: View {
     @State private var dragStartWidth: Double?
     @State private var showsSidebarAppPicker = false
     @State private var hoveredSidebarRow: String?
+    /// Bumped when remembered routes are cleared, so the list redraws — the store is
+    /// UserDefaults-backed and publishes nothing on its own.
+    @State private var routeResetToken = 0
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -656,6 +659,39 @@ struct GeneralChatWindowView: View {
                     }
 
                     if let bundleId = model.activeScopeBundleId {
+                        let remembered = ChatRoutePreferenceStore.remembered(bundleId: bundleId)
+                        if !remembered.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                sectionLabel(
+                                    "Preferred routes", symbol: "arrow.triangle.branch",
+                                    count: remembered.count)
+                                ForEach(remembered, id: \.intent) { entry in
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: entry.kind.symbol)
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.top, 2)
+                                        Text("“\(entry.intent)” → \(entry.kind.routeLabel)")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.primary.opacity(0.85))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                                Button {
+                                    ChatRoutePreferenceStore.forget(bundleId: bundleId)
+                                    routeResetToken += 1
+                                } label: {
+                                    Text("Always ask again")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Forget these choices and ask each time")
+                            }
+                            .id(routeResetToken)
+                        }
+
                         Button {
                             AppDelegate.shared?.showSettings()
                             // The settings window has to exist before it can be navigated.

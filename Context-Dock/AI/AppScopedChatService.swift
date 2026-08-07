@@ -271,7 +271,7 @@ enum AppScopedChatService {
         // anything. Asking the user which to use is only worth it when they differ in
         // consequence — that check is in the resolver.
         if case .app(let bundleId) = scope {
-            let routes = ChatRouteResolver.routes(
+            let routes = await ChatRouteResolver.routes(
                 for: query, bundleId: bundleId, appName: appName)
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 pendingRoutes = Dictionary(
@@ -289,6 +289,24 @@ enum AppScopedChatService {
                 bundleId: bundleId, query: query),
                 let route = routes.first(where: { $0.kind == preferred })
             {
+                return await execute(route: route, query: query, history: history)
+            }
+        }
+
+        if case .cli(let command) = scope {
+            let routes = ChatRouteResolver.cliRoutes(for: query, command: command)
+            if ChatRouteResolver.shouldAsk(
+                routes: routes, bundleId: "cli://\(command)", query: query)
+            {
+                pendingRoutes = Dictionary(uniqueKeysWithValues: routes.map { ($0.id, $0) })
+                log.notice("stage: asking which invocation (\(routes.count, privacy: .public))")
+                return Answer(
+                    text: "There's more than one \(command) command for that. Which should I run?",
+                    toolChips: [],
+                    routeChoices: routes.map(\.asActionChoice))
+            }
+            // A single read-only invocation is just the answer: run it and report.
+            if routes.count == 1, let route = routes.first, route.isReadOnly {
                 return await execute(route: route, query: query, history: history)
             }
         }

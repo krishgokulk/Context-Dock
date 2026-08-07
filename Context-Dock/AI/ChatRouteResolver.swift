@@ -73,9 +73,40 @@ enum ChatRouteResolver {
         "create", "add", "install", "update", "move", "rename", "empty", "reset", "run",
     ]
 
+    /// Routes for a CLI scope: the tool's own subcommands that match the request. A CLI
+    /// thread has exactly one executable, so the choice is which invocation to run — the
+    /// same decision, one level down.
+    static func cliRoutes(for query: String, command: String) -> [ChatRoute] {
+        guard let package = TerminalPackageManager.shared.packages.first(where: {
+            $0.command.caseInsensitiveCompare(command) == .orderedSame
+        }) else { return [] }
+        let terms = Set(
+            query.lowercased().split { !$0.isLetter && !$0.isNumber }
+                .map(String.init).filter { $0.count > 2 })
+        guard !terms.isEmpty else { return [] }
+
+        let matching = package.subcommands.filter { subcommand in
+            let words = Set(
+                subcommand.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+            return !words.isDisjoint(with: terms)
+                || terms.contains { subcommand.lowercased().hasPrefix($0) }
+        }
+        return matching.prefix(4).map { subcommand in
+            let invocation = "\(package.command) \(subcommand)"
+            return ChatRoute(
+                id: "cli:\(invocation)",
+                kind: .cli,
+                title: invocation,
+                payload: invocation,
+                appName: package.command,
+                bundleId: "cli://\(package.command)",
+                isReadOnly: !mutatingVerbs.contains { invocation.lowercased().contains($0) })
+        }
+    }
+
     static func routes(
         for query: String, bundleId: String, appName: String
-    ) -> [ChatRoute] {
+    ) async -> [ChatRoute] {
         guard !bundleId.isEmpty else { return [] }
         let lowered = query.lowercased()
         let terms = Set(
@@ -141,6 +172,30 @@ enum ChatRouteResolver {
                     isReadOnly: false))
         }
 
+        // MCP tools that are already connected. Cached only: resolving a list of choices
+        // must never spawn a process, and a server that has not been used yet is not a
+        // route the user can be offered honestly.
+        let mcpTools = await AppScopedChatService.withTimeout(
+            seconds: 2, fallback: [(server: String, serverId: UUID, tool: MCPTool)]()
+        ) {
+            await MCPRuntime.shared.cachedTools(forBundleId: bundleId)
+        }
+        for entry in mcpTools where matches(entry.tool.name + " " + entry.tool.description) {
+            let required = (entry.tool.inputSchema["required"] as? [String]) ?? []
+            // A tool that needs arguments cannot be offered as a one-tap route; the model
+            // has to fill it in through the normal tool loop.
+            guard required.isEmpty else { continue }
+            routes.append(
+                ChatRoute(
+                    id: "mcp:\(entry.server):\(entry.tool.name)",
+                    kind: .mcpTool,
+                    title: entry.tool.name.replacingOccurrences(of: "_", with: " "),
+                    payload: "\(entry.server)\u{1}\(entry.tool.name)",
+                    appName: appName,
+                    bundleId: bundleId,
+                    isReadOnly: MCPToolSafety.isClearlyReadOnly(name: entry.tool.name)))
+        }
+
         // Deduplicate by title so the same capability offered by two subsystems is one
         // choice, and cap the list: five ways to do one thing is not a decision, it is a
         // quiz.
@@ -184,7 +239,18 @@ enum ChatRouteResolver {
                 path, targetBundleId: route.bundleId, appName: route.appName)
             return (result.0, result.1)
 
-        case .mcpTool, .model:
+        case .mcpTool:
+            let parts = route.payload.split(separator: "\u{1}").map(String.init)
+            guard parts.count == 2 else { return (false, "") }
+            do {
+                let output = try await MCPRuntime.shared.callTool(
+                    bundleId: route.bundleId, server: parts[0], tool: parts[1], arguments: [:])
+                return (true, output)
+            } catch {
+                return (false, "\(parts[1]) failed: \(error.localizedDescription)")
+            }
+
+        case .model:
             return (false, "")
         }
     }
@@ -223,6 +289,21 @@ enum ChatRoutePreferenceStore {
         var all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
         all[storageKey(bundleId: bundleId, query: query)] = kind.rawValue
         UserDefaults.standard.set(all, forKey: key)
+    }
+
+    /// Everything remembered for an app, as (request shape, route kind). Shown in the
+    /// side panel: a preference the user cannot see is one they cannot undo.
+    static func remembered(bundleId: String) -> [(intent: String, kind: ChatRoute.Kind)] {
+        let all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        return all.compactMap { entry in
+            guard entry.key.hasPrefix("\(bundleId)|"),
+                let kind = ChatRoute.Kind(rawValue: entry.value)
+            else { return nil }
+            let intent = String(entry.key.dropFirst(bundleId.count + 1))
+                .replacingOccurrences(of: "-", with: " ")
+            return (intent, kind)
+        }
+        .sorted { $0.intent < $1.intent }
     }
 
     static func forget(bundleId: String) {
