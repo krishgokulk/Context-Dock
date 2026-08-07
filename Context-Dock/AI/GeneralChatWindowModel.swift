@@ -31,6 +31,9 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Apps the answer should be about — the composer's app picker. Several at once
     /// is the point: a chat can be scoped to Reminders and Safari together.
     @Published var attachedAppNames: [String] = []
+    /// Verbatim output of the last route that ran, shown in the Console panel. A receipt
+    /// the user can read beats a summary they have to trust.
+    @Published var consoleOutput: String = ""
     /// Which apps were attached when each message was sent, so the transcript keeps
     /// showing what a question was asked *about* after the scope changes. In memory
     /// only — the stored conversation format has no field for it, and a reopened
@@ -198,6 +201,53 @@ final class GeneralChatWindowModel: ObservableObject {
         case .app(let bundleId):
             return sessions.first { $0.scope == activeScope }?.title ?? bundleId
         }
+    }
+
+    /// Files an answer, carrying whatever it came with: the enable button, the route
+    /// choices, the console receipt.
+    private func apply(
+        _ answer: AppScopedChatService.Answer, to scope: GeneralChatScope, title: String
+    ) {
+        if let output = answer.consoleOutput {
+            consoleOutput = output
+            GeneralChatWindowChromeState.shared.showBottomPanel()
+        }
+        deliver(
+            AIChatMessage(
+                role: .assistant, content: answer.text,
+                mcpToolsRan: answer.toolChips,
+                enableAppRequest: answer.enableApp,
+                actionChoices: answer.routeChoices),
+            to: scope, title: title)
+    }
+
+    /// The user picked how to carry out the last request. Runs that route, remembers the
+    /// choice for next time, and answers from what it produced.
+    func pickRoute(_ choice: ActionChoice) {
+        guard !isSending else { return }
+        let question = lastUserQuestion
+        let scope = activeScope
+        let title = activeTitle
+        let key = scope.storageKey
+        let history: [ChatMessage] = messages.compactMap { message in
+            switch message.role {
+            case .user: return ChatMessage(role: .user, content: message.content)
+            case .assistant: return ChatMessage(role: .assistant, content: message.content)
+            case .tool, .approval: return nil
+            }
+        }
+
+        sendingScopeKeys.insert(key)
+        sendTasks[key] = Task { [weak self] in
+            let answer = await AppScopedChatService.runChosenRoute(
+                choice.id, query: question, history: history)
+            await MainActor.run { self?.apply(answer, to: scope, title: title) }
+        }
+    }
+
+    /// The question the route choice belongs to.
+    private var lastUserQuestion: String {
+        messages.last { $0.role == .user }?.content ?? ""
     }
 
     /// "Enable <app> for this chat": attach the app, then ask the question again so the
@@ -450,12 +500,7 @@ final class GeneralChatWindowModel: ObservableObject {
                     return
                 }
                 await MainActor.run {
-                    self?.deliver(
-                        AIChatMessage(
-                            role: .assistant, content: answer.text,
-                            mcpToolsRan: answer.toolChips,
-                            enableAppRequest: answer.enableApp),
-                        to: sendScope, title: sendTitle)
+                    self?.apply(answer, to: sendScope, title: sendTitle)
                 }
             } catch {
                 guard !Task.isCancelled else {

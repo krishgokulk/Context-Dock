@@ -45,6 +45,13 @@ final class GeneralChatWindowChromeState: ObservableObject {
         withAnimation(.easeOut(duration: 0.18)) { sidebarVisible.toggle() }
     }
 
+    /// Opens the console without toggling it shut when it is already open — used when a
+    /// route produces output the user should see.
+    func showBottomPanel() {
+        guard !bottomPanelVisible else { return }
+        withAnimation(.easeOut(duration: 0.18)) { bottomPanelVisible = true }
+    }
+
     func toggleBottomPanel() {
         withAnimation(.easeOut(duration: 0.18)) { bottomPanelVisible.toggle() }
     }

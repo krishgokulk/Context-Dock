@@ -31,6 +31,65 @@ enum AppScopedChatService {
         /// Set when the question is about an app this chat may not read. The surface shows
         /// it as a one-tap "Enable <app> for this chat" button.
         var enableApp: EnableAppRequest? = nil
+        /// Set when several routes could carry out the request and they differ in
+        /// consequence. The surface shows them as pick-one buttons.
+        var routeChoices: [ActionChoice] = []
+        /// Raw output of a route that ran, for the Console panel.
+        var consoleOutput: String? = nil
+    }
+
+    /// Routes offered for the last question, by choice id, so a pick can be executed
+    /// without re-resolving (and without the resolution having drifted in between).
+    private(set) static var pendingRoutes: [String: ChatRoute] = [:]
+
+    /// Runs a route the user picked, then has the model phrase the result. The output is
+    /// returned verbatim as well, because a receipt the user can read beats a summary they
+    /// have to trust.
+    static func runChosenRoute(
+        _ choiceID: String, query: String, history: [ChatMessage]
+    ) async -> Answer {
+        guard let route = pendingRoutes[choiceID] else {
+            return Answer(text: "That route is no longer available.", toolChips: [])
+        }
+        ChatRoutePreferenceStore.remember(
+            route.kind, bundleId: route.bundleId, query: query)
+        return await execute(route: route, query: query, history: history)
+    }
+
+    private static func execute(
+        route: ChatRoute, query: String, history: [ChatMessage]
+    ) async -> Answer {
+        log.notice("route: \(route.kind.rawValue, privacy: .public) \(route.title, privacy: .public)")
+        let result = await ChatRouteResolver.run(route, query: query)
+
+        let settings = AppSettings.shared
+        let provider = settings.selectedAIProvider
+        let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
+        let phrased: String
+        if result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            phrased = result.success
+                ? "Done — \(route.title)."
+                : "\(route.title) didn't run."
+        } else {
+            // The model turns output into an answer; it never invents one, because the
+            // output is right there beside it in the Console.
+            phrased =
+                (try? await AIProviderService.shared.sendMessage(
+                    "Ran `\(route.title)` for \(route.appName). Output:\n\n"
+                        + result.output.prefix(6_000)
+                        + "\n\nAnswer the user's question from this output only: \(query)",
+                    context: .appFocused(name: route.appName, bundleID: route.bundleId),
+                    provider: provider,
+                    apiKey: rawKey.isEmpty ? nil : rawKey,
+                    conversationHistory: history,
+                    surfaceScoped: true))
+                .map(ChatAnswerSanitizer.clean)
+                ?? result.output
+        }
+        return Answer(
+            text: phrased,
+            toolChips: ["\(route.kind.rawValue) · \(route.title)"],
+            consoleOutput: result.output.isEmpty ? nil : result.output)
     }
 
     /// Adds a plural form of every word alongside the original, so a query written in the
@@ -208,6 +267,32 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // Which routes could actually carry this out, resolved before the model is asked
+        // anything. Asking the user which to use is only worth it when they differ in
+        // consequence — that check is in the resolver.
+        if case .app(let bundleId) = scope {
+            let routes = ChatRouteResolver.routes(
+                for: query, bundleId: bundleId, appName: appName)
+            if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
+                pendingRoutes = Dictionary(
+                    uniqueKeysWithValues: routes.map { ($0.id, $0) })
+                log.notice("stage: asking which route (\(routes.count, privacy: .public))")
+                return Answer(
+                    text:
+                        "\(appName) can do that more than one way. Which should I use?",
+                    toolChips: [],
+                    routeChoices: routes.map(\.asActionChoice))
+            }
+            // Already answered for this app and this kind of request: take that route
+            // without asking again.
+            if let preferred = ChatRoutePreferenceStore.preferredKind(
+                bundleId: bundleId, query: query),
+                let route = routes.first(where: { $0.kind == preferred })
+            {
+                return await execute(route: route, query: query, history: history)
+            }
+        }
+
         var sections: [String] = [dateTimeBlock()]
         var context: UserContext = .none
 

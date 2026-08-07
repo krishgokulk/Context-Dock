@@ -480,7 +480,8 @@ struct GeneralChatWindowView: View {
                             }
                             AIChatMessageView(
                                 message: message,
-                                onEnableApp: { model.enableApp($0) })
+                                onEnableApp: { model.enableApp($0) },
+                                onPickAction: { model.pickRoute($0) })
                         }
                         .id(message.id)
                     }
@@ -595,9 +596,10 @@ struct GeneralChatWindowView: View {
             panelHeader("Console") { chrome.toggleBottomPanel() }
             Divider().opacity(0.4)
             ScrollView {
-                Text("No output yet.")
+                Text(model.consoleOutput.isEmpty ? "No output yet." : model.consoleOutput)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(model.consoleOutput.isEmpty ? .secondary : .primary)
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
             }
