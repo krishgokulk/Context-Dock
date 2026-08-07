@@ -104,6 +104,24 @@ enum ChatRouteResolver {
         }
     }
 
+    /// True when the user asked for something to be *done*. "what page am I on" is a
+    /// question about state; offering to run a menu command for it is noise, and the
+    /// answer should come from context the app already exposes.
+    static func isActionRequest(_ query: String) -> Bool {
+        let lowered = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let questionStarts = [
+            "what", "which", "who", "when", "where", "why", "how", "is ", "are ", "do ",
+            "does ", "did ", "can ", "am i", "tell me", "show me my", "my ",
+        ]
+        if questionStarts.contains(where: lowered.hasPrefix) { return false }
+        if lowered.hasSuffix("?") { return false }
+        let actionVerbs = mutatingVerbs + [
+            "open", "launch", "start", "stop", "show", "list", "export", "copy", "paste",
+            "refresh", "reload", "search", "find", "jump", "switch", "toggle",
+        ]
+        return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
+    }
+
     static func routes(
         for query: String, bundleId: String, appName: String
     ) async -> [ChatRoute] {
@@ -128,6 +146,12 @@ enum ChatRouteResolver {
         for package in TerminalPackageManager.shared.packages
         where package.isEnabled && package.contextAppBundleIds.contains(bundleId) {
             let subcommand = package.subcommands.first { matches($0) }
+            // Offering the bare binary for any question is how "what page am I on" was
+            // answered with a choice between `markitdown` and `play`. A linked tool is a
+            // route only when something in it actually matches the request.
+            guard subcommand != nil || terms.contains(package.command.lowercased()) else {
+                continue
+            }
             let command = subcommand.map { "\(package.command) \($0)" } ?? package.command
             routes.append(
                 ChatRoute(
@@ -159,7 +183,12 @@ enum ChatRouteResolver {
 
         let menuItems = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleId, appName: appName, query: query, maxResults: 6)
-        for item in menuItems where item.isLeaf && !item.path.isEmpty {
+        for item in menuItems
+        where item.isLeaf && !item.path.isEmpty
+            // Match the command, not its menu. Matching any path component is what put
+            // "Edit ▸ Copy" and "Edit ▸ Delete" in front of a question about an IP address,
+            // because both live under a menu whose name shares nothing with the request.
+            && item.path.last.map(matches) == true {
             let path = item.path.joined(separator: " ▸ ")
             routes.append(
                 ChatRoute(
@@ -209,6 +238,7 @@ enum ChatRouteResolver {
     /// something or takes the screen, and the user has not already answered this question
     /// for this app.
     static func shouldAsk(routes: [ChatRoute], bundleId: String, query: String) -> Bool {
+        guard isActionRequest(query) else { return false }
         guard routes.count > 1 else { return false }
         guard ChatRoutePreferenceStore.preferredKind(bundleId: bundleId, query: query) == nil
         else { return false }

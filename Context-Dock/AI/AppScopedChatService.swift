@@ -66,10 +66,16 @@ enum AppScopedChatService {
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
         let phrased: String
-        if result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            phrased = result.success
-                ? "Done — \(route.title)."
-                : "\(route.title) didn't run."
+        if !result.success {
+            // Say what happened rather than handing the model an empty result to narrate.
+            // A denied command answered as "the current page information is unavailable"
+            // told the user nothing about the denial that caused it.
+            let reason = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            phrased = reason.isEmpty
+                ? "`\(route.title)` didn't run."
+                : "`\(route.title)` didn't run — \(reason)"
+        } else if result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            phrased = "Done — \(route.title)."
         } else {
             // The model turns output into an answer; it never invents one, because the
             // output is right there beside it in the Console.
@@ -231,6 +237,34 @@ enum AppScopedChatService {
         return "Live window state (read just now, factual):\n" + lines.joined(separator: "\n")
     }
 
+    /// The page a browser scope is currently on. "What page am I on?" is answerable from
+    /// the browser itself; without this the window had the app's capability list and no
+    /// idea what was open in it, so it offered to reload a page it could not name.
+    static func browserPageFacts(bundleID: String) -> String? {
+        guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
+        let detector = ContextDetector.shared
+        switch bundleID {
+        case "com.apple.Safari":
+            if let page = detector.getSafariPageContextForAI() {
+                return "Current page (read just now, factual):\n\(page)"
+            }
+            if let page = detector.getSafariContext() {
+                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+            }
+        case "com.google.Chrome":
+            if let page = detector.getChromeContext() {
+                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+            }
+        case "company.thebrowser.Browser":
+            if let page = detector.getArcContext() {
+                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+            }
+        default:
+            break
+        }
+        return nil
+    }
+
     // MARK: - Request
 
     /// Asks the provider about an app or CLI scope with the grounding above, and lets it
@@ -325,6 +359,7 @@ enum AppScopedChatService {
                 product knowledge and never claim you lack access to an app listed here.
                 """)
             if let facts = liveWindowFacts(bundleID: bundleId) { sections.append(facts) }
+            if let page = browserPageFacts(bundleID: bundleId) { sections.append(page) }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.
             let capabilities = ScopedAppPromptBuilder.appIdentityBlock(
