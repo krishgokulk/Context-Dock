@@ -532,6 +532,13 @@ final class GeneralChatWindowModel: ObservableObject {
         sendTasks[key] = nil
     }
 
+    /// Closes any console row still running for a thread whose turn has ended, so the log
+    /// never shows work in progress that nothing is doing.
+    private func settleConsole(_ scope: GeneralChatScope) {
+        ChatConsoleLog.shared.settleRunning(
+            scope: scope, note: "Stopped when the turn ended.")
+    }
+
     private func deliver(
         _ message: AIChatMessage, to scope: GeneralChatScope, title: String
     ) {
@@ -540,6 +547,7 @@ final class GeneralChatWindowModel: ObservableObject {
         // turn, and the loser is dropped rather than appended twice.
         guard sendingScopeKeys.contains(scope.storageKey) else { return }
         sendingScopeKeys.remove(scope.storageKey)
+        settleConsole(scope)
         sendTasks[scope.storageKey] = nil
 
         if scope == activeScope {

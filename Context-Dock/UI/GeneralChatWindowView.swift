@@ -733,14 +733,44 @@ struct GeneralChatWindowView: View {
     private func consoleEntry(_ entry: ChatConsoleEntry) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: entry.source.symbol)
-                    .font(.system(size: 9))
-                    .foregroundStyle(entry.success ? Color.secondary : Color.red)
+                if entry.isRunning {
+                    ProgressView().controlSize(.small).scaleEffect(0.5).frame(width: 12)
+                } else {
+                    Image(systemName: entry.source.symbol)
+                        .font(.system(size: 9))
+                        .foregroundStyle(entry.success ? Color.secondary : Color.red)
+                }
                 Text(entry.title)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(entry.success ? Color.primary : Color.red)
+                    .foregroundStyle(
+                        entry.isRunning
+                            ? Color.secondary : (entry.success ? Color.primary : Color.red))
                     .lineLimit(2)
+
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(entry.title, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy this command")
+
                 Spacer(minLength: 8)
+
+                if entry.isRunning {
+                    Text("running…")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else if let duration = entry.duration, duration >= 0.1 {
+                    // How long it took. A tool that takes eight seconds every time is worth
+                    // knowing about before it becomes a mystery.
+                    Text(String(format: "%.1fs", duration))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
                 Text(Self.consoleTime(entry.at))
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)

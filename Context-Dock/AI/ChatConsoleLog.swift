@@ -30,14 +30,34 @@ struct ChatConsoleEntry: Identifiable, Equatable {
         }
     }
 
-    let id = UUID()
+    let id: UUID
     let at: Date
     let source: Source
     /// What ran, verbatim where possible: `git log -1`, `run_capability(yt-history)`.
     let title: String
     /// Raw output. Never summarised — a receipt that paraphrases is not a receipt.
-    let output: String
-    let success: Bool
+    var output: String
+    var success: Bool
+    /// Still running. A row that appears the moment work starts is the difference between
+    /// a slow tool and a dead one — the ambiguity that made every earlier stall unreadable.
+    var isRunning: Bool = false
+    /// How long it took, once it is done.
+    var duration: TimeInterval?
+
+    init(
+        id: UUID = UUID(), at: Date = Date(), source: Source, title: String,
+        output: String = "", success: Bool = true, isRunning: Bool = false,
+        duration: TimeInterval? = nil
+    ) {
+        self.id = id
+        self.at = at
+        self.source = source
+        self.title = title
+        self.output = output
+        self.success = success
+        self.isRunning = isRunning
+        self.duration = duration
+    }
 }
 
 @MainActor
@@ -73,6 +93,43 @@ final class ChatConsoleLog: ObservableObject {
             ChatConsoleEntry(
                 at: Date(), source: source, title: title, output: output, success: success),
             scope: scope)
+    }
+
+    /// Opens a row for work that has started, and returns its id so the caller can close
+    /// it when the work finishes.
+    @discardableResult
+    func begin(
+        _ source: ChatConsoleEntry.Source, title: String, scope: GeneralChatScope
+    ) -> UUID {
+        let entry = ChatConsoleEntry(source: source, title: title, isRunning: true)
+        append(entry, scope: scope)
+        return entry.id
+    }
+
+    func finish(
+        _ id: UUID, output: String, success: Bool, scope: GeneralChatScope
+    ) {
+        guard var list = entriesByScope[scope.storageKey],
+            let index = list.firstIndex(where: { $0.id == id })
+        else { return }
+        list[index].output = output
+        list[index].success = success
+        list[index].isRunning = false
+        list[index].duration = Date().timeIntervalSince(list[index].at)
+        entriesByScope[scope.storageKey] = list
+    }
+
+    /// Closes any row still marked running — used when a turn ends without the work
+    /// reporting back, so the log never shows a spinner for something that stopped.
+    func settleRunning(scope: GeneralChatScope, note: String) {
+        guard var list = entriesByScope[scope.storageKey] else { return }
+        for index in list.indices where list[index].isRunning {
+            list[index].isRunning = false
+            list[index].success = false
+            list[index].duration = Date().timeIntervalSince(list[index].at)
+            if list[index].output.isEmpty { list[index].output = note }
+        }
+        entriesByScope[scope.storageKey] = list
     }
 
     func clear(scope: GeneralChatScope) {

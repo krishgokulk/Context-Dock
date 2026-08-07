@@ -60,7 +60,15 @@ enum AppScopedChatService {
         route: ChatRoute, query: String, history: [ChatMessage]
     ) async -> Answer {
         log.notice("route: \(route.kind.rawValue, privacy: .public) \(route.title, privacy: .public)")
+        let routeScope = GeneralChatScope.app(bundleId: route.bundleId)
+        let rowID = ChatConsoleLog.shared.begin(.route, title: route.title, scope: routeScope)
         let result = await ChatRouteResolver.run(route, query: query)
+        ChatConsoleLog.shared.finish(
+            rowID,
+            output: result.output.isEmpty
+                ? (result.success ? "(no output)" : "(failed, no output)") : result.output,
+            success: result.success,
+            scope: routeScope)
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -92,12 +100,6 @@ enum AppScopedChatService {
                 .map(ChatAnswerSanitizer.clean)
                 ?? result.output
         }
-        ChatConsoleLog.shared.append(
-            .route,
-            title: route.title,
-            output: result.output,
-            success: result.success,
-            scope: .app(bundleId: route.bundleId))
         return Answer(
             text: phrased,
             toolChips: ["\(route.kind.rawValue) · \(route.title)"],
@@ -515,8 +517,23 @@ enum AppScopedChatService {
 
         let executor: (String, String, Bool) async -> (Bool, String) = {
             command, purpose, needsApproval in
-            await TerminalCommandExecutor.shared.run(
+            // Opened before the command runs, closed when it returns: a row that appears
+            // immediately is what tells the user a slow tool is working rather than dead.
+            let rowID = await MainActor.run {
+                ChatConsoleLog.shared.begin(.command, title: command, scope: scope)
+            }
+            let result = await TerminalCommandExecutor.shared.run(
                 command, purpose: purpose, modelRequiresApproval: needsApproval)
+            await MainActor.run {
+                ChatConsoleLog.shared.finish(
+                    rowID,
+                    output: result.output.isEmpty
+                        ? (result.success ? "(no output)" : "(failed, no output)")
+                        : result.output,
+                    success: result.success,
+                    scope: scope)
+            }
+            return result
         }
 
         log.notice("stage: provider sendWithTools")
@@ -560,10 +577,14 @@ enum AppScopedChatService {
         // Everything the model ran during this turn, on the record with its real output.
         // The chips say a tool ran; the console says what it produced, which is the part
         // a user can check.
-        for command in executed {
+        // Tool calls the loop made without going through our executor — capabilities, MCP,
+        // registry tools. Shell commands are already on the record, live, from the executor
+        // above, so they are not written twice.
+        let alreadyLogged = Set(
+            ChatConsoleLog.shared.entries(for: scope).map(\.title))
+        for command in executed where !alreadyLogged.contains(command.command) {
             ChatConsoleLog.shared.append(
-                command.command.hasPrefix("run_") || command.command.contains("(")
-                    ? .tool : .command,
+                .tool,
                 title: command.command,
                 output: command.output,
                 success: command.success,
