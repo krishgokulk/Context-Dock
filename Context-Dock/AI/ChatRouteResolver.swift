@@ -33,6 +33,23 @@ struct ChatRoute: Identifiable, Equatable {
             }
         }
 
+        /// Fixed preference order: the app's own API, then structured tools, then
+        /// inspectable commands, then the screen, then the model. Deterministic before
+        /// probabilistic, without asking the model which it prefers.
+        var rank: Int {
+            switch self {
+            case .adapterAction: return 1
+            case .mcpTool: return 2
+            case .cli: return 3
+            case .menuCommand: return 4
+            case .model: return 5
+            }
+        }
+
+        /// True when running it takes the screen. The user is choosing between "answer me"
+        /// and "drive my Mac"; that is the cost that matters to them.
+        var takesTheScreen: Bool { self == .menuCommand }
+
         var symbol: String {
             switch self {
             case .cli: return "terminal"
@@ -227,9 +244,27 @@ enum ChatRouteResolver {
 
         // Deduplicate by title so the same capability offered by two subsystems is one
         // choice, and cap the list: five ways to do one thing is not a decision, it is a
-        // quiz.
+        // quiz. Ranked first, so the cap keeps the best routes rather than the first-found
+        // ones, and so the leading choice is the one the layer would take unattended.
         var seen = Set<String>()
-        return routes.filter { seen.insert($0.title.lowercased()).inserted }.prefix(4).map { $0 }
+        return
+            routes
+            .sorted {
+                if $0.kind.rank != $1.kind.rank { return $0.kind.rank < $1.kind.rank }
+                // Same kind: a read is a safer default than something that changes state.
+                if $0.isReadOnly != $1.isReadOnly { return $0.isReadOnly }
+                return $0.title.count < $1.title.count
+            }
+            .filter { seen.insert($0.title.lowercased()).inserted }
+            .prefix(4)
+            .map { $0 }
+    }
+
+    /// The route the layer takes when no decision is needed: highest-ranked, read-only.
+    /// Deterministic before probabilistic means acting on it without consulting the model
+    /// about which subsystem it would rather use.
+    static func unattendedRoute(_ routes: [ChatRoute]) -> ChatRoute? {
+        routes.first { $0.isReadOnly && !$0.kind.takesTheScreen }
     }
 
     /// True when the user should be asked which route to take.

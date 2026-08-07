@@ -73,6 +73,23 @@ enum AppScopedChatService {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
+        // Verification, not narration. An action that changed something is checked by
+        // reading the app back, so the answer reports what is true rather than what was
+        // attempted.
+        var verification: String?
+        if result.success, !route.isReadOnly {
+            try? await Task.sleep(nanoseconds: 400_000_000)  // let the app settle
+            verification = liveWindowFacts(bundleID: route.bundleId)
+            if let verification {
+                ChatConsoleLog.shared.append(
+                    .note,
+                    title: "verified \(route.appName) state",
+                    output: verification,
+                    success: true,
+                    scope: routeScope)
+            }
+        }
+
         let phrased: String
         if !result.success {
             // Say what happened rather than handing the model an empty result to narrate.
@@ -83,7 +100,8 @@ enum AppScopedChatService {
                 ? "`\(route.title)` didn't run."
                 : "`\(route.title)` didn't run — \(reason)"
         } else if result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            phrased = "Done — \(route.title)."
+            phrased = verification.map { "Done — \(route.title).\n\n\($0)" }
+                ?? "Done — \(route.title)."
         } else {
             // The model turns output into an answer; it never invents one, because the
             // output is right there beside it in the Console.
@@ -91,6 +109,7 @@ enum AppScopedChatService {
                 (try? await AIProviderService.shared.sendMessage(
                     "Ran `\(route.title)` for \(route.appName). Output:\n\n"
                         + result.output.prefix(6_000)
+                        + (verification.map { "\n\nState afterwards:\n\($0)" } ?? "")
                         + "\n\nAnswer the user's question from this output only: \(query)",
                     context: .appFocused(name: route.appName, bundleID: route.bundleId),
                     provider: provider,
@@ -380,6 +399,12 @@ enum AppScopedChatService {
                 bundleId: bundleId, query: query),
                 let route = routes.first(where: { $0.kind == preferred })
             {
+                return await execute(route: route, query: query, history: history)
+            }
+            // Deterministic before probabilistic: a read the app can answer itself beats
+            // sending the question to a model with a catalogue and hoping it picks well.
+            if let route = ChatRouteResolver.unattendedRoute(routes) {
+                log.notice("stage: unattended route \(route.kind.rawValue, privacy: .public)")
                 return await execute(route: route, query: query, history: history)
             }
         }
