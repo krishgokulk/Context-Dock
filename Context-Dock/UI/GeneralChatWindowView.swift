@@ -12,6 +12,9 @@ import SwiftUI
 struct GeneralChatWindowView: View {
     @ObservedObject private var chrome = GeneralChatWindowChromeState.shared
     @ObservedObject private var model = GeneralChatWindowModel.shared
+    /// The same approval queue the dock reads, so a command proposed in a window thread can
+    /// be answered here rather than expiring unseen.
+    @ObservedObject private var terminalBridge = TerminalAIBridge.shared
     @Environment(\.colorScheme) private var colorScheme
 
     private var dark: Bool { colorScheme == .dark }
@@ -429,6 +432,7 @@ struct GeneralChatWindowView: View {
             } else {
                 transcript
             }
+            approvalCard
             composer
         }
     }
@@ -509,6 +513,57 @@ struct GeneralChatWindowView: View {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
+        }
+    }
+
+    /// Approve or deny a command the thread proposed.
+    ///
+    /// Without this the window could ask to run something and had nowhere to say yes: the
+    /// approval card lives on the dock, so a request raised from a window thread sat unanswered
+    /// until its 60-second continuation expired and came back as "Command denied by user" — which
+    /// is why the console never showed a command running. Same TerminalAIBridge.pendingApproval
+    /// the dock reads, so a request is answered wherever the user actually is.
+    @ViewBuilder
+    private var approvalCard: some View {
+        if let pending = terminalBridge.pendingApproval {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.green)
+                    Text("Run command?")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text(pending.classification.riskLevel.displayName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.orange)
+                }
+                if !pending.purpose.isEmpty {
+                    Text(pending.purpose)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Text(pending.command)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(
+                        Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                HStack(spacing: 8) {
+                    Button("Deny") { terminalBridge.denyCommand() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    Button("Approve & Run") { terminalBridge.approveCommand(pending.command) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.orange.opacity(0.08))
+            .overlay(alignment: .top) { Divider().opacity(0.4) }
         }
     }
 
