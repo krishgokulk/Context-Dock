@@ -28,6 +28,7 @@ struct GeneralChatWindowView: View {
     /// Bumped when remembered routes are cleared, so the list redraws — the store is
     /// UserDefaults-backed and publishes nothing on its own.
     @State private var routeResetToken = 0
+    @State private var cachedInventory: ScopeInventory?
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -51,6 +52,12 @@ struct GeneralChatWindowView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .ignoresSafeArea()
+        .task(id: model.activeScope.storageKey) {
+            cachedInventory = model.activeScopeInventory
+        }
+        .onChange(of: routeResetToken) { _, _ in
+            cachedInventory = model.activeScopeInventory
+        }
     }
 
     /// Opaque so the two-tone split against the translucent sidebar is visible.
@@ -797,7 +804,10 @@ struct GeneralChatWindowView: View {
     }
 
     private var sidePanel: some View {
-        let inventory = model.activeScopeInventory
+        // Read once per scope change, not per redraw. This calls into AX and the capability
+        // stores; doing it on every frame put main-thread work behind every animation in
+        // the window.
+        let inventory = cachedInventory ?? model.activeScopeInventory
         return VStack(alignment: .leading, spacing: 0) {
             // Scope pill, not a title: the panel belongs to a thread, and the thread is
             // named by its app.

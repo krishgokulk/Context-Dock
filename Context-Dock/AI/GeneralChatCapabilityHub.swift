@@ -144,6 +144,7 @@ final class GeneralChatCapabilityHub {
             // handshake. One server that never answers used to hold the whole chat at
             // "Looking for MCP and app tools…" with no way out. A server that is too slow
             // to answer is treated as a server with no tools.
+            Self.log.notice("hub: asking \(adapter.appName, privacy: .public)")
             let tools = await Self.withTimeout(
                 seconds: 6,
                 fallback: [(server: String, serverId: UUID, tool: MCPTool)]()
@@ -170,6 +171,7 @@ final class GeneralChatCapabilityHub {
         }
 
         Self.log.notice("hub: saved chats")
+        Self.log.notice("hub: mcp loop done")
         let historyApps = savedChatApps()
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 

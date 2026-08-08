@@ -594,8 +594,16 @@ enum AppScopedChatService {
         if !liveAppleData.isEmpty { sections.append(liveAppleData) }
 
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
-        log.notice("stage: capability hub")
-        let hubBlock = await withTimeout(seconds: 8, fallback: "") {
+        // A CLI thread is one executable. The cross-app catalogue is noise there — and
+        // building it means walking every linked MCP server, which is where these turns
+        // were dying: a scope that needs none of it was paying for all of it.
+        let needsCrossAppCatalogue: Bool = {
+            if case .cli = scope { return false }
+            return true
+        }()
+
+        log.notice("stage: capability hub (\(needsCrossAppCatalogue ? "yes" : "skipped", privacy: .public))")
+        let hubBlock = !needsCrossAppCatalogue ? "" : await withTimeout(seconds: 8, fallback: "") {
             await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: provider == .onDevice,
                 query: query,
