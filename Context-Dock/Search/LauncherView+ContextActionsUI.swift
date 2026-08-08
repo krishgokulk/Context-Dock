@@ -1113,7 +1113,14 @@ extension LauncherView {
                             ? "Running \(current)…"
                             : "Step \(attempt): running \(current)…")
                 }
-                let result = await TerminalCommandExecutor.shared.runPreApproved(current) { line in
+                // Same thread the chat window lists for this scope: a command approved in the
+                // dock belongs on that thread's console, whichever surface approved it.
+                let consoleScope = await MainActor.run {
+                    GeneralChatScope(dockBundleId: currentGlobalScopedBundleID)
+                }
+                let result = await TerminalCommandExecutor.shared.runPreApproved(
+                    current, consoleScope: consoleScope
+                ) { line in
                     // Live progress: the tool's own latest line, cleaned of the escape codes it
                     // prints for colour. Status only — the full output is kept for the answer.
                     let clean = TerminalPackageManager.strippingANSI(line)

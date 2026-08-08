@@ -199,6 +199,25 @@ class TerminalPackageManager: ObservableObject {
         packages[index].isInteractive = isInteractive
         savePackages()
         refreshInteractiveCommands()
+        // The mark changed, so the per-subcommand verdicts learned under the old one are no
+        // longer evidence about anything.
+        CommandInteractivity.forget(tool: packages[index].command)
+    }
+
+    /// Directories holding the tools the user deliberately scoped, most-specific first.
+    ///
+    /// Prepended to PATH for every command DoraX runs. A tool installed to ~/.local/bin (pipx,
+    /// cargo, a curl installer) is on PATH only if one of the user's dotfiles puts it there —
+    /// so a tool DoraX had scanned, listed with its full path and let the user scope could
+    /// still come back "command not found" the moment the model invoked it by name.
+    func pinnedToolDirectories() -> [String] {
+        var seen = Set<String>()
+        return packages
+            .filter { $0.isEnabled && isUserAddedGlobalScope($0) }
+            .compactMap { $0.installedPath }
+            .filter { !$0.isEmpty }
+            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private let packagesKey = "L2TerminalPackages"

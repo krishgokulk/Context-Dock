@@ -1504,6 +1504,21 @@ struct LauncherView: View {
                 CommandApprovalWindowHost.close()
             }
         }
+        .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
+            // A capability approval is a second, separate way a turn can block — its own
+            // window, its own centre, nothing to do with TerminalAIBridge. The status line
+            // watched only the bridge, so a chat waiting on this window kept displaying
+            // whatever stage set it last ("Checking that actually happened…") and read as a
+            // hang while the answer was one click away, behind a window the dock had put on
+            // screen itself.
+            guard l2.isLoading else { return }
+            if let pending {
+                l2.loadingStatus =
+                    "Waiting for your approval — \(pending.capability.title.lowercased())…"
+            } else if l2.loadingStatus?.hasPrefix("Waiting for your approval") == true {
+                l2.loadingStatus = "Working…"
+            }
+        }
         .onReceive(TerminalAIBridge.shared.$currentCommand) { command in
             // TerminalAIBridge is the authoritative execution signal. Updating from it
             // avoids fake timer-based progress and keeps the CLI agent transcript aligned

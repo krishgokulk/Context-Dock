@@ -5070,7 +5070,11 @@ extension LauncherView {
                         // the classifier, and the approval sheet.
                         return await TerminalCommandExecutor.shared.run(
                             command, purpose: purpose,
-                            modelRequiresApproval: modelRequiresApproval)
+                            modelRequiresApproval: modelRequiresApproval,
+                            // Same thread the general chat window shows for this scope, so
+                            // its console holds what the dock ran, not only what the window
+                            // ran. One record of the work, two views of it.
+                            consoleScope: GeneralChatScope(dockBundleId: scopedBundleId))
                     }
                     let toolQuery = activeContextPrompt.isEmpty
                         ? query
@@ -5493,6 +5497,28 @@ extension LauncherView {
         await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
     }
 
+    /// Reads the app back after an action and reports what actually moved.
+    ///
+    /// "Done" is a claim about the model's intent; this is a claim about the machine. An
+    /// action that succeeds mechanically while nothing changes — a menu item that was
+    /// disabled, a command that hit the wrong window — is exactly the case a user cannot
+    /// spot from a confident reply.
+    static func verify(
+        ran: Bool, label: String, bundleId: String, appName: String,
+        before: ResolvedContext
+    ) async -> String {
+        guard ran else { return "Couldn't run \(label)." }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        let changes = await MainActor.run { () -> [String] in
+            ContextResolver.resolve(scope: .app(bundleId: bundleId), appName: appName)
+                .changes(since: before)
+        }
+        guard !changes.isEmpty else {
+            return "Ran \(label), but nothing observable changed in \(appName)."
+        }
+        return "Done — \(label).\n\n" + changes.map { "· \($0)" }.joined(separator: "\n")
+    }
+
     /// Runs a `menu_call` / `adapter_call` the model emitted as plain text and returns the
     /// confirmation that replaces the JSON. Every provider path needs this: only the cloud
     /// tool loop used to execute these, so an on-device or Shortcuts reply printed the raw
@@ -5518,10 +5544,15 @@ extension LauncherView {
             guard !path.isEmpty else { return nil }
             let label = path.joined(separator: " ▸ ")
             await setL2LoadingStatus("Running \(label)…", requestID: requestID)
+            let before = await MainActor.run {
+                ContextResolver.resolve(scope: .app(bundleId: bundle), appName: scopeName)
+            }
             let (ok, out) = await AppAdapterManager.shared.runMenuPath(
                 path, targetBundleId: bundle, appName: scopeName)
+            let verdict = await Self.verify(
+                ran: ok, label: label, bundleId: bundle, appName: scopeName, before: before)
             return (
-                ok ? "Done — \(label)." : (out.isEmpty ? "Couldn't run \(label)." : out),
+                ok ? verdict : (out.isEmpty ? "Couldn't run \(label)." : out),
                 [label]
             )
 
@@ -5541,12 +5572,18 @@ extension LauncherView {
             let ctx = await MainActor.run {
                 self.sanitizedAXContextForScope(self.axContext, scopedBundleId: bundle)
             }
+            let beforeAction = await MainActor.run {
+                ContextResolver.resolve(scope: .app(bundleId: bundle), appName: scopeName)
+            }
             let (ok, out) = await AppAdapterManager.shared.execute(
                 action, context: ctx, targetBundleId: bundle,
                 query: invocation.arguments["query"] ?? userQuery)
+            let actionVerdict = await Self.verify(
+                ran: ok, label: action.name, bundleId: bundle, appName: scopeName,
+                before: beforeAction)
             return (
                 ok
-                    ? (out.isEmpty ? "Done — \(action.name)." : out)
+                    ? (out.isEmpty ? actionVerdict : "\(out)\n\n\(actionVerdict)")
                     : (out.isEmpty ? "Couldn't run \(action.name)." : out),
                 [action.name]
             )
@@ -6662,7 +6699,8 @@ extension LauncherView {
                         (String, String, Bool) async -> (Bool, String) = { command, purpose, needsApproval in
                             await TerminalCommandExecutor.shared.run(
                                 command, purpose: purpose,
-                                modelRequiresApproval: needsApproval)
+                                modelRequiresApproval: needsApproval,
+                                consoleScope: .general)
                         }
                     await MainActor.run { aiMode.loadingStatus = "Working…" }
                     var (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(

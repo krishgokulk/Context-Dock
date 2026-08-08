@@ -177,6 +177,14 @@ enum AppScopedChatService {
             GeneralAIActionResolver.shared.namedInstalledApp(in: query)
             ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
         guard let named else { return nil }
+        // Match on the name first. Resolving an attached name to a bundle id depends on
+        // the app running or on a warmed installed-apps cache, and when neither held, an
+        // app the user had just enabled looked unattached — so the gate asked again, and
+        // again, with the Enable button doing nothing each time.
+        if attachedAppNames.contains(where: {
+            $0.caseInsensitiveCompare(named.name) == .orderedSame
+        }) { return nil }
+
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
                 NSWorkspace.shared.runningApplications
@@ -622,23 +630,12 @@ enum AppScopedChatService {
 
         let executor: (String, String, Bool) async -> (Bool, String) = {
             command, purpose, needsApproval in
-            // Opened before the command runs, closed when it returns: a row that appears
-            // immediately is what tells the user a slow tool is working rather than dead.
-            let rowID = await MainActor.run {
-                ChatConsoleLog.shared.begin(.command, title: command, scope: scope)
-            }
-            let result = await TerminalCommandExecutor.shared.run(
-                command, purpose: purpose, modelRequiresApproval: needsApproval)
-            await MainActor.run {
-                ChatConsoleLog.shared.finish(
-                    rowID,
-                    output: result.output.isEmpty
-                        ? (result.success ? "(no output)" : "(failed, no output)")
-                        : result.output,
-                    success: result.success,
-                    scope: scope)
-            }
-            return result
+            // The row is opened before the command runs and closed when it returns — that is
+            // what tells the user a slow tool is working rather than dead. Done inside the
+            // executor rather than here, so the dock's commands land on the same record.
+            await TerminalCommandExecutor.shared.run(
+                command, purpose: purpose, modelRequiresApproval: needsApproval,
+                consoleScope: scope)
         }
 
         log.notice("stage: provider sendWithTools")

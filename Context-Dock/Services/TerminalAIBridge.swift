@@ -548,23 +548,46 @@ class TerminalAIBridge: ObservableObject {
     /// Uses the explicit allowlist and a tight keyword heuristic only — NOT the intent registry,
     /// which produces too many false positives (e.g. brew mentioning "services"/"daemon").
     func isTUICommand(_ command: String) -> Bool {
+        routing(for: command) == .terminal
+    }
+
+    /// Where a command should run.
+    enum CommandRoute {
+        case terminal
+        case headless
+        /// Unknown subcommand of an interactive tool: try headless behind a deadline.
+        case probe
+    }
+
+    /// Decided per invocation, not per tool.
+    ///
+    /// The per-tool "Needs a terminal" mark says *some* of this tool's commands take over the
+    /// tty — for terminal-browser that is `open` and nothing else. Treating the mark as a
+    /// verdict on every invocation sent `ls` and `setup` to the PTY too, where they produced
+    /// no output for the chat, the console or the verifier to work with.
+    func routing(for command: String) -> CommandRoute {
         let parts = command.trimmingCharacters(in: .whitespaces)
             .components(separatedBy: .whitespaces)
         let executable = (parts.first ?? "").components(separatedBy: "/").last ?? ""
         let execLower = executable.lowercased()
 
-        // The user's own mark comes first. The allowlist below cannot know every TUI tool —
-        // terminal-browser, for one — and running a full-screen app with its output piped
-        // either hangs it waiting for a tty or turns an answer into escape sequences. This is
-        // a Set lookup kept by TerminalPackageManager, not a scan of ~950 packages.
-        if TerminalPackageManager.shared.interactiveCommands.contains(execLower) { return true }
-
-        // Primary: explicit allowlist of known interactive TUI apps
-        if Self.knownTUIApps.contains(execLower) { return true }
-
-        // Secondary: tight keyword heuristic on the binary name only (not args)
+        // The allowlist cannot know every TUI tool — terminal-browser, for one — so the
+        // user's own mark counts alongside it. Both are statements about the *tool*; which
+        // of its commands are interactive is CommandInteractivity's question. This is a Set
+        // lookup kept by TerminalPackageManager, not a scan of ~950 packages.
         let tuiKeywords = ["tui", "ncurses", "curses"]
-        return tuiKeywords.contains(where: { execLower.contains($0) })
+        let toolIsInteractive =
+            TerminalPackageManager.shared.interactiveCommands.contains(execLower)
+            || Self.knownTUIApps.contains(execLower)
+            || tuiKeywords.contains(where: { execLower.contains($0) })
+
+        switch CommandInteractivity.verdict(
+            for: command, toolIsMarkedInteractive: toolIsInteractive)
+        {
+        case .interactive: return .terminal
+        case .headless: return .headless
+        case .unknown: return .probe
+        }
     }
 
     /// Execute command either in visible terminal or background
@@ -572,54 +595,96 @@ class TerminalAIBridge: ObservableObject {
         _ command: String,
         onLine: (@Sendable (String) -> Void)? = nil
     ) async -> (output: String, exitCode: Int32) {
+        let route = routing(for: command)
+
         // TUI / interactive apps MUST go to the visible terminal (real PTY)
-        if isTUICommand(command) {
-            if let controller = terminalController {
-                controller.sendCommand(command)
-
-                // Register as PTY worker in the pool
-                let executable = command.trimmingCharacters(in: .whitespaces)
-                    .components(separatedBy: .whitespaces).first ?? command
-                let workerIntent = detectWorkerIntent(for: executable)
-                let workerID = BackgroundWorkerPool.shared.registerPTYWorker(
-                    command: command,
-                    purpose: "Interactive terminal command",
-                    intent: workerIntent
-                )
-
-                // Show mini-player if this is a music tool
-                if workerIntent == .musicPlayer {
-                    MiniPlayerController.shared.show(
-                        workerID: workerID,
-                        toolName: executable,
-                        intent: .musicPlayer
-                    )
-                }
-
-                return ("Launched '\(command)' in terminal (interactive mode, worker: \(workerID.uuidString.prefix(6)))", 0)
-            }
-            return ("Cannot run '\(command)': requires an interactive terminal. Open the Terminal tab first.", 1)
+        if route == .terminal {
+            return launchInTerminal(command, purpose: "Interactive terminal command")
         }
 
-        // Non-interactive commands: stream line-by-line to active panel, capture full output
         let lineHandler = streamLineHandler
-        let bgResult = await executeInBackground(
-            command, onLine: onLine ?? lineHandler)
+
+        // Unknown subcommand of a tool the user marked interactive. Run it headless with a
+        // deadline: a one-shot answers well inside it, and anything still alive afterwards
+        // was waiting for a terminal it was never given. Either way the answer is recorded,
+        // so this costs one probe per subcommand, not one per question.
+        let bgResult: (output: String, exitCode: Int32)
+        if route == .probe {
+            let probe = await executeInBackground(
+                command, onLine: onLine ?? lineHandler,
+                probeDeadline: CommandInteractivity.probeDeadline)
+            if probe.exitCode == Self.probeDeadlineExitCode {
+                CommandInteractivity.record(true, for: command)
+                return launchInTerminal(command, purpose: "Interactive terminal command")
+            }
+            // It finished, but it may still have refused for want of a tty — that is the
+            // check below, and it gets to record the verdict instead of this line.
+            bgResult = probe
+        } else {
+            // Non-interactive commands: stream line-by-line to active panel, capture full output
+            bgResult = await executeInBackground(command, onLine: onLine ?? lineHandler)
+        }
 
         // If the command itself complains it needs a TTY, re-route to visible terminal
-        let interactivePhrases = ["requires an interactive terminal", "is running interactively", "needs a terminal", "not a tty", "no tty present"]
+        // A tool that wants a tty says so, but not always by failing: `terminal-browser ls`
+        // prints "cannot control this terminal" and exits 0, so keying this off a non-zero
+        // exit missed it and the user got the refusal as their answer. The length guard is
+        // what keeps a help page that happens to mention "not a tty" from being read as a
+        // refusal — a refusal is one line, documentation is not.
+        let interactivePhrases = [
+            "requires an interactive terminal", "is running interactively", "needs a terminal",
+            "not a tty", "no tty present", "cannot control this terminal",
+            "no controlling terminal", "must be run in a terminal", "requires a terminal",
+        ]
         let lowerOutput = bgResult.output.lowercased()
-        if bgResult.exitCode != 0, interactivePhrases.contains(where: { lowerOutput.contains($0) }) {
-            if let controller = terminalController {
-                controller.sendCommand(command)
-                let executable = command.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).first ?? command
-                let workerIntent = detectWorkerIntent(for: executable)
-                _ = BackgroundWorkerPool.shared.registerPTYWorker(command: command, purpose: "Interactive fallback", intent: workerIntent)
+        if lowerOutput.count < 400, interactivePhrases.contains(where: { lowerOutput.contains($0) })
+        {
+            // The command said so itself — the most reliable signal there is, so it is worth
+            // remembering rather than rediscovering on every ask.
+            CommandInteractivity.record(true, for: command)
+            if terminalController != nil {
+                _ = launchInTerminal(command, purpose: "Interactive fallback")
                 return ("'\(command)' requires an interactive terminal — launched in the Terminal tab.", 0)
             }
+        } else if route == .probe {
+            // Ran to completion and did not ask for a tty: a real headless command.
+            CommandInteractivity.record(false, for: command)
         }
 
         return bgResult
+    }
+
+    /// Hands a command to the visible PTY and registers it as a worker.
+    ///
+    /// One place, so the direct route, the probe result and the "needs a tty" fallback all
+    /// launch identically — they used to be three near-copies that had already drifted.
+    private func launchInTerminal(
+        _ command: String, purpose: String
+    ) -> (output: String, exitCode: Int32) {
+        guard let controller = terminalController else {
+            return (
+                "Cannot run '\(command)': requires an interactive terminal. Open the Terminal tab first.",
+                1
+            )
+        }
+        controller.sendCommand(command)
+
+        let executable = command.trimmingCharacters(in: .whitespaces)
+            .components(separatedBy: .whitespaces).first ?? command
+        let workerIntent = detectWorkerIntent(for: executable)
+        let workerID = BackgroundWorkerPool.shared.registerPTYWorker(
+            command: command, purpose: purpose, intent: workerIntent)
+
+        // Show mini-player if this is a music tool
+        if workerIntent == .musicPlayer {
+            MiniPlayerController.shared.show(
+                workerID: workerID, toolName: executable, intent: .musicPlayer)
+        }
+
+        return (
+            "Launched '\(command)' in terminal (interactive mode, worker: \(workerID.uuidString.prefix(6)))",
+            0
+        )
     }
 
     // MARK: - Worker Intent Detection
@@ -761,9 +826,11 @@ class TerminalAIBridge: ObservableObject {
 
     func executeInBackground(
         _ command: String,
-        onLine: (@Sendable (String) -> Void)? = nil
+        onLine: (@Sendable (String) -> Void)? = nil,
+        probeDeadline: TimeInterval? = nil
     ) async -> (output: String, exitCode: Int32) {
-        await withCheckedContinuation { continuation in
+        let toolDirectories = TerminalPackageManager.shared.pinnedToolDirectories()
+        return await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             // A login shell sources the user's dotfiles, and anything they print lands on this
@@ -783,7 +850,16 @@ class TerminalAIBridge: ObservableObject {
             environment["TERM"] = "xterm-256color"
             environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
             let currentPath = environment["PATH"] ?? "/usr/bin:/bin"
-            environment["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:" + currentPath
+            // The directories the user's own pinned tools actually live in come first.
+            // terminal-browser installs to ~/.local/bin, which is on PATH only if a dotfile
+            // puts it there — so a tool DoraX scanned, listed and scoped could still fail to
+            // run as "command not found". We know each tool's resolved path; use it.
+            environment["PATH"] =
+                (toolDirectories
+                    + [
+                        "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+                        "/usr/bin", "/bin",
+                    ]).joined(separator: ":") + ":" + currentPath
             process.environment = environment
 
             // Set working directory to home
@@ -834,7 +910,21 @@ class TerminalAIBridge: ObservableObject {
                 }
             }
 
+            // Set when the probe deadline fires, so the termination handler can report a
+            // command that was killed for hanging rather than one that failed on its own.
+            let deadlineExpired = TerminalStderrGate()
+
             process.terminationHandler = { proc in
+                if deadlineExpired.isOpen {
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    continuation.resume(
+                        returning: (
+                            "'\(command)' did not finish — it is waiting for a terminal.",
+                            Self.probeDeadlineExitCode
+                        ))
+                    return
+                }
                 // Drain any remaining bytes when no streaming handler
                 if onLine == nil {
                     let outData = outputPipe.fileHandleForReading.readDataToEndOfFile()
@@ -854,11 +944,31 @@ class TerminalAIBridge: ObservableObject {
 
             do {
                 try process.run()
+                if let probeDeadline {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + probeDeadline) {
+                        guard process.isRunning else { return }
+                        deadlineExpired.open()
+                        // The command runs under `zsh -lc`, so terminating the process kills
+                        // the shell and can leave the tool itself parented to launchd. Take
+                        // the children first, or the probe leaves a second copy running that
+                        // the PTY relaunch then competes with.
+                        let reaper = Process()
+                        reaper.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+                        reaper.arguments = ["-TERM", "-P", "\(process.processIdentifier)"]
+                        try? reaper.run()
+                        reaper.waitUntilExit()
+                        process.terminate()
+                    }
+                }
             } catch {
                 continuation.resume(returning: ("Error: \(error.localizedDescription)", 1))
             }
         }
     }
+
+    /// Exit code for a probe the deadline killed. Outside the 0…255 range a real process can
+    /// return, so it cannot collide with a command's own failure.
+    static let probeDeadlineExitCode: Int32 = -777
 
     // MARK: - Multi-Step Workflow
 

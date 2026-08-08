@@ -31,6 +31,21 @@ enum GeneralChatScope: Codable, Hashable {
         case .general: return "general"
         }
     }
+
+    /// The dock identifies a scope by bundle id, using a `cli://` prefix for tools. Given the
+    /// same string, both surfaces name the same thread — which is what lets a command run in
+    /// the dock show up on the console of the window thread for that app or tool.
+    init(dockBundleId: String?) {
+        guard let dockBundleId, !dockBundleId.isEmpty else {
+            self = .general
+            return
+        }
+        if dockBundleId.hasPrefix("cli://") {
+            self = .cli(command: String(dockBundleId.dropFirst("cli://".count)))
+        } else {
+            self = .app(bundleId: dockBundleId)
+        }
+    }
 }
 
 struct GeneralChatSession: Identifiable, Codable, Equatable {

@@ -253,10 +253,11 @@ final class GeneralChatWindowModel: ObservableObject {
     /// "Enable <app> for this chat": attach the app, then ask the question again so the
     /// user gets an answer rather than a granted permission and a dead end.
     func enableApp(_ request: EnableAppRequest) {
-        attachApp(request.name)
-        // attachApp turns a first app on an empty General chat into that app's own thread;
-        // here the conversation already exists, so the app joins it as a scope.
-        if !attachedAppNames.contains(request.name), activeScope == .general {
+        // Attach by the name the gate reported, so the two sides agree on what is in scope
+        // even when the app is not running and the installed-apps cache is cold.
+        if !attachedAppNames.contains(where: {
+            $0.caseInsensitiveCompare(request.name) == .orderedSame
+        }) {
             attachedAppNames.append(request.name)
             GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
         }
