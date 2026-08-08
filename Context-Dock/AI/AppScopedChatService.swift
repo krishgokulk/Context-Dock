@@ -402,6 +402,47 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // A request that spans apps gets a plan rather than a route. Candidates are
+        // resolved across every app this chat may touch, so the ordering the model does is
+        // ordering of real capabilities — not an improvisation it then narrates.
+        if ChatRouteResolver.isActionRequest(query) {
+            var crossAppRoutes: [ChatRoute] = []
+            var scopeApps: [(String, String)] = []
+            if case .app(let bundleId) = scope { scopeApps.append((bundleId, appName)) }
+            for name in extraAppNames {
+                let bundleId =
+                    NSWorkspace.shared.runningApplications
+                    .first { $0.localizedName == name }?.bundleIdentifier
+                    ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                    .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+                if let bundleId { scopeApps.append((bundleId, name)) }
+            }
+            if scopeApps.count > 1 {
+                for (bundleId, name) in scopeApps {
+                    crossAppRoutes += await ChatRouteResolver.routes(
+                        for: query, bundleId: bundleId, appName: name)
+                }
+                if crossAppRoutes.count > 1,
+                    let plan = await ChatPlanRunner.plan(
+                        query: query, routes: crossAppRoutes,
+                        provider: provider, apiKey: apiKey)
+                {
+                    log.notice("stage: plan of \(plan.steps.count, privacy: .public) steps")
+                    let results = await ChatPlanRunner.run(plan, query: query)
+                    let receipt = ChatPlanRunner.receipt(plan, results: results)
+                    let allSucceeded = results.allSatisfy(\.success)
+                        && results.count == plan.steps.count
+                    return Answer(
+                        text: (allSucceeded ? "\(plan.summary)\n\n" : "")
+                            + receipt
+                            + (allSucceeded
+                                ? ""
+                                : "\n\nNothing after the failed step was attempted."),
+                        toolChips: results.map { "\($0.step.route.kind.rawValue) · \($0.step.route.title)" })
+                }
+            }
+        }
+
         // Which routes could actually carry this out, resolved before the model is asked
         // anything. Asking the user which to use is only worth it when they differ in
         // consequence — that check is in the resolver.
