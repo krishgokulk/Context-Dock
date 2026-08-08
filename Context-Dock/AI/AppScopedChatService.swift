@@ -59,6 +59,26 @@ enum AppScopedChatService {
     private static func execute(
         route: ChatRoute, query: String, history: [ChatMessage]
     ) async -> Answer {
+        // A skill is instructions, not a command: it is carried out by answering with the
+        // user's own workflow foregrounded, in the scope it was written for.
+        if route.kind == .skill {
+            let instructions = SkillStore.shared.skills(for: route.bundleId)
+                .first { $0.id == route.payload }
+                .map { "## Skill: \($0.name)\n\($0.instructions)" } ?? ""
+            ChatConsoleLog.shared.append(
+                .tool, title: "skill · \(route.title)", output: instructions,
+                success: !instructions.isEmpty,
+                scope: .app(bundleId: route.bundleId))
+            let answer = try? await send(
+                scope: .app(bundleId: route.bundleId),
+                appName: route.appName,
+                query: query,
+                history: history,
+                skillOverride: instructions)
+            return answer
+                ?? Answer(text: "Couldn't apply \(route.title).", toolChips: [])
+        }
+
         log.notice("route: \(route.kind.rawValue, privacy: .public) \(route.title, privacy: .public)")
         let routeScope = GeneralChatScope.app(bundleId: route.bundleId)
         let rowID = ChatConsoleLog.shared.begin(.route, title: route.title, scope: routeScope)
@@ -355,7 +375,10 @@ enum AppScopedChatService {
         query: String,
         history: [ChatMessage],
         attachments: [URL] = [],
-        extraAppNames: [String] = []
+        extraAppNames: [String] = [],
+        /// A skill the user chose for this request. Present means the route decision is
+        /// already made, so the picker is skipped rather than asked again.
+        skillOverride: String? = nil
     ) async throws -> Answer {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -382,7 +405,7 @@ enum AppScopedChatService {
         // Which routes could actually carry this out, resolved before the model is asked
         // anything. Asking the user which to use is only worth it when they differ in
         // consequence — that check is in the resolver.
-        if case .app(let bundleId) = scope {
+        if case .app(let bundleId) = scope, skillOverride == nil {
             let routes = await ChatRouteResolver.routes(
                 for: query, bundleId: bundleId, appName: appName)
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
@@ -431,6 +454,9 @@ enum AppScopedChatService {
 
         var sections: [String] = [dateTimeBlock()]
         var context: UserContext = .none
+        /// The machine as it was before this turn ran anything, kept so a tool's claim can
+        /// be checked against what actually changed.
+        var contextBefore: ResolvedContext?
 
         switch scope {
         case .app(let bundleId):
@@ -445,6 +471,7 @@ enum AppScopedChatService {
             // Resolved once, with its gaps recorded: an answer that could not know
             // something now says which slot was empty instead of inventing a value.
             let resolved = ContextResolver.resolve(scope: scope, appName: appName)
+            contextBefore = resolved
             let block = resolved.promptBlock()
             if !block.isEmpty { sections.append(block) }
             log.notice("context \(resolved.summary, privacy: .public)")
@@ -459,7 +486,9 @@ enum AppScopedChatService {
             // The app's enabled skills, in full. The identity block only counts them, and
             // a Calendar chat that is told "2 skills active" without their instructions
             // behaves differently from the dock's, which reads them.
-            let skills = SkillStore.shared.instructionsBlock(for: bundleId)
+            // A chosen skill replaces the full set: the user said which workflow applies,
+            // and stacking the others behind it would dilute the instruction they picked.
+            let skills = skillOverride ?? SkillStore.shared.instructionsBlock(for: bundleId)
             if !skills.isEmpty { sections.append(skills) }
             // The app's live MCP tools, in the prose protocol the loop understands, so a
             // Reminders thread can read reminders instead of describing how to.
@@ -583,6 +612,31 @@ enum AppScopedChatService {
             imageAttachments: attachments
         )
         log.notice("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
+
+        // Verification for the tool loop. Anything that was not clearly read-only gets the
+        // scope read back and compared: a tool that reports success while nothing on the
+        // machine moved is the failure mode worth catching, and it cannot be caught by
+        // reading the model's own summary of itself.
+        if let contextBefore,
+            case .app = scope,
+            executed.contains(where: { !MCPToolSafety.isClearlyReadOnly(name: $0.command) })
+        {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            let after = ContextResolver.resolve(scope: scope, appName: appName)
+            let changes = after.changes(since: contextBefore)
+            ChatConsoleLog.shared.append(
+                .note,
+                title: "verified \(appName) state",
+                output: changes.isEmpty
+                    ? "No observable change." : changes.joined(separator: "\n"),
+                success: !changes.isEmpty,
+                scope: scope)
+            if changes.isEmpty {
+                text +=
+                    "\n\n_Nothing observable changed in \(appName) — if you expected it to, "
+                    + "the action may not have taken effect._"
+            }
+        }
 
         // The model sometimes writes its tool call out as text instead of calling it. The
         // dock recovers by running it; the window used to render the JSON. One recovery

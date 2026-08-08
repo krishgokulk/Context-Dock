@@ -19,6 +19,10 @@ struct ChatRoute: Identifiable, Equatable {
         case adapterAction
         case menuCommand
         case mcpTool
+        /// An adapter skill: the user's own written workflow for this app. Not a command —
+        /// it steers the model rather than running anything — but it is a real, chooseable
+        /// way to carry out a request, and it belongs in the same list as the rest.
+        case skill
         case model
 
         /// What picking this actually does, in the user's terms. "No window opens" is the
@@ -29,6 +33,7 @@ struct ChatRoute: Identifiable, Equatable {
             case .adapterAction: return "App action"
             case .menuCommand: return "App menu · opens the app"
             case .mcpTool: return "App data · no window opens"
+            case .skill: return "Your saved workflow for this app"
             case .model: return "Answer without running anything"
             }
         }
@@ -42,7 +47,8 @@ struct ChatRoute: Identifiable, Equatable {
             case .mcpTool: return 2
             case .cli: return 3
             case .menuCommand: return 4
-            case .model: return 5
+            case .skill: return 5
+            case .model: return 6
             }
         }
 
@@ -56,6 +62,7 @@ struct ChatRoute: Identifiable, Equatable {
             case .adapterAction: return "bolt.fill"
             case .menuCommand: return "filemenu.and.selection"
             case .mcpTool: return "server.rack"
+            case .skill: return "brain.head.profile"
             case .model: return "text.bubble"
             }
         }
@@ -242,6 +249,21 @@ enum ChatRouteResolver {
                     isReadOnly: MCPToolSafety.isClearlyReadOnly(name: entry.tool.name)))
         }
 
+        // The user's own workflows for this app. A skill runs nothing on its own, so it is
+        // read-only by definition; it changes how the request is answered, not the machine.
+        for skill in SkillStore.shared.skills(for: bundleId)
+        where skill.isEnabled && matches("\(skill.name) \(skill.summary)") {
+            routes.append(
+                ChatRoute(
+                    id: "skill:\(skill.id)",
+                    kind: .skill,
+                    title: skill.name,
+                    payload: skill.id,
+                    appName: appName,
+                    bundleId: bundleId,
+                    isReadOnly: true))
+        }
+
         // Deduplicate by title so the same capability offered by two subsystems is one
         // choice, and cap the list: five ways to do one thing is not a decision, it is a
         // quiz. Ranked first, so the cap keeps the best routes rather than the first-found
@@ -315,8 +337,10 @@ enum ChatRouteResolver {
                 return (false, "\(parts[1]) failed: \(error.localizedDescription)")
             }
 
-        case .model:
-            return (false, "")
+        case .skill, .model:
+            // Neither runs anything: the caller answers with the skill's instructions in
+            // the prompt. Returning "nothing happened" here is the honest result.
+            return (true, "")
         }
     }
 }

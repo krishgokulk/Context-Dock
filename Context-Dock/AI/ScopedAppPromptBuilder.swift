@@ -195,7 +195,12 @@ enum ScopedAppPromptBuilder {
                 ? "- MCP servers: none linked"
                 : "- MCP servers: " + mcpServers.map(\.name).joined(separator: ", "))
         if !apiConns.isEmpty {
-            lines.append("- API connections: " + apiConns.map(\.name).joined(separator: ", "))
+            // Stored credentials and a base URL, with no endpoint spec and no executor —
+            // so they are context, not a route. Advertising them as callable would have
+            // the model propose calls that nothing in DoraX can make.
+            lines.append(
+                "- API connections (configured, NOT callable from chat — mention them only "
+                + "as context): " + apiConns.map(\.name).joined(separator: ", "))
         }
         if !shortcuts.isEmpty {
             lines.append("- macOS Shortcuts: " + shortcuts.compactMap(\.shortcutName).joined(separator: ", "))
@@ -322,7 +327,9 @@ struct ScopeInventory {
         let apis = APIConnectionStore.shared.connections(for: bundleId)
         if !apis.isEmpty {
             groups.append(
-                Group(title: "API connections", symbol: "link", items: apis.map(\.name)))
+                Group(
+                    title: "API connections", symbol: "link",
+                    items: apis.map { "\($0.name) — configured, not callable yet" }))
         }
 
         let shortcuts = actions.filter { $0.type == .shortcut }.compactMap(\.shortcutName)

@@ -70,6 +70,27 @@ struct ResolvedContext {
         return lines.joined(separator: "\n")
     }
 
+    /// What changed between two resolutions of the same scope. Used after an action to
+    /// check the claim against the machine: an empty result means nothing observable
+    /// happened, which is worth saying out loud.
+    func changes(since earlier: ResolvedContext) -> [String] {
+        var out: [String] = []
+        for slot in slots {
+            let before = earlier.value(slot.name)
+            if before != slot.value {
+                out.append(
+                    before == nil
+                        ? "\(slot.name) is now \(slot.value)"
+                        : "\(slot.name): \(before ?? "") → \(slot.value)")
+            }
+        }
+        // A slot that was readable and no longer is, is also a change.
+        for slot in earlier.slots where value(slot.name) == nil {
+            out.append("\(slot.name) is no longer readable")
+        }
+        return out
+    }
+
     /// One line for the log: what was known, what was missing.
     var summary: String {
         let filled = slots.map(\.name).joined(separator: ", ")
