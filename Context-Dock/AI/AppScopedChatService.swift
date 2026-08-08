@@ -79,7 +79,9 @@ enum AppScopedChatService {
         var verification: String?
         if result.success, !route.isReadOnly {
             try? await Task.sleep(nanoseconds: 400_000_000)  // let the app settle
-            verification = liveWindowFacts(bundleID: route.bundleId)
+            verification = ContextResolver
+                .resolve(scope: routeScope, appName: route.appName)
+                .promptBlock()
             if let verification {
                 ChatConsoleLog.shared.append(
                     .note,
@@ -440,8 +442,12 @@ enum AppScopedChatService {
                 supplied context, say DoraX could not read it — never answer from generic \
                 product knowledge and never claim you lack access to an app listed here.
                 """)
-            if let facts = liveWindowFacts(bundleID: bundleId) { sections.append(facts) }
-            if let page = browserPageFacts(bundleID: bundleId) { sections.append(page) }
+            // Resolved once, with its gaps recorded: an answer that could not know
+            // something now says which slot was empty instead of inventing a value.
+            let resolved = ContextResolver.resolve(scope: scope, appName: appName)
+            let block = resolved.promptBlock()
+            if !block.isEmpty { sections.append(block) }
+            log.notice("context \(resolved.summary, privacy: .public)")
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
                 sections.append(history)
             }
@@ -464,6 +470,10 @@ enum AppScopedChatService {
             if !mcpBlock.isEmpty { sections.append(mcpBlock) }
 
         case .cli(let command):
+            let resolved = ContextResolver.resolve(scope: scope, appName: command)
+            let resolvedBlock = resolved.promptBlock()
+            if !resolvedBlock.isEmpty { sections.append(resolvedBlock) }
+            log.notice("context \(resolved.summary, privacy: .public)")
             let tool = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: "cli://\(command)", appName: command, query: query)
             if !tool.isEmpty { sections.append(tool) }

@@ -4827,6 +4827,18 @@ extension LauncherView {
                     appName: scopedAppName.isEmpty
                         ? (frontmostName ?? frontmost.name) : scopedAppName,
                     query: query)
+                // The same resolution the window runs: window, document, selection, page and
+                // capability counts as named slots, with the ones that could not be filled
+                // recorded. Context Dock's whole job is knowing what "this" means, so it
+                // resolves that explicitly rather than inferring it from whatever readers
+                // happened to fire.
+                let resolvedContextBlock = await MainActor.run { () -> String in
+                    ContextResolver.resolve(
+                        scope: .app(bundleId: scopedBundleId),
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName
+                    ).promptBlock()
+                }
                 let identityBlock = await MainActor.run {
                     self.scopedAppIdentityBlock(
                         bundleId: scopedBundleId,
@@ -4888,7 +4900,8 @@ extension LauncherView {
                 }
                 let activeContextPrompt: String = {
                     let parts = [
-                        sourceDecision.promptRule, identityBlock, workspaceBlock, referenceBlock,
+                        sourceDecision.promptRule, resolvedContextBlock, identityBlock,
+                        workspaceBlock, referenceBlock,
                         finalContextPrompt,
                         runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
                         skillsBlock, attachmentBlock, memoryBlock,
@@ -4901,7 +4914,8 @@ extension LauncherView {
                     // Ordered by what the answer actually needs: who the scope is, then the
                     // live data, then reference material. Reference is cut first.
                     let prioritised = [
-                        sourceDecision.promptRule, identityBlock, workspaceBlock, referenceBlock,
+                        sourceDecision.promptRule, resolvedContextBlock, identityBlock,
+                        workspaceBlock, referenceBlock,
                         browserPageBlock,
                         attachmentBlock, finalContextPrompt, appleData, mcpBlock, skillsBlock,
                         memoryBlock, runtimeCLIContextPrompt,
