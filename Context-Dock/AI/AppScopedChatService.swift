@@ -638,10 +638,26 @@ enum AppScopedChatService {
 
         let executor: (String, String, Bool) async -> (Bool, String) = {
             command, purpose, needsApproval in
+            // A tool that draws its own screen cannot be run with its output captured:
+            // with no tty it hangs or emits escape codes, which is how a working
+            // terminal-browser became a two-and-a-half minute timeout. Those go to the
+            // thread's own terminal, where they have somewhere to draw.
+            let binary = command.split(separator: " ").first.map(String.init) ?? ""
+            if await MainActor.run(body: { ChatThreadTerminalManager.needsTerminal(command: binary) }) {
+                await MainActor.run {
+                    ChatThreadTerminalManager.shared.run(command, scope: scope)
+                    ChatConsoleLog.shared.append(
+                        .command, title: command,
+                        output: "Sent to this thread's terminal — the tool draws its own screen.",
+                        success: true, scope: scope)
+                    GeneralChatWindowChromeState.shared.showSidePanel()
+                }
+                return (true, "Sent to the terminal panel; it renders there.")
+            }
             // The row is opened before the command runs and closed when it returns — that is
             // what tells the user a slow tool is working rather than dead. Done inside the
             // executor rather than here, so the dock's commands land on the same record.
-            await TerminalCommandExecutor.shared.run(
+            return await TerminalCommandExecutor.shared.run(
                 command, purpose: purpose, modelRequiresApproval: needsApproval,
                 consoleScope: scope)
         }

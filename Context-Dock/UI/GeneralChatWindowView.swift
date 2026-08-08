@@ -29,6 +29,8 @@ struct GeneralChatWindowView: View {
     /// UserDefaults-backed and publishes nothing on its own.
     @State private var routeResetToken = 0
     @State private var cachedInventory: ScopeInventory?
+    /// Bumped to rebuild the terminal view after its shell is restarted.
+    @State private var terminalToken = 0
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -827,6 +829,14 @@ struct GeneralChatWindowView: View {
 
             Divider().opacity(0.4)
 
+            // A CLI thread gets a real terminal here. Some tools — a browser, an editor, a
+            // pager — draw their own screen and cannot be run with output captured, so
+            // describing their output is not an option: it has to be shown.
+            if case .cli = model.activeScope {
+                threadTerminal
+                Divider().opacity(0.4)
+            }
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let subtitle = inventory.subtitle {
@@ -930,6 +940,46 @@ struct GeneralChatWindowView: View {
             }
         }
         .background(Theme.surface(dark))
+    }
+
+    /// The thread's live PTY, with the tool's own prompt. Created on first sight of a CLI
+    /// thread rather than on every scope, so a thread you never open costs nothing.
+    @ViewBuilder
+    private var threadTerminal: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                Text("TERMINAL")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+                Button {
+                    ChatThreadTerminalManager.shared.close(scope: model.activeScope)
+                    terminalToken += 1
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Restart this thread's shell")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            PanelTerminalView(
+                controller: ChatThreadTerminalManager.shared.controller(for: model.activeScope)
+            )
+            .frame(height: 260)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+            .id("\(model.activeScope.storageKey)-\(terminalToken)")
+        }
     }
 
     private var scopePill: some View {

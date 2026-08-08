@@ -56,6 +56,13 @@ final class GeneralChatWindowChromeState: ObservableObject {
         withAnimation(.easeOut(duration: 0.18)) { bottomPanelVisible.toggle() }
     }
 
+    /// Reveals the side panel without closing it when already open — used when a tool
+    /// starts drawing into the thread's terminal.
+    func showSidePanel() {
+        guard !sidePanelVisible else { return }
+        withAnimation(.easeOut(duration: 0.18)) { sidePanelVisible = true }
+    }
+
     func toggleSidePanel() {
         withAnimation(.easeOut(duration: 0.18)) { sidePanelVisible.toggle() }
     }

@@ -307,6 +307,20 @@ enum ChatRouteResolver {
     static func run(_ route: ChatRoute, query: String) async -> (success: Bool, output: String) {
         switch route.kind {
         case .cli:
+            // A tool that draws its own screen cannot be run with its output captured:
+            // with no tty it hangs or emits escape codes, which is how a working
+            // terminal-browser became a two-and-a-half minute timeout. Type it into the
+            // thread's own terminal instead, where it has somewhere to draw.
+            let command = route.payload.split(separator: " ").first.map(String.init) ?? ""
+            if ChatThreadTerminalManager.needsTerminal(command: command) {
+                let scope = GeneralChatScope.cli(command: command)
+                ChatThreadTerminalManager.shared.run(route.payload, scope: scope)
+                return (
+                    true,
+                    "Running in this thread's terminal — it draws its own screen, so watch "
+                        + "the Terminal panel rather than waiting for output here."
+                )
+            }
             return await TerminalCommandExecutor.shared.run(
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
 
