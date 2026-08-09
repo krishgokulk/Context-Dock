@@ -91,6 +91,14 @@ final class GeneralChatWindowModel: ObservableObject {
     ///   window while the dock still held the transcript is not a handover, it is a second
     ///   conversation. Applied only when the thread is empty, so reopening never overwrites
     ///   history with whatever the dock happens to be showing.
+    /// A file the window should open on, set just before a handoff from the dock.
+    ///
+    /// The dock is a strip. Reading a document or an image in it means the conversation is
+    /// gone, and closing the document to reply means the document is gone. Handing the file
+    /// to the window puts both on screen at once, which is the arrangement the work
+    /// actually needs.
+    @Published var pendingPreviewFile: URL?
+
     func openSession(_ scope: GeneralChatScope, title: String, seed: [AIChatMessage] = []) {
         guard scope != activeScope else {
             adoptSeedIfEmpty(seed, scope: scope, title: title)

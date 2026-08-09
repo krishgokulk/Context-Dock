@@ -435,6 +435,8 @@ struct GeneralChatWindowView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { revealHandoffIfNeeded() }
+            .onChange(of: model.pendingPreviewFile) { _, _ in revealHandoffIfNeeded() }
         }
     }
 
@@ -874,7 +876,16 @@ struct GeneralChatWindowView: View {
                 panelTabs
                 switch effectivePanelTab {
                 case .terminal where hasTerminal:
-                    threadTerminal
+                    if let reason = unsupportedToolReason {
+                        Text(reason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    } else {
+                        threadTerminal
+                    }
                 default:
                     ChatThreadPreviewPanel(candidates: previewFiles)
                         .id(previewFiles.last?.path ?? "none")
@@ -993,6 +1004,11 @@ struct GeneralChatWindowView: View {
 
     private enum PanelTab: String { case terminal, preview }
 
+    private var unsupportedToolReason: String? {
+        guard case .cli(let command) = model.activeScope else { return nil }
+        return ChatThreadTerminalManager.unsupportedReason(for: command)
+    }
+
     private var hasTerminal: Bool {
         if case .cli = model.activeScope { return true }
         return false
@@ -1013,6 +1029,14 @@ struct GeneralChatWindowView: View {
         var seen = Set<String>()
         var found: [URL] = []
 
+        func considerHandoff() {
+            guard let handed = model.pendingPreviewFile,
+                FileManager.default.fileExists(atPath: handed.path)
+            else { return }
+            seen.insert(handed.path)
+            found.append(handed)
+        }
+
         func consider(_ path: String) {
             let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'.,)]"))
             var isDirectory: ObjCBool = false
@@ -1022,6 +1046,20 @@ struct GeneralChatWindowView: View {
             else { return }
             seen.insert(trimmed)
             found.append(URL(fileURLWithPath: trimmed))
+        }
+
+        // Tool output is where a file a command produced actually announces itself — the
+        // assistant's prose may never mention the path at all.
+        for entry in ChatConsoleLog.shared.entries(for: model.activeScope).suffix(20) {
+            let output = entry.output
+            var index = output.startIndex
+            while let range = output.range(
+                of: "/[A-Za-z0-9._~/@+-]+\\.[A-Za-z0-9]{1,8}", options: .regularExpression,
+                range: index..<output.endIndex)
+            {
+                consider(String(output[range]))
+                index = range.upperBound
+            }
         }
 
         for message in model.messages.suffix(30) {
@@ -1037,7 +1075,19 @@ struct GeneralChatWindowView: View {
             }
         }
         model.attachments.forEach { consider($0.path) }
+        // Last, so it is the one Preview opens on — the file the user asked to see wins
+        // over whatever the transcript happened to mention most recently.
+        considerHandoff()
         return found
+    }
+
+    /// Opens the panel on the handed-over file. Without this the file is merely in the
+    /// candidate list, behind a panel that may be closed and a tab that may be Terminal —
+    /// which is indistinguishable from the handoff not working.
+    private func revealHandoffIfNeeded() {
+        guard model.pendingPreviewFile != nil else { return }
+        chrome.sidePanelVisible = true
+        panelTab = .preview
     }
 
     private var panelTabs: some View {

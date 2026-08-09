@@ -1018,6 +1018,19 @@ extension LauncherView {
     /// keeps the dock up in always-float and taskbar modes, which is right for running an
     /// action and wrong here: the conversation has moved, and leaving the sheet showing the
     /// same thread gives the user two copies of it, one of which is already stale.
+    /// Sends a file to the chat window's Preview and hands the conversation over with it.
+    ///
+    /// Opening it in Preview.app or an editor takes the user out of the chat to read one
+    /// file, and back again to say anything about it. The window shows the document and the
+    /// conversation at the same time, which is what reading-and-replying actually requires.
+    func previewFileInChatWindow(_ url: URL, bundleId: String, appName: String) {
+        GeneralChatWindowModel.shared.pendingPreviewFile = url
+        GeneralChatWindowModel.shared.openSession(
+            .app(bundleId: bundleId), title: appName, seed: l2.chatMessages)
+        handOffChatToWindow()
+        GeneralChatWindowController.shared.show()
+    }
+
     func handOffChatToWindow() {
         if let key = l2.activeDockSessionKey {
             AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)

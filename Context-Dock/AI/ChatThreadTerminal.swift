@@ -49,7 +49,9 @@ final class ChatThreadTerminalManager: ObservableObject {
         controllers[scope.storageKey] = created
         liveScopeKeys.insert(scope.storageKey)
 
-        if case .cli(let command) = scope, Self.needsTerminal(command: command) {
+        if case .cli(let command) = scope, Self.needsTerminal(command: command),
+            Self.unsupportedReason(for: command) == nil
+        {
             // After the shell has come up. Sending immediately writes into a PTY that has
             // not finished starting, and the line is lost.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak created] in
@@ -91,6 +93,25 @@ final class ChatThreadTerminalManager: ObservableObject {
     // streaming kitty-graphics image data, which SwiftTerm cannot decode and which froze
     // the app while it tried. A tool that declines is recoverable. A frozen window is not,
     // so the capability check the tool performs is left to succeed or fail on its own.
+
+    /// Why a tool cannot run here, when it cannot.
+    ///
+    /// Some terminal tools need capabilities a terminal *emulator* does not have: a
+    /// remote-control API to split its own panes, and the kitty graphics protocol to draw
+    /// images into the grid. SwiftTerm has neither, and neither does Terminal.app — this is
+    /// not a gap specific to this app.
+    ///
+    /// Naming them is better than launching them. Started anyway, the tool either prints an
+    /// error the user has to interpret or, worse, decides the terminal is capable and
+    /// streams image data that hangs the window.
+    static func unsupportedReason(for command: String) -> String? {
+        let graphicsTools = ["terminal-browser", "carbonyl", "browsh"]
+        guard graphicsTools.contains(command.lowercased()) else { return nil }
+        return "\(command) draws web pages with the kitty graphics protocol and controls its "
+            + "own split panes. A terminal emulator can't provide either — this tool needs "
+            + "Ghostty, kitty or WezTerm. Everything else about this thread works: ask "
+            + "questions, run its other subcommands, and read the results here."
+    }
 
     /// True when this tool draws its own screen and must not be run with captured output.
     static func needsTerminal(command: String) -> Bool {
