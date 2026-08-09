@@ -273,6 +273,36 @@ enum ContextResolver {
         }
     }
 
+    /// An AXContext describing *this* app, not whichever app the shared snapshot belongs to.
+    ///
+    /// Readers that derive a project or document from the window title get nothing when
+    /// handed another app's snapshot, which is how "enable Code" was followed by "the
+    /// project name is not readable" — Code was in scope, and the reader was looking at
+    /// Safari.
+    static func axContext(for bundleId: String, appName: String) -> AXContext {
+        let shared = AXContextReader.shared.current
+        if shared.bundleId == bundleId { return shared }
+
+        guard let running = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleId).first,
+            running.processIdentifier > 0
+        else { return AXContext(appName: appName, bundleId: bundleId, pid: 0) }
+
+        let element = AXUIElementCreateApplication(running.processIdentifier)
+        AXUIElementSetMessagingTimeout(element, 1.0)
+        var context = AXContext(
+            appName: running.localizedName ?? appName,
+            bundleId: bundleId,
+            pid: running.processIdentifier)
+        if let window = focusedWindow(of: element) {
+            context.windowTitle = axString(window, kAXTitleAttribute as String)
+            if let document = axString(window, kAXDocumentAttribute as String) {
+                context.currentURL = document
+            }
+        }
+        return context
+    }
+
     // MARK: - AX helpers
 
     private static func focusedWindow(of app: AXUIElement) -> AXUIElement? {

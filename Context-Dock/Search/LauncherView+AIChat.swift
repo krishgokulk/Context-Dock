@@ -2945,8 +2945,12 @@ extension LauncherView {
         bundleId: String, appName: String, forceRefresh: Bool = false
     ) async -> String {
         guard !bundleId.isEmpty else { return "" }
+        // The window title of the app being asked about. Reading the shared snapshot only
+        // when it already belongs to that app meant a workspace could never be resolved for
+        // any app that was not frontmost — which is exactly the case in General Chat, where
+        // the launcher is in front.
         let windowTitle = await MainActor.run {
-            self.axContext.bundleId == bundleId ? self.axContext.windowTitle : nil
+            ContextResolver.axContext(for: bundleId, appName: appName).windowTitle
         }
         let finderFolder = bundleId == "com.apple.finder"
             ? AppleAppsAPI.shared.getCurrentFolder() : nil

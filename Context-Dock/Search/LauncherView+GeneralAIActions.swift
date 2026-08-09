@@ -1898,12 +1898,27 @@ extension LauncherView {
         // Adapter context readers — the same live readers frontmost-app chat runs
         // (current file, git branch, workspace, …).
         if AppAdapterManager.shared.adapter(for: app.bundleId) != nil, running != nil {
+            // This app's own accessibility state, not the frontmost app's. Readers that
+            // derive a project or document from the window title return nothing when handed
+            // another app's snapshot — which is why enabling Code was followed by "the
+            // project name is not readable" while Code sat there with the project open.
+            let scopedAX = ContextResolver.axContext(for: app.bundleId, appName: app.name)
             let readerData = await AppAdapterManager.shared.runContextReaders(
-                for: app.bundleId, axContext: AXContextReader.shared.current)
+                for: app.bundleId, axContext: scopedAX)
             for (_, value) in readerData.sorted(by: { $0.key < $1.key })
             where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append(String(value.prefix(600)))
             }
+        }
+
+        // What the app is working on — project, branch, changes. The scoped dock chat has
+        // always had this; General Chat listed the app's tools and never said what it was
+        // doing with them.
+        let workspace = await appWorkspaceContextPrompt(
+            bundleId: app.bundleId, appName: app.name)
+        if !workspace.isEmpty {
+            lines.append("")
+            lines.append(workspace)
         }
 
         // Runtime CLI snapshots: VS Code `code --status`, Messages imsg, Tailscale CLI.
