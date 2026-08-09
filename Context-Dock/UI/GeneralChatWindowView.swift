@@ -928,9 +928,13 @@ struct GeneralChatWindowView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         sectionLabel("Provider", symbol: "brain.head.profile", count: nil)
-                        Text(AppSettings.shared.selectedAIProvider.displayName)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.primary.opacity(0.85))
+                        HStack(spacing: 6) {
+                            AIProviderIcon(
+                                provider: AppSettings.shared.selectedAIProvider, size: 12)
+                            Text(AppSettings.shared.selectedAIProvider.displayName)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.primary.opacity(0.85))
+                        }
                     }
 
                     Spacer(minLength: 0)

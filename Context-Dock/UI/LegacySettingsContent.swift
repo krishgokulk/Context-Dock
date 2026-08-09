@@ -4173,8 +4173,7 @@ struct AIProviderRow: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(rowAccent.opacity(isSelected ? 0.18 : 0.09))
                         .frame(width: 36, height: 36)
-                    Image(systemName: provider.iconName)
-                        .font(.system(size: 16, weight: .medium))
+                    AIProviderIcon(provider: provider, size: 16)
                         .foregroundStyle(isSelected ? rowAccent : .primary)
                 }
 

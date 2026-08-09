@@ -847,7 +847,7 @@ extension LauncherView {
                                         }
                                     }) {
                                         HStack {
-                                            Image(systemName: provider.iconName)
+                                            AIProviderIcon(provider: provider, size: 13)
                                             Text(provider.shortName)
                                             Spacer()
                                             if settings.selectedAIProvider == provider {
@@ -864,9 +864,9 @@ extension LauncherView {
                                 }
                             } label: {
                                 HStack(spacing: 7) {
-                                    Image(systemName: settings.selectedAIProvider.iconName)
+                                    AIProviderIcon(
+                                        provider: settings.selectedAIProvider, size: 15)
                                         .foregroundStyle(providerColor)
-                                        .font(.system(size: 15, weight: .semibold))
                                         .frame(width: 20, height: 20)
                                     Text(settings.selectedAIProvider.shortName)
                                         .font(.system(size: 14, weight: .semibold))

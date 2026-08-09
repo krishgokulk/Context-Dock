@@ -1693,8 +1693,7 @@ struct AILoadingView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // AI Avatar - uses provider icon
-            Image(systemName: settings.selectedAIProvider.iconName)
-                .font(.system(size: 16))
+            AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
                 .foregroundStyle(providerColor)
                 .frame(width: 28, height: 28)
                 .background(providerColor.opacity(0.1))

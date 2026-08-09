@@ -604,8 +604,7 @@ struct AIComposerBar: View {
                 // Icon only by default: the placeholder already says which model this
                 // is, and the name repeated beside it ate half the bar on a narrow panel.
                 HStack(spacing: 4) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 14, weight: .semibold))
+                    AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
                         .foregroundStyle(.primary)
                     if showsProviderName {
                         Text(settings.selectedAIProvider.shortName)
