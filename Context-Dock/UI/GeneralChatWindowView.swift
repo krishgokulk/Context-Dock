@@ -822,13 +822,16 @@ struct GeneralChatWindowView: View {
     private var sidePanelResizeHandle: some View {
         Rectangle()
             .fill(Color.primary.opacity(0.001))
-            .frame(width: 6)
+            .frame(width: 10)
             .contentShape(Rectangle())
             .onHover { inside in
-                inside ? NSCursor.resizeLeftRight.push() : NSCursor.pop()
+                // set(), not push()/pop(). A push that misses its pop — which happens when
+                // the pointer leaves during a drag — leaves the resize cursor stuck over
+                // the whole app.
+                if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
             }
-            .gesture(
-                DragGesture(minimumDistance: 1)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         let start = panelDragStart ?? sidePanelWidth
                         if panelDragStart == nil { panelDragStart = start }
