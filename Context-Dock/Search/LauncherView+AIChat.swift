@@ -4581,6 +4581,10 @@ extension LauncherView {
         let submittedContextDockText = contextDockChatCapturedText
         contextDockChatFiles = []
         contextDockChatCapturedText = nil
+        // Every path from here either reaches the prompt, where the attachment is read, or
+        // returns early. Recording what this turn carried lets the early paths say so
+        // instead of dropping a file the user watched attach.
+        pendingAttachmentTurn = !submittedContextDockFiles.isEmpty || submittedContextDockText != nil
 
         // Display only the user's actual query in the chat UI (not the full context prompt),
         // with the transferred files visible on that message as proof of what was sent.
@@ -4607,7 +4611,13 @@ extension LauncherView {
                     for: .noAPIKey(provider: provider.shortName), originalQuery: query
                 )
                 : "\(provider.displayName) is not configured. Check endpoint and model in Settings -> AI Provider."
-            l2.chatMessages.append(AIChatMessage(role: .assistant, content: guide, isError: true))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: pendingAttachmentTurn
+                        ? guide + "\n\nYour attachment wasn't read — nothing was sent."
+                        : guide,
+                    isError: true))
             finishL2AIRequest(l2RequestID)
             return
         }
@@ -4628,7 +4638,13 @@ extension LauncherView {
                 // Safari's browser chrome or other tabs.
                 let historyBundle = scopedBundleId.isEmpty
                     ? frontmost.bundleID : scopedBundleId
-                if self.isContextDockBrowserBundle(historyBundle),
+                // A turn carrying an attachment is a question about that attachment. These
+                // routes answer from other sources and never see the file, so letting one
+                // win means the user watched a file attach and then be ignored — and it was
+                // already cleared from the composer, so it was gone.
+                if submittedContextDockFiles.isEmpty,
+                    submittedContextDockText == nil,
+                    self.isContextDockBrowserBundle(historyBundle),
                     self.isBrowserHistoryReadQuery(query)
                 {
                     await self.setL2LoadingStatus(
@@ -4695,7 +4711,9 @@ extension LauncherView {
                     return
                 }
 
-                if self.isSafariPageLinkReadQuery(query, bundleID: historyBundle) {
+                if submittedContextDockFiles.isEmpty, submittedContextDockText == nil,
+                    self.isSafariPageLinkReadQuery(query, bundleID: historyBundle)
+                {
                     var pageLinks = await MainActor.run(body: {
                         self.structuredSafariPageLinks() ?? []
                     })
@@ -4746,7 +4764,9 @@ extension LauncherView {
                 // App UI work is proposed as a visible Computer Use action. Resolution is
                 // deterministic and local; the user's click is Allow Once. Only after that
                 // click may DoraX launch/restore the app and live-verify the cached menu path.
-                if !self.isGlobalQueryModeActive,
+                if submittedContextDockFiles.isEmpty,
+                    submittedContextDockText == nil,
+                    !self.isGlobalQueryModeActive,
                     !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle),
                     await self.offerScopedNativeAppAction(
                         query: query,

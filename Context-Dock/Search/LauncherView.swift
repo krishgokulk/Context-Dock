@@ -38,6 +38,9 @@ struct LauncherView: View {
     @State var clipboardSourcePillFocusIndex: Int? = nil
     // Running apps explicitly shared with General AI chat from the app picker.
     @State var chatFocusApps: [GeneralChatFocusApp] = []
+    /// True while a submitted dock turn is carrying files or captured text. Early routes
+    /// check it so an attachment is never dropped without the user being told.
+    @State var pendingAttachmentTurn = false
     @State var isShowingChatFocusAppPicker = false
     @State var hoveredChatFocusBundleId: String? = nil
     // Max visible list height: rows beyond this scroll inside the glass card.
