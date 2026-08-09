@@ -32,6 +32,24 @@ enum ChatAnswerSanitizer {
         "(?m)^\\s*\\{\\s*\"(?:mcp_call|menu_call|adapter_call|terminal_call|capability_call)\"\\s*:[\\s\\S]*?\\}\\s*$",
     ]
 
+    /// A call the model invented rather than one we defined — e.g. system_call. Returned
+    /// so the surface can look for a real capability that does the same thing instead of
+    /// showing the user a JSON blob or, worse, dropping their request in silence.
+    static func inventedCall(in text: String) -> (name: String, body: String)? {
+        let pattern = #"\{\s*"([a-z_]+_call)"\s*:\s*(\{[\s\S]*?\})\s*\}"#
+        guard let match = text.range(of: pattern, options: .regularExpression) else { return nil }
+        let blob = String(text[match])
+        guard let data = blob.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let key = object.keys.first
+        else { return nil }
+        let known = ["mcp_call", "menu_call", "adapter_call", "terminal_call", "capability_call"]
+        guard !known.contains(key) else { return nil }
+        let fields = object[key] as? [String: Any] ?? [:]
+        let body = fields.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        return (key, body)
+    }
+
     static func clean(_ text: String) -> String {
         var out = text
         for pattern in patterns {

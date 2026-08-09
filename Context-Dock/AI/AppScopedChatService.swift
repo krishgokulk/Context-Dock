@@ -723,6 +723,35 @@ enum AppScopedChatService {
                         command: call.command, output: result.output, success: true))
             }
         }
+        // The model sometimes invents a protocol for something we do support — sleep is a
+        // registered global command, but it asked for it as {"system_call":…}. Look the
+        // intent up in the capability registry and say what exists, rather than dropping a
+        // request the user watched it make.
+        if let invented = ChatAnswerSanitizer.inventedCall(in: text) {
+            log.notice("invented call: \(invented.name, privacy: .public)")
+            let words = invented.body.lowercased()
+                .split { !$0.isLetter }.map(String.init).filter { $0.count > 2 }
+            let match = CapabilityRegistry.shared.all.first { capability in
+                let haystack = (capability.id + " " + capability.title).lowercased()
+                return words.contains { haystack.contains($0) }
+            }
+            let cleaned = ChatAnswerSanitizer.clean(text)
+            if let match {
+                let prefix: String = cleaned.isEmpty ? "" : cleaned + "\n\n"
+                let advice: String =
+                    "I tried to call something that doesn't exist. The real capability is "
+                    + "`\(match.id)` — say the word and I'll run it (it asks for approval "
+                    + "first)."
+                text = prefix + advice
+            } else if cleaned.isEmpty {
+                text =
+                    "I tried to call `\(invented.name)`, which isn't something DoraX exposes, "
+                    + "and I couldn't find a registered capability for it."
+            } else {
+                text = cleaned
+            }
+        }
+
         text = ChatAnswerSanitizer.clean(text)
 
         // Everything the model ran during this turn, on the record with its real output.
