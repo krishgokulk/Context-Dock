@@ -410,6 +410,25 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // A question aimed at Claude Code runs Claude Code. It is the only route here that
+        // can read the user's repository — files, branch, CLAUDE.md — so answering it from
+        // the chat's own model would answer about code in general, and printing a command
+        // for the user to run themselves is not answering at all.
+        if ClaudeCodeBridge.shouldHandle(query) {
+            log.notice("stage: claude code bridge")
+            let result = await ClaudeCodeBridge.shared.ask(
+                query: query, scope: scope, attachments: attachments,
+                onProgress: { activity in
+                    ChatConsoleLog.shared.append(
+                        .note, title: "claude code", output: activity, success: true,
+                        scope: scope)
+                })
+            return Answer(
+                text: result.text,
+                toolChips: result.toolsRan.map { "\($0) via Claude Code" },
+                consoleOutput: result.transcript.isEmpty ? nil : result.transcript)
+        }
+
         // A request that spans apps gets a plan rather than a route. Candidates are
         // resolved across every app this chat may touch, so the ordering the model does is
         // ordering of real capabilities — not an improvisation it then narrates.
