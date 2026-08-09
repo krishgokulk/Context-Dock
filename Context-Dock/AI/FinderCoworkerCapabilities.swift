@@ -23,6 +23,349 @@ enum FinderCoworkerCapabilities {
         registerReveal(in: registry)
         registerTrash(in: registry)
         registerDiskUsage(in: registry)
+        registerDuplicates(in: registry)
+        registerStaleFiles(in: registry)
+        registerDiskSpace(in: registry)
+        registerRecentByKind(in: registry)
+        registerOrganize(in: registry)
+    }
+
+    // MARK: - Shared scope resolution
+
+    /// What the user means by "here", in the order a Finder co-worker should assume it:
+    /// what they selected, then the folder they are looking at, then their usual roots.
+    ///
+    /// Selection first is the whole point of a co-worker. "Are these duplicates?" with six
+    /// files highlighted is a question about those six, and answering it about Downloads
+    /// instead is a different answer to a question nobody asked.
+    private static func scopeURLs(
+        from request: AICapabilityExecutionRequest, explicitPath: String? = nil
+    ) -> (roots: [URL], describedAs: String) {
+        if let explicit = resolveRoot(explicitPath) {
+            return ([explicit], explicit.path)
+        }
+        let selected = selectedURLs(from: request)
+        if !selected.isEmpty {
+            return (
+                selected,
+                selected.count == 1
+                    ? selected[0].lastPathComponent
+                    : "\(selected.count) selected item(s)")
+        }
+        if let current = ContextDetector.shared.getCurrentFinderDirectory(), !current.isEmpty {
+            let url = URL(fileURLWithPath: current)
+            return ([url], url.path)
+        }
+        return (defaultRoots, "your Desktop, Documents and Downloads")
+    }
+
+    /// Every file under the given roots, hidden files skipped. One walker for the whole
+    /// co-worker so the rules about what it may touch live in a single place.
+    private static func files(under roots: [URL], limit: Int = 20_000) -> [URL] {
+        let fm = FileManager.default
+        var out: [URL] = []
+        for root in roots {
+            let isDir = (try? root.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else {
+                out.append(root)
+                continue
+            }
+            guard let walker = fm.enumerator(
+                at: root, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles])
+            else { continue }
+            for case let url as URL in walker {
+                let dir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                if !dir { out.append(url) }
+                if out.count >= limit { return out }
+            }
+        }
+        return out
+    }
+
+    private static func size(of url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+    }
+
+    private static func modified(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate ?? .distantPast
+    }
+
+    private static var byteFormatter: ByteCountFormatter {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }
+
+    // MARK: - Duplicates
+
+    /// Same name and same byte count, in more than one place. Not a hash comparison: reading
+    /// every candidate to prove identity costs minutes on a Downloads folder, and name+size
+    /// is enough to show the user where to look. The answer says which test was used, so
+    /// nobody deletes on a promise the check did not make.
+    private static func registerDuplicates(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.duplicates",
+                title: "Find likely duplicate files (same name and size) in a folder or the selection",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(name: "path", description: "Folder to check (defaults to the selection or current folder)", required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                let scope = scopeURLs(from: request, explicitPath: request.input["path"])
+                let all = files(under: scope.roots)
+                var groups: [String: [URL]] = [:]
+                for url in all {
+                    let key = "\(url.lastPathComponent)|\(size(of: url))"
+                    groups[key, default: []].append(url)
+                }
+                let duplicates = groups.values.filter { $0.count > 1 }
+                    .sorted { size(of: $0[0]) * Int64($0.count) > size(of: $1[0]) * Int64($1.count) }
+                guard !duplicates.isEmpty else {
+                    return .init(success: true, output: "No duplicate names and sizes in \(scope.describedAs).")
+                }
+                let formatter = byteFormatter
+                var reclaimable: Int64 = 0
+                var lines: [String] = []
+                for group in duplicates.prefix(15) {
+                    let each = size(of: group[0])
+                    reclaimable += each * Int64(group.count - 1)
+                    lines.append(
+                        "- \(group[0].lastPathComponent) — \(group.count) copies, "
+                        + "\(formatter.string(fromByteCount: each)) each")
+                    for url in group.prefix(4) {
+                        lines.append("    \(url.deletingLastPathComponent().path)")
+                    }
+                }
+                return .init(
+                    success: true,
+                    output:
+                        "\(duplicates.count) set(s) of likely duplicates in \(scope.describedAs) — "
+                        + "matched on name and size, not contents.\n"
+                        + "Reclaimable if you keep one of each: \(formatter.string(fromByteCount: reclaimable))\n\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
+    }
+
+    // MARK: - Stale files
+
+    private static func registerStaleFiles(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.staleFiles",
+                title: "Find files untouched for months, with how much space they hold",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(name: "months", description: "How many months untouched counts as stale (default 6)", required: false),
+                    .init(name: "path", description: "Folder to check (defaults to the selection or current folder)", required: false),
+                ]),
+                riskLevel: .low
+            ) { request in
+                let months = Int(request.input["months"] ?? "") ?? 6
+                let cutoff = Calendar.current.date(byAdding: .month, value: -months, to: Date())
+                    ?? Date.distantPast
+                let scope = scopeURLs(from: request, explicitPath: request.input["path"])
+                let stale = files(under: scope.roots)
+                    .filter { modified($0) < cutoff }
+                    .sorted { size(of: $0) > size(of: $1) }
+                guard !stale.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: "Nothing in \(scope.describedAs) has been untouched for \(months) months.")
+                }
+                let formatter = byteFormatter
+                let total = stale.reduce(Int64(0)) { $0 + size(of: $1) }
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateStyle = .medium
+                let lines = stale.prefix(20).map { url in
+                    "- \(url.lastPathComponent) — \(formatter.string(fromByteCount: size(of: url))), "
+                        + "last touched \(dateFormatter.string(from: modified(url)))"
+                }
+                return .init(
+                    success: true,
+                    output:
+                        "\(stale.count) file(s) in \(scope.describedAs) untouched for \(months)+ months, "
+                        + "holding \(formatter.string(fromByteCount: total)).\n\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
+    }
+
+    // MARK: - Disk space
+
+    private static func registerDiskSpace(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.diskSpace",
+                title: "Report free and total space on the startup volume",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                let home = URL(fileURLWithPath: NSHomeDirectory())
+                guard let values = try? home.resourceValues(forKeys: [
+                    .volumeAvailableCapacityForImportantUsageKey,
+                    .volumeTotalCapacityKey,
+                ]),
+                    let available = values.volumeAvailableCapacityForImportantUsage,
+                    let total = values.volumeTotalCapacity
+                else {
+                    return .init(success: false, output: "Couldn't read the volume's capacity.")
+                }
+                let formatter = byteFormatter
+                let used = Int64(total) - available
+                let percent = Int((Double(used) / Double(total)) * 100)
+                return .init(
+                    success: true,
+                    output:
+                        "\(formatter.string(fromByteCount: available)) free of "
+                        + "\(formatter.string(fromByteCount: Int64(total))) — \(percent)% used.")
+            }
+        )
+    }
+
+    // MARK: - Recent by kind
+
+    private static func registerRecentByKind(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.recentByKind",
+                title: "List recent files of a kind — screenshots, PDFs, images, documents, archives",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(name: "kind", description: "screenshot, pdf, image, document, archive, video, audio", required: true),
+                    .init(name: "days", description: "How far back to look (default 7)", required: false),
+                    .init(name: "path", description: "Folder to search (defaults to the selection or your usual folders)", required: false),
+                ]),
+                riskLevel: .low
+            ) { request in
+                let kind = (request.input["kind"] ?? "").lowercased()
+                let days = Int(request.input["days"] ?? "") ?? 7
+                let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+                    ?? Date.distantPast
+                let extensions: [String: [String]] = [
+                    "pdf": ["pdf"],
+                    "image": ["png", "jpg", "jpeg", "heic", "gif", "webp", "tiff"],
+                    "screenshot": ["png", "jpg", "jpeg"],
+                    "document": ["doc", "docx", "pages", "txt", "md", "rtf", "key", "numbers", "xlsx"],
+                    "archive": ["zip", "dmg", "pkg", "tar", "gz", "xip"],
+                    "video": ["mp4", "mov", "m4v", "avi", "mkv"],
+                    "audio": ["mp3", "m4a", "wav", "aiff", "flac"],
+                ]
+                let wanted = extensions[kind] ?? [kind]
+                let scope = scopeURLs(from: request, explicitPath: request.input["path"])
+                var matches = files(under: scope.roots).filter { url in
+                    wanted.contains(url.pathExtension.lowercased()) && modified(url) >= cutoff
+                }
+                // "Screenshot" is a name convention, not a file type — every screenshot is a
+                // PNG but almost no PNG is a screenshot.
+                if kind == "screenshot" {
+                    matches = matches.filter {
+                        let name = $0.lastPathComponent.lowercased()
+                        return name.contains("screenshot") || name.contains("screen shot")
+                            || name.hasPrefix("scr-")
+                    }
+                }
+                matches.sort { modified($0) > modified($1) }
+                guard !matches.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: "No \(kind) files in \(scope.describedAs) from the last \(days) day(s).")
+                }
+                let formatter = byteFormatter
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateStyle = .medium
+                dateFormatter.timeStyle = .short
+                let lines = matches.prefix(20).map { url in
+                    "- \(url.lastPathComponent) — \(formatter.string(fromByteCount: size(of: url))), "
+                        + "\(dateFormatter.string(from: modified(url)))\n    \(url.deletingLastPathComponent().path)"
+                }
+                return .init(
+                    success: true,
+                    output:
+                        "\(matches.count) \(kind) file(s) in the last \(days) day(s):\n\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
+    }
+
+    // MARK: - Organise
+
+    /// Moves files into folders by kind or by month. Medium risk, so it goes through the
+    /// approval sheet: this rearranges someone's filing, and a wrong guess is tedious to
+    /// undo even though nothing is destroyed.
+    private static func registerOrganize(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.organize",
+                title: "Move files into folders by kind or by month",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(name: "by", description: "kind or month (default kind)", required: false),
+                    .init(name: "path", description: "Folder to organise (defaults to the selection or current folder)", required: false),
+                ]),
+                riskLevel: .medium
+            ) { request in
+                let by = (request.input["by"] ?? "kind").lowercased()
+                let scope = scopeURLs(from: request, explicitPath: request.input["path"])
+                guard let destination = scope.roots.first(where: { $0.hasDirectoryPath })
+                    ?? scope.roots.first?.deletingLastPathComponent()
+                else { return .init(success: false, output: "No folder to organise.") }
+
+                let fm = FileManager.default
+                // Only the top level. Recursing would reorganise folders the user already
+                // arranged, which is a bigger promise than the request makes.
+                let items =
+                    (try? fm.contentsOfDirectory(
+                        at: destination, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+                        options: [.skipsHiddenFiles])) ?? []
+                let files = items.filter {
+                    !((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false)
+                }
+                guard !files.isEmpty else {
+                    return .init(success: true, output: "Nothing to organise in \(destination.path).")
+                }
+
+                let monthFormatter = DateFormatter()
+                monthFormatter.dateFormat = "yyyy-MM"
+                var moved = 0
+                var perFolder: [String: Int] = [:]
+                for file in files {
+                    let folderName: String
+                    if by == "month" {
+                        folderName = monthFormatter.string(from: modified(file))
+                    } else {
+                        let ext = file.pathExtension.lowercased()
+                        folderName = ext.isEmpty ? "Other" : ext.uppercased()
+                    }
+                    let folder = destination.appendingPathComponent(folderName, isDirectory: true)
+                    try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let target = folder.appendingPathComponent(file.lastPathComponent)
+                    // Never overwrite: a name collision keeps both, because losing a file to
+                    // tidying would be the worst possible outcome of a tidy-up.
+                    guard !fm.fileExists(atPath: target.path) else { continue }
+                    do {
+                        try fm.moveItem(at: file, to: target)
+                        moved += 1
+                        perFolder[folderName, default: 0] += 1
+                    } catch { continue }
+                }
+                let summary = perFolder.sorted { $0.value > $1.value }
+                    .map { "- \($0.key): \($0.value) file(s)" }
+                return .init(
+                    success: true,
+                    output:
+                        "Moved \(moved) of \(files.count) file(s) in \(destination.path) by \(by).\n"
+                        + (summary.isEmpty ? "" : summary.joined(separator: "\n"))
+                        + (moved < files.count
+                            ? "\n\nSkipped \(files.count - moved) — a file of that name already existed in the target folder."
+                            : ""))
+            }
+        )
     }
 
     // MARK: - Disk usage
@@ -47,14 +390,9 @@ enum FinderCoworkerCapabilities {
                 ]),
                 riskLevel: .low
             ) { request in
-                let root =
-                    resolveRoot(request.input["path"])
-                    ?? selectedURLs(from: request).first(where: { $0.hasDirectoryPath })
-                    ?? ContextDetector.shared.getCurrentFinderDirectory().map {
-                        URL(fileURLWithPath: $0)
-                    }
-                    ?? defaultRoots.first
-                guard let root else { return .init(success: false, output: "No folder to measure.") }
+                let scope = scopeURLs(from: request, explicitPath: request.input["path"])
+                guard let root = scope.roots.first(where: { $0.hasDirectoryPath }) ?? scope.roots.first
+                else { return .init(success: false, output: "No folder to measure.") }
 
                 let fm = FileManager.default
                 var total: Int64 = 0
