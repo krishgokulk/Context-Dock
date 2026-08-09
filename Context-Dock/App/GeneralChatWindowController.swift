@@ -75,8 +75,15 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         window = win
     }
 
+    /// True while the window exists on screen. Used to decide whether the app still needs
+    /// to be a regular, menu-bar-owning app.
+    var isVisible: Bool { window?.isVisible == true }
+
     func windowWillClose(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
-        window = nil
+        // The window is kept, not dropped. Rebuilding it on the next open would rebuild the
+        // SwiftUI view with fresh @State — a new thread selection, a cleared transcript,
+        // scroll position gone — which reads as "closing the window deleted my chat".
+        AppDelegate.shared?.restoreAccessoryPolicyIfNoWindowsRemain(closing: notification.object as? NSWindow)
     }
 }

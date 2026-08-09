@@ -2078,6 +2078,16 @@ extension LauncherView {
                                 }
 
                                 TextField("", text: $searchState.query)
+                                    // ⌘V of a screenshot, in the dock's own field. Only
+                                    // while a chat is armed: outside chat mode the field is
+                                    // a search box, and an image has nothing to attach to.
+                                    .acceptsPastedImages { urls in
+                                        guard l2.chatArmed else { return }
+                                        contextDockChatFiles.append(
+                                            contentsOf: urls.filter {
+                                                !contextDockChatFiles.contains($0)
+                                            })
+                                    }
                                     .textFieldStyle(.plain)
                                     .font(.system(size: inputTextSize, weight: inputTextWeight))
                                     .foregroundStyle(Color.primary)

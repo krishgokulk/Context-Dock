@@ -630,6 +630,10 @@ struct GeneralChatWindowView: View {
                 onRemoveApp: { name in
                     guard name != model.activeScopeAppName else { return }
                     model.removeApp(name)
+                },
+                onPasteImages: { urls in
+                    model.attachments.append(
+                        contentsOf: urls.filter { !model.attachments.contains($0) })
                 }
             )
         }

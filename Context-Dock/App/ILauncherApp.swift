@@ -1456,6 +1456,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if notification.object as? NSWindow === settingsWindow {
             settingsWindow = nil
         }
+        restoreAccessoryPolicyIfNoWindowsRemain(closing: notification.object as? NSWindow)
+    }
+
+    /// Goes back to being a menu-bar app once the last ordinary window closes.
+    ///
+    /// Opening the chat window or Settings switches the app to `.regular` so it can own a
+    /// menu bar, and nothing switched it back. The app then kept the menu bar and the Dock
+    /// icon for the rest of the session, took focus from whatever the user was working in,
+    /// and interrupted copy and paste in that app — because a `.regular` app that
+    /// activates is, correctly, taking over.
+    func restoreAccessoryPolicyIfNoWindowsRemain(closing: NSWindow?) {
+        // Run after the close completes: the window being closed still reports itself
+        // visible while the notification is being delivered.
+        DispatchQueue.main.async {
+            let settingsOpen = self.settingsWindow?.isVisible == true
+                && self.settingsWindow !== closing
+            let chatOpen = GeneralChatWindowController.shared.isVisible
+            guard !settingsOpen, !chatOpen else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     func registerGlobalHotkey() {

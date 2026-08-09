@@ -526,6 +526,8 @@ struct AIComposerBar: View {
     var onClear: (() -> Void)? = nil
     /// Detach an app. Nil leaves the attached icons read-only.
     var onRemoveApp: ((String) -> Void)? = nil
+    /// Images pasted with ⌘V. Nil leaves paste as text-only on that surface.
+    var onPasteImages: (([URL]) -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -788,6 +790,7 @@ struct AIComposerBar: View {
         .background(Color.primary.opacity(0.06), in: Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+        .acceptsPastedImages { urls in onPasteImages?(urls) }
     }
 }
 
