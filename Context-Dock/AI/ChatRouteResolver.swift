@@ -135,7 +135,12 @@ enum ChatRouteResolver {
         let lowered = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let questionStarts = [
             "what", "which", "who", "when", "where", "why", "how", "is ", "are ", "do ",
-            "does ", "did ", "can ", "am i", "tell me", "show me my", "my ",
+            "does ", "did ", "can ", "am i", "tell me", "my ",
+            // "show me" / "list" / "find" are requests to *see* something, and were being
+            // read as commands because they begin with a verb that also names a GUI action.
+            // "show me recent files i viewed" ran Preview's "Show Inspector" — a menu item
+            // matched on the word "show", unattended, answering nothing.
+            "show me", "list ", "give me", "find me", "search for",
         ]
         if questionStarts.contains(where: lowered.hasPrefix) { return false }
         if lowered.hasSuffix("?") { return false }
