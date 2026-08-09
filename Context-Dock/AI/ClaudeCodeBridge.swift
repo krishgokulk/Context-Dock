@@ -83,6 +83,44 @@ final class ClaudeCodeBridge {
 
     private static let sessionDefaultsKey = "claudeCodeSessionIDs"
 
+    /// When set, questions continue the Claude Code conversation already open in the
+    /// user's editor instead of a separate one owned by this chat.
+    static let continueEditorSessionKey = "claudeCodeContinueEditorSession"
+
+    /// The newest Claude Code session for this project that this app did not create.
+    ///
+    /// Claude Code stores one JSONL per session under a directory named after the project
+    /// path with `/` and `.` flattened to `-`. Picking the newest by modification time is
+    /// what "the one I have open" means in practice — an editor session is the one being
+    /// written to right now.
+    ///
+    /// Sessions this app minted are skipped, or the toggle would just resume the chat's
+    /// own thread and appear to do nothing.
+    private func editorSessionID(projectRoot: String) -> String? {
+        let flattened = projectRoot
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+        let directory = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".claude/projects/\(flattened)")
+        let ours = Set(
+            (UserDefaults.standard.dictionary(forKey: Self.sessionDefaultsKey)
+                as? [String: String] ?? [:]).values)
+
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return nil }
+
+        return files
+            .filter { $0.pathExtension == "jsonl" }
+            .filter { !ours.contains($0.deletingPathExtension().lastPathComponent) }
+            .map {
+                ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast)
+            }
+            .max { $0.1 < $1.1 }?
+            .0.deletingPathExtension().lastPathComponent
+    }
+
     /// The Claude Code session this chat thread owns. One per scope, so the second question
     /// continues the first — the whole point of using Claude Code over a one-shot call.
     private func sessionID(for scope: GeneralChatScope) -> (id: String, isNew: Bool) {
@@ -141,7 +179,14 @@ final class ClaudeCodeBridge {
         var bundleId: String?
         if case .app(let id) = scope { bundleId = id }
         let root = projectRoot(for: scope, bundleId: bundleId)
-        let session = sessionID(for: scope)
+
+        // Continue the editor's conversation, when the user asked for that. Off by
+        // default: a quick screenshot question does not belong in the middle of a
+        // multi-hour coding session, and two clients writing one session file is not
+        // something Claude Code is built for.
+        let continueEditor = UserDefaults.standard.bool(forKey: Self.continueEditorSessionKey)
+        let editorSession = continueEditor ? editorSessionID(projectRoot: root) : nil
+        let session = editorSession.map { (id: $0, isNew: false) } ?? sessionID(for: scope)
 
         // Attachments go in as absolute paths. Claude Code's Read tool opens images
         // itself, so a screenshot is read at full fidelity rather than passed through the
@@ -169,7 +214,7 @@ final class ClaudeCodeBridge {
         arguments += session.isNew ? ["--session-id", session.id] : ["--resume", session.id]
 
         log.notice(
-            "run session=\(session.id, privacy: .public) new=\(session.isNew, privacy: .public) root=\(root, privacy: .public)")
+            "run session=\(session.id, privacy: .public) new=\(session.isNew, privacy: .public) editor=\(editorSession != nil, privacy: .public) root=\(root, privacy: .public)")
 
         return await withCheckedContinuation { continuation in
             Self.execute(

@@ -459,6 +459,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // The agent-facing server, only if the user turned it on. Started here rather than
+        // lazily: an agent's first tool call must not be the thing that starts the server,
+        // or that call fails and the agent concludes the capability does not exist.
+        DoraXMCPServer.shared.startIfEnabled()
         // Before any accessibility read happens: cap how long one may block. An app that
         // is slow to answer (Terminal while launching or streaming output is the usual
         // one) otherwise stalls every reader for seconds, and the ones on the main thread

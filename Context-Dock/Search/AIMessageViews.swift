@@ -2128,6 +2128,7 @@ struct MarkdownMessageView: View {
         enum Kind {
             case text(String)
             case codeBlock(code: String, language: String?)
+            case table(header: [String], rows: [[String]])
         }
         let kind: Kind
     }
@@ -2164,6 +2165,9 @@ struct MarkdownMessageView: View {
 
                 case .codeBlock(let code, let language):
                     CodeBlockView(code: code, language: language)
+
+                case .table(let header, let rows):
+                    MarkdownTableView(header: header, rows: rows)
                 }
             }
         }
@@ -2194,7 +2198,7 @@ struct MarkdownMessageView: View {
 
             let pre = String(src[lastIndex..<matchRange.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !pre.isEmpty { blocks.append(MessageBlock(kind: .text(pre))) }
+            if !pre.isEmpty { blocks.append(contentsOf: Self.splitTables(pre)) }
 
             if match.numberOfRanges >= 3,
                 let langRange = Range(match.range(at: 1), in: src),
@@ -2212,9 +2216,71 @@ struct MarkdownMessageView: View {
         }
 
         let tail = String(src[lastIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !tail.isEmpty { blocks.append(MessageBlock(kind: .text(tail))) }
+        if !tail.isEmpty { blocks.append(contentsOf: Self.splitTables(tail)) }
 
         return blocks.isEmpty ? [MessageBlock(kind: .text(src))] : blocks
+    }
+
+    /// Pulls Markdown tables out of prose so they can be laid out as a grid.
+    ///
+    /// The text renderer parses with `.inlineOnlyPreservingWhitespace`, which handles bold,
+    /// code and links and drops every *block* construct on the floor. A table therefore
+    /// reached the user as the raw pipes that produced it — `| Surface | Job |` over
+    /// `|---|---|` — which is not a formatting nit: a comparison is the shape an answer
+    /// takes when it has something to compare, and it was arriving unreadable.
+    static func splitTables(_ text: String) -> [MessageBlock] {
+        let lines = text.components(separatedBy: "\n")
+        var blocks: [MessageBlock] = []
+        var prose: [String] = []
+        var index = 0
+
+        func flushProse() {
+            let joined = prose.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty { blocks.append(MessageBlock(kind: .text(joined))) }
+            prose.removeAll()
+        }
+
+        func cells(_ line: String) -> [String] {
+            var row = line.trimmingCharacters(in: .whitespaces)
+            if row.hasPrefix("|") { row.removeFirst() }
+            if row.hasSuffix("|") { row.removeLast() }
+            return row.components(separatedBy: "|")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+
+        while index < lines.count {
+            let line = lines[index]
+            // A table is a header row plus a `|---|---|` separator. Requiring the separator
+            // is what keeps a sentence that merely contains a pipe from being eaten.
+            let isRow = line.trimmingCharacters(in: .whitespaces).hasPrefix("|")
+            let separator = index + 1 < lines.count
+                ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
+            let isSeparator = separator.range(
+                of: "^\\|?[\\s:-]*-[-\\s:|]*\\|?$", options: .regularExpression) != nil
+                && separator.contains("-") && separator.contains("|")
+
+            guard isRow, isSeparator else {
+                prose.append(line)
+                index += 1
+                continue
+            }
+
+            flushProse()
+            let header = cells(line)
+            var rows: [[String]] = []
+            index += 2
+            while index < lines.count,
+                lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("|")
+            {
+                rows.append(cells(lines[index]))
+                index += 1
+            }
+            blocks.append(MessageBlock(kind: .table(header: header, rows: rows)))
+        }
+
+        flushProse()
+        return blocks
     }
 
     /// Some OpenAI-compatible bridges occasionally return Claude's internal XML-style
@@ -2295,8 +2361,23 @@ struct MarkdownMessageView: View {
             .replacingOccurrences(of: "&amp;", with: "&")
     }
 
+    /// Rewrites the block constructs the inline parser discards into inline ones it keeps.
+    ///
+    /// `## Heading` loses its hashes and its weight, and `- item` loses its bullet — the
+    /// answer arrives as a wall of undifferentiated text. Bold and a real bullet character
+    /// survive inline parsing, so the structure the model wrote is still visible.
+    private static func inlineFriendlyMarkdown(_ text: String) -> String {
+        var out = text.replacingOccurrences(
+            of: "(?m)^\\s{0,3}#{1,6}\\s+(.+?)\\s*$", with: "**$1**",
+            options: .regularExpression)
+        out = out.replacingOccurrences(
+            of: "(?m)^(\\s*)[-*+]\\s+(?!\\s)", with: "$1• ", options: .regularExpression)
+        return out
+    }
+
     @available(macOS 12.0, *)
     private func attributedMarkdown(_ text: String) -> AttributedString {
+        let text = Self.inlineFriendlyMarkdown(text)
         do {
             var attributed = try AttributedString(
                 markdown: text,
@@ -2313,6 +2394,63 @@ struct MarkdownMessageView: View {
 }
 
 // MARK: - Code Block View
+/// A Markdown table, laid out as a grid.
+///
+/// Wide tables scroll inside their own row rather than stretching the bubble: a chat
+/// panel is narrow and fixed, and a comparison with four columns would otherwise push the
+/// whole conversation sideways.
+struct MarkdownTableView: View {
+    let header: [String]
+    let rows: [[String]]
+
+    private var columnCount: Int {
+        max(header.count, rows.map(\.count).max() ?? 0)
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                GridRow {
+                    ForEach(0..<columnCount, id: \.self) { column in
+                        Text(cell(header, column))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                Divider().gridCellUnsizedAxes(.horizontal)
+                ForEach(rows.indices, id: \.self) { index in
+                    GridRow {
+                        ForEach(0..<columnCount, id: \.self) { column in
+                            Text(inline(cell(rows[index], column)))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.05)))
+        .textSelection(.enabled)
+    }
+
+    private func cell(_ row: [String], _ column: Int) -> String {
+        column < row.count ? row[column] : ""
+    }
+
+    /// Cells carry their own `**bold**` and `` `code` `` — dropping it would make the
+    /// table less readable than the raw pipes it replaced.
+    private func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
 struct CodeBlockView: View {
     let code: String
     let language: String?
