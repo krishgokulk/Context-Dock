@@ -4637,6 +4637,40 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                // A question aimed at Claude Code runs Claude Code, in the dock exactly as
+                // in the window. The dock and the window are two send paths, and wiring
+                // only the window meant "ask claude what this screenshot shows" fell
+                // through to the ordinary tool loop — which cannot see an image, so it
+                // web-searched the question instead, opened Safari to do it, and left the
+                // user reading Google results in a chat scoped to their editor.
+                if ClaudeCodeBridge.shouldHandle(query) {
+                    await self.setL2LoadingStatus("Asking Claude Code…", requestID: l2RequestID)
+                    // The chat's own scope, not the frontmost app — the two differ
+                    // whenever the user is typing into a chat about something other than
+                    // the window in front of them, which is most of the time.
+                    let scopeBundle = self.currentContextDockChatScope.bundleId
+                    let scope = GeneralChatScope.app(
+                        bundleId: scopeBundle.isEmpty ? frontmost.bundleID : scopeBundle)
+                    let result = await ClaudeCodeBridge.shared.ask(
+                        query: query, scope: scope, attachments: submittedContextDockFiles,
+                        onProgress: { activity in
+                            Task { @MainActor in
+                                self.setL2LoadingStatus(activity, requestID: l2RequestID)
+                            }
+                        })
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: result.text,
+                                isError: !result.success,
+                                mcpToolsRan: result.toolsRan.map { "\($0) via Claude Code" },
+                                runOutput: result.transcript.isEmpty ? nil : result.transcript))
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
+
                 // Browser-library reads must win before page scripts and menu actions. A
                 // page-world adapter can inspect one document, but it can never enumerate
                 // Safari's browser chrome or other tabs.
