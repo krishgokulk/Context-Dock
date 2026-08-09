@@ -31,6 +31,7 @@ struct GeneralChatWindowView: View {
     @State private var cachedInventory: ScopeInventory?
     /// Bumped to rebuild the terminal view after its shell is restarted.
     @State private var terminalToken = 0
+    @State private var panelTab: PanelTab = .terminal
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -833,11 +834,18 @@ struct GeneralChatWindowView: View {
 
             Divider().opacity(0.4)
 
-            // A CLI thread gets a real terminal here. Some tools — a browser, an editor, a
-            // pager — draw their own screen and cannot be run with output captured, so
-            // describing their output is not an option: it has to be shown.
-            if case .cli = model.activeScope {
-                threadTerminal
+            // Two things the panel shows rather than describes: the tool's own screen, and
+            // the file the thread is working on. They share the space — the panel is narrow,
+            // and stacking both leaves neither enough room to be useful.
+            if hasTerminal || !previewFiles.isEmpty {
+                panelTabs
+                switch effectivePanelTab {
+                case .terminal where hasTerminal:
+                    threadTerminal
+                default:
+                    ChatThreadPreviewPanel(candidates: previewFiles)
+                        .id(previewFiles.last?.path ?? "none")
+                }
                 Divider().opacity(0.4)
             }
 
@@ -948,6 +956,83 @@ struct GeneralChatWindowView: View {
             }
         }
         .background(Theme.surface(dark))
+    }
+
+    private enum PanelTab: String { case terminal, preview }
+
+    private var hasTerminal: Bool {
+        if case .cli = model.activeScope { return true }
+        return false
+    }
+
+    /// Falls back rather than showing an empty half: a thread with no terminal opens on the
+    /// preview, and one with no files opens on the terminal.
+    private var effectivePanelTab: PanelTab {
+        if panelTab == .terminal, !hasTerminal { return .preview }
+        if panelTab == .preview, previewFiles.isEmpty, hasTerminal { return .terminal }
+        return panelTab
+    }
+
+    /// Files this thread is working on: what the user attached, plus any absolute path in
+    /// the transcript that actually exists. Derived rather than tracked, so a path the
+    /// assistant only planned to write never appears — it isn't there.
+    private var previewFiles: [URL] {
+        var seen = Set<String>()
+        var found: [URL] = []
+
+        func consider(_ path: String) {
+            let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'.,)]"))
+            var isDirectory: ObjCBool = false
+            guard trimmed.hasPrefix("/"), !seen.contains(trimmed),
+                FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDirectory),
+                !isDirectory.boolValue
+            else { return }
+            seen.insert(trimmed)
+            found.append(URL(fileURLWithPath: trimmed))
+        }
+
+        for message in model.messages.suffix(30) {
+            message.attachments.forEach { consider($0.path) }
+            let pattern = "/[A-Za-z0-9._~/@+-]+\\.[A-Za-z0-9]{1,8}"
+            let content = message.content
+            var index = content.startIndex
+            while let range = content.range(
+                of: pattern, options: .regularExpression, range: index..<content.endIndex)
+            {
+                consider(String(content[range]))
+                index = range.upperBound
+            }
+        }
+        model.attachments.forEach { consider($0.path) }
+        return found
+    }
+
+    private var panelTabs: some View {
+        HStack(spacing: 6) {
+            if hasTerminal { tabPill("Terminal", tab: .terminal, symbol: "terminal") }
+            if !previewFiles.isEmpty {
+                tabPill("Preview", tab: .preview, symbol: "doc.text")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
+
+    private func tabPill(_ title: String, tab: PanelTab, symbol: String) -> some View {
+        let active = effectivePanelTab == tab
+        return Button { panelTab = tab } label: {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                Text(title).font(.system(size: 10.5, weight: .semibold))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(active ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.07)))
+            .foregroundStyle(active ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.plain)
     }
 
     /// The thread's live PTY, with the tool's own prompt. Created on first sight of a CLI
