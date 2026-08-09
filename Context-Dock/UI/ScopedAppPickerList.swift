@@ -164,6 +164,17 @@ extension ScopedAppPickerRow {
                     icon: result.icon ?? running[result.title] ?? nil,
                     isRunning: running[result.title] != nil))
         }
+
+        // Running apps the catalogue does not carry. The catalogue scans /Applications, and
+        // Finder lives in /System/Library/CoreServices — so typing "/finder" in the window
+        // matched nothing, while the dock's picker (which starts from running apps) offered
+        // it. Finder is the app most worth scoping a chat to: it is where the user's files
+        // are, and this app can already read its selection.
+        for (name, icon) in running where seen.insert(name).inserted {
+            rows.append(
+                ScopedAppPickerRow(name: name, bundleId: name, icon: icon, isRunning: true))
+        }
+
         return rows.sorted {
             ($0.isRunning ? 0 : 1, $0.name.lowercased())
                 < ($1.isRunning ? 0 : 1, $1.name.lowercased())
