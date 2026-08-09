@@ -50,6 +50,23 @@ enum ChatAnswerSanitizer {
         return (key, body)
     }
 
+    /// A call the model wrote as text instead of calling: {"mcp_call":…},
+    /// {"capability_call":…}, {"menu_call":…}, {"adapter_call":…}.
+    ///
+    /// The prompt teaches this protocol — the built-in tools section literally says to
+    /// reply with one line of JSON — so a model that follows the instruction is not
+    /// misbehaving. A surface that then only strips it swallows the user's request.
+    static func knownCall(in text: String) -> (kind: String, arguments: [String: Any])? {
+        let pattern = #"\{\s*"(mcp_call|capability_call|menu_call|adapter_call)"\s*:\s*(\{[\s\S]*?\})\s*\}"#
+        guard let range = text.range(of: pattern, options: .regularExpression),
+            let data = String(text[range]).data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let kind = object.keys.first,
+            let arguments = object[kind] as? [String: Any]
+        else { return nil }
+        return (kind, arguments)
+    }
+
     static func clean(_ text: String) -> String {
         var out = text
         for pattern in patterns {

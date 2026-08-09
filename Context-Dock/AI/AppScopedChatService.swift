@@ -700,6 +700,43 @@ enum AppScopedChatService {
             }
         }
 
+        // A capability call written as prose. The built-in tools section of the prompt
+        // teaches exactly this protocol, so a model following the instruction is not
+        // misbehaving — and until now the surface stripped it and answered nothing, which
+        // is why "sleep now" ended in a confirmation that led nowhere.
+        if let call = ChatAnswerSanitizer.knownCall(in: text) {
+            log.notice("recovering prose \(call.kind, privacy: .public)")
+            let capabilityID =
+                (call.arguments["tool"] as? String)
+                ?? (call.arguments["capability"] as? String)
+                ?? (call.arguments["capability_id"] as? String)
+                ?? ""
+            if !capabilityID.isEmpty,
+                CapabilityRegistry.shared.capability(id: capabilityID) != nil
+            {
+                var input: [String: String] = [:]
+                if let raw = call.arguments["arguments"] as? [String: Any] {
+                    for (key, value) in raw { input[key] = String(describing: value) }
+                }
+                let plan = AIActionPlan(
+                    capability: capabilityID, input: input,
+                    explanation: "Requested in chat: \(query)")
+                let result = try? await AIExecutionEngine.shared.executeWithApproval(
+                    plan, context: context)
+                ChatConsoleLog.shared.append(
+                    .tool, title: capabilityID,
+                    output: result?.output ?? "(no output)",
+                    success: result?.success ?? false, scope: scope)
+                if let result, result.success {
+                    text = result.output.isEmpty
+                        ? "Done — \(capabilityID)."
+                        : result.output
+                } else {
+                    text = "\(capabilityID) didn't run."
+                }
+            }
+        }
+
         // The model sometimes writes its tool call out as text instead of calling it. The
         // dock recovers by running it; the window used to render the JSON. One recovery
         // round only — a model that keeps narrating tool calls is not going to stop.

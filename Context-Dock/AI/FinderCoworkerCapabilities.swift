@@ -22,6 +22,98 @@ enum FinderCoworkerCapabilities {
         registerInfo(in: registry)
         registerReveal(in: registry)
         registerTrash(in: registry)
+        registerDiskUsage(in: registry)
+    }
+
+    // MARK: - Disk usage
+
+    /// "How much space does Downloads take?" had no capability behind it, so the model
+    /// answered that the size was unavailable and told the user to go look in Finder —
+    /// while Finder itself was the scope of the conversation. A folder's size is a fact
+    /// the machine can produce; it should never be a suggestion to check manually.
+    private static func registerDiskUsage(in registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "finder.folderSize",
+                title: "Measure a folder's total size and its largest items",
+                appBundleID: finderBundleID,
+                inputSchema: .init(fields: [
+                    .init(
+                        name: "path",
+                        description:
+                            "Folder to measure, e.g. ~/Downloads (defaults to the selected "
+                            + "folder or the current Finder folder)",
+                        required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                let root =
+                    resolveRoot(request.input["path"])
+                    ?? selectedURLs(from: request).first(where: { $0.hasDirectoryPath })
+                    ?? ContextDetector.shared.getCurrentFinderDirectory().map {
+                        URL(fileURLWithPath: $0)
+                    }
+                    ?? defaultRoots.first
+                guard let root else { return .init(success: false, output: "No folder to measure.") }
+
+                let fm = FileManager.default
+                var total: Int64 = 0
+                var fileCount = 0
+                var folderCount = 0
+                /// Size per immediate child, so the answer can say what is actually taking
+                /// the space rather than only how much there is.
+                var perChild: [(name: String, bytes: Int64)] = []
+
+                let children =
+                    (try? fm.contentsOfDirectory(
+                        at: root, includingPropertiesForKeys: [.isDirectoryKey],
+                        options: [.skipsHiddenFiles])) ?? []
+
+                for child in children {
+                    var childTotal: Int64 = 0
+                    let isDir =
+                        (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                    if isDir {
+                        folderCount += 1
+                        // Enumerated rather than shelling out to du: no approval prompt, no
+                        // shell, and it stops at the user's own folder either way.
+                        if let walker = fm.enumerator(
+                            at: child, includingPropertiesForKeys: [.fileSizeKey],
+                            options: [.skipsHiddenFiles])
+                        {
+                            for case let url as URL in walker {
+                                let size =
+                                    (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                                childTotal += Int64(size)
+                            }
+                        }
+                    } else {
+                        fileCount += 1
+                        childTotal = Int64(
+                            (try? child.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                    }
+                    total += childTotal
+                    perChild.append((child.lastPathComponent, childTotal))
+                }
+
+                let formatter = ByteCountFormatter()
+                formatter.countStyle = .file
+                let largest = perChild.sorted { $0.bytes > $1.bytes }.prefix(8)
+                    .map { "- \($0.name): \(formatter.string(fromByteCount: $0.bytes))" }
+
+                var out = [
+                    "\(root.path)",
+                    "Total: \(formatter.string(fromByteCount: total))",
+                    "\(fileCount) file(s), \(folderCount) folder(s) at the top level",
+                ]
+                if !largest.isEmpty {
+                    out.append("")
+                    out.append("Largest items:")
+                    out += largest
+                }
+                return .init(success: true, output: out.joined(separator: "\n"))
+            }
+        )
     }
 
     // MARK: - Roots the tool may touch
