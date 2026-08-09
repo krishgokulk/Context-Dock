@@ -28,8 +28,8 @@ enum ChatAnswerSanitizer {
         "(?m)^\\s*\\[(?:TERMINAL_COMMAND|COMMAND_PURPOSE)\\s*:[^\\]]*\\]\\s*$",
         "\\[(?:TERMINAL_COMMAND|COMMAND_PURPOSE)\\s*:[^\\]]*\\]",
         // A lone JSON tool call, fenced or not.
-        "(?m)^\\s*```(?:json)?\\s*\\{\\s*\"(?:mcp_call|menu_call|adapter_call|terminal_call|capability_call)\"[\\s\\S]*?```\\s*$",
-        "(?m)^\\s*\\{\\s*\"(?:mcp_call|menu_call|adapter_call|terminal_call|capability_call)\"\\s*:[\\s\\S]*?\\}\\s*$",
+        "(?m)^\\s*```(?:json)?\\s*\\{\\s*\"[a-z_]+_call\"[\\s\\S]*?```\\s*$",
+        "(?m)^\\s*\\{\\s*\"[a-z_]+_call\"\\s*:[\\s\\S]*?\\}\\s*$",
     ]
 
     /// A call the model invented rather than one we defined — e.g. system_call. Returned
