@@ -550,6 +550,9 @@ struct AIChatMessageView: View {
     var onReplaceText: (() -> Void)? = nil
     /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
     var onEnableApp: ((EnableAppRequest) -> Void)? = nil
+    /// Show a file in the chat window's Preview panel. Nil on surfaces that already have
+    /// one — the window does not need a button that opens the window.
+    var onPreviewFile: ((URL) -> Void)? = nil
     var onPickAction: ((ActionChoice) -> Void)? = nil
     var onReminderAction: ((ReminderResultAction, String) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
@@ -629,6 +632,15 @@ struct AIChatMessageView: View {
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 4)
+                    if let onPreviewFile {
+                        // Reading a file in the dock costs the conversation, and going back
+                        // to the conversation costs the file. The window shows both.
+                        Button("Preview") { onPreviewFile(file.url) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                            .help("Open \(file.name) beside this chat")
+                    }
                     Button("Open") {
                         NSWorkspace.shared.open(file.url)
                     }

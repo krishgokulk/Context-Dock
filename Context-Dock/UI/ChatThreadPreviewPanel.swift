@@ -30,6 +30,7 @@ struct ChatThreadPreviewPanel: View {
     @State private var loadedText: String = ""
     @State private var thumbnail: NSImage?
     @State private var status: String?
+    @State private var watcher: DispatchSourceFileSystemObject?
 
     private var current: URL? { selected ?? candidates.last }
 
@@ -47,8 +48,15 @@ struct ChatThreadPreviewPanel: View {
                     .padding(.vertical, 18)
             }
         }
-        .onChange(of: current) { _, _ in load() }
-        .onAppear { load() }
+        .onChange(of: current) { _, _ in
+            load()
+            startWatching()
+        }
+        .onAppear {
+            load()
+            startWatching()
+        }
+        .onDisappear { stopWatching() }
     }
 
     // MARK: - Header
@@ -151,6 +159,43 @@ struct ChatThreadPreviewPanel: View {
     }
 
     // MARK: - Load and save
+
+    /// Reloads when the file changes underneath.
+    ///
+    /// Without this the panel showed whatever the file said when it was opened, so an agent
+    /// rewriting it left the user reading a stale copy that looked current — the failure a
+    /// preview pane exists to prevent.
+    private func startWatching() {
+        stopWatching()
+        guard let current else { return }
+        let descriptor = open(current.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
+        source.setEventHandler {
+            // An editor that writes atomically replaces the file rather than modifying it,
+            // so the old descriptor now points at nothing: re-open on the new path.
+            Task { @MainActor in
+                guard text == loadedText else {
+                    // Unsaved edits are not thrown away because something else touched the
+                    // file. The save path already refuses to overwrite a changed file.
+                    status = "changed on disk"
+                    return
+                }
+                load()
+                startWatching()
+            }
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        watcher = source
+    }
+
+    private func stopWatching() {
+        watcher?.cancel()
+        watcher = nil
+    }
 
     private func load() {
         thumbnail = nil

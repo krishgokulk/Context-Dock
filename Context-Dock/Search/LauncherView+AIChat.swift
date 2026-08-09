@@ -1431,6 +1431,12 @@ extension LauncherView {
                                             onInstallProposal: { json in installFromProposal(json)
                                             },
                                             onRunOnceProposal: { json in runOnceFromProposal(json) },
+                                            onPreviewFile: { url in
+                                                let scope = currentContextDockChatScope
+                                                previewFileInChatWindow(
+                                                    url, bundleId: scope.bundleId,
+                                                    appName: scope.appName)
+                                            },
                                             onPickAction: { choice in
                                                 runPickedActionChoice(choice, inDock: true)
                                             },
@@ -1444,6 +1450,12 @@ extension LauncherView {
                                     } else {
                                         AIChatMessageView(
                                             message: message,
+                                            onPreviewFile: { url in
+                                                let scope = currentContextDockChatScope
+                                                previewFileInChatWindow(
+                                                    url, bundleId: scope.bundleId,
+                                                    appName: scope.appName)
+                                            },
                                             onPickAction: { choice in
                                                 runPickedActionChoice(choice, inDock: true)
                                             },
