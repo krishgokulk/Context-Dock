@@ -53,7 +53,7 @@ final class ChatThreadTerminalManager: ObservableObject {
             // After the shell has come up. Sending immediately writes into a PTY that has
             // not finished starting, and the line is lost.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak created] in
-                created?.sendCommand(command)
+                created?.sendCommand(Self.launchCommand(for: command))
             }
         }
         return created
@@ -81,6 +81,34 @@ final class ChatThreadTerminalManager: ObservableObject {
     func close(scope: GeneralChatScope) {
         controllers[scope.storageKey] = nil
         liveScopeKeys.remove(scope.storageKey)
+    }
+
+    /// Where tmux is, if the user has it.
+    ///
+    /// Checked by path rather than `which`: a GUI app's PATH is not the user's shell PATH.
+    static var tmuxPath: String? {
+        ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// Runs a tool inside tmux when tmux is available.
+    ///
+    /// Some terminal tools do more than draw: they ask the terminal to split panes, open
+    /// windows, or render images. A terminal emulator has no API for that — it emulates a
+    /// screen, not an application — so `terminal-browser` refuses outright with "cannot
+    /// control this terminal", and would refuse the same way in Terminal.app.
+    ///
+    /// tmux is the answer the tool itself names. It multiplexes panes *inside* one PTY, so
+    /// the thing being asked to split is tmux rather than the emulator, and our terminal
+    /// only has to draw what tmux composes. Without tmux the command runs bare — the tool
+    /// then prints its own advice, which is more useful than us guessing on its behalf.
+    static func launchCommand(for command: String) -> String {
+        guard let tmux = tmuxPath else { return command }
+        // One named session per tool: reattaching an existing one keeps a tool's state when
+        // the user closes the panel and comes back, which is the behaviour a terminal
+        // multiplexer exists to give.
+        let session = "dorax-" + command.replacingOccurrences(of: " ", with: "-")
+        return "\(tmux) new-session -A -s \(session) \(command)"
     }
 
     /// True when this tool draws its own screen and must not be run with captured output.

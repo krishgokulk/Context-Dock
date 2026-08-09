@@ -35,7 +35,10 @@ struct GeneralChatWindowView: View {
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
-    private let sidePanelWidth: CGFloat = 300
+    /// Kept across launches: a width someone dragged to is a preference, not a gesture to
+    /// repeat every time they open the window.
+    @AppStorage("generalChatSidePanelWidth") private var sidePanelWidth: Double = 300
+    @State private var panelDragStart: Double?
     private let bottomPanelHeight: CGFloat = 180
 
     var body: some View {
@@ -424,6 +427,7 @@ struct GeneralChatWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if chrome.sidePanelVisible {
+                    sidePanelResizeHandle
                     Divider().opacity(0.55)
                     sidePanel
                         .frame(width: sidePanelWidth)
@@ -808,6 +812,32 @@ struct GeneralChatWindowView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: date)
+    }
+
+    /// Drag to trade width between the conversation and the panel.
+    ///
+    /// The panel holds a live terminal and a file being edited, and 300pt was chosen for a
+    /// list of tool names. Reading either at that width means giving up the conversation,
+    /// which defeats having them side by side.
+    private var sidePanelResizeHandle: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.001))
+            .frame(width: 6)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                inside ? NSCursor.resizeLeftRight.push() : NSCursor.pop()
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let start = panelDragStart ?? sidePanelWidth
+                        if panelDragStart == nil { panelDragStart = start }
+                        // Dragging left widens the panel: it is pinned to the right edge.
+                        sidePanelWidth = min(760, max(240, start - Double(value.translation.width)))
+                    }
+                    .onEnded { _ in panelDragStart = nil }
+            )
+            .overlay(Divider().opacity(0.4))
     }
 
     private var sidePanel: some View {
