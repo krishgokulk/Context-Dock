@@ -37,12 +37,25 @@ final class ChatThreadTerminalManager: ObservableObject {
 
     /// The thread's terminal, started on first use. `isPanel` so it never takes the AI
     /// bridge's main slot from the dock's own terminal.
+    ///
+    /// A CLI thread's terminal starts the tool, not a bare shell. Opening the panel for
+    /// `terminal-browser` and getting an empty zsh prompt is the reason the assistant kept
+    /// reporting "terminal-browser is not currently running" and typing `help` into a shell
+    /// one character at a time: the panel exists to run that tool, and nothing ran it.
     @discardableResult
     func controller(for scope: GeneralChatScope) -> TerminalHostController {
         if let existing = controllers[scope.storageKey] { return existing }
         let created = TerminalHostController(isPanel: true)
         controllers[scope.storageKey] = created
         liveScopeKeys.insert(scope.storageKey)
+
+        if case .cli(let command) = scope, Self.needsTerminal(command: command) {
+            // After the shell has come up. Sending immediately writes into a PTY that has
+            // not finished starting, and the line is lost.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak created] in
+                created?.sendCommand(command)
+            }
+        }
         return created
     }
 
