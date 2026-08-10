@@ -97,7 +97,7 @@ enum WorkbenchIntent {
 
     /// Whether anything is being held that would make a report worth sending.
     private static var hasFreshEvidence: Bool {
-        guard let root = ProjectContextResolver.shared.frontmostProjectRoot() else {
+        guard let root = ProjectContextResolver.shared.workingProjectRoot() else {
             return false
         }
         return WorkbenchEvidence.shared.buildFailure(for: root) != nil
@@ -178,7 +178,7 @@ enum WorkbenchIntent {
     /// after a failed build is how someone spends twenty minutes testing a fix that was
     /// never compiled — the exact loop this is here to shorten.
     private static func test(scope: GeneralChatScope) async -> Outcome {
-        guard let root = ProjectContextResolver.shared.frontmostProjectRoot() else {
+        guard let root = ProjectContextResolver.shared.workingProjectRoot() else {
             return Outcome(
                 text: "I couldn't tell which project to test. Open it in your editor first.",
                 chips: [])

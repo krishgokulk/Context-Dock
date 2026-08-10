@@ -160,7 +160,7 @@ enum ProjectBuildCapabilities {
                 first.hasDirectoryPath ? first.path : first.deletingLastPathComponent().path
             return ProjectContextResolver.repositoryRoot(containing: base) ?? base
         }
-        return ProjectContextResolver.shared.frontmostProjectRoot()
+        return ProjectContextResolver.shared.workingProjectRoot()
     }
 
     /// Build logs are long and the useful part is at the end. Keeping the tail rather than

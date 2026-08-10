@@ -67,7 +67,7 @@ final class WorkbenchEvidence {
     func recordCapture(_ url: URL) {
         let capture = Capture(url: url, at: Date())
         looseCapture = capture
-        if let root = ProjectContextResolver.shared.frontmostProjectRoot() {
+        if let root = ProjectContextResolver.shared.workingProjectRoot() {
             captures[root] = capture
         }
     }
@@ -149,7 +149,7 @@ enum AgentHandoff {
     static func send(observation: String, scope: GeneralChatScope) async -> ClaudeCodeBridge
         .Result?
     {
-        guard let root = ProjectContextResolver.shared.frontmostProjectRoot() else {
+        guard let root = ProjectContextResolver.shared.workingProjectRoot() else {
             return nil
         }
         let brief = await brief(observation: observation, projectRoot: root)

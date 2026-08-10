@@ -66,6 +66,27 @@ final class ProjectContextResolver {
         return projectRoot(for: app)
     }
 
+    /// The project the user is working in, asked from inside one of our own windows.
+    ///
+    /// To NSWorkspace, the chat window is a frontmost app like any other, so
+    /// `frontmostProjectRoot()` answers "Context-Dock" — that is, no project — at exactly
+    /// the moment someone types "test it" into it. The app that was in front before us is
+    /// the one they mean. Same reasoning the browser and extension paths already use.
+    func workingProjectRoot() -> String? {
+        let ours = Bundle.main.bundleIdentifier
+        if let app = NSWorkspace.shared.frontmostApplication,
+            app.bundleIdentifier != ours,
+            let root = projectRoot(for: app)
+        {
+            return root
+        }
+        guard let previous = AppDelegate.shared?.previousFrontmostApp,
+            !previous.isTerminated,
+            previous.bundleIdentifier != ours
+        else { return nil }
+        return projectRoot(for: previous)
+    }
+
     func invalidate() { cache.removeAll() }
 
     // MARK: - Per-app sources
