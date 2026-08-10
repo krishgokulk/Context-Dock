@@ -200,6 +200,7 @@ struct LauncherView: View {
     /// Cloud-consent request rendered inline in the chat (instead of the floating window)
     /// whenever a chat surface is already on screen.
     @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
+    @State var pendingCapabilityApproval: AICapabilityApprovalCenter.PendingApproval?
     /// Adapter / menu-command approval rendered inline in the chat (instead of the
     /// floating panel) whenever a chat surface is already on screen.
     @State var pendingAdapterApproval: AdapterActionRequest?
@@ -1426,9 +1427,29 @@ struct LauncherView: View {
             }
         }
         .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
+            // Same rule the privacy approval below already follows: while a chat surface is
+            // on screen the card belongs in it. A separate window lands over the dock and
+            // covers the request being approved.
+            let chatSurfaceVisible =
+                aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
             if let pending {
-                openAICapabilityApprovalWindow(pending: pending)
+                if chatSurfaceVisible {
+                    AICapabilityApprovalWindowHost.close()
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        pendingCapabilityApproval = pending
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                } else {
+                    pendingCapabilityApproval = nil
+                    openAICapabilityApprovalWindow(pending: pending)
+                }
             } else {
+                if pendingCapabilityApproval != nil {
+                    withAnimation(.dockSoft) {
+                        pendingCapabilityApproval = nil
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                }
                 AICapabilityApprovalWindowHost.close()
             }
         }

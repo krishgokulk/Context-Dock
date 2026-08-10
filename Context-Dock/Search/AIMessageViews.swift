@@ -151,6 +151,85 @@ struct InlinePrivacyApprovalCard: View {
     }
 }
 
+/// Capability approval rendered inside the conversation. Same decision as the floating
+/// `AICapabilityApprovalView`, but it stays in the chat that asked for it — a separate
+/// window lands over the dock and hides the request it is asking about, which is the one
+/// thing someone needs to see before approving.
+struct InlineCapabilityApprovalCard: View {
+    let pending: AICapabilityApprovalCenter.PendingApproval
+
+    private var isHighRisk: Bool {
+        pending.capability.riskLevel == .high || pending.capability.riskLevel == .critical
+    }
+
+    private var accent: Color { isHighRisk ? .orange : .accentColor }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accent)
+                Text(pending.capability.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                Spacer(minLength: 0)
+                Text(pending.capability.riskLevel.rawValue.capitalized)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isHighRisk ? .orange : .secondary)
+            }
+            if !pending.plan.explanation.isEmpty {
+                Text(pending.plan.explanation)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            // The inputs are the approval. A title without them is a request to trust that
+            // the right values were filled in somewhere off screen.
+            if !pending.plan.input.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(pending.plan.input.keys.sorted(), id: \.self) { key in
+                        Text("\(key): \(pending.plan.input[key] ?? "")")
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            Text("Expires after 60 seconds.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Cancel") { AICapabilityApprovalCenter.shared.deny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button("Approve") { AICapabilityApprovalCenter.shared.approve() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(accent, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(accent.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
 /// Adapter / menu-command approval rendered inside the conversation. Same decision as the
 /// floating `AdapterApprovalPopupView`, but it stays in the chat that asked for it instead of
 /// throwing a second window over the dock.

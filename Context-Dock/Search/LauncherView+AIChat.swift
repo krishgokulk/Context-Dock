@@ -1773,6 +1773,10 @@ extension LauncherView {
                             InlinePrivacyApprovalCard(pending: pendingPrivacyApproval)
                                 .id("privacy-approval")
                         }
+                        if let pendingCapabilityApproval {
+                            InlineCapabilityApprovalCard(pending: pendingCapabilityApproval)
+                                .id("capability-approval")
+                        }
                         if let pendingAdapterApproval {
                             InlineAdapterApprovalCard(request: pendingAdapterApproval)
                                 .id("adapter-approval")
