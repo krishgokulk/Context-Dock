@@ -58,10 +58,14 @@ enum ProjectBuildCapabilities {
                 guard result.success else {
                     // The failure text is the payload, not a footnote: it is what gets handed
                     // back to whichever agent is fixing the code.
+                    let detail = tail(result.output)
+                    WorkbenchEvidence.shared.recordBuildFailure(
+                        projectRoot: root, source: recipe.source, output: detail)
                     return .init(
                         success: false,
-                        output: "Build failed (\(recipe.source)).\n\n\(tail(result.output))")
+                        output: "Build failed (\(recipe.source)).\n\n\(detail)")
                 }
+                WorkbenchEvidence.shared.recordBuildSuccess(projectRoot: root)
                 return .init(
                     success: true, output: "Build succeeded (\(recipe.source)).")
             }

@@ -258,6 +258,9 @@ final class CapabilityRegistry {
                     guard FileManager.default.fileExists(atPath: outputURL.path) else {
                         return .init(success: false, output: "The screenshot command finished, but no file was created.")
                     }
+                    // Remember it: the next question about what the app is doing wrong should
+                    // be able to show the agent this shot rather than describe it.
+                    WorkbenchEvidence.shared.recordCapture(outputURL)
                     return .init(success: true, output: "Saved screenshot to \(outputURL.path).")
                 }
                 return .init(success: true, output: "Copied screenshot to the clipboard.")
