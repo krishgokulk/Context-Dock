@@ -1184,7 +1184,7 @@ class L2UnifiedAssistant: ObservableObject {
     }
 
     private func executeRunCommand(command: String) async -> L2Response {
-        let (success, output) = await terminalBridge.processAICommand(command, purpose: "User requested command")
+        let (success, output, _) = await terminalBridge.processAICommand(command, purpose: "User requested command")
 
         if success {
             return L2Response(
@@ -1355,7 +1355,7 @@ class L2UnifiedAssistant: ObservableObject {
 
     private func executeInstallTool(name: String) async -> L2Response {
         let command = "brew install \(name)"
-        let (success, output) = await terminalBridge.processAICommand(command, purpose: "Install \(name) via Homebrew")
+        let (success, output, _) = await terminalBridge.processAICommand(command, purpose: "Install \(name) via Homebrew")
 
         if success {
             return L2Response(
@@ -1383,7 +1383,7 @@ class L2UnifiedAssistant: ObservableObject {
     /// Check if a tool is installed by running `which <tool>`
     private func executeCheckIfInstalled(toolName: String) async -> L2Response {
         let command = "which \(toolName)"
-        let (success, output) = await terminalBridge.processAICommand(command, purpose: "Check if \(toolName) is installed")
+        let (success, output, _) = await terminalBridge.processAICommand(command, purpose: "Check if \(toolName) is installed")
 
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1391,7 +1391,7 @@ class L2UnifiedAssistant: ObservableObject {
             // Tool is installed - get version if possible
             var versionInfo = ""
             let versionCmd = "\(toolName) --version 2>/dev/null || \(toolName) -v 2>/dev/null || echo ''"
-            let (_, versionOutput) = await terminalBridge.processAICommand(versionCmd, purpose: "Get \(toolName) version")
+            let (_, versionOutput, _) = await terminalBridge.processAICommand(versionCmd, purpose: "Get \(toolName) version")
             let version = versionOutput.trimmingCharacters(in: .whitespacesAndNewlines)
             if !version.isEmpty {
                 versionInfo = "\n**Version:** `\(version.components(separatedBy: "\n").first ?? version)`"
@@ -1463,7 +1463,7 @@ class L2UnifiedAssistant: ObservableObject {
                     ],
                     actions: [
                         L2Response.L2Action(title: "Execute", icon: "play.fill") {
-                            let (success, output) = await self.terminalBridge.processAICommand(finalCommand, purpose: purpose)
+                            let (success, output, _) = await self.terminalBridge.processAICommand(finalCommand, purpose: purpose)
                             self.packageManager.recordCommand(query: query, command: finalCommand, success: success, forPackageName: package.name)
 
                             await MainActor.run {
@@ -1529,8 +1529,8 @@ class L2UnifiedAssistant: ObservableObject {
 
         // Closure: routes each AI-requested tool call through TerminalAIBridge
         // (all approval UI, risk classification, and audit logging are preserved)
-        let commandExecutor: (String, String, Bool) async -> (Bool, String) = { [weak self] command, purpose, needsApproval in
-            guard let self else { return (false, "Internal error") }
+        let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = { [weak self] command, purpose, needsApproval in
+            guard let self else { return (false, "Internal error", -1) }
             return await self.terminalBridge.processAICommand(
                 command, purpose: purpose, modelRequiresApproval: needsApproval)
         }
@@ -1621,7 +1621,7 @@ class L2UnifiedAssistant: ObservableObject {
                let purpose = extractPurpose(from: aiResponse),
                command != "NONE" {
 
-                let (success, output) = await terminalBridge.processAICommand(command, purpose: purpose)
+                let (success, output, _) = await terminalBridge.processAICommand(command, purpose: purpose)
 
                 if let matchedPkg = packageManager.findPackageForQuery(query) {
                     packageManager.recordCommand(query: query, command: command, success: success, forPackageName: matchedPkg.name)

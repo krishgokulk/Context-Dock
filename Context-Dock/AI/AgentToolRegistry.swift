@@ -19,14 +19,14 @@ import Foundation
 struct AgentToolContext {
     /// Runs a shell command through the classifier / argv gate / approval path.
     /// The Bool is the model's own `requires_approval` answer.
-    let commandExecutor: (String, String, Bool) async -> (Bool, String)
+    let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32)
 
     /// What the user had selected or focused when they asked. Capabilities read it to
     /// resolve implicit targets ("this file", "the current folder").
     var userContext: UserContext = .none
 
     init(
-        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         userContext: UserContext = .none
     ) {
         self.commandExecutor = commandExecutor
@@ -63,6 +63,41 @@ struct AgentToolResult {
         self.exitCode = exitCode
         self.stdout = stdout
         self.stderr = stderr
+    }
+}
+
+/// Renders a tool result for the model.
+///
+/// The three provider loops each computed `success` and then sent only `output` back:
+///
+///     messages.append(["role": "tool", "content": output.isEmpty ? "(no output)" : output])
+///
+/// So a command that failed and a command that returned nothing were the same eight
+/// characters — "(no output)" — and the model had no way to know a call had failed. That is
+/// why it could not retry: not because the loop stopped too early, but because failure was
+/// invisible to it. A model that cannot see an error can only guess that its plan worked,
+/// which is exactly what produced answers claiming work that never happened.
+enum AgentToolTranscript {
+    static func payload(success: Bool, output: String, exitCode: Int32? = nil) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        var header = success ? "status: ok" : "status: FAILED"
+        if let exitCode { header += " (exit code \(exitCode))" }
+
+        if trimmed.isEmpty {
+            // Distinguish the two cases that used to look identical. "Succeeded quietly" and
+            // "failed silently" call for opposite next moves.
+            return success
+                ? header + "\nThe command completed and produced no output. Treat that as "
+                    + "success, not as missing data."
+                : header + "\nThe command failed and produced no output. Do not report it as "
+                    + "done — try a different approach, or say what could not be done."
+        }
+        if success {
+            return header + "\n" + trimmed
+        }
+        return header + "\nerror output:\n" + trimmed
+            + "\n\nRead the error and decide: retry with a corrected command, use a different "
+            + "tool, or tell the user plainly what failed. Do not report this as done."
     }
 }
 
@@ -226,9 +261,13 @@ final class AgentToolRegistry {
                     displayCommand: "run_command(invalid)")
             }
             let needsApproval = arguments["requires_approval"] as? Bool ?? false
-            let (success, output) = await context.commandExecutor(command, purpose, needsApproval)
+            let (success, output, exitCode) = await context.commandExecutor(
+                command, purpose, needsApproval)
             return AgentToolResult(
-                success: success, output: output, displayCommand: "run_command(\(command))")
+                success: success,
+                output: output,
+                displayCommand: "run_command(\(command))",
+                exitCode: exitCode)
         })
 
         register(AgentTool(

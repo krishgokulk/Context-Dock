@@ -573,7 +573,7 @@ class L2AITaskExecutor: ObservableObject {
         let command = "brew install \(toolName)"
         let purpose = "Install \(toolName) to complete your task"
         
-        let (success, _) = await TerminalCommandExecutor.shared.run(command, purpose: purpose)
+        let (success, _, _) = await TerminalCommandExecutor.shared.run(command, purpose: purpose)
         
         if success {
             // Detect and cache the tool
@@ -586,7 +586,8 @@ class L2AITaskExecutor: ObservableObject {
     }
     
     private func executeCommand(_ command: String) async throws -> (success: Bool, output: String) {
-        return await TerminalCommandExecutor.shared.run(command, purpose: "Execute task step")
+        let result = await TerminalCommandExecutor.shared.run(command, purpose: "Execute task step")
+        return (result.success, result.output)
     }
     
     private func shouldSuggestExtension(for task: TaskExecution) -> Bool {

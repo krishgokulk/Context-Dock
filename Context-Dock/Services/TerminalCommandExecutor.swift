@@ -19,7 +19,7 @@ final class TerminalCommandExecutor {
         purpose: String,
         modelRequiresApproval: Bool = false,
         consoleScope: GeneralChatScope? = nil
-    ) async -> (success: Bool, output: String) {
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         let rowID = consoleScope.map {
             ChatConsoleLog.shared.begin(.command, title: command, scope: $0)
         }

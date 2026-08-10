@@ -129,7 +129,7 @@ struct ShellCommandTool: Tool {
             return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
         }
 
-        let (success, output) = await TerminalCommandExecutor.shared.run(
+        let (success, output, _) = await TerminalCommandExecutor.shared.run(
             command,
             purpose: "On-device AI shell command"
         )
@@ -897,7 +897,7 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
-        let (success, output) = await TerminalCommandExecutor.shared.run(
+        let (success, output, _) = await TerminalCommandExecutor.shared.run(
             fullCommand,
             purpose: "\(cliCommand) CLI"
         )

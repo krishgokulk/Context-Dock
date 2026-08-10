@@ -326,8 +326,9 @@ enum ChatRouteResolver {
                         + "the Terminal panel rather than waiting for output here."
                 )
             }
-            return await TerminalCommandExecutor.shared.run(
+            let result = await TerminalCommandExecutor.shared.run(
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
+            return (result.success, result.output)
 
         case .adapterAction:
             guard let adapter = AppAdapterManager.shared.adapters.first(where: {

@@ -16,7 +16,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String?,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         endpoint: String,
@@ -90,6 +90,7 @@ extension AIProviderService {
                     else { continue }
 
                     var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
                     if simulateAllTools {
                         success = true
                         output = "Simulated \(tc.function.name) tool call"
@@ -101,6 +102,7 @@ extension AIProviderService {
                     ) {
                         success = result.success
                         output = result.output
+                        exitCode = result.exitCode
                         executedCommands.append(ExecutedCommand(
                             command: result.displayCommand, output: output, success: success))
                     } else {
@@ -108,8 +110,11 @@ extension AIProviderService {
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
                     }
-                    messages.append(["role": "tool", "tool_call_id": tc.id,
-                                     "content": output.isEmpty ? "(no output)" : output])
+                    messages.append([
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": AgentToolTranscript.payload(
+                            success: success, output: output, exitCode: exitCode),
+                    ])
                 }
             } else {
                 return (choice.message.content ?? "(no response)", executedCommands)
@@ -125,7 +130,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         model: String,
@@ -231,6 +236,7 @@ extension AIProviderService {
 
                 let args = inputDict.mapValues { $0.value }
                 var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
 
                 if simulateAllTools {
                     success = true
@@ -243,6 +249,7 @@ extension AIProviderService {
                 ) {
                     success = result.success
                     output = result.output
+                    exitCode = result.exitCode
                     executedCommands.append(ExecutedCommand(
                         command: result.displayCommand, output: output, success: success))
                 } else {
@@ -254,7 +261,9 @@ extension AIProviderService {
                 resultBlocks.append([
                     "type": "tool_result",
                     "tool_use_id": toolId,
-                    "content": output.isEmpty ? "(no output)" : output
+                    "is_error": !success,
+                    "content": AgentToolTranscript.payload(
+                        success: success, output: output, exitCode: exitCode),
                 ])
             }
             messages.append(["role": "user", "content": resultBlocks])
@@ -269,7 +278,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         imageAttachments: [URL] = [],
@@ -329,6 +338,7 @@ extension AIProviderService {
                 let args = fc.args.mapValues { $0.value }
 
                 var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(fc.name) tool call"
@@ -340,6 +350,7 @@ extension AIProviderService {
                 ) {
                     success = result.success
                     output = result.output
+                    exitCode = result.exitCode
                     executedCommands.append(ExecutedCommand(
                         command: result.displayCommand, output: output, success: success))
                 } else {
@@ -351,7 +362,10 @@ extension AIProviderService {
                 functionResultParts.append([
                     "functionResponse": [
                         "name": fc.name,
-                        "response": ["content": output.isEmpty ? "(no output)" : output]
+                        "response": [
+                            "content": AgentToolTranscript.payload(
+                                success: success, output: output, exitCode: exitCode)
+                        ],
                     ]
                 ])
             }

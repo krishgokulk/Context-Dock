@@ -655,7 +655,7 @@ enum AppScopedChatService {
                 toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
         }
 
-        let executor: (String, String, Bool) async -> (Bool, String) = {
+        let executor: (String, String, Bool) async -> (Bool, String, Int32) = {
             command, purpose, needsApproval in
             // A tool that draws its own screen cannot be run with its output captured:
             // with no tty it hangs or emits escape codes, which is how a working
@@ -671,7 +671,9 @@ enum AppScopedChatService {
                         success: true, scope: scope)
                     GeneralChatWindowChromeState.shared.showSidePanel()
                 }
-                return (true, "Sent to the terminal panel; it renders there.")
+                // Handed off to the visible terminal, which draws its own screen. Nothing
+                // was captured here, so report exit 0: the hand-off itself succeeded.
+                return (true, "Sent to the terminal panel; it renders there.", 0)
             }
             // The row is opened before the command runs and closed when it returns — that is
             // what tells the user a slow tool is working rather than dead. Done inside the

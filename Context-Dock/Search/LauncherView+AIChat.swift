@@ -4308,7 +4308,7 @@ extension LauncherView {
                 l2.chatMessages.append(AIChatMessage(role: .user, content: query))
                 l2.isLoading = true
                 l2.currentTask = Task {
-                    let (success, output) = await TerminalCommandExecutor.shared.run(
+                    let (success, output, _) = await TerminalCommandExecutor.shared.run(
                         pending.command, purpose: pending.purpose)
                     await MainActor.run {
                         let resultIcon = success ? "✅" : "❌"
@@ -5028,7 +5028,7 @@ extension LauncherView {
                     // In a CLI tool scope every status names the tool and the step, so the
                     // user can follow the agent: help probe → chosen subcommand → result.
                     let cliTool = self.cliScopeToolCommand(for: scopedBundleId)
-                    let commandExecutor: (String, String, Bool) async -> (Bool, String) = {
+                    let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
                         command, purpose, modelRequiresApproval in
                         // Run an installed adapter action (New Board, Zoom, Delete, deep link,
                         // shortcut, script) directly — this is the native route the model is told
@@ -5045,7 +5045,7 @@ extension LauncherView {
                             let bundle = (invocation.arguments["bundleId"].flatMap {
                                 $0.isEmpty ? nil : $0 }) ?? scopedBundleId
                             guard !path.isEmpty else {
-                                return (false, "No menu path given.")
+                                return (false, "No menu path given.", -1)
                             }
                             await self.setL2LoadingStatus(
                                 "Running \(path.joined(separator: " ▸ "))…", requestID: l2RequestID)
@@ -5053,7 +5053,7 @@ extension LauncherView {
                                 path, targetBundleId: bundle,
                                 appName: scopedAppName.isEmpty
                                     ? (frontmostName ?? frontmost.name) : scopedAppName)
-                            return (ok, out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out)
+                            return (ok, out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out, ok ? 0 : -1)
                         }
                         if let invocation = AITypedInvocationResolver.invocation(from: command),
                            invocation.kind == .adapterAction {
@@ -5063,7 +5063,7 @@ extension LauncherView {
                             guard let adapter = AppAdapterManager.shared.adapter(for: bundle),
                                 let action = adapter.actions.first(where: { $0.id == actionId })
                             else {
-                                return (false, "No adapter action '\(actionId)' is installed for this app.")
+                                return (false, "No adapter action '\(actionId)' is installed for this app.", -1)
                             }
                             await self.setL2LoadingStatus(
                                 "Running \(action.name)…", requestID: l2RequestID)
@@ -5072,7 +5072,7 @@ extension LauncherView {
                             let (ok, out) = await AppAdapterManager.shared.execute(
                                 action, context: ctx, targetBundleId: bundle,
                                 query: invocation.arguments["query"] ?? purpose)
-                            return (ok, out.isEmpty ? "Ran \(action.name)" : out)
+                            return (ok, out.isEmpty ? "Ran \(action.name)" : out, ok ? 0 : -1)
                         }
                         // The model often wraps an mcp_call inside a TERMINAL_COMMAND tag — route
                         // it to the MCP server instead of running it as a shell command (which
@@ -5098,12 +5098,13 @@ extension LauncherView {
                                             ? (frontmostName ?? frontmost.name) : scopedAppName)
                                 )
                             } catch {
-                                return (false, error.localizedDescription)
+                                return (false, error.localizedDescription, -1)
                             }
                             guard MCPToolSafety.isClearlyReadOnly(name: invocation.capabilityID) else {
                                 return (
                                     false,
-                                    "MCP tool \(invocation.capabilityID) is write/unknown risk and requires an approved app capability route."
+                                    "MCP tool \(invocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
+                                    -1
                                 )
                             }
                             let call = self.parseMCPCall(from: command) ?? (
@@ -5118,7 +5119,7 @@ extension LauncherView {
                                 arguments: call.arguments)) ?? "MCP tool failed"
                             await mcpRan.add(
                                 "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
-                            return (true, result)
+                            return (true, result, 0)
                         }
                         await self.setL2LoadingStatus(
                             cliTool == nil
@@ -5128,7 +5129,8 @@ extension LauncherView {
                         if let cliTool, !self.command(command, targetsScopedCLITool: cliTool) {
                             return (
                                 false,
-                                "This chat is scoped to \(cliTool). Commands for other executables are not allowed in this scope."
+                                "This chat is scoped to \(cliTool). Commands for other executables are not allowed in this scope.",
+                                -1
                             )
                         }
                         // NOTE: a blanket veto used to live here. It refused run_command
@@ -5777,7 +5779,7 @@ extension LauncherView {
             let next = (try? await AIProviderService.shared.sendWithTools(
                 followup, context: .none, provider: provider, apiKey: apiKey,
                 conversationHistory: transcript,
-                commandExecutor: { _, _, _ in (false, "") },
+                commandExecutor: { _, _, _ in (false, "", -1) },
                 additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
             ))?.finalResponse ?? ""
             if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -6779,7 +6781,7 @@ extension LauncherView {
                         ? AppSettings.shared.getAPIKey(for: toolProvider) : ""
                     let toolAPIKey: String? = rawKey.isEmpty ? nil : rawKey
                     let generalCommandExecutor:
-                        (String, String, Bool) async -> (Bool, String) = { command, purpose, needsApproval in
+                        (String, String, Bool) async -> (Bool, String, Int32) = { command, purpose, needsApproval in
                             await TerminalCommandExecutor.shared.run(
                                 command, purpose: purpose,
                                 modelRequiresApproval: needsApproval,

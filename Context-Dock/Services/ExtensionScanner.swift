@@ -151,7 +151,7 @@ struct ScriptExtension: Identifiable {
                 .replacingOccurrences(of: "\"$OUTPUT\"", with: "\"\(outputPath)\"")
 
             // Execute via TerminalAIBridge
-            let (success, output) = await TerminalCommandExecutor.shared.run(
+            let (success, output, _) = await TerminalCommandExecutor.shared.run(
                 finalCommand,
                 purpose: "Execute \(requiresTool ?? "command")"
             )

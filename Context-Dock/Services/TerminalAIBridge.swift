@@ -133,7 +133,7 @@ class TerminalAIBridge: ObservableObject {
         _ command: String,
         purpose: String,
         modelRequiresApproval: Bool = false
-    ) async -> (success: Bool, output: String) {
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
         // reach the shell. URL-shaped placeholders are substituted with the live page
         // URL when we have one; anything else unresolved blocks with a clear message.
@@ -147,7 +147,8 @@ class TerminalAIBridge: ObservableObject {
             return (
                 false,
                 "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
-                + "the current page. Open the exact page (e.g. the video you want) and ask again."
+                + "the current page. Open the exact page (e.g. the video you want) and ask again.",
+                -1
             )
         }
 
@@ -158,9 +159,9 @@ class TerminalAIBridge: ObservableObject {
         if classification.riskLevel == .critical {
             let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
             if let alternative = classification.suggestedAlternative {
-                return (false, "\(message)\n\nAlternative: \(alternative)")
+                return (false, "\(message)\n\nAlternative: \(alternative)", -1)
             }
-            return (false, message)
+            return (false, message, -1)
         }
 
         // Set when the command was otherwise eligible to auto-run but failed the argv gate.
@@ -186,7 +187,7 @@ class TerminalAIBridge: ObservableObject {
                     wasApproved: true,
                     argv: (executable, arguments)
                 )
-                return (detailed.success, detailed.output)
+                return detailed
             case .rejected(let reason):
                 // Fall through to the approval path, carrying why it could not run unattended.
                 unattendedRejection = reason
@@ -195,7 +196,7 @@ class TerminalAIBridge: ObservableObject {
 
         // Check if auto-deny applies
         if TerminalCommandPreferences.shared.shouldAutoDeny(command) {
-            return (false, "Command automatically denied based on your preferences")
+            return (false, "Command automatically denied based on your preferences", -1)
         }
 
         // Request user approval. When the command was otherwise eligible to run unattended,
@@ -209,11 +210,11 @@ class TerminalAIBridge: ObservableObject {
         case .approved(let approvedCommand):
             let detailed = await executeCommand(
                 approvedCommand, classification: classification, wasApproved: true)
-            return (detailed.success, detailed.output)
+            return detailed
         case .denied:
-            return (false, "Command denied by user")
+            return (false, "Command denied by user", -1)
         case .blocked(let reason):
-            return (false, "Command blocked: \(reason)")
+            return (false, "Command blocked: \(reason)", -1)
         }
     }
 
@@ -997,7 +998,7 @@ class TerminalAIBridge: ObservableObject {
             }
 
             // Execute the step
-            let (success, output) = await processAICommand(step.command, purpose: step.description)
+            let (success, output, _) = await processAICommand(step.command, purpose: step.description)
 
             results.append(WorkflowResult.StepResult(
                 step: step,

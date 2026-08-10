@@ -1931,7 +1931,7 @@ struct AIProviderSettingsView: View {
                 apiKey: key,
                 conversationHistory: [],
                 commandExecutor: { command, _, _ in
-                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output")
+                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output", 0)
                 },
                 maxIterations: 2,
                 systemPromptOverride: "You are running provider QA. Call requested tool exactly once.",

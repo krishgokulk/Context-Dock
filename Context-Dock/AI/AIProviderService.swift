@@ -1141,7 +1141,7 @@ class AIProviderService: ObservableObject {
         provider: AIProvider,
         apiKey: String?,
         conversationHistory: [ChatMessage],
-        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         maxIterations: Int = 5,
         systemPromptOverride: String? = nil,
         additionalSystemPrompt: String? = nil,

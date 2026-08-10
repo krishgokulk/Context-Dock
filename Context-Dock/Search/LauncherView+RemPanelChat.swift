@@ -1277,7 +1277,7 @@ extension LauncherView {
                 }
                 return
             }
-            let (success, output) = await TerminalCommandExecutor.shared.run(
+            let (success, output, _) = await TerminalCommandExecutor.shared.run(
                 remCmd, purpose: "rem")
             await MainActor.run {
                 let reply =
