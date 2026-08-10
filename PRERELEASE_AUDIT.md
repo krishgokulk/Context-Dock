@@ -1,7 +1,28 @@
 # Context Dock — Pre-Release Audit
 **Scope:** Global Context mode, launch path, stability, performance  
 **Standard:** Spotlight / Raycast parity  
-**Date:** 2026-06-14
+**Date:** 2026-06-14  
+**Last verified against source:** 2026-08-10
+
+---
+
+## Status — re-verified 2026-08-10
+
+Re-read against the current source before the launch pass. Items below marked
+**RESOLVED** are fixed in the tree; the finding text is kept as written so the
+reasoning stays readable, but do not re-open them without re-checking the code.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Hotkey dies after sleep/wake | **RESOLVED** — `8d3b879`. Both `screensDidWake` and `didWake` observed, and the NSEvent monitors behind double-tap Option are reinstalled too, which the original fix would have missed. |
+| 3 | 509 `print()` calls in production | **RESOLVED** — `Services/DebugLogger.swift` shadows `print` for the whole module, so every call compiles away in Release. No call-site changes needed. Remaining interpolations are all `.count` on arrays; nothing expensive survives to be evaluated. |
+| 9 | 160ms window fade | **RESOLVED** — now `0.10` in `showLauncher()`. |
+| 10 | No sleep/wake cleanup for AX observers | **RESOLVED** — `AXObserverManager` clears the pool on `willSleepNotification` and re-attaches on `didWakeNotification`. |
+| — | `preconditionFailure` in `AIProviderRouter` | **RESOLVED** — no `preconditionFailure` remains anywhere in the target. |
+| — | `best!` force-unwrap | **NOT A DEFECT** — the one remaining use is `best == nil \|\| score > best!.score`, which short-circuits. |
+
+Findings 2, 4–8, 11–14 and the rest of Code Health are **not re-verified** and
+should be treated as still open.
 
 ---
 
