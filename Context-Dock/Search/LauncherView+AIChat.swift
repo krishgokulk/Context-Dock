@@ -4676,6 +4676,31 @@ extension LauncherView {
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
 
+                // "test it" is about the user's project, not about the scoped app's
+                // capabilities, so it is recognised before the tool loop gets a chance to
+                // improvise. Left to that loop, "test it" became `npm test` in the home
+                // directory — a project that has no package.json, run somewhere that is not
+                // even a repository, reported back as a testing failure.
+                //
+                // In the dock exactly as in the window: these are two send paths, and the
+                // last thing wired to only one of them had to be fixed the same way.
+                if let intent = WorkbenchIntent.intent(in: query) {
+                    await self.setL2LoadingStatus("Working…", requestID: l2RequestID)
+                    let scopeBundle = self.currentContextDockChatScope.bundleId
+                    let scope = GeneralChatScope.app(
+                        bundleId: scopeBundle.isEmpty ? frontmost.bundleID : scopeBundle)
+                    let outcome = await WorkbenchIntent.handle(intent, scope: scope)
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: outcome.text,
+                                mcpToolsRan: outcome.chips))
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
+
                 // A question aimed at Claude Code runs Claude Code, in the dock exactly as
                 // in the window. The dock and the window are two send paths, and wiring
                 // only the window meant "ask claude what this screenshot shows" fell
