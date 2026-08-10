@@ -410,6 +410,14 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // "test it", "save that as X", "run X" are about the user's own project rather than
+        // about an app's capabilities, so they are recognised before route resolution —
+        // there is no menu item or MCP tool that means "build what I'm working on".
+        if let intent = WorkbenchIntent.intent(in: query) {
+            log.notice("stage: workbench intent")
+            let outcome = await WorkbenchIntent.handle(intent, scope: scope)
+            return Answer(text: outcome.text, toolChips: outcome.chips)
+        }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from
         // the chat's own model would answer about code in general, and printing a command
@@ -459,6 +467,12 @@ enum AppScopedChatService {
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
                     let allSucceeded = results.allSatisfy(\.success)
                         && results.count == plan.steps.count
+                    // Only a plan that ran end to end is offerable as a recipe. Keeping a
+                    // partial one would let "save that as X" preserve a sequence that has
+                    // never worked, under a name implying it has.
+                    if allSucceeded {
+                        WorkbenchIntent.rememberSuccessfulPlan(plan, query: query)
+                    }
                     return Answer(
                         text: (allSucceeded ? "\(plan.summary)\n\n" : "")
                             + receipt
