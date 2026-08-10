@@ -3975,7 +3975,21 @@ extension LauncherView {
         // an answer that can only say "open Terminal yourself".
         let gapBundleId = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
         let gapAppName = scopedAppName.isEmpty ? frontmost.name : scopedAppName
-        if pendingCapabilityGap == nil,
+        // The gap card REPLACES the answer, so it must only fire when the model genuinely
+        // could not have handled the request. That was true when it had no tools: a provider
+        // call could only say "open Terminal yourself". It now has run_command,
+        // find_capability and run_capability — "convert this page as png" is a screencapture
+        // away — so a card that pre-empts the turn is once again a router deciding what may
+        // be attempted before the request is read.
+        //
+        // Under model-first, offer it only when the user actually named a tool ("use yt-dlp
+        // to grab this"), where linking is unambiguously what they asked for. Otherwise let
+        // the model try; if it truly cannot, it says so, and that is a better answer than a
+        // card for a video downloader in response to a screenshot request.
+        let gapMayPreemptAnswer = !AppSettings.shared.agentModelFirstRouting
+            || CapabilityGapService.shared.queryExplicitlyNamesATool(query: query)
+        if gapMayPreemptAnswer,
+            pendingCapabilityGap == nil,
             let gap = CapabilityGapService.shared.resolve(
                 query: query, bundleID: gapBundleId, appName: gapAppName)
         {

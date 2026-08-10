@@ -93,7 +93,7 @@ final class CapabilityGapService {
         //    offered to link a transcoder for a download. When the task is one we recognise, the
         //    tool is not a guess.
         if let known = catalog.first(where: { tool in
-            tool.keywords.contains { normalized.contains($0) }
+            tool.keywords.contains { Self.mentionsAsIntent($0, in: normalized) }
         }) {
             if let installed = manager.packages.first(where: {
                 $0.command == known.command && $0.isInstalled
@@ -189,6 +189,44 @@ final class CapabilityGapService {
         return menus.contains { item in
             let haystack = (item.path + [item.title]).joined(separator: " ").lowercased()
             return tokens.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    /// True when a catalog keyword appears as something the user is ASKING FOR, rather than
+    /// as an incidental noun.
+    ///
+    /// "convert this page as png save it in downloads" contains "download" — inside
+    /// "downloads", the folder they wanted the file saved to. That matched yt-dlp, a video
+    /// downloader, which took over the turn and offered to link itself instead of answering.
+    /// The page was never converted.
+    ///
+    /// Same shape as the bug queryNamesTool below already guards against, where a substring
+    /// test found the tool `pp` inside "app". A substring test cannot stand in for a meaning
+    /// test, and this file has now been bitten by that twice.
+    private static func mentionsAsIntent(_ keyword: String, in query: String) -> Bool {
+        let keyword = keyword.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !keyword.isEmpty else { return false }
+        // Multi-word keywords ("save video", "convert document") are specific enough on their
+        // own — the phrase itself carries the intent.
+        if keyword.contains(" ") { return query.contains(keyword) }
+
+        let words = query.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        guard let index = words.firstIndex(where: { $0 == keyword || $0 == keyword + "s" })
+        else { return false }
+
+        // A destination, not a task: "save it in downloads", "put it into downloads folder".
+        let locationPrepositions = ["in", "into", "to", "inside", "under", "at", "from"]
+        if index > 0, locationPrepositions.contains(words[index - 1]) { return false }
+        if index + 1 < words.count, words[index + 1] == "folder" { return false }
+        return true
+    }
+
+    /// True when the query names any known package outright. Used by the chat path to decide
+    /// whether a gap card is allowed to take over the turn: "use yt-dlp to grab this" asks
+    /// for a tool, "save it in downloads" does not.
+    func queryExplicitlyNamesATool(query: String) -> Bool {
+        TerminalPackageManager.shared.packages.contains {
+            queryNamesTool($0, query: query)
         }
     }
 
