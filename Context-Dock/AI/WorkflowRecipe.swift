@@ -214,8 +214,7 @@ enum WorkflowRecipeRunner {
             let results = await ChatPlanRunner.run(plan, query: recipe.query)
             WorkflowRecipeStore.shared.markRun(recipe.id)
             let receipt = ChatPlanRunner.receipt(plan, results: results)
-            let allSucceeded =
-                results.allSatisfy(\.success) && results.count == plan.steps.count
+            let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
             return (
                 (allSucceeded ? "\(recipe.name)\n\n" : "")
                     + receipt

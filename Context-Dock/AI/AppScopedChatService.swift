@@ -465,8 +465,7 @@ enum AppScopedChatService {
                     log.notice("stage: plan of \(plan.steps.count, privacy: .public) steps")
                     let results = await ChatPlanRunner.run(plan, query: query)
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
-                    let allSucceeded = results.allSatisfy(\.success)
-                        && results.count == plan.steps.count
+                    let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
                     // Only a plan that ran end to end is offerable as a recipe. Keeping a
                     // partial one would let "save that as X" preserve a sequence that has
                     // never worked, under a name implying it has.

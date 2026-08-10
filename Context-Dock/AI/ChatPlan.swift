@@ -174,15 +174,31 @@ enum ChatPlanRunner {
         return results
     }
 
+    /// Every step ran *and* left something to show for it.
+    ///
+    /// Stricter than "no step failed" on purpose. This is what decides whether the plan is
+    /// announced as done and whether it is offerable as a saved recipe, and a sequence
+    /// whose steps changed nothing observable is not one to keep under a name that says it
+    /// works.
+    static func fullyConfirmed(_ plan: ChatPlan, results: [ChatPlanStepResult]) -> Bool {
+        results.count == plan.steps.count
+            && results.allSatisfy { $0.success && $0.verification != "No observable change." }
+    }
+
     /// A receipt the user can read without opening the console: what ran, in order, and
     /// where it stopped if it did.
     static func receipt(_ plan: ChatPlan, results: [ChatPlanStepResult]) -> String {
         var lines: [String] = []
         for (index, result) in results.enumerated() {
-            let mark = result.success ? "✓" : "✗"
+            // A step that changes things, reports success, and leaves nothing observably
+            // different is not a clean tick. The executor's word is that the command ran;
+            // it is not evidence the thing happened, and a ✓ next to "nothing observable
+            // changed" invites the user to read the first and ignore the second.
+            let changedNothing = result.verification == "No observable change."
+            let mark = result.success ? (changedNothing ? "?" : "✓") : "✗"
             lines.append("\(mark) \(index + 1). \(result.step.purpose) — `\(result.step.route.title)`")
-            if let verification = result.verification, verification == "No observable change." {
-                lines.append("   nothing observable changed")
+            if changedNothing {
+                lines.append("   ran, but nothing observable changed — treat as unconfirmed")
             }
         }
         if results.count < plan.steps.count {
