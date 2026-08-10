@@ -189,6 +189,58 @@ final class GeneralAIActionExecutor {
             }
             return .unverified(fallback: "I couldn't find the event in Calendar just now.")
 
+        case "notes.create":
+            let title = candidate.inputValues["title"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty else { return .skipped }
+            let matches = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.searchNotes(query: title)
+            }.value
+            return matches.isEmpty
+                ? .unverified(fallback: "I couldn't find that note in Notes just now.")
+                : .verified("I've created the note “\(title)”.")
+
+        // Filesystem writes verify against the filesystem, which is the one read-back with
+        // no scripting bridge, no permission prompt and no timing window between it and the
+        // thing it is checking.
+        case "finder.newFolder":
+            let destination = candidate.inputValues["destination"] ?? ""
+            let name = candidate.inputValues["name"] ?? ""
+            guard !destination.isEmpty, !name.isEmpty else { return .skipped }
+            let url = URL(fileURLWithPath: destination, isDirectory: true)
+                .appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: url.path, isDirectory: &isDirectory)
+            return exists && isDirectory.boolValue
+                ? .verified("Created the folder “\(name)”.")
+                : .unverified(fallback: "I couldn't find that folder afterwards.")
+
+        // Deletion is where an unearned "done" costs the most: the user stops looking for
+        // something that is still there, or believes something is gone that is not.
+        case "finder.trash":
+            let path = candidate.inputValues["path"] ?? ""
+            guard !path.isEmpty else { return .skipped }
+            return FileManager.default.fileExists(atPath: path)
+                ? .unverified(fallback: "It's still at \(path).")
+                : .verified(nil)
+
+        case "reminders.delete", "reminders.complete":
+            let title = candidate.inputValues["title"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty else { return .skipped }
+            let items = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.getReminders(limit: 50)
+            }.value
+            // getReminders returns open reminders, so completing one removes it from this
+            // list exactly as deleting it does — absence is the confirmation either way.
+            let stillOpen = items.contains {
+                ($0["title"] as? String)?.localizedCaseInsensitiveContains(title) ?? false
+            }
+            return stillOpen
+                ? .unverified(fallback: "“\(title)” is still in Reminders.")
+                : .verified(nil)
+
         default:
             break
         }
