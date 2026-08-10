@@ -17,7 +17,11 @@ final class GeneralChatCapabilityHub {
 
     private var cachedBlock: String?
     private var cachedAt: Date = .distantPast
-    private var cachedAllowlistFingerprint = ""
+    /// Identifies what the cached block was built *from*, not just which adapters are
+    /// enabled. The MCP section narrows to the app a question names, so a block built for
+    /// "what's in my Notes?" lists Notes tools and nothing else — serving that to the next
+    /// question tells the model the user's other apps have no tools at all.
+    private var cachedKey = ""
     private let cacheTTL: TimeInterval = 300
     private let chatPanelKeyPrefix = "dock_app_"
 
@@ -31,7 +35,7 @@ final class GeneralChatCapabilityHub {
     func invalidate() {
         cachedBlock = nil
         cachedAt = .distantPast
-        cachedAllowlistFingerprint = ""
+        cachedKey = ""
     }
 
     /// Runs `operation` on a detached task and gives up on it after `seconds`.
@@ -84,11 +88,26 @@ final class GeneralChatCapabilityHub {
         // so a flipped toggle shows up on the very next message.
         Self.log.notice("hub: builtins")
         let builtinLines = builtInCapabilityLines()
-        let allowlistFingerprint = AppAdapterManager.shared.adapters
-            .filter(\.isEnabled)
+        let enabledAdapters = AppAdapterManager.shared.adapters.filter(\.isEnabled)
+        let allowlistFingerprint = enabledAdapters
             .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
             .sorted()
             .joined(separator: "|")
+
+        // Which adapters the MCP section will cover. A question that names an app is
+        // answered with that app's tools alone; a question that names none fans out to
+        // every enabled adapter. Decided here rather than inside the loop below, because
+        // the answer is part of the cache identity — two questions naming different apps
+        // must not share a block.
+        let normalizedQuery = query.lowercased()
+        let explicitlyNamed = enabledAdapters.filter {
+            normalizedQuery.contains($0.appName.lowercased())
+                || normalizedQuery.contains($0.bundleId.lowercased())
+        }
+        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
+        let cacheKey =
+            allowlistFingerprint + "##"
+            + adapters.map(\.bundleId).sorted().joined(separator: ",")
         // Retrieved evidence for THIS question, not just an inventory of what exists.
         // The inventory says which apps are installed; this says which cached menu command,
         // history entry, recent document or indexed file actually matches what was asked —
@@ -105,7 +124,7 @@ final class GeneralChatCapabilityHub {
             + targetedSkillLines(query: query, scope: scope)
             + evidenceLines
         if let cachedBlock,
-            cachedAllowlistFingerprint == allowlistFingerprint,
+            cachedKey == cacheKey,
             Date().timeIntervalSince(cachedAt) < cacheTTL
         {
             let block = withInventory(
@@ -125,13 +144,6 @@ final class GeneralChatCapabilityHub {
         // fan-out / "which app?" targets for broad discovery questions that name no app.
         var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
         let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
-        let enabledAdapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
-        let normalizedQuery = query.lowercased()
-        let explicitlyNamed = enabledAdapters.filter {
-            normalizedQuery.contains($0.appName.lowercased())
-                || normalizedQuery.contains($0.bundleId.lowercased())
-        }
-        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
         for adapter in adapters {
             guard Date() < mcpDeadline else {
                 Self.log.notice("hub: mcp budget spent, skipping the rest")
@@ -180,7 +192,7 @@ final class GeneralChatCapabilityHub {
         else {
             cachedBlock = ""
             cachedAt = Date()
-            cachedAllowlistFingerprint = allowlistFingerprint
+            cachedKey = cacheKey
             return ""
         }
 
@@ -243,7 +255,7 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
-        cachedAllowlistFingerprint = allowlistFingerprint
+        cachedKey = cacheKey
         let full = withInventory(
             cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
             inventoryLines: inventoryLines
