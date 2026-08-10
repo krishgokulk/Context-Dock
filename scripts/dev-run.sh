@@ -23,6 +23,19 @@ APP="$ROOT_DIR/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app"
 # AppKit rethrows it out of the status-item scene, and the app aborts. That crash looks
 # like it belongs to whatever the user was doing at the time, which is exactly how it
 # got blamed on a chat thread.
+# Whether this shell can see other processes at all. Run from inside a sandboxed host —
+# Context-Dock's own terminal, for one — process enumeration comes back empty for
+# everything, and a check built on it concludes "the app is not running" about an app
+# that is running. Count what `ps` can see: a shell that can enumerate the system sees
+# hundreds, a blinded one sees itself and little else. (Probing for a known daemon by
+# name does not work — `pgrep -x launchd` misses it even with full visibility.)
+if [ "$(ps -A 2>/dev/null | wc -l | tr -d ' ')" -gt 20 ]; then
+    CAN_SEE_PROCESSES=1
+else
+    CAN_SEE_PROCESSES=0
+    echo "note: this shell cannot enumerate processes; skipping the quit/launch checks." >&2
+fi
+
 pkill -x Context-Dock 2>/dev/null || true
 
 # Verify it actually went. `open` on an app that is already running does not start a
@@ -30,6 +43,7 @@ pkill -x Context-Dock 2>/dev/null || true
 # the script cheerfully reports "Launched" while you go on testing the previous build.
 # That has already cost a debugging session: a process 34 minutes older than the binary
 # answering questions about code it did not contain.
+if [ "$CAN_SEE_PROCESSES" = 1 ]; then
 for _ in $(seq 1 20); do
     pgrep -x Context-Dock >/dev/null || break
     sleep 0.25
@@ -45,6 +59,7 @@ if pgrep -x Context-Dock >/dev/null; then
     echo "       testing stale code." >&2
     exit 1
 fi
+fi
 
 # Signed (ad-hoc/dev) builds keep macOS Accessibility behavior consistent between
 # runs; build-debug.sh defaults to unsigned, so override here.
@@ -55,14 +70,16 @@ open "$APP"
 
 # Confirm something actually came up, and that it is this bundle. Reporting the pid and
 # its start time makes "am I testing the new build?" answerable without guessing.
-for _ in $(seq 1 20); do
-    pgrep -x Context-Dock >/dev/null && break
-    sleep 0.25
-done
-PID="$(pgrep -x Context-Dock || true)"
-if [ -z "$PID" ]; then
-    echo "ERROR: build succeeded but Context-Dock did not start." >&2
-    exit 1
-fi
 echo "Launched: $APP"
-echo "  pid $PID, started $(ps -p "$PID" -o lstart= | sed 's/^ *//')"
+if [ "$CAN_SEE_PROCESSES" = 1 ]; then
+    for _ in $(seq 1 20); do
+        pgrep -x Context-Dock >/dev/null && break
+        sleep 0.25
+    done
+    PID="$(pgrep -x Context-Dock || true)"
+    if [ -z "$PID" ]; then
+        echo "ERROR: build succeeded but Context-Dock did not start." >&2
+        exit 1
+    fi
+    echo "  pid $PID, started $(ps -p "$PID" -o lstart= | sed 's/^ *//')"
+fi

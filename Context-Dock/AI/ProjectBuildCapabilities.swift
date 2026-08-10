@@ -95,10 +95,15 @@ enum ProjectBuildCapabilities {
             fm.isExecutableFile(atPath: (root as NSString).appendingPathComponent(relative))
         }
 
-        // 1. The repository's own entry point. Named in the order a human would try them.
+        // 1. The repository's own build script — a script that *builds*, ahead of one that
+        //    builds and then runs. The distinction is not pedantic: this capability is
+        //    `project.build`, and a run-too script does more than was asked and more than
+        //    was consented to. Context-Dock proved the point on itself — dev-run.sh quits
+        //    Context-Dock before building, so asking DoraX to build DoraX had it kill the
+        //    process handling the request. Any project whose dev script restarts the app
+        //    under test has the same shape.
         for script in [
-            "scripts/dev-run.sh", "scripts/build-debug.sh", "scripts/build.sh",
-            "build.sh", "bin/build",
+            "scripts/build-debug.sh", "scripts/build.sh", "build.sh", "bin/build",
         ] where isExecutable(script) {
             return BuildRecipe(command: "./\(script)", source: "the project's \(script)")
         }
