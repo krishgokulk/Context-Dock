@@ -312,6 +312,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var localEventMonitor: Any?
     var outsideMouseMonitor: Any?
     var lastOutsideMouseDownAt: TimeInterval = 0
+    /// A single system wake fires both `didWakeFromSleep` and `screensDidWake`. Recovery
+    /// tears down and reinstalls every monitor, so running it twice in a row would drop
+    /// the events arriving in between.
+    private var lastWakeRecoveryAt: TimeInterval = 0
     var hotKeyRef: EventHotKeyRef?
     var eventHandler: EventHandlerRef?
     var contextDockHotKeyRef: EventHotKeyRef?
@@ -641,11 +645,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
-        // Re-register hotkeys on wake — Carbon hotkeys are invalidated after sleep
+        // Re-register hotkeys on wake — Carbon hotkeys are invalidated after sleep.
+        //
+        // Both notifications, because neither one covers every wake on its own. The Mac can
+        // wake with the display left off (Power Nap, wake for network, clamshell), and that
+        // fires `didWake` with no `screensDidWake` — the hotkeys are dead and the user finds
+        // out by pressing them. Screen wake alone is the more common case and arrives first.
+        // The handler debounces the overlap.
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(handleSystemWakeFromSleep),
             name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWakeFromSleep),
+            name: NSWorkspace.didWakeNotification,
             object: nil
         )
 
@@ -775,6 +791,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func handleSystemWakeFromSleep() {
+        // Two notifications point here for one wake. Collapse them.
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastWakeRecoveryAt > 2 else { return }
+        lastWakeRecoveryAt = now
+
         // Re-register hotkeys after wake — Carbon hotkeys are invalidated during sleep.
         // Register methods clean up old handlers automatically, so just re-register all.
         registerGlobalHotkey()
@@ -783,6 +804,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerQuickNoteHotkey()
         registerChatWindowHotkey()
         registerCaptureHotkeys()
+
+        // The Carbon refs above are not how the launcher is actually opened — double-tap
+        // Option is, and that runs on NSEvent global monitors. A monitor that stops
+        // delivering after wake takes the primary way in with it, and the Carbon
+        // re-registration above would have masked the problem as "hotkeys work fine".
+        // Reinstalling is idempotent: each of these removes its old monitor first.
+        registerOutsideMouseMonitor()
+        unregisterModifierSideEffectMonitors()
+        registerDoubleOptionMonitor()
     }
 
     func setupApplicationMenu() {
