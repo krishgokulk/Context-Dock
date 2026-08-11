@@ -158,9 +158,37 @@ final class GeneralAIActionExecutor {
     /// that are cheap and reliable are implemented; everything else returns `.skipped` so
     /// the honest executor message stands (we never emit a false "couldn't verify").
     func verify(_ candidate: DoraXActionCandidate) async -> VerificationOutcome {
-        switch candidate.capabilityID {
+        let byCapability = await verifyCapability(
+            id: candidate.capabilityID, inputValues: candidate.inputValues)
+        if case .skipped = byCapability {} else { return byCapability }
+
+        switch candidate.route {
+        case .appLaunch:
+            guard let bundleID = candidate.bundleID else { return .skipped }
+            let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .contains { !$0.isTerminated }
+            return running
+                ? .verified(nil)
+                : .unverified(fallback: "\(candidate.appName ?? "The app") isn't running.")
+        default:
+            return .skipped
+        }
+    }
+
+    /// The same read-backs, reachable by capability id alone.
+    ///
+    /// Split out because the candidate path is not the only way a capability runs: the
+    /// agent tool loop calls them directly through `run_capability`, and while this logic
+    /// lived inside `verify(_ candidate:)` that entire path claimed success on the
+    /// executor's word. Two execution paths, one of them verified, is the same shape of
+    /// bug as two send paths with one of them wired.
+    func verifyCapability(id: String?, inputValues: [String: String]) async
+        -> VerificationOutcome
+    {
+        switch id {
         case "reminders.create":
-            let title = candidate.inputValues["title"]?
+            let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !title.isEmpty else { return .skipped }
             let items = await Task.detached(priority: .utility) {
@@ -174,7 +202,7 @@ final class GeneralAIActionExecutor {
                 : .unverified(fallback: "I couldn't find it in Reminders just now.")
 
         case "calendar.create":
-            let title = (candidate.inputValues["title"] ?? candidate.title)
+            let title = (inputValues["title"] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty else { return .skipped }
             let events = await Task.detached(priority: .utility) {
@@ -190,7 +218,7 @@ final class GeneralAIActionExecutor {
             return .unverified(fallback: "I couldn't find the event in Calendar just now.")
 
         case "notes.create":
-            let title = candidate.inputValues["title"]?
+            let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !title.isEmpty else { return .skipped }
             let matches = await Task.detached(priority: .utility) {
@@ -204,8 +232,8 @@ final class GeneralAIActionExecutor {
         // no scripting bridge, no permission prompt and no timing window between it and the
         // thing it is checking.
         case "finder.newFolder":
-            let destination = candidate.inputValues["destination"] ?? ""
-            let name = candidate.inputValues["name"] ?? ""
+            let destination = inputValues["destination"] ?? ""
+            let name = inputValues["name"] ?? ""
             guard !destination.isEmpty, !name.isEmpty else { return .skipped }
             let url = URL(fileURLWithPath: destination, isDirectory: true)
                 .appendingPathComponent(name)
@@ -219,14 +247,14 @@ final class GeneralAIActionExecutor {
         // Deletion is where an unearned "done" costs the most: the user stops looking for
         // something that is still there, or believes something is gone that is not.
         case "finder.trash":
-            let path = candidate.inputValues["path"] ?? ""
+            let path = inputValues["path"] ?? ""
             guard !path.isEmpty else { return .skipped }
             return FileManager.default.fileExists(atPath: path)
                 ? .unverified(fallback: "It's still at \(path).")
                 : .verified(nil)
 
         case "reminders.delete", "reminders.complete":
-            let title = candidate.inputValues["title"]?
+            let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !title.isEmpty else { return .skipped }
             let items = await Task.detached(priority: .utility) {
@@ -241,19 +269,6 @@ final class GeneralAIActionExecutor {
                 ? .unverified(fallback: "“\(title)” is still in Reminders.")
                 : .verified(nil)
 
-        default:
-            break
-        }
-
-        switch candidate.route {
-        case .appLaunch:
-            guard let bundleID = candidate.bundleID else { return .skipped }
-            let running = NSRunningApplication
-                .runningApplications(withBundleIdentifier: bundleID)
-                .contains { !$0.isTerminated }
-            return running
-                ? .verified(nil)
-                : .unverified(fallback: "\(candidate.appName ?? "The app") isn't running.")
         default:
             return .skipped
         }

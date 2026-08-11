@@ -16,6 +16,39 @@ import Foundation
 
 /// What a tool receives. Carries the per-request collaborators a handler may need, so
 /// handlers stay free of ambient state and can be tested by constructing one of these.
+/// Writes the tool loop has already made, so it does not make them twice.
+///
+/// A model that is unsure whether a call landed calls it again. For a read that costs a
+/// duplicate request; for `notes.create` it costs a duplicate note, and one request has
+/// produced four. Nothing downstream deduplicates, because at the capability layer four
+/// identical creates are four legitimate creates.
+///
+/// So the guard sits here, where the repetition happens: an identical capability and input
+/// that already succeeded moments ago returns that result again instead of writing again.
+/// Two genuinely intended identical writes seconds apart is not a workflow anyone has; a
+/// model looping is one we have watched.
+@MainActor
+enum RecentCapabilityWrites {
+    private static var succeeded: [String: Date] = [:]
+    /// Long enough to cover a tool loop's retries, short enough that a deliberate repeat
+    /// later in the conversation is not swallowed.
+    private static let window: TimeInterval = 45
+
+    private static func key(_ capabilityID: String, _ input: [String: String]) -> String {
+        capabilityID + "|" + input.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+    }
+
+    static func alreadyRan(_ capabilityID: String, input: [String: String]) -> Bool {
+        guard let at = succeeded[key(capabilityID, input)] else { return false }
+        return Date().timeIntervalSince(at) < window
+    }
+
+    static func record(_ capabilityID: String, input: [String: String]) {
+        succeeded[key(capabilityID, input)] = Date()
+    }
+}
+
 struct AgentToolContext {
     /// Runs a shell command through the classifier / argv gate / approval path.
     /// The Bool is the model's own `requires_approval` answer.
@@ -124,6 +157,39 @@ final class AgentToolRegistry {
 
     func register(_ tool: AgentTool) {
         tools[tool.name] = tool
+    }
+
+    /// A message pointing at the registered capability, when a shell command would do the
+    /// same job to the user's own files without any of the protection.
+    ///
+    /// `mkdir ~/Desktop/X` and `finder.newFolder` create the same folder, but the
+    /// capability shows the destination in an approval card and reads the folder back
+    /// afterwards, while the shell command reports whatever mkdir's exit code said. The
+    /// model picked the shell, and the user got "successfully created" on an exit code.
+    ///
+    /// Deliberately limited to the Finder-managed folders. Inside a repository the shell is
+    /// the right tool and the capability has nothing to add — redirecting `rm` in a build
+    /// directory would just be in the way.
+    static func capabilityInsteadOfShell(_ command: String) -> String? {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        let home = NSHomeDirectory()
+        let userFolders = ["Desktop", "Documents", "Downloads"]
+        let touchesUserFolder = userFolders.contains { folder in
+            trimmed.contains("~/\(folder)") || trimmed.contains("\(home)/\(folder)")
+        }
+        guard touchesUserFolder else { return nil }
+
+        if trimmed.hasPrefix("mkdir ") {
+            return "Use run_capability with finder.newFolder for folders in the user's own "
+                + "folders — it previews the destination for approval and confirms the "
+                + "folder afterwards. Fields: destination (absolute parent path), name."
+        }
+        if trimmed.hasPrefix("rm ") || trimmed.hasPrefix("rm -") {
+            return "Use run_capability with finder.trash instead of rm for the user's own "
+                + "files — it is recoverable from the Trash and confirms the file is gone. "
+                + "Field: path."
+        }
+        return nil
     }
 
     func tool(named name: String) -> AgentTool? {
@@ -259,6 +325,12 @@ final class AgentToolRegistry {
                     success: false,
                     output: "run_command requires 'command' and 'purpose'.",
                     displayCommand: "run_command(invalid)")
+            }
+            if let redirect = Self.capabilityInsteadOfShell(command) {
+                return AgentToolResult(
+                    success: false,
+                    output: redirect,
+                    displayCommand: "run_command(\(command))")
             }
             let needsApproval = arguments["requires_approval"] as? Bool ?? false
             let (success, output, exitCode) = await context.commandExecutor(
@@ -479,16 +551,53 @@ final class AgentToolRegistry {
                     displayCommand: "run_capability(\(capabilityID))")
             }
 
+            // A capability that changes something and already ran with these exact inputs is
+            // not run again. Reads are exempt: repeating one is harmless, and refusing it
+            // would stop the model re-checking state it is right to re-check.
+            let capability = CapabilityRegistry.shared.capability(id: capabilityID)
+            let isWrite = capability.map { $0.riskLevel != .low } ?? false
+            if isWrite, RecentCapabilityWrites.alreadyRan(capabilityID, input: input) {
+                return AgentToolResult(
+                    success: true,
+                    output: "Already done a moment ago with exactly these inputs — not "
+                        + "repeated. Continue; do not call this again.",
+                    displayCommand: "run_capability(\(capabilityID))")
+            }
+
             let plan = AIActionPlan(
                 capability: capabilityID, input: input, explanation: explanation)
             do {
                 let result = try await AIExecutionEngine.shared.executeWithApproval(
                     plan, context: context.userContext)
+                if result.success, isWrite {
+                    RecentCapabilityWrites.record(capabilityID, input: input)
+                }
+                // Read the write back, exactly as the candidate path does. Without this the
+                // tool loop reported whatever the executor returned, and an executor
+                // returning success means the command ran — not that the thing exists.
+                var output = result.output.isEmpty
+                    ? (result.success ? "(completed, no output)" : "(failed, no output)")
+                    : result.output
+                var succeeded = result.success
+                if result.success {
+                    switch await GeneralAIActionExecutor.shared.verifyCapability(
+                        id: capabilityID, inputValues: input)
+                    {
+                    case .verified(let refined):
+                        output = refined ?? output
+                    case .unverified(let fallback):
+                        // The command ran and the result could not be found. Saying so is
+                        // the whole point; reporting success here is how a chat claims to
+                        // have created something that is not there.
+                        succeeded = false
+                        output = "\(output)\n\nCouldn't confirm it: \(fallback)"
+                    case .skipped:
+                        break
+                    }
+                }
                 return AgentToolResult(
-                    success: result.success,
-                    output: result.output.isEmpty
-                        ? (result.success ? "(completed, no output)" : "(failed, no output)")
-                        : result.output,
+                    success: succeeded,
+                    output: output,
                     displayCommand: "run_capability(\(capabilityID))")
             } catch {
                 // Name the failure precisely: "unknown id" and "the capability ran and
