@@ -65,9 +65,16 @@ enum LocalDataCapabilities {
                         name: "query",
                         description: "Words to match in the copied text or OCR. Omit for the most recent.",
                         required: false),
+                    // Named separately from `query` because "captures from Code" is two
+                    // conditions, and folding the app into the text search would return
+                    // any clip that merely mentions the word.
+                    .init(
+                        name: "app",
+                        description: "Only clips taken from this app, e.g. \"Code\", \"Safari\".",
+                        required: false),
                     .init(
                         name: "captures_only",
-                        description: "\"true\" to return only screenshots / captured text.",
+                        description: "\"true\" for only screenshots / Capture Area / Capture Text.",
                         required: false),
                     .init(name: "limit", description: "Max clips (default 20)", required: false),
                 ]),
@@ -81,21 +88,38 @@ enum LocalDataCapabilities {
                 let capturesOnly = (request.input["captures_only"] ?? "").lowercased() == "true"
                 let limit = Int(request.input["limit"] ?? "") ?? 20
 
+                let app = (request.input["app"] ?? "").lowercased()
                 var matched = entries
                 if capturesOnly { matched = matched.filter(\.isScreenCapture) }
+                if !app.isEmpty {
+                    matched = matched.filter {
+                        $0.sourceAppName.lowercased().contains(app)
+                            || $0.sourceBundleId.lowercased().contains(app)
+                    }
+                }
                 if !query.isEmpty {
                     matched = matched.filter {
                         $0.text.lowercased().contains(query)
                             || $0.ocrText.lowercased().contains(query)
-                            || $0.sourceAppName.lowercased().contains(query)
                     }
                 }
                 guard !matched.isEmpty else {
+                    // Say which condition emptied it. "No clips from Code" and "no clips
+                    // at all" send the user to different next steps.
+                    var conditions: [String] = []
+                    if capturesOnly { conditions.append("captures") }
+                    if !app.isEmpty { conditions.append("from \(request.input["app"] ?? app)") }
+                    if !query.isEmpty { conditions.append("mentioning “\(query)”") }
+                    let known = Set(entries.map(\.sourceAppName)).filter { !$0.isEmpty }
+                    let hint = app.isEmpty || known.isEmpty
+                        ? ""
+                        : " Clips exist from: " + known.sorted().prefix(8).joined(separator: ", ")
+                            + "."
                     return .init(
                         success: true,
-                        output: query.isEmpty
-                            ? "No clips of that kind."
-                            : "Nothing in the clipboard history mentions “\(query)”.")
+                        output: conditions.isEmpty
+                            ? "Clipboard history is empty."
+                            : "No clips \(conditions.joined(separator: " ")).\(hint)")
                 }
 
                 let formatter = DateFormatter()

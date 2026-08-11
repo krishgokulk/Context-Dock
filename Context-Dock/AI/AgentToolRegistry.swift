@@ -276,10 +276,31 @@ final class AgentToolRegistry {
     /// I copied" matched nothing, because no word in the phrase appears in "clipboard.read /
     /// Read Clipboard" — the model would have had to guess the word DoraX happens to use.
     private static func searchAliases(for capabilityID: String) -> String {
+        // Whole-id aliases first. Families are too coarse when one mixes reading with
+        // doing: "system" covers both listing running apps and taking a screenshot, and
+        // giving the screenshot capability the family's "apps applications" made "what did
+        // I capture from Code?" rank *taking a new screenshot* above reading the captures
+        // already taken. A request to read something must not be answered by doing it.
+        switch capabilityID {
+        case "system.captureScreenshot":
+            return "screenshot screengrab grab snap take picture of the screen new"
+        // These two differ by tense, and tense is the whole question: one is what is on the
+        // pasteboard now, the other is what was on it before. Sharing the family's words
+        // made "what did I capture from Code?" rank the current clip first — a single item,
+        // usually unrelated, presented as the answer to a question about many.
+        case "clipboard.read":
+            return "current now latest pasteboard paste this what is copied"
+        case "clipboard.history":
+            return "history earlier previous past clips captures captured capturing "
+                + "screenshots screenshot ocr snippets from source app apps saved took "
+                + "taken all list recent"
+        default: break
+        }
+
         switch capabilityID.split(separator: ".").first.map(String.init) ?? "" {
-        case "clipboard":
-            return "copied copy paste pasteboard cut clip clips history earlier "
-                + "screenshot capture captured ocr text snippet"
+        // Both clipboard capabilities are matched by whole id above; this covers any that
+        // are added later without their own entry.
+        case "clipboard": return "copied copy paste pasteboard cut clip"
         case "extensions": return "extension extensions script scripts plugin plugins addon"
         case "globalcmd":
             return "command commands global system toggle setting settings shortcut"
