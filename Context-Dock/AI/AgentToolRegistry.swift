@@ -277,7 +277,12 @@ final class AgentToolRegistry {
     /// Read Clipboard" — the model would have had to guess the word DoraX happens to use.
     private static func searchAliases(for capabilityID: String) -> String {
         switch capabilityID.split(separator: ".").first.map(String.init) ?? "" {
-        case "clipboard": return "copied copy paste pasteboard cut"
+        case "clipboard":
+            return "copied copy paste pasteboard cut clip clips history earlier "
+                + "screenshot capture captured ocr text snippet"
+        case "extensions": return "extension extensions script scripts plugin plugins addon"
+        case "globalcmd":
+            return "command commands global system toggle setting settings shortcut"
         case "notifications": return "alerts unread banners"
         case "skills": return "workflows playbooks instructions prompts"
         case "system": return "apps applications open running processes frontmost"

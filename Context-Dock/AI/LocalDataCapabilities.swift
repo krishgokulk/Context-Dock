@@ -38,6 +38,148 @@ enum LocalDataCapabilities {
         registerFileSearch(registry)
         registerQuickNotesSearch(registry)
         registerMostUsedApps(registry)
+        registerClipboardHistory(registry)
+        registerExtensionsList(registry)
+    }
+
+    // MARK: - Clipboard
+
+    /// Everything copied recently, not just what is on the pasteboard now.
+    ///
+    /// `clipboard.read` returns the current clip, which answers "paste this" and nothing
+    /// else. "What did I copy earlier", "where did that snippet go", "what did I capture
+    /// from that page" are all questions about the history — which DoraX keeps, shows in
+    /// its own Clipboard scope, and had no way to be asked about.
+    ///
+    /// Captures land here too: Take Screenshot, Capture Area and Capture Text all write a
+    /// clip, and Capture Text writes its OCR into the same record. So this is also how the
+    /// model reads what a capture actually said.
+    private static func registerClipboardHistory(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "clipboard.history",
+                title: "Search Clipboard History",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(
+                        name: "query",
+                        description: "Words to match in the copied text or OCR. Omit for the most recent.",
+                        required: false),
+                    .init(
+                        name: "captures_only",
+                        description: "\"true\" to return only screenshots / captured text.",
+                        required: false),
+                    .init(name: "limit", description: "Max clips (default 20)", required: false),
+                ]),
+                riskLevel: .low
+            ) { request in
+                let entries = loadClipboardHistory()
+                guard !entries.isEmpty else {
+                    return .init(success: true, output: "Clipboard history is empty.")
+                }
+                let query = (request.input["query"] ?? "").lowercased()
+                let capturesOnly = (request.input["captures_only"] ?? "").lowercased() == "true"
+                let limit = Int(request.input["limit"] ?? "") ?? 20
+
+                var matched = entries
+                if capturesOnly { matched = matched.filter(\.isScreenCapture) }
+                if !query.isEmpty {
+                    matched = matched.filter {
+                        $0.text.lowercased().contains(query)
+                            || $0.ocrText.lowercased().contains(query)
+                            || $0.sourceAppName.lowercased().contains(query)
+                    }
+                }
+                guard !matched.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: query.isEmpty
+                            ? "No clips of that kind."
+                            : "Nothing in the clipboard history mentions “\(query)”.")
+                }
+
+                let formatter = DateFormatter()
+                formatter.dateFormat = "EEE d MMM HH:mm"
+                let lines = matched.sorted { $0.timestamp > $1.timestamp }
+                    .prefix(limit)
+                    .map { clip -> String in
+                        // OCR is the readable content of a capture; the clip's own text is
+                        // empty for one, so showing `text` alone would list blank rows.
+                        let body = clip.text.isEmpty ? clip.ocrText : clip.text
+                        let kind = clip.isScreenCapture ? "capture" : "copied"
+                        let from = clip.sourceAppName.isEmpty ? "" : " from \(clip.sourceAppName)"
+                        let flat = body.replacingOccurrences(of: "\n", with: " ")
+                        return "- [\(kind)\(from) · \(formatter.string(from: clip.timestamp))] "
+                            + String(flat.prefix(200))
+                    }
+                return .init(
+                    success: true,
+                    output: "\(matched.count) clip\(matched.count == 1 ? "" : "s"):\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
+    }
+
+    /// The same file the Clipboard scope persists to. Read from disk rather than from the
+    /// launcher's state so this works whether or not the dock view happens to be alive.
+    private static func loadClipboardHistory() -> [LauncherView.ClipboardEntry] {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support")
+        let url = base
+            .appendingPathComponent("Context-Dock", isDirectory: true)
+            .appendingPathComponent("clipboard-history.json")
+        guard let data = try? Data(contentsOf: url),
+            let entries = try? JSONDecoder().decode(
+                [LauncherView.ClipboardEntry].self, from: data)
+        else { return [] }
+        return entries
+    }
+
+    // MARK: - Extensions
+
+    /// What `extension.run` can actually be called with.
+    ///
+    /// extension.run takes a UUID and there was no way to obtain one: the model cannot
+    /// invent a UUID, and nothing listed them. A capability reachable only by guessing a
+    ///128-bit number is a capability that does not exist.
+    private static func registerExtensionsList(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "extensions.list",
+                title: "List Installed Extensions",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(name: "query", description: "Words to match", required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                let query = (request.input["query"] ?? "").lowercased()
+                let manifests = ExtensionRegistry.shared.manifests
+                let matched = query.isEmpty
+                    ? manifests
+                    : manifests.filter {
+                        $0.name.lowercased().contains(query)
+                            || $0.summary.lowercased().contains(query)
+                    }
+                guard !matched.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: query.isEmpty
+                            ? "No extensions installed."
+                            : "No extension matches “\(query)”.")
+                }
+                let lines = matched.prefix(40).map { manifest in
+                    "- \(manifest.id.uuidString): \(manifest.name)"
+                        + (manifest.summary.isEmpty ? "" : " — \(manifest.summary)")
+                }
+                return .init(
+                    success: true,
+                    output: "Run one with extension.run using its id:\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
     }
 
     // MARK: - Browser
