@@ -5914,7 +5914,16 @@ extension LauncherView {
             "bookmark this", "bookmark the", "add bookmark", "save bookmark",
         ]
         if actionWords.contains(where: normalized.contains) { return false }
-        let dataWords = ["history", "visited", "visit ", "bookmark", "opened tab", "open tab", "tabs"]
+        // "visit" unsuffixed, because visit/visited/visiting/visite are all the same
+        // question and a trailing space made "did i visite any website today?" match none
+        // of them. "website" and friends were missing outright, so the most ordinary way to
+        // ask this — naming the thing rather than the log it lives in — was never
+        // recognised, and the question fell through to a generic answer that reported
+        // finding nothing while Safari sat enabled two inches away.
+        let dataWords = [
+            "history", "visit", "bookmark", "opened tab", "open tab", "tabs",
+            "website", "web site", "webpage", "web page", "browse", "browsing", "url",
+        ]
         guard dataWords.contains(where: normalized.contains) else { return false }
         let readShapes = [
             "what", "which", "show", "list", "find", "search", "how many", "give me",
