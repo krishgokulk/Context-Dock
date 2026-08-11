@@ -293,6 +293,21 @@ final class AgentToolRegistry {
         case "mail": return "email emails inbox"
         case "photos": return "image images picture pictures"
         case "xcode": return "build compile project scheme"
+        // The words people actually use. A capability is only findable through the terms
+        // its user would type, and nobody asks about their "browser history capability" —
+        // they ask whether they visited a website. Registering the reader without these is
+        // registering something that still cannot be found.
+        case "browser":
+            return "website websites site sites web page pages visit visited visiting "
+                + "browsing browse url urls link links tab tabs bookmark bookmarks safari "
+                + "chrome edge brave arc firefox online internet read looked"
+        case "files":
+            return "file document documents recent recently opened downloads folder search find"
+        case "quicknotes":
+            return "note notes captured capture saved jot scratch snippet quick"
+        case "apps":
+            return "app application applications used usage often frequently favourite favorite"
+        case "project": return "build compile make run test rebuild"
         default: return ""
         }
     }

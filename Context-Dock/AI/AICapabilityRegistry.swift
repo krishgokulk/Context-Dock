@@ -162,6 +162,7 @@ final class CapabilityRegistry {
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
         ProjectBuildCapabilities.register(in: self)
+        LocalDataCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
         AppWorkflowToolCatalog.shared.register(in: self)
