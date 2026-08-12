@@ -931,6 +931,47 @@ extension LauncherView {
                 : "Add \(folderName) as AI context — all queries will be scoped to this folder")
     }
 
+    /// Takes the folder Finder is showing and makes it a thread in the chat window.
+    ///
+    /// Deliberately not what "+" does. "+" scopes the dock's next question to this folder
+    /// and forgets it when the dock closes; this opens a conversation about the folder that
+    /// keeps its history, its file tools and its own artifacts — the same folder reached
+    /// from the window's own picker. One is a scope on a query, the other is a place to
+    /// come back to, and collapsing them would cost the user the difference.
+    @ViewBuilder
+    var openFinderFolderInChatWindowButton: some View {
+        let folderPath = currentFinderFolderPath()
+        let folderURL = URL(fileURLWithPath: folderPath).standardizedFileURL
+        let folderName =
+            folderURL.lastPathComponent.isEmpty ? "this folder" : folderURL.lastPathComponent
+        let isOpen = GeneralChatWindowModel.shared.sessions.contains {
+            $0.scope == .folder(path: folderURL.resolvingSymlinksInPath().path)
+        }
+
+        Button {
+            GeneralChatWindowModel.shared.openFolderSession(folderURL)
+            GeneralChatWindowController.shared.show()
+            searchState.query = ""
+            isSearchFieldFocused = false
+            AppDelegate.shared?.hideLauncher(force: true)
+        } label: {
+            Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(
+                    isOpen
+                        ? AnyShapeStyle(Color.green.opacity(0.9))
+                        : AnyShapeStyle(.secondary.opacity(0.70))
+                )
+                .frame(width: 22, height: 22)
+                .background(Color.white.opacity(0.07), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help(
+            isOpen
+                ? "Open the \(folderName) thread in the chat window"
+                : "Chat with \(folderName) — a thread with this folder's files and history")
+    }
+
     @ViewBuilder
     var addMailContextButton: some View {
         let alreadyAdded = isCurrentMailContextAttached()

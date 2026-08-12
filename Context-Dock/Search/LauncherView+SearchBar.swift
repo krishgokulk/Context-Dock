@@ -2657,6 +2657,9 @@ extension LauncherView {
                                             // the current folder for recursive/content search.
                                             if canAttachCurrentFinderFolderToConversation {
                                                 addFinderFolderButton
+                                                // Same folder, the other job: a thread
+                                                // rather than a scope on this query.
+                                                openFinderFolderInChatWindowButton
                                             }
                                         } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
                                             frontmost.bundleID != Bundle.main.bundleIdentifier

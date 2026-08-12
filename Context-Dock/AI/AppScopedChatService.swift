@@ -838,7 +838,7 @@ enum AppScopedChatService {
                     capability: capabilityID, input: input,
                     explanation: "Requested in chat: \(query)")
                 let result = try? await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context, scopeRoot: scope.folderURL)
+                    plan, context: context, chatScope: scope)
                 ChatConsoleLog.shared.append(
                     .tool, title: capabilityID,
                     output: result?.output ?? "(no output)",

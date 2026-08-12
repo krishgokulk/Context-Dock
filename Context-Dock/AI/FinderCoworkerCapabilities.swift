@@ -38,7 +38,7 @@ enum FinderCoworkerCapabilities {
     /// Selection first is the whole point of a co-worker. "Are these duplicates?" with six
     /// files highlighted is a question about those six, and answering it about Downloads
     /// instead is a different answer to a question nobody asked.
-    private static func scopeURLs(
+    static func scopeURLs(
         from request: AICapabilityExecutionRequest, explicitPath: String? = nil
     ) -> (roots: [URL], describedAs: String) {
         if let explicit = resolveRoot(explicitPath) {
@@ -61,7 +61,7 @@ enum FinderCoworkerCapabilities {
 
     /// Every file under the given roots, hidden files skipped. One walker for the whole
     /// co-worker so the rules about what it may touch live in a single place.
-    private static func files(under roots: [URL], limit: Int = 20_000) -> [URL] {
+    static func files(under roots: [URL], limit: Int = 20_000) -> [URL] {
         let fm = FileManager.default
         var out: [URL] = []
         for root in roots {
@@ -83,11 +83,11 @@ enum FinderCoworkerCapabilities {
         return out
     }
 
-    private static func size(of url: URL) -> Int64 {
+    static func size(of url: URL) -> Int64 {
         Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
     }
 
-    private static func modified(_ url: URL) -> Date {
+    static func modified(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate ?? .distantPast
     }
@@ -140,13 +140,36 @@ enum FinderCoworkerCapabilities {
                         lines.append("    \(url.deletingLastPathComponent().path)")
                     }
                 }
+                // Fifteen groups are shown; the rest go to a file rather than being lost.
+                // "You have 60 sets of duplicates, here are 15" is an answer that hides
+                // most of itself.
+                var trailer = ""
+                if let chatScope = request.chatScope, duplicates.count > 15 {
+                    var rows = ["name,copies,bytes_each,reclaimable_bytes,paths"]
+                    for group in duplicates {
+                        let each = size(of: group[0])
+                        let paths = group.map(\.path).joined(separator: " | ")
+                        rows.append(
+                            "\"\(group[0].lastPathComponent)\",\(group.count),\(each),"
+                            + "\(each * Int64(group.count - 1)),\"\(paths)\"")
+                    }
+                    if let url = ArtifactStore.file(
+                        rows.joined(separator: "\n"),
+                        named: ArtifactStore.reportName("duplicates", extension: "csv"),
+                        scope: chatScope)
+                    {
+                        trailer =
+                            "\n\nAll \(duplicates.count) sets are in \(url.lastPathComponent), "
+                            + "in the Artifacts panel."
+                    }
+                }
                 return .init(
                     success: true,
                     output:
                         "\(duplicates.count) set(s) of likely duplicates in \(scope.describedAs) — "
                         + "matched on name and size, not contents.\n"
                         + "Reclaimable if you keep one of each: \(formatter.string(fromByteCount: reclaimable))\n\n"
-                        + lines.joined(separator: "\n"))
+                        + lines.joined(separator: "\n") + trailer)
             }
         )
     }
@@ -185,12 +208,31 @@ enum FinderCoworkerCapabilities {
                     "- \(url.lastPathComponent) — \(formatter.string(fromByteCount: size(of: url))), "
                         + "last touched \(dateFormatter.string(from: modified(url)))"
                 }
+                var trailer = ""
+                if let chatScope = request.chatScope, stale.count > 20 {
+                    var rows = ["name,bytes,last_modified,path"]
+                    let iso = ISO8601DateFormatter()
+                    for url in stale {
+                        rows.append(
+                            "\"\(url.lastPathComponent)\",\(size(of: url)),"
+                            + "\(iso.string(from: modified(url))),\"\(url.path)\"")
+                    }
+                    if let url = ArtifactStore.file(
+                        rows.joined(separator: "\n"),
+                        named: ArtifactStore.reportName("stale-files", extension: "csv"),
+                        scope: chatScope)
+                    {
+                        trailer =
+                            "\n\nAll \(stale.count) are listed in \(url.lastPathComponent), "
+                            + "in the Artifacts panel."
+                    }
+                }
                 return .init(
                     success: true,
                     output:
                         "\(stale.count) file(s) in \(scope.describedAs) untouched for \(months)+ months, "
                         + "holding \(formatter.string(fromByteCount: total)).\n\n"
-                        + lines.joined(separator: "\n"))
+                        + lines.joined(separator: "\n") + trailer)
             }
         )
     }

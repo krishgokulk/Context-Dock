@@ -26,6 +26,18 @@ enum ArtifactStore {
     /// would bury the answer instead of showing it.
     private static let renderable: Set<String> = ["html", "svg", "mermaid", "csv"]
 
+    /// One directory per thread, named after its scope.
+    ///
+    /// Sanitised, because a folder thread's key holds a path: appending
+    /// "folder:/Users/x/Documents" verbatim buries the artifact several directories deep
+    /// under a folder literally named ":", where nothing that lists this scope would look.
+    private static func folder(for scope: GeneralChatScope) -> URL {
+        directory.appendingPathComponent(
+            scope.storageKey
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: ":", with: "-"))
+    }
+
     static var directory: URL {
         URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/Context-Dock/artifacts")
@@ -40,7 +52,7 @@ enum ArtifactStore {
         let pattern = "```([a-zA-Z]+)\\n([\\s\\S]*?)```"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
 
-        let folder = directory.appendingPathComponent(scope.storageKey)
+        let folder = folder(for: scope)
         var written: [URL] = []
 
         for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
@@ -110,9 +122,42 @@ enum ArtifactStore {
             """
     }
 
+    /// Files a document a capability produced, and returns where it went.
+    ///
+    /// The fenced-block path above exists because a model hands back prose. A capability
+    /// hands back a finished report, and printing three hundred duplicate paths into the
+    /// transcript to have them extracted again is a worse version of writing the file
+    /// directly. The panel lists this directory, so a report written here is already on
+    /// screen beside the conversation.
+    @discardableResult
+    static func file(
+        _ body: String, named name: String, scope: GeneralChatScope
+    ) -> URL? {
+        let folder = folder(for: scope)
+        let url = folder.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(
+                at: folder, withIntermediateDirectories: true)
+            try body.write(to: url, atomically: true, encoding: .utf8)
+            log.notice("filed \(name, privacy: .public)")
+            return url
+        } catch {
+            log.notice("could not file: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    /// A timestamped name, so running the same report twice keeps both rather than
+    /// overwriting the one the user is still looking at.
+    static func reportName(_ stem: String, extension ext: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        return "\(stem)-\(formatter.string(from: Date())).\(ext)"
+    }
+
     /// Every artifact this thread has produced, oldest first.
     static func artifacts(for scope: GeneralChatScope) -> [URL] {
-        let folder = directory.appendingPathComponent(scope.storageKey)
+        let folder = folder(for: scope)
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: [.contentModificationDateKey])
         else { return [] }

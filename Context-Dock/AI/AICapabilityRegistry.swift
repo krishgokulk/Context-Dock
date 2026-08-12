@@ -26,9 +26,13 @@ struct AICapabilityInputSchema: Codable {
 struct AICapabilityExecutionRequest {
     let input: [String: String]
     let context: UserContext
-    /// The folder this conversation is confined to, when it is confined to one. Set for
-    /// folder threads; nil everywhere else, where the scope is the machine.
-    var scopeRoot: URL? = nil
+    /// The thread this call was made in. Carries two things a capability needs: the folder
+    /// it may not reach outside of, and somewhere to file a report it produces.
+    var chatScope: GeneralChatScope? = nil
+
+    /// The folder this conversation is confined to, when it is confined to one. Nil
+    /// everywhere else, where the scope is the machine.
+    var scopeRoot: URL? { chatScope?.folderURL }
 }
 
 struct AICapabilityExecutionResult {
@@ -254,6 +258,7 @@ final class CapabilityRegistry {
         CaptureCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
+        FinderSearchCapabilities.register(in: self)
         // The file tools carry Finder's bundle id for scoping, not for dispatch — they run
         // through FileManager. Without this they were filtered out of every prompt as
         // "app with no adapter", which is why a Finder chat could describe file work and
@@ -650,7 +655,7 @@ final class AIExecutionEngine {
         _ plan: AIActionPlan,
         context: UserContext,
         approved: Bool = false,
-        scopeRoot: URL? = nil
+        chatScope: GeneralChatScope? = nil
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
@@ -662,7 +667,7 @@ final class AIExecutionEngine {
         // sixteen times with one of them forgotten.
         if let reason = CapabilityScopeGuard.violation(
             capabilityID: capability.id, input: plan.input, context: context,
-            scopeRoot: scopeRoot)
+            scopeRoot: chatScope?.folderURL)
         {
             throw AICapabilityError.blocked(reason)
         }
@@ -675,13 +680,13 @@ final class AIExecutionEngine {
             }
         }
         return try await capability.executor(
-            .init(input: plan.input, context: context, scopeRoot: scopeRoot))
+            .init(input: plan.input, context: context, chatScope: chatScope))
     }
 
     func executeWithApproval(
         _ plan: AIActionPlan,
         context: UserContext,
-        scopeRoot: URL? = nil
+        chatScope: GeneralChatScope? = nil
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
@@ -690,7 +695,7 @@ final class AIExecutionEngine {
         // something that will then be refused teaches them the card means nothing.
         if let reason = CapabilityScopeGuard.violation(
             capabilityID: capability.id, input: plan.input, context: context,
-            scopeRoot: scopeRoot)
+            scopeRoot: chatScope?.folderURL)
         {
             throw AICapabilityError.blocked(reason)
         }
@@ -699,7 +704,7 @@ final class AIExecutionEngine {
                 plan: plan,
                 capability: capability,
                 context: context,
-                scopeRoot: scopeRoot
+                chatScope: chatScope
             )
             guard approved else {
                 AIAuditHistory.shared.record(
@@ -714,7 +719,7 @@ final class AIExecutionEngine {
         }
         do {
             let result = try await execute(
-                plan, context: context, approved: true, scopeRoot: scopeRoot)
+                plan, context: context, approved: true, chatScope: chatScope)
             AIAuditHistory.shared.record(
                 capabilityID: capability.id,
                 risk: capability.riskLevel,
@@ -837,10 +842,12 @@ final class AICapabilityApprovalCenter: ObservableObject {
         let plan: AIActionPlan
         let capability: AICapability
         let context: UserContext
-        /// The folder the asking thread is confined to, so the card can say where this
-        /// will happen rather than only what.
-        var scopeRoot: URL? = nil
+        /// The thread that asked, so the card can say where this will happen rather than
+        /// only what.
+        var chatScope: GeneralChatScope? = nil
         let continuation: CheckedContinuation<Bool, Never>
+
+        var scopeRoot: URL? { chatScope?.folderURL }
     }
 
     @Published private(set) var pending: PendingApproval?
@@ -850,7 +857,7 @@ final class AICapabilityApprovalCenter: ObservableObject {
 
     func requestApproval(
         plan: AIActionPlan, capability: AICapability, context: UserContext,
-        scopeRoot: URL? = nil
+        chatScope: GeneralChatScope? = nil
     ) async -> Bool {
         await withCheckedContinuation { continuation in
             expiryTask?.cancel()
@@ -858,7 +865,7 @@ final class AICapabilityApprovalCenter: ObservableObject {
                 plan: plan,
                 capability: capability,
                 context: context,
-                scopeRoot: scopeRoot,
+                chatScope: chatScope,
                 continuation: continuation
             )
             expiryTask = Task { [weak self] in
