@@ -150,22 +150,33 @@ actor MCPClient {
         line.append(0x0A)  // newline-delimited
         stdin.write(line)
 
-        return try await withThrowingTaskGroup(of: Any.self) { group in
-            group.addTask { try await self.awaitResponse(id: id) }
-            group.addTask {
-                try await Task.sleep(nanoseconds: 30_000_000_000)  // 30s timeout
-                throw MCPClientError.timeout
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
+        // The deadline resumes the waiter rather than racing it.
+        //
+        // This was a task group: one child parked on the continuation, one slept 30s and
+        // threw. A group cannot unwind until every child finishes, and a server that never
+        // answers leaves the parked child parked — so the timeout threw into a group that
+        // then waited forever for the thing it had just given up on. Every enclosing
+        // timeout inherited that wait, which is how a chat turn stalled with no error and
+        // no answer.
+        let deadline = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            await self?.failPending(id: id, with: .timeout)
         }
+        defer { deadline.cancel() }
+        return try await awaitResponse(id: id)
     }
 
     private func awaitResponse(id: Int) async throws -> Any {
         try await withCheckedThrowingContinuation { cont in
             pending[id] = cont
         }
+    }
+
+    /// Ends one outstanding request. Safe to call after the reply landed: the entry is
+    /// gone by then, and resuming a continuation twice would trap.
+    private func failPending(id: Int, with error: MCPClientError) {
+        guard let cont = pending.removeValue(forKey: id) else { return }
+        cont.resume(throwing: error)
     }
 
     private func notify(method: String, params: [String: Any]) {

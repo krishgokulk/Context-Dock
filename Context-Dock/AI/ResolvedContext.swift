@@ -116,6 +116,15 @@ enum ContextResolver {
             return ResolvedContext(scope: scope, appName: appName, bundleId: "")
         case .cli(let command):
             return resolveCLI(scope: scope, command: command)
+        case .folder(let path):
+            // A folder has no window, document or app state to read — its context is the
+            // directory itself, which the prompt already carries as a listing. Resolving
+            // it as an app would record gaps ("not running") about something that was
+            // never an app.
+            var context = ResolvedContext(scope: scope, appName: appName, bundleId: "")
+            context.slots.append(
+                .init(name: "folder", value: path, source: "user-attached"))
+            return context
         case .app(let bundleId):
             return resolveApp(scope: scope, bundleId: bundleId, appName: appName)
         }

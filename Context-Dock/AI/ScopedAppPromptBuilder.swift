@@ -367,6 +367,37 @@ struct ScopeInventory {
         return ScopeInventory(subtitle: bundleId, groups: groups)
     }
 
+    /// What a folder thread can reach: the folder itself, and the file tools that act on
+    /// it. Listed rather than assumed — "which of these can it actually do" is the
+    /// question this panel exists to answer, and for files the honest answer is long.
+    @MainActor
+    static func folder(path: String) -> ScopeInventory {
+        let url = URL(fileURLWithPath: path)
+        var groups: [Group] = []
+
+        let entries = FolderScopeDigest.topEntries(for: url)
+        if !entries.isEmpty {
+            groups.append(
+                Group(title: "Recently changed", symbol: "clock", items: entries))
+        }
+
+        let fileTools = CapabilityRegistry.shared
+            .capabilities(for: ChatAppDirectory.finderBundleID)
+            .filter { $0.id.hasPrefix("finder.") }
+            .map { capability in
+                capability.riskLevel.requiresApproval
+                    ? "\(capability.title) — asks first" : capability.title
+            }
+        if !fileTools.isEmpty {
+            groups.append(Group(title: "File tools", symbol: "folder.badge.gearshape", items: fileTools))
+        }
+
+        groups.append(
+            Group(title: "Path", symbol: "folder", items: [path], isMonospaced: true))
+
+        return ScopeInventory(subtitle: FolderScopeDigest.subtitle(for: url), groups: groups)
+    }
+
     @MainActor
     static func cli(command: String) -> ScopeInventory {
         guard let package = TerminalPackageManager.shared.packages.first(where: {

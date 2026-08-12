@@ -221,6 +221,20 @@ class AIProviderService: ObservableObject {
         // Capture current Finder folder only when Finder is the active context.
         // A pinned app scope in the dock should not inherit frontmost Finder folder context.
         let currentFolder: String? = await { () async -> String? in
+            // A directory the user attached IS the working directory — asked first,
+            // because a folder-scoped chat must not run "here" against whatever happens to
+            // be frontmost. (The later `.filesSelected` fallback takes the parent, which is
+            // right for a selected file and wrong for a selected folder.)
+            if case .filesSelected(let urls) = context, urls.count == 1,
+                let url = urls.first
+            {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                    isDirectory.boolValue
+                {
+                    return url.path
+                }
+            }
             // A scoped app dock panel resolves the folder for THAT app, so a pinned scope
             // still gets its own project instead of inheriting whatever is frontmost.
             if case .appFocused(_, let bundleID) = context {

@@ -38,27 +38,21 @@ final class GeneralChatCapabilityHub {
         cachedKey = ""
     }
 
-    /// Runs `operation` on a detached task and gives up on it after `seconds`.
+    /// Runs `operation` and gives up on it after `seconds`.
     ///
     /// Detached and nonisolated on purpose. When this helper was a method on a @MainActor
     /// type, both the work and the timer inherited that isolation, so the timer could not
     /// be scheduled while the work held the actor — the cap never fired, and a stalled MCP
-    /// handshake took the whole turn down with it.
+    /// handshake took the whole turn down with it. The task-group version that replaced it
+    /// had the same end result for a different reason; AsyncTimeout explains it.
     nonisolated static func withTimeout<T: Sendable>(
         seconds: Double,
         fallback: T,
+        label: String = "hub section",
         operation: @escaping @Sendable () async -> T
     ) async -> T {
-        await withTaskGroup(of: T.self) { group in
-            group.addTask { await operation() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return fallback
-            }
-            let first = await group.next() ?? fallback
-            group.cancelAll()
-            return first
-        }
+        await AsyncTimeout.run(
+            seconds: seconds, fallback: fallback, label: label, operation: operation)
     }
 
     // MARK: - Prompt block
@@ -306,6 +300,9 @@ final class GeneralChatCapabilityHub {
         // adapter cannot run, and advertising it would invite a call that must fail.
         let caps = CapabilityRegistry.shared.all.filter { cap in
             guard let bundleID = cap.appBundleID else { return true }
+            // Self-executing capabilities name an app to be scoped by it, not to be
+            // dispatched through it — an adapter they never use must not gate them.
+            if cap.runsWithoutAdapter { return true }
             return AppAdapterManager.shared.adapter(for: bundleID) != nil
         }
         let disabledNames = families

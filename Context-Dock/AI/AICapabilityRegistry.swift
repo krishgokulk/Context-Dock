@@ -105,6 +105,13 @@ struct AICapability {
     /// What this may touch when the conversation is scoped to a selection. Defaults to
     /// unsafe, so a capability is only reachable from Selection Scope if it says so.
     var selectionSafety: SelectionSafety = .unsafe
+    /// True when the capability runs itself rather than dispatching through the app's
+    /// adapter, so naming an app in `appBundleID` scopes it without requiring one.
+    ///
+    /// The file tools are the case: they belong to Finder so they surface in file-shaped
+    /// chats, but they execute through FileManager. Treating "names an app" as "needs an
+    /// adapter" hid all sixteen of them from every chat, because Finder ships no adapter.
+    var runsWithoutAdapter: Bool = false
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
@@ -156,6 +163,17 @@ final class CapabilityRegistry {
 
     func register(_ capability: AICapability) {
         capabilitiesByID[capability.id] = capability
+    }
+
+    /// Marks a family of already-registered capabilities as self-executing. Called once by
+    /// the family's own file, so the fact lives with the code that knows it rather than in
+    /// a list somewhere else that the next capability will not be added to.
+    func markRunsWithoutAdapter(idsWithPrefix prefix: String) {
+        for (id, capability) in capabilitiesByID where id.hasPrefix(prefix) {
+            var updated = capability
+            updated.runsWithoutAdapter = true
+            capabilitiesByID[id] = updated
+        }
     }
 
     func registerAppleNotesMCPIfNeeded() {
@@ -233,6 +251,11 @@ final class CapabilityRegistry {
         CaptureCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
+        // The file tools carry Finder's bundle id for scoping, not for dispatch — they run
+        // through FileManager. Without this they were filtered out of every prompt as
+        // "app with no adapter", which is why a Finder chat could describe file work and
+        // never do any.
+        markRunsWithoutAdapter(idsWithPrefix: "finder.")
         AppWorkflowToolCatalog.shared.register(in: self)
         GlobalCommandCapabilities.register(in: self)
         // Apple Notes MCP — only registered when explicitly enabled

@@ -8,6 +8,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct GeneralChatWindowView: View {
     @ObservedObject private var chrome = GeneralChatWindowChromeState.shared
@@ -58,12 +59,49 @@ struct GeneralChatWindowView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .ignoresSafeArea()
+        // Dragging from Finder is how a folder gets here without a file panel. A folder
+        // becomes its own thread; a file joins the thread you are in, because dropping a
+        // PDF on a conversation means "read this", not "start again".
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            handleDroppedItems(providers)
+        }
         .task(id: model.activeScope.storageKey) {
             cachedInventory = model.activeScopeInventory
+            model.refreshFinderSelection()
+        }
+        // Coming back to this window is the moment the selection may have changed: the
+        // user cannot click in Finder without leaving here first, so there is nothing to
+        // poll for and one read on return is enough.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            model.refreshFinderSelection()
         }
         .onChange(of: routeResetToken) { _, _ in
             cachedInventory = model.activeScopeInventory
         }
+    }
+
+    /// Sorts a drop into the two things it can mean. Returns true if anything was taken,
+    /// which is what tells the drag to land rather than snap back.
+    private func handleDroppedItems(_ providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers where provider.canLoadObject(ofClass: URL.self) {
+            handled = true
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url else { return }
+                Task { @MainActor in
+                    var isDirectory: ObjCBool = false
+                    let exists = FileManager.default.fileExists(
+                        atPath: url.path, isDirectory: &isDirectory)
+                    guard exists else { return }
+                    if isDirectory.boolValue {
+                        model.openFolderSession(url)
+                    } else if !model.attachments.contains(url) {
+                        model.attachments.append(url)
+                    }
+                }
+            }
+        }
+        return handled
     }
 
     /// Opaque so the two-tone split against the translucent sidebar is visible.
@@ -159,7 +197,11 @@ struct GeneralChatWindowView: View {
     /// "what did I ask tailscale yesterday" has to be answerable with tailscale closed.
     @ViewBuilder
     private var sessionList: some View {
-        let rows = model.sessions.filter { $0.scope != .general }
+        // Folders get their own heading: a directory listed under "Apps & tools" reads as
+        // an app that is not one, and the two are picked for different reasons.
+        let all = model.sessions.filter { $0.scope != .general }
+        let folderRows = all.filter { $0.scope.folderURL != nil }
+        let rows = all.filter { $0.scope.folderURL == nil }
         // A lone attached app has no session of its own — it is a scope on the current
         // conversation — but from the sidebar it reads as the same thing: one app this
         // chat is about. Listing it here is what stops it disappearing from the sidebar
@@ -182,6 +224,35 @@ struct GeneralChatWindowView: View {
                 }
 
                 ForEach(rows) { session in
+                    sessionRow(session)
+                }
+            }
+        }
+
+        if !folderRows.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("Folders")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .tracking(0.6)
+                    Spacer(minLength: 0)
+                    Button {
+                        model.attachFolder()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Chat with another folder")
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+
+                ForEach(folderRows) { session in
                     sessionRow(session)
                 }
             }
@@ -292,12 +363,21 @@ struct GeneralChatWindowView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+        // A folder's name is rarely enough — two "Invoices" in the sidebar are told apart
+        // by where they are, not what they are called.
+        .help(session.scope.folderURL?.path ?? session.title)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.1)) {
                 hoveredSidebarRow = hovering ? session.id : nil
             }
         }
         .contextMenu {
+            if let folder = session.scope.folderURL {
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                }
+                Divider()
+            }
             Button("Close thread", role: .destructive) {
                 model.closeSession(session.scope)
             }
@@ -589,6 +669,8 @@ struct GeneralChatWindowView: View {
     /// and a clear button because this surface has a transcript and the room.
     private var composer: some View {
         VStack(spacing: 6) {
+            selectionPill
+
             if !model.attachments.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(model.attachments, id: \.self) { url in
@@ -615,6 +697,12 @@ struct GeneralChatWindowView: View {
                             Button {
                                 model.attachFiles(imagesOnly: true)
                             } label: { Label("Upload Photo", systemImage: "photo") }
+                            Divider()
+                            // A folder is a thread, not an attachment — see
+                            // GeneralChatWindowModel.attachFolder.
+                            Button {
+                                model.attachFolder()
+                            } label: { Label("Chat with a Folder…", systemImage: "folder") }
                             Divider()
                             Button {
                                 model.captureScreenshot(interactive: false)
@@ -648,6 +736,48 @@ struct GeneralChatWindowView: View {
         .padding(.horizontal, 28)
         .padding(.bottom, 20)
         .padding(.top, 8)
+    }
+
+    /// What Finder has highlighted, when this thread is entitled to speak for it.
+    ///
+    /// Shown rather than applied silently: the answer to "rename these" changes completely
+    /// depending on what "these" is, and the user should be able to see it — and dismiss
+    /// it — before pressing Return, not discover it in the receipt.
+    @ViewBuilder
+    private var selectionPill: some View {
+        let selection = model.selectionInScope
+        if !selection.isEmpty {
+            HStack(spacing: 7) {
+                Image(systemName: "cursorarrow.click.2")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(model.selectionSummary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("· in Finder")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+                Button {
+                    model.ignoreSelectionForActiveThread()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Ignore the selection in this thread")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.accentColor.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 0.5))
+            .help(selection.map(\.path).joined(separator: "\n"))
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        }
     }
 
     // MARK: - Work mode

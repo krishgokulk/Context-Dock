@@ -21,6 +21,14 @@ enum GeneralChatScope: Codable, Hashable {
     case app(bundleId: String)
     /// A pinned CLI tool, by command.
     case cli(command: String)
+    /// A directory the user attached, by absolute path.
+    ///
+    /// A folder is not an app, and scoping a chat to Finder is not the same as scoping it
+    /// to ~/Documents/Invoices: Finder is wherever the user last clicked, a folder stays
+    /// put. Files are the thing most worth asking about, and until this existed the only
+    /// way to ask about a directory was to open it and hope the question landed while it
+    /// was still frontmost.
+    case folder(path: String)
     /// The unscoped conversation — the one the result sheet and the window already share.
     case general
 
@@ -28,8 +36,15 @@ enum GeneralChatScope: Codable, Hashable {
         switch self {
         case .app(let bundleId): return "app:\(bundleId)"
         case .cli(let command): return "cli:\(command.lowercased())"
+        case .folder(let path): return "folder:\(path)"
         case .general: return "general"
         }
+    }
+
+    /// The directory this scope is about, when it is about one.
+    var folderURL: URL? {
+        guard case .folder(let path) = self else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     /// The dock identifies a scope by bundle id, using a `cli://` prefix for tools. Given the
@@ -121,6 +136,9 @@ enum GeneralChatSessionStore {
         switch scope {
         case .app(let bundleId): return "dock_app_\(bundleId)"
         case .cli(let command): return "dock_app_cli://\(command.lowercased())"
+        // A folder thread has no dock counterpart to share a file with — the dock scopes
+        // by bundle id, and a directory has none. Its conversation lives in this store.
+        case .folder: return nil
         case .general: return nil
         }
     }
@@ -252,6 +270,10 @@ enum GeneralChatSessionStore {
             return NSWorkspace.shared.icon(forFile: url.path)
         case .cli:
             return NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: nil)
+        case .folder(let path):
+            // The real folder icon, so a tagged or custom-iconed directory looks in the
+            // sidebar the way it looks in Finder.
+            return NSWorkspace.shared.icon(forFile: path)
         case .general:
             return NSImage(systemSymbolName: "bubble.left.and.bubble.right", accessibilityDescription: nil)
         }

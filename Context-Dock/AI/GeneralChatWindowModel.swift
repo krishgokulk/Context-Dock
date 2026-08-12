@@ -37,6 +37,17 @@ final class GeneralChatWindowModel: ObservableObject {
     /// window showing today's scope on last week's question would be a lie.
     @Published var messageApps: [UUID: [String]] = [:]
 
+    /// What is highlighted in Finder right now, filtered to what this thread is about.
+    ///
+    /// A file chat that ignores the selection makes the user describe what they are already
+    /// pointing at. Read from Finder rather than from the AX snapshot so it is current
+    /// while this window — not Finder — is the key window.
+    @Published private(set) var finderSelection: [URL] = []
+    /// The pill's "×": this thread stops following the selection until the user picks
+    /// something else. Per thread, because ignoring it in one is not a statement about
+    /// the others.
+    @Published var ignoredSelectionKeys: Set<String> = []
+
     /// The conversation currently shown. The window is a hub: one thread per app or CLI tool,
     /// each kept whether or not that app is running, plus the unscoped one the result sheet
     /// shares. Combined chat is unchanged — it is what attachedAppNames does *within* a
@@ -156,6 +167,10 @@ final class GeneralChatWindowModel: ObservableObject {
             return TerminalPackageManager.shared.packages.contains {
                 $0.command.caseInsensitiveCompare(command) == .orderedSame && $0.isInstalled
             }
+        case .folder(let path):
+            // Dimmed rather than dropped when the folder is gone: the conversation about
+            // it is still worth reading, and a row that vanishes looks like data loss.
+            return FileManager.default.fileExists(atPath: path)
         }
     }
 
@@ -164,6 +179,7 @@ final class GeneralChatWindowModel: ObservableObject {
         switch activeScope {
         case .general: return "Details"
         case .cli(let command): return command
+        case .folder(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .app: return activeScopeAppName ?? "Details"
         }
     }
@@ -179,6 +195,7 @@ final class GeneralChatWindowModel: ObservableObject {
         switch activeScope {
         case .general: return "bubble.left.and.bubble.right"
         case .cli: return "terminal"
+        case .folder: return "folder"
         case .app: return "app.dashed"
         }
     }
@@ -192,6 +209,8 @@ final class GeneralChatWindowModel: ObservableObject {
                 groups: [])
         case .cli(let command):
             return ScopeInventory.cli(command: command)
+        case .folder(let path):
+            return ScopeInventory.folder(path: path)
         case .app(let bundleId):
             return ScopeInventory.app(
                 bundleId: bundleId, appName: activeScopeAppName ?? bundleId)
@@ -203,6 +222,7 @@ final class GeneralChatWindowModel: ObservableObject {
         switch activeScope {
         case .general: return "General"
         case .cli(let command): return command
+        case .folder(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .app(let bundleId):
             return sessions.first { $0.scope == activeScope }?.title ?? bundleId
         }
@@ -357,18 +377,117 @@ final class GeneralChatWindowModel: ObservableObject {
 
     func attachApp(_ name: String) {
         guard !attachedAppNames.contains(name) else { return }
-        // Picking an app on a fresh General chat means "talk to this app" — so it becomes
-        // that app's own thread, listed and persisted like the ones handed over from the
-        // dock. Held only in attachedAppNames it was a scope on an unsaved conversation,
-        // which is why "/calendar" vanished on the next New chat.
-        if activeScope == .general, messages.isEmpty,
-            let bundleId = Self.bundleId(forAppNamed: name)
-        {
+        // Picking an app in General chat means "talk to this app" — so it becomes that
+        // app's own thread, listed and persisted like the ones handed over from the dock.
+        // Held only in attachedAppNames it was a scope on an unsaved conversation, which
+        // is why "/calendar" vanished on the next New chat.
+        //
+        // Mid-thread too, not only on an empty one: "/finder" after three questions asked
+        // for a Finder chat just as plainly, and answering it with a loose name in the
+        // composer left the user in General with no Finder tools and no row to return to.
+        // The General thread is persisted on the way out and stays in the sidebar; the app
+        // thread opens clean rather than inheriting a copy of a conversation that is
+        // already readable one row above.
+        if activeScope == .general, let bundleId = Self.bundleId(forAppNamed: name) {
             openSession(.app(bundleId: bundleId), title: name)
             return
         }
         attachedAppNames.append(name)
         GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
+    }
+
+    // MARK: - Finder selection
+
+    /// The selection, narrowed to what this thread may speak for.
+    ///
+    /// A folder thread promises the folder: a file selected somewhere else is not "these",
+    /// and quietly widening the scope to wherever the user last clicked would break the
+    /// one guarantee the thread makes. A Finder thread has no such boundary — the
+    /// selection is the whole point of it.
+    var selectionInScope: [URL] {
+        guard !ignoredSelectionKeys.contains(ignoreKey) else { return [] }
+        switch activeScope {
+        case .folder(let path):
+            let root = path.hasSuffix("/") ? path : path + "/"
+            return finderSelection.filter { $0.path == path || $0.path.hasPrefix(root) }
+        case .app(let bundleId) where bundleId == ChatAppDirectory.finderBundleID:
+            return finderSelection
+        default:
+            return []
+        }
+    }
+
+    /// One line for the pill: names when there are few, a count when there are many.
+    var selectionSummary: String {
+        let selection = selectionInScope
+        switch selection.count {
+        case 0: return ""
+        case 1: return selection[0].lastPathComponent
+        case 2, 3: return selection.map(\.lastPathComponent).joined(separator: ", ")
+        default: return "\(selection.count) items selected"
+        }
+    }
+
+    /// Re-reads Finder's selection. Cheap and non-blocking — ContextDetector answers from a
+    /// short-lived cache and refreshes behind it, so calling this on window focus, on
+    /// thread switch and before a send costs one Apple event, not three.
+    func refreshFinderSelection() {
+        // Only threads that can act on files ask Finder anything.
+        let readsFiles: Bool = {
+            switch activeScope {
+            case .folder: return true
+            case .app(let bundleId): return bundleId == ChatAppDirectory.finderBundleID
+            default: return false
+            }
+        }()
+        guard readsFiles else {
+            if !finderSelection.isEmpty { finderSelection = [] }
+            return
+        }
+        ContextDetector.shared.finderSelectedFilesAsync { [weak self] urls in
+            guard let self, self.finderSelection != urls else { return }
+            self.finderSelection = urls
+        }
+    }
+
+    /// Identifies a thread AND the selection it was shown, so dismissing the pill silences
+    /// this selection here — not the feature. Highlight something else and it comes back,
+    /// which is what the "×" means to someone who has just changed their mind about which
+    /// files they want.
+    private var ignoreKey: String {
+        let fingerprint = finderSelection.map(\.path).sorted().joined(separator: "|")
+        return "\(activeScope.storageKey)##\(fingerprint)"
+    }
+
+    func ignoreSelectionForActiveThread() {
+        ignoredSelectionKeys.insert(ignoreKey)
+    }
+
+    /// Asks for a directory and opens it as its own thread.
+    ///
+    /// A folder attached as a file would be one more chip on one more question. As a
+    /// thread it is somewhere to come back to: the same directory, the same history, the
+    /// same tools, whether or not Finder is open on it.
+    func attachFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Chat"
+        panel.message = "Pick a folder to chat with"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openFolderSession(url)
+    }
+
+    /// Opens (or returns to) the thread for a directory. Symlinks and aliases are resolved
+    /// first so the same folder reached two ways is one thread, not two.
+    func openFolderSession(_ url: URL) {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return }
+        openSession(.folder(path: path), title: URL(fileURLWithPath: path).lastPathComponent)
     }
 
     func removeApp(_ name: String) {
@@ -378,6 +497,12 @@ final class GeneralChatWindowModel: ObservableObject {
 
     /// Bundle id for an app the user picked by name, running or merely installed.
     private static func bundleId(forAppNamed name: String) -> String? {
+        // The directory the pickers offer from, so anything listed can also be scoped —
+        // an app the user could pick but not resolve would attach as a name and silently
+        // lose its tools.
+        if let fromDirectory = ChatAppDirectory.bundleId(forName: name) {
+            return fromDirectory
+        }
         if let running = NSWorkspace.shared.runningApplications
             .first(where: { $0.localizedName == name })?.bundleIdentifier
         {
@@ -469,6 +594,10 @@ final class GeneralChatWindowModel: ObservableObject {
 
         let scopeAppName = activeScopeAppName ?? sendTitle
         let extraApps = attachedAppNames
+        // What was highlighted when the question was asked. Captured here rather than read
+        // inside the request: the user may click elsewhere while the answer is in flight,
+        // and "these" has to mean what it meant when they typed it.
+        let selection = selectionInScope
 
         Self.log.notice(
             "turn start scope=\(sendKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
@@ -503,7 +632,8 @@ final class GeneralChatWindowModel: ObservableObject {
                     query: query,
                     history: history,
                     attachments: sentAttachments,
-                    extraAppNames: extraApps)
+                    extraAppNames: extraApps,
+                    finderSelection: selection)
                 guard !Task.isCancelled else {
                     await MainActor.run { self?.finishSending(sendKey) }
                     return

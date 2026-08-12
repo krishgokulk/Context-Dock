@@ -205,21 +205,37 @@ enum AppScopedChatService {
     nonisolated static func withTimeout<T: Sendable>(
         seconds: Double,
         fallback: T,
+        label: String = "prompt section",
         operation: @escaping @Sendable () async -> T
     ) async -> T {
-        await withTaskGroup(of: T.self) { group in
-            group.addTask { await operation() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return fallback
-            }
-            let first = await group.next() ?? fallback
-            group.cancelAll()
-            return first
-        }
+        // The group version of this abandoned nothing: see AsyncTimeout for why a turn
+        // could sit past its own deadline.
+        await AsyncTimeout.run(
+            seconds: seconds, fallback: fallback, label: label, operation: operation)
     }
 
     // MARK: - Shared context blocks
+
+    /// What the user is pointing at, named in full.
+    ///
+    /// A count alone ("3 files selected") leaves the model to ask which — and the whole
+    /// value of a selection is that the user has already said. Capped, because a selection
+    /// of two hundred files is a scope, not a list.
+    static func selectionBlock(_ selection: [URL]) -> String? {
+        guard !selection.isEmpty else { return nil }
+        let shown = selection.prefix(30)
+        var lines = [
+            "SELECTED IN FINDER RIGHT NOW (\(selection.count) item\(selection.count == 1 ? "" : "s"))"
+        ]
+        lines += shown.map { "- \($0.path)" }
+        if selection.count > shown.count {
+            lines.append("…and \(selection.count - shown.count) more.")
+        }
+        lines.append(
+            "\"these\", \"them\", \"the selected files\" and \"this one\" mean exactly these "
+                + "paths. Act on them rather than searching for something similar.")
+        return lines.joined(separator: "\n")
+    }
 
     /// Today's date and time, in the model's prompt. A chat that cannot resolve "today"
     /// answers calendar and reminder questions against nothing.
@@ -384,6 +400,9 @@ enum AppScopedChatService {
         history: [ChatMessage],
         attachments: [URL] = [],
         extraAppNames: [String] = [],
+        /// What was highlighted in Finder when the question was asked, already narrowed to
+        /// this scope by the caller. Empty means the scope itself is the subject.
+        finderSelection: [URL] = [],
         /// A skill the user chose for this request. Present means the route decision is
         /// already made, so the picker is skipped rather than asked again.
         skillOverride: String? = nil
@@ -486,16 +505,31 @@ enum AppScopedChatService {
         // Which routes could actually carry this out, resolved before the model is asked
         // anything. Asking the user which to use is only worth it when they differ in
         // consequence — that check is in the resolver.
-        if case .app(let bundleId) = scope, skillOverride == nil {
+        // A folder thread routes through Finder: "new folder here", "open this" are Finder
+        // work aimed at one directory, and a thread that can list files but not act on
+        // them is half a file chat.
+        let routingBundleId: String? = {
+            switch scope {
+            case .app(let bundleId): return bundleId
+            case .folder: return ChatAppDirectory.finderBundleID
+            default: return nil
+            }
+        }()
+        if let bundleId = routingBundleId, skillOverride == nil {
+            // The routes belong to Finder even when the thread is named after a folder —
+            // "Invoices can do that more than one way" names the wrong thing.
+            let routingAppName =
+                bundleId == ChatAppDirectory.finderBundleID && scope.folderURL != nil
+                ? "Finder" : appName
             let routes = await ChatRouteResolver.routes(
-                for: query, bundleId: bundleId, appName: appName)
+                for: query, bundleId: bundleId, appName: routingAppName)
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 pendingRoutes = Dictionary(
                     uniqueKeysWithValues: routes.map { ($0.id, $0) })
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
                 return Answer(
                     text:
-                        "\(appName) can do that more than one way. Which should I use?",
+                        "\(routingAppName) can do that more than one way. Which should I use?",
                     toolChips: [],
                     routeChoices: routes.map(\.asActionChoice))
             }
@@ -541,7 +575,16 @@ enum AppScopedChatService {
 
         switch scope {
         case .app(let bundleId):
-            context = .appFocused(name: appName, bundleID: bundleId)
+            // A Finder thread with something highlighted is a question about those files.
+            // Handing the tools the selection rather than the app is what lets "rename
+            // these" mean the six files on screen instead of whatever folder is frontmost.
+            context =
+                finderSelection.isEmpty
+                ? .appFocused(name: appName, bundleID: bundleId)
+                : .filesSelected(finderSelection)
+            if let selectionBlock = selectionBlock(finderSelection) {
+                sections.append(selectionBlock)
+            }
             sections.append(
                 """
                 This conversation is scoped to \(appName) (\(bundleId)). Answer about that app, \
@@ -578,6 +621,34 @@ enum AppScopedChatService {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
             if !mcpBlock.isEmpty { sections.append(mcpBlock) }
+
+        case .folder(let path):
+            let url = URL(fileURLWithPath: path)
+            // The folder arrives as a selection, which is what the file capabilities
+            // already resolve "here" from — so every finder.* tool defaults to this
+            // directory instead of the user's Desktop, with no per-capability wiring and
+            // no new argument for the model to remember to pass.
+            //
+            // Highlighted files inside it are narrower and win: "are these duplicates?"
+            // with six files selected is a question about those six, and answering it
+            // about the whole folder answers something nobody asked.
+            context = .filesSelected(finderSelection.isEmpty ? [url] : finderSelection)
+            sections.append(
+                """
+                This conversation is scoped to the folder \(url.lastPathComponent) \
+                (\(path)). Answer about the files in it, using the listing and the file \
+                tools below. If something is not in the listing, use a tool to look rather \
+                than guessing — and if a tool cannot read it, say so.
+                """)
+            sections.append(FolderScopeDigest.promptBlock(for: url))
+            if let selectionBlock = selectionBlock(finderSelection) {
+                sections.append(selectionBlock)
+            }
+            // Finder's identity block, because the file tools are registered against
+            // Finder's bundle id: a folder thread is the same toolset aimed at one place.
+            let fileTools = ScopedAppPromptBuilder.appIdentityBlock(
+                bundleId: ChatAppDirectory.finderBundleID, appName: "Finder", query: query)
+            if !fileTools.isEmpty { sections.append(fileTools) }
 
         case .cli(let command):
             let resolved = ContextResolver.resolve(scope: scope, appName: command)
